@@ -41,7 +41,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
   if (site instanceof Response) return site;
   const result = await db().query(
     `UPDATE sites SET name = $3, location = $4, light = $5, grow_light = $6,
-     warm_min_c = $7, warm_max_c = $8, cold_min_c = $9, cold_max_c = $10, humidity = $11, draft = $12
+     warm_min_c = $7, warm_max_c = $8, cold_min_c = $9, cold_max_c = $10, humidity = $11, draft = $12, imported_conditions_incomplete = false
      WHERE id = $1 AND household_id = $2 RETURNING *`,
     [params.id, locals.identity.household.id, site.name, site.location, site.light, site.grow_light, site.warm_min_c, site.warm_max_c, site.cold_min_c, site.cold_max_c, site.humidity, site.draft],
   );

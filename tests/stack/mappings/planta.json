@@ -1,0 +1,243 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/auth/authorize",
+        "headers": {
+          "Host": {
+            "matches": "planta(:[0-9]+)?"
+          }
+        },
+        "bodyPatterns": [
+          {
+            "equalToJson": {
+              "code": "synthetic-browser-import"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "data": {
+            "accessToken": "synthetic-browser-access",
+            "refreshToken": "synthetic-browser-refresh",
+            "tokenType": "Bearer"
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "POST",
+        "urlPath": "/v1/auth/refreshToken",
+        "headers": {
+          "Host": {
+            "matches": "planta(:[0-9]+)?"
+          }
+        },
+        "bodyPatterns": [
+          {
+            "equalToJson": {
+              "refreshToken": "synthetic-browser-refresh"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "data": {
+            "accessToken": "synthetic-browser-access-new",
+            "refreshToken": "synthetic-browser-refresh",
+            "tokenType": "Bearer"
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/v1/addedPlants",
+        "headers": {
+          "Host": {
+            "matches": "planta(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "cursor": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "data": [
+            {
+              "id": "synthetic-browser-planta-a",
+              "names": {
+                "custom": "Test import amber",
+                "scientific": "Testoria neblosa",
+                "variety": "Invented stripe"
+              },
+              "site": {
+                "name": "Test imported nook"
+              },
+              "environment": {
+                "pot": {
+                  "type": "potterracotta",
+                  "size": 18,
+                  "soil": "cactussoil"
+                }
+              },
+              "actions": {
+                "watering": {
+                  "completed": {
+                    "date": "2026-06-01T12:00:00Z"
+                  }
+                },
+                "fertilizing": {
+                  "completed": {
+                    "date": "2026-05-25T12:00:00Z"
+                  }
+                },
+                "misting": {
+                  "completed": {
+                    "date": "2026-06-02T12:00:00Z"
+                  }
+                },
+                "cleaning": {
+                  "completed": {
+                    "date": "2026-05-20T12:00:00Z"
+                  }
+                },
+                "repotting": {
+                  "completed": {
+                    "date": "2025-06-01T12:00:00Z"
+                  }
+                }
+              },
+              "image": {
+                "url": "https://planta:8443/import-cover.png"
+              }
+            }
+          ],
+          "pagination": {
+            "nextPage": "synthetic-page-two"
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/v1/addedPlants",
+        "headers": {
+          "Host": {
+            "matches": "planta(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "cursor": {
+            "equalTo": "synthetic-page-two"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "data": [
+            {
+              "id": "synthetic-browser-planta-b",
+              "names": {
+                "custom": "Test import blue",
+                "scientific": "Testoria lucida",
+                "variety": "Invented stripe"
+              },
+              "site": {
+                "name": "Test imported nook"
+              },
+              "environment": {
+                "pot": {
+                  "type": "potterracotta",
+                  "size": 18,
+                  "soil": "cactussoil"
+                }
+              },
+              "actions": {
+                "watering": {
+                  "completed": {
+                    "date": "2026-06-01T12:00:00Z"
+                  }
+                },
+                "fertilizing": {
+                  "completed": {
+                    "date": "2026-05-25T12:00:00Z"
+                  }
+                },
+                "misting": {
+                  "completed": {
+                    "date": "2026-06-02T12:00:00Z"
+                  }
+                },
+                "cleaning": {
+                  "completed": {
+                    "date": "2026-05-20T12:00:00Z"
+                  }
+                },
+                "repotting": {
+                  "completed": {
+                    "date": "2025-06-01T12:00:00Z"
+                  }
+                }
+              },
+              "image": {
+                "url": null
+              }
+            }
+          ],
+          "pagination": {
+            "nextPage": null
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/import-cover.png",
+        "headers": {
+          "Host": {
+            "matches": "planta(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "image/png"
+        },
+        "base64Body": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      }
+    }
+  ]
+}

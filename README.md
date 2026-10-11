@@ -168,3 +168,51 @@ Full deletion commits all row deletion first, then deletes both MinIO objects fo
 Schedule reads use the catalogue's `effectiveCareProfiles`, including source caches and household overrides. The API test sets different care overrides for two species through the catalogue API, then verifies changed due dates with unchanged history and plant intervals.
 
 `tests/api/lifecycle.test.ts` covers graveyard exclusions, retained photos and care, restore, mixed active/graveyard site deletion, name confirmation, real MinIO cleanup and a forced delete failure, species confirmation and recomputation, and household/session/origin refusals. `tests/browser/lifecycle.spec.ts` exercises graveyard, restore, species correction and permanent deletion at the phone viewport.
+
+## Planta import
+
+The real import runs once with the owner present. Create the one-time app code at https://getplanta.com/apps/manage that day, then open **Import from Planta** on the home screen. Do not send the code in chat or save it. Development and tests use invented plants only. No Planta calls are needed to develop this flow.
+
+`PLANTA_BASE_URL` defaults to `https://public.planta-api.com/v1`. Compose points it at the WireMock alias `planta`. The client exchanges the code at POST /auth/authorize, refreshes at POST /auth/refreshToken, and follows GET /addedPlants pagination. Authorization replies wrap tokens in `data`, as in the public MIT-licensed [ha-planta client](https://github.com/natekspencer/ha-planta). Tokens stay in server memory only for the fetch run and are discarded before review. Upstream errors are replaced with credential-free messages. Each request times out after five seconds; a fetch run allows at most two minutes, 100 pages and 10,000 plants. One 401 triggers one refresh for the run, then a second 401 fails clearly. 429 retries twice, with exponential backoff and Retry-After capped at two seconds.
+
+Mapped fields and species candidates persist in ImportStaging. Nothing raw is retained. Exact matches follow the shared species confirmation rule; fuzzy and low-confidence matches require explicit confirmation. Pick a candidate, use **Search again** with the shared SpeciesPicker, or skip. Both automatic and reviewed choices use `chosenSpecies`; persisted candidates are restored to a household-scoped search record when reviewed. `saveSpecies` queues Perenual, Open Plantbook and name fetches and indexes the stored canonical name. Import inserts missing species but never overwrites stored taxonomy. A new successful fetch replaces the previous review. A failed fetch leaves it untouched.
+
+Endpoints are owner-only and household-scoped: GET /api/import/planta reads staging, POST exchanges `{code}` and stages all pages, PUT /api/import/planta/:id accepts `{gbif_key, confirmed}`, a shared `{search_id, gbif_key, confirmed}`, or `{skip:true}`, and POST /api/import/planta/commit commits reviewed rows. Writes check origins. Staging IDs are not Planta IDs.
+
+### Re-run rule
+
+A fresh fetch updates the plant keyed by household and Planta plant ID. It replaces Planta-sourced species, nickname, cultivar, site, pot type, pot size and soil **even if the owner edited those fields in Fytorium**. Health, birthday, lifecycle, plant/environment settings, care overrides and local care events stay. Imported last dates update one `source=planta` completed event per action, with a server-generated request UUID and no batch ID. Re-fetch keeps its event ID, request ID and undo state, and never changes local completion batches, snoozes or skips. Missing dates do not erase prior events, and an undone import event stays undone. Invalid or future dates refuse the fetch. Water and the other schedules anchor on the imported completions in the household time zone.
+
+Each row commits in its own transaction. A failure leaves earlier rows committed and the failed row staged. Restart the app and press **Import confirmed plants** again. Retrying the same review skips committed rows, without replacing subsequent owner edits. A new fetch is required to update those rows again. Skipped plants are untouched. Re-import locks the existing plant before checking lifecycle status. A graveyard plant is automatically marked skipped, even if its site was deleted. It receives no field updates, sites, care events, species changes or photos. Restore it explicitly in Fytorium, then fetch again to resume import updates.
+
+Sites match by trimmed, case-insensitive name, choosing the oldest if duplicate names already exist. New sites default to indoor, part sun, normal humidity, no grow light or draft, and unknown temperatures. They show **Imported site. Complete its conditions.** Saving site settings clears that flag, and later imports retain those conditions.
+
+### Pot and soil mapping
+
+Planta enum strings are compared case-insensitively. Unknown values fall back rather than borrowing an unrelated material.
+
+| Planta pot type | Fytorium pot type |
+| --- | --- |
+| potplastic, potoriginalplastic | plastic |
+| potterracotta | terracotta |
+| potporcelain | ceramic |
+| potglass | glass |
+| potmetallic | metal |
+| potwood | wood |
+| potfabric | fabric |
+| ground | in_ground |
+| potconcrete, potpeat, potrectangular, potshallow, windowbox, other, none, unknown or absent | other, neutral schedule factor |
+
+| Planta soil | Fytorium soil type |
+| --- | --- |
+| allpurposepottingmix, allpurposegardensoil, pottingsoilanddrainage | all_purpose |
+| cactussoil, cactuspalmcitrussoil | cactus |
+| orchidpottingmix | orchid |
+| epiphyticsoil, tropicalsoil | aroid |
+| acidicsoil, bonsaisoil, carnivoresplantmix, coconutcoirorpeat, rosesoil, seedstartingmix, semihydro, sphagnummoss, treeshrubplantingmix, vegetableherbsoil, water, other, none, notset, unknown or absent | other |
+
+Pot size is a positive whole number of cm, otherwise null. Planta exposes site.name only. Drainage and other missing attributes keep Fytorium defaults on first import. Watering, fertilizing, misting, cleaning and repotting completed dates map to water, fertilize, mist, clean_leaves and repot. This is inventory and last-date migration, not full Planta history.
+
+The first imported cover uses the URL Planta returned. Downloads require HTTPS, refuse redirects and credentials, cap bytes at 15 MB, and time out after five seconds including DNS. All resolved addresses must be public; the request pins one validated address to prevent DNS rebinding. The shared `sanitiseImage` path applies orientation and removes EXIF/GPS before storing JPEG original and thumbnail as a cover photo update. A plant remembers a successful cover import. Later fetches neither download it again nor replace an owner-selected cover, even if the imported photo was deleted. Failed downloads can retry from staging.
+
+`PLANTA_TEST_IMAGE_ORIGIN` permits one synthetic image origin's private address and self-signed certificate only with NODE_ENV=test and FYTORIUM_TEST_CLOCK=true. Production refuses the setting. Compose uses WireMock's built-in HTTPS listener; API tests use an in-process fake Planta and a disposable HTTPS image host with synthetic GPS-tagged images. `tests/api/planta.test.ts` covers retries, resumability, sanitisation, SSRF, review, schedules, mapping, owner edits and access refusals. `tests/browser/planta.spec.ts` covers the code, fuzzy confirmation, commit, cover and due dates at the phone viewport.

@@ -1,7 +1,7 @@
 import type { Health } from './photos';
 
 export const plantChoices = {
-  pot_type: ['plastic', 'terracotta', 'ceramic', 'glass', 'metal', 'wood', 'fabric', 'in_ground'],
+  pot_type: ['plastic', 'terracotta', 'ceramic', 'glass', 'metal', 'wood', 'fabric', 'in_ground', 'other'],
   soil_type: ['all_purpose', 'cactus', 'orchid', 'aroid', 'other'],
   plant_size: ['small', 'medium', 'large', 'very_large'],
   growth_stage: ['seedling', 'young', 'mature'],

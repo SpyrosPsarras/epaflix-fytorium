@@ -15,5 +15,5 @@ export type SiteInput = {
   draft: boolean;
 };
 
-export type Site = SiteInput & { id: string };
+export type Site = SiteInput & { id: string; imported_conditions_incomplete?: boolean };
 export type ListedSite = Site & { plant_count: number };

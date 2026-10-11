@@ -73,14 +73,14 @@ export function chosenSpecies(searchId: unknown, key: unknown, household: string
   return candidate;
 }
 
-export async function saveSpecies(client: PoolClient, species: Candidate) {
+export async function saveSpecies(client: PoolClient, species: Candidate, preserveTaxonomy = species.source === 'identification') {
   await client.query(
     'INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (gbif_key) ' +
-    (species.source === 'identification' ? 'DO NOTHING' : 'DO UPDATE SET scientific_name = EXCLUDED.scientific_name, canonical_name = EXCLUDED.canonical_name, rank = EXCLUDED.rank, fetched_at = EXCLUDED.fetched_at'),
+    (preserveTaxonomy ? 'DO NOTHING' : 'DO UPDATE SET scientific_name = EXCLUDED.scientific_name, canonical_name = EXCLUDED.canonical_name, rank = EXCLUDED.rank, fetched_at = EXCLUDED.fetched_at'),
     [species.gbif_key, species.scientific_name, species.canonical_name, species.rank, now()],
   );
   await enqueueCareFetch(client, species.gbif_key);
-  // Identification keeps existing taxonomy, so index the stored canonical name, not the suggestion.
+  // Identification and imports keep existing taxonomy, so index the stored canonical name.
   const stored = await client.query<{ scientific_name: string; canonical_name: string }>('SELECT scientific_name, canonical_name FROM species WHERE gbif_key = $1 FOR UPDATE', [species.gbif_key]);
   const canonicalName = stored.rows[0].canonical_name;
   await client.query("DELETE FROM species_names WHERE gbif_key = $1 AND language = 'la' AND source = 'gbif' AND name <> $2", [species.gbif_key, canonicalName]);
