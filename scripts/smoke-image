@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+image="${1:-fytorium:walking-skeleton}"
+network="fytorium-smoke-$(date +%s)-$$"
+database=''
+app=''
+cleanup() {
+  [ -z "$app" ] || docker rm -f "$app" >/dev/null
+  [ -z "$database" ] || docker rm -f "$database" >/dev/null
+  docker network rm "$network" >/dev/null
+}
+trap cleanup EXIT INT TERM
+docker network create "$network" >/dev/null
+database=$(docker run -d --network "$network" --network-alias postgres -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine)
+for attempt in $(seq 1 60); do
+  if docker exec "$database" pg_isready -U postgres >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+start_app() {
+  app=$(docker run -d --network "$network" --network-alias app \
+    -e DATABASE_URL=postgres://postgres@postgres:5432/postgres?sslmode=disable \
+    -e OIDC_ISSUER=https://identity.example \
+    -e OIDC_CLIENT_ID=synthetic-client -e OIDC_CLIENT_SECRET=synthetic-secret \
+    -e OIDC_REDIRECT_URL=http://app:3000/auth/callback -e ORIGIN=http://app:3000 "$image")
+  for attempt in $(seq 1 60); do
+    if docker run --rm --network "$network" curlimages/curl:8.17.0 -fsS http://app:3000/healthz >/dev/null 2>&1; then return; fi
+    sleep 1
+  done
+  docker logs "$app"
+  return 1
+}
+start_app
+docker logs "$app"
+docker run --rm --network "$network" curlimages/curl:8.17.0 -si http://app:3000/healthz
+docker run --rm --network "$network" curlimages/curl:8.17.0 -si http://app:3000/metrics
+# A restart must not reapply migrations.
+docker rm -f "$app" >/dev/null
+app=''
+start_app
+docker logs "$app"
+docker stop "$database" >/dev/null
+status=$(docker run --rm --network "$network" curlimages/curl:8.17.0 -sS -o /dev/null -w '%{http_code}' -H 'Cookie: fytorium_session=invalid' http://app:3000/healthz)
+[ "$status" = 503 ]
+status=$(docker run --rm --network "$network" curlimages/curl:8.17.0 -sS -o /dev/null -w '%{http_code}' -H 'Cookie: fytorium_session=invalid' http://app:3000/metrics)
+[ "$status" = 200 ]
+echo 'Image smoke passed: startup migrations, restart, health 200/503, metrics 200 without DB.'

@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+tools_image="fytorium-tools-$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
+docker build --target tools -t "$tools_image" .
+exec docker run --rm --network host \
+  --user "$(id -u):$(id -g)" \
+  --group-add "$(stat -c %g /var/run/docker.sock)" \
+  -e HOME=/tmp -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD":/app -w /app "$tools_image" pnpm "$@"

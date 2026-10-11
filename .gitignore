@@ -1,1 +1,8 @@
 .scratch/
+node_modules/
+.pnpm-store/
+.svelte-kit/
+build/
+.env
+.env.*
+!.env.example
