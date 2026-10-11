@@ -12,8 +12,12 @@ export function config() {
   if (testClockEnabled && env.NODE_ENV !== 'test') {
     throw new Error('FYTORIUM_TEST_CLOCK requires NODE_ENV=test');
   }
+  const householdTimezone = env.HOUSEHOLD_TIMEZONE ?? 'Europe/Oslo';
+  try { new Intl.DateTimeFormat('en', { timeZone: householdTimezone }); }
+  catch { throw new Error(`Invalid configuration: HOUSEHOLD_TIMEZONE '${householdTimezone}' is not a valid time zone`); }
   return {
     testClockEnabled,
+    householdTimezone,
     gbifBaseUrl: new URL(env.GBIF_BASE_URL ?? 'https://api.gbif.org/v1/'),
     databaseUrl: required('DATABASE_URL'),
     origin: new URL(required('ORIGIN')),

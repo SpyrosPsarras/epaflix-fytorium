@@ -72,8 +72,8 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
     if (postgres && !postgresStopped) await stopPostgres();
   });
 
-  async function login(subject = 'synthetic-owner') {
-    provider.setSubject(subject);
+  async function login(subject = 'synthetic-owner', claims: { name?: string; email?: string } = { name: 'Test member' }) {
+    provider.setSubject(subject, claims);
     const start = await fetch(base + '/auth/login', { redirect: 'manual' });
     expect(start.status).toBe(303);
     const transactionCookie = start.headers.getSetCookie()[0].split(';')[0];

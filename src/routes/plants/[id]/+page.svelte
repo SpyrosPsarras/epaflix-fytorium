@@ -1,5 +1,7 @@
 <script lang="ts">
   import { plantLabels, plantBooleans, plantNumbers, plantChoices } from '$lib/plants';
+  import { taskTypes } from '$lib/schedule/engine';
+  import { taskRules } from '$lib/schedule/rules';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
   const choices = Object.keys(plantChoices) as (keyof typeof plantChoices)[];
@@ -17,6 +19,31 @@
   <p>Site: <a href={'/sites/' + data.plant.site_id}>{data.plant.site_name}</a></p>
   <dl><dt>Nickname</dt><dd>{data.plant.nickname ?? 'Not set'}</dd><dt>Cultivar</dt><dd>{data.plant.cultivar ?? 'Not set'}</dd><dt>Birthday</dt><dd>{data.plant.birthday ?? 'Not set'}</dd></dl>
 </section>
+{#each taskTypes as taskType}
+  {@const task = data.tasks[taskType]}
+  {@const action = taskRules[taskType].action}
+  {@const title = action.charAt(0).toUpperCase() + action.slice(1)}
+  <section aria-labelledby={taskType + '-title'}>
+    <h2 id={taskType + '-title'}>{title}</h2>
+    {#if task.status === 'due'}
+      <p>Next {action}: {task.dueOn}</p>
+      <p>Every {task.intervalDays} days</p>
+      {#if task.lateDays > 0}<p>{task.lateDays}d late</p>{/if}
+    {:else}<p>{title} is not applicable.</p>{/if}
+  </section>
+{/each}
+<section aria-labelledby="care-history-title">
+  <h2 id="care-history-title">Care history</h2>
+  {#if data.history.length === 0}<p>No care events yet.</p>{/if}
+  <ul>
+    {#each data.history as event (event.id)}
+      <li class:undone={event.undone_at}>
+        <time datetime={event.occurred_on}>{event.occurred_on}</time> · {taskRules[event.task_type].label}
+        <p>Completed by {event.by_name}{#if event.undone_at}{' · Undone'}{/if}</p>
+      </li>
+    {/each}
+  </ul>
+</section>
 <section>
   <h2>Pot and plant attributes</h2>
   <dl>
@@ -31,4 +58,8 @@
   h2 { margin-top: 0; }
   dt { font-weight: 600; margin-top: .75rem; }
   dd { margin-left: 0; }
+  ul { padding-left: 1.25rem; }
+  li { margin: .75rem 0; }
+  li p { margin: .25rem 0; }
+  .undone { color: #57534e; }
 </style>

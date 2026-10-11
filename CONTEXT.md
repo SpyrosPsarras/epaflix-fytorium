@@ -41,10 +41,22 @@ A stored species-rank scientific or canonical name matching the whole trimmed qu
 The effective care values for a species, with a source for each value. Owner overrides take priority over Perenual, Open Plantbook and Fytorium rules.
 
 **Task**:
-A care action due for a plant or site, such as watering or a custom recurring action. Its due date comes from the schedule rather than manual editing.
+A care action for a plant or site. Watering is the first task type. The pure schedule engine returns tasks keyed by type, with an interval, due date and the inputs and adjustments behind them. Today groups due and late tasks by type.
+
+**Due date**:
+A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Otherwise it is due on the last effective completion date plus the current interval. Reads recompute due dates; no command stores or edits them.
+
+**Late**:
+The whole-calendar-day difference between today and a past due date. Due today is not late. Today shows this as "3d late", for example. DST does not add or remove calendar days.
+
+**Care rule**:
+A named, versioned fallback or adjustment, such as water.default@1. Watering starts at seven days when species data is missing. Site, pot and plant factors multiply that estimate, then the engine rounds and clamps it to 1–60 days. Unknown inputs are neutral and recorded as "not set". Each adjustment records its rule and reason.
 
 **Care event**:
-A dated record of a task being completed, snoozed, skipped or undone, including who acted.
+A dated record of care, including the acting member and their display name. Only completed watering exists now; snooze and skip arrive later. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
+
+**Undo**:
+Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked. Already-undone events and events from another household are refused.
 
 **Photo update**:
 A dated plant photo with a note and health value. One photo can be the plant's cover photo.

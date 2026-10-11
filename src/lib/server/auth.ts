@@ -52,7 +52,7 @@ export async function startLogin(cookies: Cookies): Promise<URL> {
   );
   cookies.set(LOGIN_COOKIE, token, cookieOptions(600));
   return oidc.buildAuthorizationUrl(client, {
-    redirect_uri: config().oidcRedirectUrl.href, scope: 'openid', response_type: 'code', state, nonce,
+    redirect_uri: config().oidcRedirectUrl.href, scope: 'openid profile email', response_type: 'code', state, nonce,
     code_challenge: challenge, code_challenge_method: 'S256',
   });
 }
@@ -88,6 +88,8 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
       const member = await client.query<{ id: string }>("INSERT INTO members (issuer, subject, role, household_id) VALUES ($1, $2, 'owner', $3) RETURNING id", [claims.iss, claims.sub, household.rows[0].id]);
       memberId = member.rows[0].id;
     }
+    const displayName = [claims.name, claims.email].find(value => typeof value === 'string' && value.trim());
+    if (displayName) await client.query('UPDATE members SET display_name = $1 WHERE id = $2', [displayName, memberId]);
     const previous = cookies.get(SESSION_COOKIE);
     if (previous) await client.query('DELETE FROM sessions WHERE token_hash = $1', [hash(previous)]);
     await client.query('INSERT INTO sessions (token_hash, member_id, expires_at) VALUES ($1, $2, $3)', [hash(session), memberId, new Date(now().getTime() + SESSION_SECONDS * 1000)]);

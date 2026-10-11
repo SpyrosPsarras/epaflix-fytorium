@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Today from '$lib/Today.svelte';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
 </script>
@@ -8,6 +9,7 @@
   <p>{data.identity.household.name} · {data.identity.member.role}</p>
   <nav><a href="/plants">Plants</a> · <a href="/sites">Sites</a></nav>
   <section><h2>{data.plantCount === 0 ? 'No plants yet' : data.plantCount + (data.plantCount === 1 ? ' plant' : ' plants')}</h2><p><a href="/plants">Open your plant collection</a></p></section>
+  {#if data.plantCount > 0 && data.tasks}<Today list={data.tasks} />{/if}
   <form method="POST" action="/auth/logout"><button>Log out</button></form>
 {:else}
   <p>Plant care for your household.</p>

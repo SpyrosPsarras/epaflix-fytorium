@@ -17,7 +17,7 @@ docker build -t fytorium:walking-skeleton .
 ./scripts/smoke-image fytorium:walking-skeleton
 ```
 
-API tests run real migrations and a synthetic OIDC provider, including PKCE and signed ID tokens. There are no unit tests until the pure schedule engine exists.
+API tests run real migrations and a synthetic OIDC provider, including PKCE and signed ID tokens. Table-driven unit tests exercise the pure schedule engine with explicit calendar dates, without a database or clock.
 
 ## Run the stack and browser tests
 
@@ -57,9 +57,19 @@ The server retains search results for five minutes, with a maximum of 1,000 reco
 
 All plant fields use the vocabulary in CONTEXT.md. POST and PUT validate on the server; field errors return 422, malformed JSON returns 400, and GBIF outages return 503. Birthday uses the server clock's UTC date. The database checks birthday against the recorded validation date so the test clock and database do not disagree. Enum, positive-integer and household-site constraints also live in Postgres. Occupied-site tests now create plants through the API, and the phone scenario adds one through the UI.
 
+## Watering
+
+Home shows **Today** when plants exist, grouped by task type with late badges. Tap **Done** once to record watering and see the next date; the same row offers **Undo**. Plant pages show the next watering date and care history with the member's OIDC name or email, falling back to "Member". Undone events remain marked in history.
+
+The pure engine in `src/lib/schedule/engine.ts` takes a care profile with sources, site, pot, plant, per-task history, custom intervals, today, added date and optional weather. The custom-interval and weather inputs are reserved for their later tickets. Watering rules in `src/lib/schedule/rules.ts` start at seven days and list each factor and reason. The result records every adjustment, rounds to whole days and clamps to 1–60 days. These are starting estimates, not a substitute for checking soil moisture.
+
+Dates use `HOUSEHOLD_TIMEZONE`, default `Europe/Oslo`. Server reads use the shared clock and Intl to resolve instants to calendar dates before calling the engine. A plant with no effective completion is due on its added date. Otherwise, its last non-undone completion plus the current interval determines the next date. No due date is stored.
+
+API endpoints: `GET /api/tasks?view=today` returns dated task groups, `GET /api/plants/:id/tasks` returns the plant's schedule, and `GET /api/plants/:id/history` returns all care events, including marked undone entries. `POST /api/plants/:id/tasks/water/complete` takes `{"request_id":"<client UUID>"}`. Retry the same action with the same UUID. A reused UUID for another action returns 409. `POST /api/care-events/:id/undo` marks that event undone; a second undo returns 409. Both commands return the event and recomputed task. Every endpoint requires a household session; foreign plants and events return 404. Cross-origin writes are refused.
+
 ## Runtime
 
-Runtime config: `GBIF_BASE_URL` defaults to `https://api.gbif.org/v1/`; tests override it with an in-process fake or the Compose alias `gbif`. Other config: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL` and `ORIGIN`. Register `/auth/callback` at the provider and set `ORIGIN` to the public app URL. Inject secrets at runtime. Use HTTPS for secure session cookies and PWA installation. `OIDC_ALLOW_INSECURE_HTTP=true` is for the test provider only, never deployment.
+Runtime config: `GBIF_BASE_URL` defaults to `https://api.gbif.org/v1/`; tests override it with an in-process fake or the Compose alias `gbif`. Other config: `HOUSEHOLD_TIMEZONE`, `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL` and `ORIGIN`. Register `/auth/callback` at the provider and set `ORIGIN` to the public app URL. Inject secrets at runtime. Use HTTPS for secure session cookies and PWA installation. `OIDC_ALLOW_INSECURE_HTTP=true` is for the test provider only, never deployment.
 
 The first login becomes the household owner. Other subjects are refused until invitations are implemented. Sessions expire after seven days. `/healthz` checks Postgres; `/metrics` exposes Prometheus metrics. Neither operational endpoint requires login; restrict them at the ingress.
 

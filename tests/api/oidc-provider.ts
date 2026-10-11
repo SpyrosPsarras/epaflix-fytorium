@@ -9,7 +9,8 @@ export async function startOidcProvider() {
   const jwk = { ...await exportJWK(publicKey), kid: 'test-key', alg: 'RS256', use: 'sig' };
   let issuer = '';
   let subject = 'synthetic-owner';
-  const codes = new Map<string, { subject: string; nonce: string; challenge: string; redirect: string }>();
+  let claims: { name?: string; email?: string } = { name: 'Test member' };
+  const codes = new Map<string, { subject: string; claims: typeof claims; nonce: string; challenge: string; redirect: string }>();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, issuer);
     const json = (data: unknown) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(data)); };
@@ -22,7 +23,7 @@ export async function startOidcProvider() {
         res.writeHead(400).end(); return;
       }
       const code = randomUUID();
-      codes.set(code, { subject, nonce: url.searchParams.get('nonce')!, challenge: url.searchParams.get('code_challenge')!, redirect: url.searchParams.get('redirect_uri')! });
+      codes.set(code, { subject, claims, nonce: url.searchParams.get('nonce')!, challenge: url.searchParams.get('code_challenge')!, redirect: url.searchParams.get('redirect_uri')! });
       const redirect = new URL(url.searchParams.get('redirect_uri')!);
       redirect.searchParams.set('code', code);
       redirect.searchParams.set('state', url.searchParams.get('state')!);
@@ -38,13 +39,13 @@ export async function startOidcProvider() {
       if (!code || code.challenge !== challenge || params.get('redirect_uri') !== code.redirect || basic[0] !== 'test-client' || basic[1] !== TEST_CLIENT_SECRET) {
         res.statusCode = 400; json({ error: 'invalid_grant' }); return;
       }
-      const idToken = await new SignJWT({ nonce: code.nonce }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).setIssuer(issuer).setAudience('test-client').setSubject(code.subject).setIssuedAt().setExpirationTime('5m').sign(privateKey);
+      const idToken = await new SignJWT({ ...code.claims, nonce: code.nonce }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).setIssuer(issuer).setAudience('test-client').setSubject(code.subject).setIssuedAt().setExpirationTime('5m').sign(privateKey);
       json({ access_token: 'synthetic-access-token', token_type: 'Bearer', expires_in: 300, id_token: idToken });
     } else { res.writeHead(404).end(); }
   });
   const port = await listen(server);
   issuer = `http://127.0.0.1:${port}`;
-  return { issuer, server, setSubject(value: string) { subject = value; } };
+  return { issuer, server, setSubject(value: string, nextClaims: typeof claims) { subject = value; claims = nextClaims; } };
 }
 
 export async function listen(server: Server): Promise<number> {
