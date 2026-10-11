@@ -1,0 +1,37 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "POST",
+        "urlPath": "/identify/all",
+        "queryParameters": { "include-related-images": { "equalTo": "false" } },
+        "headers": { "Host": { "matches": "plantnet(:[0-9]+)?" } },
+        "multipartPatterns": [
+          { "name": "images", "headers": { "Content-Type": { "equalTo": "image/jpeg" } } },
+          { "name": "organs", "bodyPatterns": [{ "equalTo": "auto" }] }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "bestMatch": "Testoria picta",
+          "results": [
+            {
+              "score": 0.97,
+              "species": { "scientificNameWithoutAuthor": "Testoria picta", "scientificNameAuthorship": "Inventor", "commonNames": ["Test paintedleaf"] },
+              "gbif": { "id": "913001" }
+            },
+            {
+              "score": 0.21,
+              "species": { "scientificNameWithoutAuthor": "Testoria lucida", "scientificNameAuthorship": "Inventor", "commonNames": ["Test brightleaf"] }
+            }
+          ],
+          "remainingIdentificationRequests": 42,
+          "version": "synthetic"
+        }
+      }
+    }
+  ]
+}

@@ -8,8 +8,8 @@ import { getPlant, isUuid } from './plants';
 import { now } from './clock';
 import { calendarDate } from './tasks';
 import { storePhoto, removePhotos } from './photo-storage';
+import { imageForm, maxPhotoBytes, sanitiseImage } from './images';
 
-const maxPhotoBytes = 15 * 1024 * 1024;
 export function photoToday() {
   return calendarDate(now());
 }
@@ -30,34 +30,10 @@ export async function getPhoto(id: string, household: string): Promise<PhotoUpda
   return result.rows[0];
 }
 
-async function uploadForm(request: Request) {
-  if (!request.headers.get('content-type')?.startsWith('multipart/form-data;')) error(400, 'Send a photo form.');
-  // Bound the entire body before formData buffers it, including chunked uploads.
-  const reader = request.body?.getReader();
-  if (!reader) error(400, 'Send a photo form.');
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      size += chunk.value.byteLength;
-      if (size > maxPhotoBytes + 64 * 1024) {
-        await reader.cancel();
-        error(413, 'Photos must be at most 15 MB.');
-      }
-      chunks.push(chunk.value);
-    }
-  } finally { reader.releaseLock(); }
-  try {
-    return await new Response(Buffer.concat(chunks), { headers: { 'content-type': request.headers.get('content-type')! } }).formData();
-  } catch { error(400, 'Send a valid photo form.'); }
-}
-
 export async function addPhoto(identity: Identity, plant: string, request: Request) {
   const household = identity.household.id;
   await getPlant(plant, household);
-  const form = await uploadForm(request);
+  const form = await imageForm(request);
   const file = form.get('photo');
   if (!(file instanceof File) || !file.size) error(422, 'Choose an image.');
   if (file.size > maxPhotoBytes) error(413, 'Photos must be at most 15 MB.');
@@ -68,16 +44,10 @@ export async function addPhoto(identity: Identity, plant: string, request: Reque
   if (typeof note !== 'string' || note.length > 5000) error(422, 'Notes must be at most 5000 characters.');
   if (health !== null && !healthValues.some(value => value === health)) error(422, 'Choose a valid health value.');
   if (typeof takenOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(takenOn) || takenOn < '0001-01-01' || !Number.isFinite(Date.parse(takenOn)) || new Date(takenOn).toISOString().slice(0, 10) !== takenOn || takenOn > today) error(422, 'Choose a valid date that is not in the future.');
-  let original: Buffer;
+  const original = await sanitiseImage(Buffer.from(await file.arrayBuffer()));
   let thumb: Buffer;
-  try {
-    const image = sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 40_000_000, failOn: 'warning' });
-    const metadata = await image.metadata();
-    // Do not accept documents, SVGs or animations as camera photos.
-    if (!['jpeg', 'png', 'webp', 'heif', 'tiff', 'avif'].includes(metadata.format ?? '') || (metadata.pages ?? 1) > 1) error(422, 'Choose a decodable still image.');
-    original = await image.rotate().flatten({ background: '#ffffff' }).jpeg({ quality: 90 }).toBuffer();
-    thumb = await sharp(original).resize(400, 400, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-  } catch { error(422, 'Choose a decodable still image.'); }
+  try { thumb = await sharp(original).resize(400, 400, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(); }
+  catch { error(422, 'Choose a decodable still image.'); }
   const id = randomUUID();
   const prefix = `photos/${household}/${plant}/${id}`;
   const keys = [prefix + '-original.jpg', prefix + '-thumb.jpg'];

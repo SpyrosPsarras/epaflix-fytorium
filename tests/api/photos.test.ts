@@ -70,11 +70,28 @@ test('stores an oriented original and thumbnail without EXIF GPS, privately serv
   expect(await updates()).toContainEqual(photo);
 });
 
+test('keeps photo-update originals wider than the identification resize limit at full width', async () => {
+  const image = await sharp({ create: { width: 2400, height: 1800, channels: 3, background: '#608060' } }).jpeg().toBuffer();
+  const response = await upload(image);
+  expect(response.status).toBe(201);
+  const photo = await response.json();
+  expect(await sharp(await download(photo.original_key)).metadata()).toMatchObject({ width: 2400, height: 1800 });
+  // Keep the shared history fixture unchanged for the dated-health scenarios below.
+  expect((await owner.request('/api/photos/' + photo.id, 'DELETE')).status).toBe(204);
+});
+
 test('refuses oversized, corrupt, non-image and invalid dated updates without rows or objects', async () => {
   const before = await updates();
   const keys = await objectKeys();
+  const notMultipart = await owner.request('/api/plants/' + plantId + '/photos', 'POST', {});
+  expect(notMultipart.status).toBe(400);
+  expect(await notMultipart.json()).toMatchObject({ message: 'Send a photo form.' });
   const oversized = Buffer.alloc(15 * 1024 * 1024 + 1);
-  expect((await upload(oversized)).status).toBe(413);
+  for (const bytes of [oversized, Buffer.alloc(15 * 1024 * 1024 + 64 * 1024 + 1)]) {
+    const response = await upload(bytes);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ message: 'Photos must be at most 15 MB.' });
+  }
   for (const bytes of [Buffer.from('not an image'), gpsImage.subarray(0, 50), Buffer.alloc(0), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>')]) expect((await upload(bytes)).status).toBe(422);
   for (const fields of [{ taken_on: '2026-10-26' }, { taken_on: '2026-02-30' }, { taken_on: 'bad-date' }, { health: 'excellent' }, { note: 'x'.repeat(5001) }]) expect((await upload(gpsImage, fields)).status).toBe(422);
   expect(await updates()).toEqual(before);

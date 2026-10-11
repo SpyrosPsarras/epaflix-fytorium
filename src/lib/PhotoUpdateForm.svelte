@@ -4,27 +4,38 @@
   let { plantId, today }: { plantId: string; today: string } = $props();
   let busy = $state(false);
   let failure = $state('');
+  let photo = $state<File | undefined>();
+  function choosePhoto(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    if (input.files?.[0]) photo = input.files[0];
+    input.value = '';
+  }
   async function upload(event: SubmitEvent) {
     event.preventDefault();
     const element = event.currentTarget as HTMLFormElement;
     const form = new FormData(element);
-    const file = form.get('photo');
+    const file = photo;
     failure = '';
     if (!(file instanceof File) || !file.size) { failure = 'Choose an image.'; return; }
     if (file.size > 15 * 1024 * 1024) { failure = 'Photos must be at most 15 MB.'; return; }
+    form.set('photo', file);
     busy = true;
     try {
       const response = await fetch('/api/plants/' + plantId + '/photos', { method: 'POST', body: form });
       if (!response.ok) { failure = (await response.json()).message ?? 'Could not upload the photo. Try again.'; return; }
       element.reset();
+      photo = undefined;
       await invalidateAll();
     } catch { failure = 'Could not reach Fytorium. Try again.'; }
     finally { busy = false; }
   }
 </script>
 <form onsubmit={upload}>
-  <label for="photo">Photo</label>
-  <input id="photo" name="photo" type="file" accept="image/*" capture="environment" required disabled={busy} />
+  <label for="photo-camera">Take photo</label>
+  <input id="photo-camera" type="file" accept="image/*" capture="environment" onchange={choosePhoto} disabled={busy} />
+  <label for="photo">Choose photos</label>
+  <input id="photo" type="file" accept="image/*" onchange={choosePhoto} disabled={busy} />
+  {#if photo}<p>Selected photo: {photo.name}</p>{/if}
   <p>Up to 15 MB. Location and camera metadata are removed.</p>
   <label for="photo-note">Note</label>
   <textarea id="photo-note" name="note" maxlength="5000" rows="3" disabled={busy}></textarea>

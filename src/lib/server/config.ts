@@ -35,6 +35,8 @@ export function config() {
     perenualMaxAttempts: positiveInteger('PERENUAL_MAX_ATTEMPTS', 5),
     perenualWorkerEnabled: env.PERENUAL_WORKER_ENABLED !== 'false',
     gbifBaseUrl: new URL(env.GBIF_BASE_URL ?? 'https://api.gbif.org/v1/'),
+    plantnetBaseUrl: new URL(env.PLANTNET_BASE_URL ?? 'https://my-api.plantnet.org/v2/'),
+    plantnetApiKey: env.PLANTNET_API_KEY ?? '',
     wikidataBaseUrl: new URL(env.WIKIDATA_BASE_URL ?? 'https://www.wikidata.org/'),
     nortaxaBaseUrl: new URL(env.NORTAXA_BASE_URL ?? 'https://nortaxa.artsdatabanken.no/'),
     databaseUrl: required('DATABASE_URL'),

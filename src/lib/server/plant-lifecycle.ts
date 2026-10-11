@@ -72,9 +72,9 @@ export async function changeSpecies(id: string, identity: Identity, input: Recor
     if (!result.rowCount) error(404, 'Plant not found');
     const previous = result.rows[0];
     if (previous.gbif_key !== species.gbif_key) {
-      await saveSpecies(client, species);
+      const savedSpecies = await saveSpecies(client, species);
       const member = await client.query('SELECT display_name FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, household]);
-      await client.query('INSERT INTO plant_species_changes (plant_id, household_id, previous_gbif_key, previous_name, next_gbif_key, next_name, changed_at, by_member, by_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, household, previous.gbif_key, previous.scientific_name, species.gbif_key, species.scientific_name, now(), identity.member.id, member.rows[0].display_name]);
+      await client.query('INSERT INTO plant_species_changes (plant_id, household_id, previous_gbif_key, previous_name, next_gbif_key, next_name, changed_at, by_member, by_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, household, previous.gbif_key, previous.scientific_name, species.gbif_key, savedSpecies.scientific_name, now(), identity.member.id, member.rows[0].display_name]);
       await client.query('UPDATE plants SET gbif_key = $3 WHERE id = $1 AND household_id = $2', [id, household, species.gbif_key]);
     }
     await client.query('COMMIT');
