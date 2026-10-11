@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { error, isHttpError } from '@sveltejs/kit';
 import { db } from './db';
 import { now } from './clock';
 import { matchSpecies } from './gbif';
+import { enqueueCareFetch } from './care/catalogue';
 import type { Candidate } from '$lib/plants';
 
 // A five-minute server record avoids a second GBIF call and never trusts client-sent taxonomy.
@@ -58,10 +60,22 @@ export async function searchSpecies(query: string, household: string) {
   searches.set(search_id, { household, expires: time + 300000, candidates });
   return { search_id, candidates };
 }
-export function chosenSpecies(searchId: unknown, key: unknown, household: string): Candidate {
+export function chosenSpecies(searchId: unknown, key: unknown, household: string, confirmed: unknown): Candidate {
   const record = typeof searchId === 'string' ? searches.get(searchId) : undefined;
-  if (!record || record.household !== household || record.expires <= now().getTime()) error(422, 'Search again before adding this plant.');
+  if (!record || record.household !== household || record.expires <= now().getTime()) error(422, 'Search again before choosing this species.');
   const candidate = record.candidates.find(item => item.gbif_key === key);
   if (!candidate) error(422, 'Choose a species from the search results.');
+  if (candidate.requires_confirmation && confirmed !== true) error(422, 'Confirm this species before saving the plant.');
   return candidate;
+}
+
+export async function saveSpecies(client: PoolClient, species: Candidate) {
+  await client.query(
+    'INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (gbif_key) DO UPDATE SET scientific_name = EXCLUDED.scientific_name, canonical_name = EXCLUDED.canonical_name, rank = EXCLUDED.rank, fetched_at = EXCLUDED.fetched_at',
+    [species.gbif_key, species.scientific_name, species.canonical_name, species.rank, now()],
+  );
+  await enqueueCareFetch(client, species.gbif_key);
+  await client.query("DELETE FROM species_names WHERE gbif_key = $1 AND language = 'la' AND source = 'gbif' AND name <> $2", [species.gbif_key, species.canonical_name]);
+  await client.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES ($1, $2, 'la', 'gbif') ON CONFLICT DO NOTHING", [species.gbif_key, species.canonical_name]);
+  await client.query("INSERT INTO species_name_fetches (gbif_key, source, retry_after) SELECT $1, source, $2 FROM unnest(ARRAY['gbif', 'wikidata', 'nortaxa']) AS source ON CONFLICT DO NOTHING", [species.gbif_key, now()]);
 }

@@ -7,11 +7,11 @@ import { healthValues } from '$lib/photos';
 export const plantFields = ['site_id', 'nickname', 'cultivar', 'birthday', 'pot_type', 'pot_size_cm', 'drainage', 'soil_type', 'plant_size', 'growth_stage', 'window_distance_cm', 'grow_light', 'near_ac', 'near_heater', 'fertilizer_type', 'health'] as const;
 export const plantSelect = `SELECT p.id, p.household_id, p.site_id, p.gbif_key, p.nickname, p.cultivar,
   to_char(p.birthday, 'YYYY-MM-DD') AS birthday, p.created_at, p.attributes_as_of,
-  p.pot_type, p.pot_size_cm, p.drainage, p.soil_type, p.plant_size, p.growth_stage,
+  p.status, to_char(p.graveyard_on, 'YYYY-MM-DD') AS graveyard_on, p.pot_type, p.pot_size_cm, p.drainage, p.soil_type, p.plant_size, p.growth_stage,
   p.window_distance_cm, p.grow_light, p.near_ac, p.near_heater, p.fertilizer_type, p.misting_enabled, p.health,
   (SELECT u.id FROM photo_updates u WHERE u.plant_id = p.id AND u.household_id = p.household_id AND u.is_cover) AS cover_photo_id,
   s.scientific_name, s.canonical_name, s.rank, coalesce(nullif(p.nickname, ''), s.canonical_name) AS display_name, t.name AS site_name
-  FROM plants p JOIN species s ON s.gbif_key = p.gbif_key JOIN sites t ON t.id = p.site_id AND t.household_id = p.household_id`;
+  FROM plants p JOIN species s ON s.gbif_key = p.gbif_key LEFT JOIN sites t ON t.id = p.site_id AND t.household_id = p.household_id`;
 export function isUuid(id: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
@@ -21,7 +21,7 @@ export async function getPlant(id: string, household: string) {
   if (!result.rowCount) error(404, 'Plant not found');
   return result.rows[0];
 }
-export async function readPlant(request: Request, household: string): Promise<(PlantInput & { search_id?: unknown; gbif_key?: unknown; confirmed?: unknown }) | Response> {
+export async function readPlant(request: Request, household: string, allowNoSite = false): Promise<(Omit<PlantInput, 'site_id'> & { site_id: string | null } & { search_id?: unknown; gbif_key?: unknown; confirmed?: unknown }) | Response> {
   let input;
   try {
     if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error('Expected JSON');
@@ -52,10 +52,12 @@ export async function readPlant(request: Request, household: string): Promise<(P
       errors.birthday = 'Enter a valid date that is not in the future.';
     }
   }
-  if (typeof input.site_id !== 'string' || !isUuid(input.site_id)) errors.site_id = 'Choose a site in your household.';
-  else {
-    const site = await db().query('SELECT id FROM sites WHERE id = $1 AND household_id = $2', [input.site_id, household]);
-    if (!site.rowCount) errors.site_id = 'Choose a site in your household.';
+  if (!(allowNoSite && input.site_id === null)) {
+    if (typeof input.site_id !== 'string' || !isUuid(input.site_id)) errors.site_id = 'Choose a site in your household.';
+    else {
+      const site = await db().query('SELECT id FROM sites WHERE id = $1 AND household_id = $2', [input.site_id, household]);
+      if (!site.rowCount) errors.site_id = 'Choose a site in your household.';
+    }
   }
   if (Object.keys(errors).length) return json({ errors }, { status: 422 });
   return input;

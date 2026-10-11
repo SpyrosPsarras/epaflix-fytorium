@@ -20,9 +20,14 @@ export type PlantInput = { [K in keyof typeof plantChoices]: typeof plantChoices
   pot_size_cm: number | null; window_distance_cm: number | null;
   drainage: boolean; grow_light: boolean; near_ac: boolean; near_heater: boolean;
 };
-export type Plant = PlantInput & {
+export type Plant = Omit<PlantInput, 'site_id'> & {
+  site_id: string | null; status: 'active' | 'graveyard'; graveyard_on: string | null;
   id: string; gbif_key: number; scientific_name: string; canonical_name: string; rank: string;
-  display_name: string; site_name: string; health: Health | null; cover_photo_id: string | null;
+  display_name: string; site_name: string | null; health: Health | null; cover_photo_id: string | null;
+};
+export type PlantSpeciesChange = {
+  id: string; previous_gbif_key: number; previous_name: string; next_gbif_key: number; next_name: string;
+  changed_at: string; changed_on: string; by_name: string;
 };
 export type Candidate = {
   gbif_key: number; scientific_name: string; canonical_name: string; rank: string;

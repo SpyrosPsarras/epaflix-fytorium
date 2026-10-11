@@ -112,3 +112,23 @@ Runtime config: `GBIF_BASE_URL` defaults to `https://api.gbif.org/v1/`; tests ov
 The first login becomes the household owner. Other subjects are refused until invitations are implemented. Sessions expire after seven days. `/healthz` checks Postgres; `/metrics` exposes Prometheus metrics. Neither operational endpoint requires login; restrict them at the ingress.
 
 Dbmate applies the timestamped SQL migrations in `migrations/` before the HTTP listener starts. Set `sslmode` in `DATABASE_URL`, such as `require` for deployment or `disable` for a disposable local database. Regenerate the PNG icons with `./scripts/container icons` after changing `assets/icon.svg`.
+
+## Plant lifecycle
+
+Plant settings offer **Move to graveyard**, **Change species** and **Delete plant**. The plant list links to **Graveyard**, where each card shows its move date and cover. Graveyard plant pages show the date, retained history and photos, and **Restore plant** with a site chooser instead of a schedule. Graveyard plants have no tasks and are excluded from active plant and site counts.
+
+Sites with only graveyard plants can be deleted. Deletion clears those plants' site in the same database transaction; active plants still block it. Restoring a detached plant requires a household site. Active plants cannot have a null site.
+
+Lifecycle endpoints require a session and refuse cross-origin writes:
+
+- `GET /api/plants?status=graveyard` lists graveyard plants. The default is active; `site_id` and `count=true` work for either status.
+- `POST /api/plants/:id/graveyard` records the first move date. Repeating it keeps the date.
+- `POST /api/plants/:id/restore` takes `{}` to keep its existing site, or `{"site_id":"<household site UUID>"}` to choose another. Detached plants require the latter.
+- `POST /api/plants/:id/species` takes `search_id`, `gbif_key` and `confirmed` from the same search and confirmation flow used by add-plant. Previous and next species appear in care history and `GET /api/plants/:id/species-changes`. Care events, photos and custom intervals remain unchanged.
+- `DELETE /api/plants/:id` takes `{"confirm_name":"<current display name>"}` and returns 204. The UI requires typing that name before enabling the permanent action.
+
+Full deletion commits all row deletion first, then deletes both MinIO objects for each photo. If MinIO refuses cleanup, the plant stays deleted and the server logs every object key to remove later, without storage credentials. An operator can remove those keys from the configured private bucket after fixing storage access. This differs from deleting an individual photo, which retains its row on storage failure for retry.
+
+Schedule reads use the catalogue's `effectiveCareProfiles`, including source caches and household overrides. The API test sets different care overrides for two species through the catalogue API, then verifies changed due dates with unchanged history and plant intervals.
+
+`tests/api/lifecycle.test.ts` covers graveyard exclusions, retained photos and care, restore, mixed active/graveyard site deletion, name confirmation, real MinIO cleanup and a forced delete failure, species confirmation and recomputation, and household/session/origin refusals. `tests/browser/lifecycle.spec.ts` exercises graveyard, restore, species correction and permanent deletion at the phone viewport.

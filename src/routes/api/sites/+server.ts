@@ -7,7 +7,7 @@ export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.identity) error(401, 'Login required');
   const result = await db().query(
     `SELECT s.*, count(p.id)::integer AS plant_count
-     FROM sites s LEFT JOIN plants p ON p.site_id = s.id AND p.household_id = s.household_id
+     FROM sites s LEFT JOIN plants p ON p.site_id = s.id AND p.household_id = s.household_id AND p.status = 'active'
      WHERE s.household_id = $1 GROUP BY s.id ORDER BY s.name, s.id`,
     [locals.identity.household.id],
   );

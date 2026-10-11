@@ -134,6 +134,7 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     bucket: photos.bucket,
     get minioOrigin() { return photos.minioOrigin; },
     failThumbnailWrites: photos.failThumbnailWrites,
+    failPhotoDeletes: photos.failDeletes,
     get postgres() { return postgres; },
     get appOutput() { return appOutput; },
     login,

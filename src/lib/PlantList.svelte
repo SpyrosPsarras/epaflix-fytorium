@@ -13,7 +13,8 @@
     {#if plant.cover_photo_id}
       <img class="photo" src={'/api/photos/' + plant.cover_photo_id + '/thumb'} alt={'Cover photo of ' + plant.display_name} loading="lazy" />
     {:else}<div class="photo" role="img" aria-label="No plant photo yet">No photo</div>{/if}
-    <div><h2><a href={'/plants/' + plant.id}>{plant.display_name}</a></h2><p>{plant.scientific_name}</p><a href={'/sites/' + plant.site_id}>{plant.site_name}</a></div>
+    <div><h2><a href={'/plants/' + plant.id}>{plant.display_name}</a></h2><p>{plant.scientific_name}</p>{#if plant.site_id}<a href={'/sites/' + plant.site_id}>{plant.site_name}</a>{:else}<p>Site deleted</p>{/if}
+      {#if plant.status === 'graveyard'}<p>In the graveyard since {plant.graveyard_on}</p>{/if}</div>
   </article>
 {/each}
 <style>

@@ -12,18 +12,23 @@ export const DELETE: RequestHandler = async ({ locals, params, request }) => {
   if (!isSiteId(params.id)) error(404, 'Site not found');
   checkOrigin(request);
   let result;
+  const client = await db().connect();
   try {
-    // The FK refuses deletion even when a plant is added concurrently.
-    result = await db().query('DELETE FROM sites WHERE id = $1 AND household_id = $2', [params.id, locals.identity.household.id]);
+    await client.query('BEGIN');
+    await client.query("UPDATE plants SET site_id = NULL WHERE site_id = $1 AND household_id = $2 AND status = 'graveyard'", [params.id, locals.identity.household.id]);
+    // Active plants retain the RESTRICT FK, including concurrent additions and restores.
+    result = await client.query('DELETE FROM sites WHERE id = $1 AND household_id = $2', [params.id, locals.identity.household.id]);
+    await client.query('COMMIT');
   } catch (cause) {
+    await client.query('ROLLBACK');
     if (!(cause instanceof Error && 'code' in cause && cause.code === '23503')) throw cause;
     const count = await db().query<{ count: number }>(
-      'SELECT count(*)::integer AS count FROM plants WHERE site_id = $1 AND household_id = $2',
+      "SELECT count(*)::integer AS count FROM plants WHERE site_id = $1 AND household_id = $2 AND status = 'active'",
       [params.id, locals.identity.household.id],
     );
     const plants = count.rows[0].count;
     return json({ message: `Move or remove the ${plants} ${plants === 1 ? 'plant' : 'plants'} on this site first.` }, { status: 409 });
-  }
+  } finally { client.release(); }
   if (!result.rowCount) error(404, 'Site not found');
   return new Response(null, { status: 204 });
 };

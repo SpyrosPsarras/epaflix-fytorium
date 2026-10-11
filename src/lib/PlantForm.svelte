@@ -11,7 +11,7 @@
   async function save(event: SubmitEvent) {
     event.preventDefault();
     const form = new FormData(event.currentTarget as HTMLFormElement);
-    const input: Record<string, unknown> = { site_id: form.get('site_id'), gbif_key: candidate?.gbif_key, search_id: searchId, confirmed };
+    const input: Record<string, unknown> = { site_id: form.get('site_id') || null, gbif_key: candidate?.gbif_key, search_id: searchId, confirmed };
     for (const field of ['nickname', 'cultivar', 'birthday']) input[field] = form.get(field) || null;
     input.health = form.get('health') || null;
     for (const field of choices) input[field] = form.get(field);
@@ -43,8 +43,8 @@
   </select>
   {#if errors.health}<p id="health-error" class="error" role="alert">{errors.health}</p>{/if}
   <label for="site_id">Site</label>
-  <select id="site_id" name="site_id" required aria-invalid={!!errors.site_id} aria-describedby={errors.site_id ? 'site-error' : undefined}>
-    <option value="" selected={!plant}>Choose a site</option>
+  <select id="site_id" name="site_id" required={plant?.status !== 'graveyard'} aria-invalid={!!errors.site_id} aria-describedby={errors.site_id ? 'site-error' : undefined}>
+    <option value="" selected={!plant?.site_id}>{plant?.status === 'graveyard' ? 'No site' : 'Choose a site'}</option>
     {#each sites as site}<option value={site.id} selected={site.id === plant?.site_id}>{site.name}</option>{/each}
   </select>
   {#if errors.site_id}<p id="site-error" class="error" role="alert">{errors.site_id}</p>{/if}
@@ -67,7 +67,7 @@
       {#if errors[field]}<p id={field + '-error'} class="error" role="alert">{errors[field]}</p>{/if}
     {/each}
   </fieldset>
-  <div class="controls"><button disabled={busy || sites.length === 0}>{busy ? 'Saving…' : 'Save plant'}</button><a href={plant ? '/plants/' + plant.id : '/plants'}>Cancel</a></div>
+  <div class="controls"><button disabled={busy || (sites.length === 0 && plant?.status !== 'graveyard')}>{busy ? 'Saving…' : 'Save plant'}</button><a href={plant ? '/plants/' + plant.id : '/plants'}>Cancel</a></div>
 </form>
 <style>
   form { background: white; border-radius: .75rem; padding: 1rem; }

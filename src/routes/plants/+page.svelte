@@ -6,5 +6,5 @@
 <svelte:head><title>Plants | Fytorium</title></svelte:head>
 <a href="/">Home</a>
 <h1>Plants</h1>
-<p><a href="/plants/new">Add plant</a></p>
+<p><a href="/plants/new">Add plant</a> · <a href="/plants/graveyard">Graveyard</a></p>
 <PlantList plants={data.plants} />

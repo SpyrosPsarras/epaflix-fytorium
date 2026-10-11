@@ -1,5 +1,6 @@
 <script lang="ts">
   import PhotoUpdateForm from '$lib/PhotoUpdateForm.svelte';
+  import PlantRestore from '$lib/PlantRestore.svelte';
   import PhotoUpdates from '$lib/PhotoUpdates.svelte';
   import { healthLabel } from '$lib/photos';
   import { plantLabels, plantBooleans, plantNumbers, plantChoices } from '$lib/plants';
@@ -15,6 +16,10 @@
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
 <a href="/plants">Plants</a>
 <h1>{data.plant.display_name}</h1>
+{#if data.plant.status === 'graveyard'}
+  <p>In the graveyard since {data.plant.graveyard_on}</p>
+  <PlantRestore plant={data.plant} sites={data.sites} />
+{/if}
 <p><a href={'/plants/' + data.plant.id + '/settings'}>Plant settings</a> · <a href="/journal">Journal</a></p>
 {#if data.plant.cover_photo_id}
   <img class="cover" src={'/api/photos/' + data.plant.cover_photo_id + '/original'} alt={'Cover photo of ' + data.plant.display_name} />
@@ -27,16 +32,17 @@
   <h3>Add a photo update</h3>
   <PhotoUpdateForm plantId={data.plant.id} today={data.photoToday} />
 </section>
-<section>
-  <h2>Species and site</h2>
+<section aria-labelledby="species-site-title">
+  <h2 id="species-site-title">Species and site</h2>
   <p>{data.plant.scientific_name}</p>
   <p><a href={'/species/' + data.plant.gbif_key}>Species care and names</a></p>
   <p>{data.plant.canonical_name} · {data.plant.rank.toLowerCase()}</p>
   <p>GBIF key: <a href={'https://www.gbif.org/species/' + data.plant.gbif_key}>{data.plant.gbif_key}</a></p>
   <p>Species data from GBIF, CC BY 4.0</p>
-  <p>Site: <a href={'/sites/' + data.plant.site_id}>{data.plant.site_name}</a></p>
+  <p>Site: {#if data.plant.site_id}<a href={'/sites/' + data.plant.site_id}>{data.plant.site_name}</a>{:else}Site deleted{/if}</p>
   <dl><dt>Nickname</dt><dd>{data.plant.nickname ?? 'Not set'}</dd><dt>Cultivar</dt><dd>{data.plant.cultivar ?? 'Not set'}</dd><dt>Birthday</dt><dd>{data.plant.birthday ?? 'Not set'}</dd></dl>
 </section>
+{#if data.plant.status === 'active'}
 {#each taskTypes as taskType}
   {@const task = data.tasks[taskType]}
   {@const action = taskRules[taskType].action}
@@ -69,8 +75,12 @@
     </details>
   {/each}
 </section>
+{/if}
 <section aria-labelledby="care-history-title">
   <h2 id="care-history-title">Care history</h2>
+  {#each data.speciesChanges as change (change.id)}
+    <p><time datetime={change.changed_on}>{change.changed_on}</time> · Species changed from {change.previous_name} to {change.next_name} by {change.by_name}</p>
+  {/each}
   {#if data.history.length === 0}<p>No care events yet.</p>{/if}
   <ul>
     {#each data.history as event (event.id)}

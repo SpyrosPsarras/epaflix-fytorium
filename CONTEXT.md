@@ -23,7 +23,7 @@ A room, garden or terrace where plants live. A site belongs to the household. It
 A site with plants cannot be deleted. Move or remove its plants first.
 
 **Plant**:
-An individual plant in the household, with a species and a required site in the same household. Its display name is its nickname, or its species' canonical name if no nickname is set. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded; graveyard arrives in a later ticket.
+An individual plant in the household, with a species and a required site in the same household. Its display name is its nickname, or its species' canonical name if no nickname is set. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded. Active plants require a site; graveyard plants can keep their history without one.
 
 **Pot attributes**:
 Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabric` or `in_ground`. Soil type is `all_purpose`, `cactus`, `orchid`, `aroid` or `other`. Pot size in cm is a positive whole number or unknown. Drainage is a boolean.
@@ -97,6 +97,25 @@ An optional value: `poor`, `fair`, `good` or `very_good`. Plant settings set it 
 
 **Journal**:
 All the household's photo updates, ordered by taken date then creation time, newest first, with ID as a stable tie-breaker. Each plant also has a View all updates page. No photo or journal entry is shared across households.
+
+## Plant lifecycle
+
+**Active plant**:
+`status = active` is the default. The earlier required-site and occupied-site rules apply to active plants. Only active plants contribute to Today, plant lists, site lists and counts.
+
+**Graveyard**:
+`status = graveyard` records the first move date in `graveyard_on`, using the household calendar. Retries keep that date. The graveyard list shows dates and cover photos. Plant pages retain care history, species history and photos, but return no tasks. Completion and undo are refused until restore. Settings and photo updates remain available.
+
+**Restore**:
+Returns a graveyard plant to active and clears `graveyard_on`, without changing history, photos or custom intervals. Graveyard plants do not block site deletion. Site deletion clears their `site_id` in the same transaction and leaves the RESTRICT FK for active plants. A database CHECK requires every active plant to have a site. A detached graveyard plant stays viewable and editable, but restore requires choosing an existing household site.
+
+**Full delete**:
+A separate permanent action, available for active and graveyard plants, confirmed by typing the current display name. One database transaction collects photo keys, deletes photo rows and the plant, and cascades care events, custom intervals and species changes. It commits before deleting both objects per photo, so a database failure cannot destroy photos that still have rows. Storage failures do not undo deletion. The server logs the object keys without SDK errors or credentials for later operator cleanup.
+
+**Change species**:
+Uses the same five-minute household search record, candidate validation and explicit confirmation as add-plant. Client taxonomy is never authoritative. Species changes snapshot the previous and next scientific names, keys, member and time in `plant_species_changes`, visible in the plant's care history. All care events, photos and custom intervals stay. Schedule reads use the current species and recompute every task.
+
+Changing species and adding a plant share species saving, care-fetch queueing and name-index population. Schedule reads use the catalogue's effective care values, including household overrides and cached sources, without storing due dates.
 
 ## Catalogue care data
 
