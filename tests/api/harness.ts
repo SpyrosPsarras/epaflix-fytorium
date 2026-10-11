@@ -8,7 +8,7 @@ import { identificationResponse } from '../identification-fixture';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
 type FakeResponse = { status: number; body: unknown; headers?: Record<string, string>; delay?: number };
-export function createApiHarness(options: { testClock?: boolean; photos?: boolean; careEnv?: Record<string, string>; weather?: (url: URL) => FakeResponse; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
+export function createApiHarness(options: { testClock?: boolean; queryStatistics?: boolean; photos?: boolean; careEnv?: Record<string, string>; weather?: (url: URL) => FakeResponse; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
   let postgres: StartedPostgreSqlContainer;
   const photos = createPhotoStorage();
   let postgresStopped = false;
@@ -110,7 +110,9 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
   });
 
   beforeAll(async () => {
-    postgres = await new PostgreSqlContainer('postgres:17-alpine').start();
+    const postgresContainer = new PostgreSqlContainer('postgres:17-alpine');
+    if (options.queryStatistics) postgresContainer.withCommand(['postgres', '-c', 'shared_preload_libraries=pg_stat_statements']);
+    postgres = await postgresContainer.start();
     if (options.photos) await photos.start();
     provider = await startOidcProvider();
     const gbifPort = await listen(gbif);

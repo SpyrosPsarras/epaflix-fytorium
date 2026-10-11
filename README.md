@@ -209,3 +209,11 @@ Endpoints, all scoped to the session household:
 Malformed JSON returns 400, invalid fields 422, foreign records 404 and action conflicts 409. Every write checks Origin. Forecast and climate HTTP tests use in-process synthetic Open-Meteo daily arrays. The browser scenario covers setting location, a cold alert, rain watering, one undo and outdoor months at the Pixel 7 viewport.
 
 Public endpoint documentation: https://open-meteo.com/en/docs and https://open-meteo.com/en/docs/climate-api. Outdoor months are starting estimates, not permission to leave a frost-sensitive plant outdoors.
+
+## Home feed
+
+Home shows late tasks, today's cached weather, one card per open weather event and one card per plant with setup warnings above Today. Cards scroll horizontally and link to the affected plant or weather settings. Several late plants get a Today see-all link plus individual plant links. Rain cards contain the batch watering and undo controls and disappear without outdoor plants. Configured weather keeps its waiting or unavailable notice when current data is missing. Warning inputs retain the care source and rule version. Effective light and the missing-information set are documented in CONTEXT.md. Graveyard plants have no warnings.
+
+Open **Customize my feed** or **Household settings**, then **My home feed** to save your four card switches. These are member preferences, not household settings. Reloading or signing in again keeps them. Hiding alerts does not stop weather reconciliation, and hiding warnings does not change plant data.
+
+GET /api/feed returns cards and settings. GET/PUT /api/feed/settings reads or replaces the member's switches with {"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true}. PUT requires exactly those four boolean fields. Invalid fields return 422 and malformed JSON returns 400. Endpoints require a session, check Origin and derive household and member IDs from that session. The feed's fifteen-query budget includes session lookup and does not grow per plant. API tests measure real Postgres execution counts for one and twenty-six plants, without inspecting SQL text. Membership fixtures use SQL because this base has no invitation API. The phone scenario checks warning navigation and persisted switches.

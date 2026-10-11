@@ -5,10 +5,10 @@ import { rainRule } from '$lib/schedule/rules';
 import { recentRain } from './rain';
 
 export async function weatherReport(household: string, plantId?: string): Promise<WeatherReport> {
-  const [location, cache, alerts, count, batches, rainBatches] = await Promise.all([
+  const [location, cache, events, count, batches, rainBatches] = await Promise.all([
     db().query('SELECT latitude FROM households WHERE id = $1', [household]),
     db().query('SELECT * FROM weather_cache WHERE household_id = $1', [household]),
-    db().query("SELECT e.*, e.starts_on::text, e.ends_on::text, COALESCE(p.nickname, sp.canonical_name) AS plant_name FROM weather_events e JOIN plants p ON p.id = e.plant_id JOIN species sp ON sp.gbif_key = p.gbif_key JOIN sites s ON s.id = p.site_id WHERE e.household_id = $1 AND e.resolved_at IS NULL AND e.kind = 'low_temperature' AND p.status = 'active' AND s.location = 'outdoor' AND e.ends_on >= $2::date AND ($3::uuid IS NULL OR p.id = $3)", [household, calendarDate(now()), plantId ?? null]),
+    db().query("SELECT e.*, e.starts_on::text, e.ends_on::text, COALESCE(p.nickname, sp.canonical_name) AS plant_name FROM weather_events e LEFT JOIN plants p ON p.id = e.plant_id AND p.household_id = e.household_id LEFT JOIN species sp ON sp.gbif_key = p.gbif_key LEFT JOIN sites s ON s.id = p.site_id WHERE e.household_id = $1 AND e.resolved_at IS NULL AND ((e.kind = 'rain' AND e.plant_id IS NULL) OR (p.status = 'active' AND s.location = 'outdoor' AND e.ends_on >= $2::date)) AND ($3::uuid IS NULL OR p.id = $3) ORDER BY e.starts_on, e.id", [household, calendarDate(now()), plantId ?? null]),
     db().query("SELECT count(*)::integer AS n FROM plants p JOIN sites s ON s.id = p.site_id WHERE p.household_id = $1 AND p.status = 'active' AND s.location = 'outdoor'", [household]),
     db().query("SELECT b.request_id AS id, (SELECT count(*)::integer FROM care_events e WHERE e.batch_id = b.request_id AND e.household_id = $1) AS plant_count FROM care_actions b WHERE b.household_id = $1 AND b.action = 'rain' AND b.batch_id IS NULL AND b.undone_at IS NULL ORDER BY b.created_at DESC, b.request_id DESC LIMIT 1", [household]),
     db().query("SELECT e.starts_on::text, b.request_id AS id FROM weather_events e JOIN care_actions b ON b.request_id = e.batch_id WHERE e.household_id = $1 AND e.kind = 'rain' AND e.resolved_at IS NULL AND b.undone_at IS NULL ORDER BY e.starts_on DESC", [household]),
@@ -29,7 +29,8 @@ export async function weatherReport(household: string, plantId?: string): Promis
   } : null;
   const failures = cache.rows.map(row => row.unavailable_since as Date | null).filter((date): date is Date => !!date).sort((a, b) => a.getTime() - b.getTime());
   return { locationSet: location.rows[0].latitude !== null, forecastFetchedAt: forecast?.fetched_at?.toISOString() ?? null,
-    unavailableSince: failures[0]?.toISOString() ?? null, snapshot, alerts: alerts.rows,
+    unavailableSince: failures[0]?.toISOString() ?? null, snapshot, alerts: events.rows.filter(event => event.kind === 'low_temperature'),
+    events: events.rows, current: todayDay && forecast?.fetched_at ? { date: today, minC: todayDay.minC, maxC: todayDay.maxC, fetchedAt: forecast.fetched_at.toISOString() } : null,
     lastRainBatch: batches.rows[0] ? { id: batches.rows[0].id, plantCount: batches.rows[0].plant_count } : null,
     rain: precipitationMm >= rainRule.thresholdMm && count.rows[0].n > 0 ? { plantCount: count.rows[0].n, precipitationMm, ruleId: rainRule.ruleId, batchId } : null };
 }

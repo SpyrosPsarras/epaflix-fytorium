@@ -8,6 +8,8 @@ export type WeatherReport = {
   unavailableSince: string | null;
   snapshot: { today: string; meanMaxTemperatureC?: number; daylightHours?: number; fetchedAt: string } | null;
   alerts: WeatherEvent[];
+  events: WeatherEvent[];
+  current: { date: string; minC: number; maxC: number; fetchedAt: string } | null;
   rain: { plantCount: number; precipitationMm: number; ruleId: string; batchId: string | null } | null;
   lastRainBatch: { id: string; plantCount: number } | null;
 };

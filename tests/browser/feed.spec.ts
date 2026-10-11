@@ -1,0 +1,77 @@
+import { expect, test } from '@playwright/test';
+import { logIn } from './helpers/login';
+import { fixturePlant } from '../plant-fixture';
+import type { FeedCard } from '../../src/lib/feed';
+
+test('home feed prioritizes late care, weather and light warnings, opens the plant and remembers a hidden card on a phone', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const key = 100000000 + Math.floor(Math.random() * 800000000);
+  const nickname = 'Test feed plant ' + key;
+  let plantId: string | undefined, siteId: string | undefined;
+  const screenshot = async (name: string) => {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (process.env.PLAYWRIGHT_KEEP_ARTIFACTS === '1') await page.screenshot({ path: testInfo.outputPath(name), fullPage: true });
+  };
+  await page.request.post('/__test/clock', { data: { action: 'set', at: '2030-05-31T12:00:00Z' } });
+  await logIn(page, 'synthetic-browser-owner');
+  const settings = await (await page.request.get('/api/feed/settings')).json();
+  const location = await (await page.request.get('/api/household/location')).json();
+  try {
+    await page.request.put('/api/feed/settings', { data: { late_tasks: true, current_weather: true, weather_alerts: true, plant_warnings: true } });
+    const site = await (await page.request.post('/api/sites', { data: { name: 'Test feed site ' + key, location: 'outdoor', light: 'part_shade', grow_light: false, draft: false, humidity: 'normal' } })).json();
+    siteId = site.id;
+    const search = await (await page.request.get('/api/species/search?q=' + encodeURIComponent('Testoria weather ' + key))).json();
+    const added = await page.request.post('/api/plants', { data: { ...fixturePlant, pot_size_cm: 20, window_distance_cm: 100, nickname, site_id: siteId, search_id: search.search_id, gbif_key: key } });
+    expect(added.status()).toBe(201);
+    plantId = (await added.json()).id;
+    await page.request.put('/api/species/' + key + '/care/overrides/light', { data: { value: 'part_sun' } });
+    await page.request.put('/api/species/' + key + '/care/overrides/hardinessC', { data: { value: 6 } });
+    await page.request.post('/__test/clock', { data: { action: 'set', at: '2030-06-01T12:00:00Z' } });
+    await page.request.put('/api/household/location', { data: { location: { latitude: .5, longitude: .5 } } });
+    await page.request.post('/__test/weather-worker');
+    await page.goto('/');
+    const feed = page.getByRole('region', { name: 'Home feed', exact: true });
+    await expect(feed).toContainText(/tasks? (is|are) late/);
+    await expect(feed).toContainText('Current weather');
+    const lateCard = feed.getByRole('article', { name: 'Late tasks', exact: true });
+    const cards: FeedCard[] = (await (await page.request.get('/api/feed')).json()).cards;
+    const late = cards.find(card => card.kind === 'late_tasks');
+    if (!late || late.kind !== 'late_tasks') throw new Error('Expected late tasks');
+    for (const plant of late.plants) await expect(lateCard.getByRole('link', { name: plant.name, exact: true })).toHaveAttribute('href', '/plants/' + plant.id);
+    await expect(lateCard.getByRole('link', { name: /tasks? (is|are) late/ })).toHaveAttribute('href', late.plants.length === 1 ? '/plants/' + late.plants[0].id : '/#today');
+    const alerts = feed.getByRole('list', { name: 'Weather alerts', exact: true });
+    await expect(alerts).toContainText(nickname, { timeout: 25000 });
+    await expect(alerts).toContainText('Hardiness source: override · 6 °C');
+    await expect(alerts).toContainText('hardiness.pot_offset@1');
+    const warning = feed.getByRole('article', { name: 'Warnings for ' + nickname, exact: true });
+    await expect(warning).toContainText('Too dark');
+    await expect(warning).toContainText('species needs part_sun');
+    await screenshot('feed-home.png');
+    await warning.getByText('Warning inputs', { exact: true }).tap();
+    await expect(warning).toContainText('override');
+    await expect(warning).toContainText('warning.effective_light@1');
+    await screenshot('feed-warning-inputs.png');
+    await warning.getByRole('link', { name: nickname, exact: true }).tap();
+    await expect(page).toHaveURL('/plants/' + plantId);
+    await expect(page.getByRole('heading', { name: nickname, exact: true })).toBeVisible();
+    await screenshot('feed-warning-plant.png');
+    await page.goto('/settings#feed-settings');
+    await page.getByLabel('Plant warnings', { exact: true }).uncheck();
+    await page.getByRole('button', { name: 'Save my feed', exact: true }).tap();
+    await expect(page.getByText('Feed settings saved.', { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel('Plant warnings', { exact: true })).not.toBeChecked();
+    await screenshot('feed-settings.png');
+    await page.goto('/');
+    await page.reload();
+    await expect(feed.getByRole('article', { name: /^Warnings for / })).toHaveCount(0);
+    await expect(feed).toContainText('Current weather');
+    await screenshot('feed-warnings-hidden.png');
+  } finally {
+    await page.request.put('/api/feed/settings', { data: settings });
+    if (plantId) await page.request.delete('/api/plants/' + plantId, { data: { confirm_name: nickname } });
+    if (siteId) await page.request.delete('/api/sites/' + siteId);
+    await page.request.put('/api/household/location', { data: location });
+    await page.request.post('/__test/clock', { data: { action: 'reset' } });
+  }
+});

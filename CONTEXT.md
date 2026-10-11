@@ -205,3 +205,17 @@ At least 5 mm of precipitation today or yesterday qualifies, weather.rain@1. Mar
 
 **Outdoor months**:
 For each species, the months whose local climate mean daily minimum is at least applicable hardiness plus 2 °C, hardiness.outdoor_months@1. Pot and ground have separate rows on the Species care card. Climate uses Open-Meteo's CMCC_CM2_VHR4 modelled daily minima for 1991 to 2020, averaged by calendar month. No location prompts the owner to set one; a pending refresh is not an empty set of suitable months. Monthly means do not rule out an individual frost.
+
+## Home feed and warnings
+
+**Home feed**:
+Cards in a horizontal strip above Today put late care and setup problems first. The server computes the feed on read using the batched task list, effective care profiles, sites and weather report. GET /api/feed uses fifteen database queries including session lookup, independent of plant count and Today filters.
+
+**Feed card**:
+One of late_tasks, current_weather, weather_alerts or plant_warnings. Late tasks show a count and up to three linked plant names. A single late plant is the card's destination; several plants get a Today see-all link. Current weather shows today's cached minimum and maximum with fetch time, or the waiting/unavailable notice when no current data exists, linking to weather settings. Cold alerts link to their plant and retain hardiness source, value and rule IDs. Rain cards link to weather settings and contain batch watering and undo controls; they disappear without active outdoor plants. Home computes schedules once and reuses the batch for the feed and member-filtered Today. Each plant with warnings has one card, linking to that plant. Empty card types disappear. Each member's four switches default on and persist in Postgres across sessions. Switching one off changes only that member's feed, not the warnings or alerts themselves.
+
+**Plant warning**:
+A pure, computed-on-read result with kind, reason and the inputs and sources used. Kinds are too_dark, too_bright, no_drainage and missing_info. Graveyard plants return none. warning.drainage@1 warns when drainage is false and the pot is not in_ground. warning.missing_info@1 groups missing site light, pot type, pot size, species care data beyond rules, and household location for outdoor plants. Species data exists when at least one non-null effective field comes from an override, Perenual or Open Plantbook. Rules and unknown values alone do not count. Pot size is required for this check even for in-ground plants.
+
+**Effective light**:
+warning.effective_light@1 uses the ordered scale full_shade, part_shade, part_sun, full_sun. A site or plant grow light adds one step, counted once when both are on. Window distance above 200 cm subtracts one step. Unknown distance is neutral. Both adjustments apply together, then clamp to the scale's endpoints. A gap of at least one step from the effective care profile's light need warns too dark or too bright. Missing site or species light cannot produce a light mismatch. These estimates prompt a setup check, not a measurement of actual light.
