@@ -1,0 +1,117 @@
+services:
+  app:
+    build: .
+    environment:
+      NODE_ENV: test
+      FYTORIUM_TEST_CLOCK: "true"
+      DATABASE_URL: postgres://fytorium@postgres:5432/fytorium?sslmode=disable
+      ORIGIN: http://app:3000
+      OIDC_ISSUER: http://oidc:8080/default
+      OIDC_CLIENT_ID: fytorium-test
+      OIDC_CLIENT_SECRET: "synthetic-oidc"
+      OIDC_REDIRECT_URL: http://app:3000/auth/callback
+      OIDC_ALLOW_INSECURE_HTTP: "true"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BUCKET: fytorium-test
+      MINIO_ACCESS_KEY: synthetic-minio
+      MINIO_SECRET_KEY: synthetic-minio-password
+      NTFY_URL: http://ntfy:80
+      PERENUAL_BASE_URL: ${PERENUAL_BASE_URL:-http://perenual:8080}
+      PLANTNET_BASE_URL: ${PLANTNET_BASE_URL:-http://plantnet:8080}
+      PERENUAL_API_KEY: "${PERENUAL_API_KEY:-}"
+      PLANTNET_API_KEY: "${PLANTNET_API_KEY:-}"
+      OPEN_PLANTBOOK_BASE_URL: http://open-plantbook:8080
+      GBIF_BASE_URL: http://gbif:8080
+      WIKIDATA_BASE_URL: http://wikidata:8080
+      NORTAXA_BASE_URL: http://nortaxa:8080
+      OPEN_METEO_BASE_URL: http://open-meteo:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      oidc:
+        condition: service_started
+      ntfy:
+        condition: service_started
+      fakes:
+        condition: service_started
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: fytorium
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: fytorium
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U fytorium -d fytorium]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    build:
+      context: .
+      dockerfile: tests/stack/Minio.Dockerfile
+      target: server
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: synthetic-minio
+      MINIO_ROOT_PASSWORD: "synthetic-minio-password"
+
+  minio-init:
+    build:
+      context: .
+      dockerfile: tests/stack/Minio.Dockerfile
+      target: client
+    depends_on: [minio]
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        for attempt in $$(seq 1 60); do
+          if mc alias set local http://minio:9000 synthetic-minio synthetic-minio-password >/dev/null 2>&1; then
+            mc mb --ignore-existing local/fytorium-test
+            exit 0
+          fi
+          sleep 1
+        done
+        exit 1
+
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.3.0
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.16.0
+    command: serve
+    environment:
+      NTFY_CACHE_FILE: /tmp/cache.db
+      NTFY_CACHE_DURATION: 24h
+
+  fakes:
+    image: wiremock/wiremock:3.13.2
+    volumes:
+      - ./tests/stack/mappings:/home/wiremock/mappings:ro
+    networks:
+      default:
+        aliases: [perenual, open-plantbook, plantnet, gbif, wikidata, nortaxa, open-meteo]
+
+  browser:
+    image: mcr.microsoft.com/playwright:v1.58.2-noble
+    profiles: [test]
+    working_dir: /app
+    init: true
+    ipc: host
+    environment:
+      PLAYWRIGHT_KEEP_ARTIFACTS: ${PLAYWRIGHT_KEEP_ARTIFACTS:-0}
+    volumes:
+      - .:/app
+    command: [./node_modules/.bin/playwright, test]
+    depends_on:
+      app:
+        condition: service_healthy

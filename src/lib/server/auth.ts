@@ -3,6 +3,7 @@ import * as oidc from 'openid-client';
 import type { Cookies } from '@sveltejs/kit';
 import { config } from './config';
 import { db } from './db';
+import { now } from './clock';
 
 export const SESSION_COOKIE = 'fytorium_session';
 const LOGIN_COOKIE = 'fytorium_login';
@@ -23,6 +24,10 @@ function provider() {
   return oidcConfig;
 }
 
+function randomToken() {
+  return randomBytes(32).toString('base64url');
+}
+
 function hash(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
@@ -33,16 +38,17 @@ function cookieOptions(maxAge: number) {
 
 export async function startLogin(cookies: Cookies): Promise<URL> {
   const client = await provider();
-  const token = oidc.randomState();
+  const token = randomToken();
   const state = oidc.randomState();
   const nonce = oidc.randomNonce();
   const verifier = oidc.randomPKCECodeVerifier();
   const challenge = await oidc.calculatePKCECodeChallenge(verifier);
-  await db().query('DELETE FROM login_transactions WHERE expires_at <= now()');
-  await db().query('DELETE FROM sessions WHERE expires_at <= now()');
+  const time = now();
+  await db().query('DELETE FROM login_transactions WHERE expires_at <= $1', [time]);
+  await db().query('DELETE FROM sessions WHERE expires_at <= $1', [time]);
   await db().query(
-    "INSERT INTO login_transactions (token_hash, state, nonce, verifier, expires_at) VALUES ($1, $2, $3, $4, now() + interval '10 minutes')",
-    [hash(token), state, nonce, verifier],
+    "INSERT INTO login_transactions (token_hash, state, nonce, verifier, expires_at) VALUES ($1, $2, $3, $4, $5)",
+    [hash(token), state, nonce, verifier, new Date(time.getTime() + 600_000)],
   );
   cookies.set(LOGIN_COOKIE, token, cookieOptions(600));
   return oidc.buildAuthorizationUrl(client, {
@@ -56,7 +62,7 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
   cookies.delete(LOGIN_COOKIE, { path: '/' });
   if (!token) throw new Error('Missing login transaction');
   const result = await db().query<{ state: string; nonce: string; verifier: string }>(
-    'DELETE FROM login_transactions WHERE token_hash = $1 AND expires_at > now() RETURNING state, nonce, verifier', [hash(token)],
+    'DELETE FROM login_transactions WHERE token_hash = $1 AND expires_at > $2 RETURNING state, nonce, verifier', [hash(token), now()],
   );
   const transaction = result.rows[0];
   if (!transaction) throw new Error('Expired or already used login transaction');
@@ -69,7 +75,7 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
   const claims = tokens.claims();
   if (!claims?.sub) throw new Error('Missing OIDC subject');
   const client = await db().connect();
-  const session = randomBytes(32).toString('base64url');
+  const session = randomToken();
   try {
     await client.query('BEGIN');
     // Serialize first login across app replicas so only one subject becomes owner.
@@ -84,7 +90,7 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
     }
     const previous = cookies.get(SESSION_COOKIE);
     if (previous) await client.query('DELETE FROM sessions WHERE token_hash = $1', [hash(previous)]);
-    await client.query("INSERT INTO sessions (token_hash, member_id, expires_at) VALUES ($1, $2, now() + interval '7 days')", [hash(session), memberId]);
+    await client.query('INSERT INTO sessions (token_hash, member_id, expires_at) VALUES ($1, $2, $3)', [hash(session), memberId, new Date(now().getTime() + SESSION_SECONDS * 1000)]);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -102,7 +108,7 @@ export async function identity(cookies: Cookies): Promise<Identity | null> {
   const result = await db().query<{ member_id: string; role: Identity['member']['role']; household_id: string; name: string }>(
     `SELECT m.id AS member_id, m.role, h.id AS household_id, h.name
      FROM sessions s JOIN members m ON m.id = s.member_id JOIN households h ON h.id = m.household_id
-     WHERE s.token_hash = $1 AND s.expires_at > now()`, [hash(token)],
+     WHERE s.token_hash = $1 AND s.expires_at > $2`, [hash(token), now()],
   );
   const row = result.rows[0];
   if (!row) { cookies.delete(SESSION_COOKIE, { path: '/' }); return null; }

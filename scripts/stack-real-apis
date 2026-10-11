@@ -1,0 +1,23 @@
+#!/bin/sh
+set +x
+set -eu
+cd "$(dirname "$0")/.."
+vault_runner="$HOME/Documents/Epaflix/k3s-swarm-proxmox/2-k3s/13.t3code/one/files/vault-run.py"
+case "${1:-}" in
+  '')
+    exec python3 "$vault_runner" '/Personal/plantnet - api key' "$PWD/scripts/stack-real-apis" --plantnet
+    ;;
+  --plantnet)
+    export PLANTNET_API_KEY="${VAULT_PASSWORD:?Vault runner did not provide the Pl@ntNet key}"
+    unset VAULT_PASSWORD
+    exec python3 "$vault_runner" '/perenual - api key' "$PWD/scripts/stack-real-apis" --perenual
+    ;;
+  --perenual)
+    export PERENUAL_API_KEY="${VAULT_PASSWORD:?Vault runner did not provide the Perenual key}"
+    unset VAULT_PASSWORD
+    export PLANTNET_BASE_URL=https://my-api.plantnet.org/v2/
+    export PERENUAL_BASE_URL=https://perenual.com/api/
+    exec ./scripts/stack up
+    ;;
+  *) echo 'Usage: ./scripts/stack-real-apis' >&2; exit 2 ;;
+esac

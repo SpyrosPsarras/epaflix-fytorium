@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "ANY",
+    "urlPathPattern": ".*",
+    "headers": {
+      "Host": {
+        "matches": "perenual(:[0-9]+)?"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "synthetic": true,
+      "service": "perenual",
+      "items": []
+    }
+  }
+}

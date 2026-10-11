@@ -1,0 +1,4 @@
+services:
+  app:
+    ports:
+      - "${STACK_APP_PORT:?Set STACK_APP_PORT}:3000"

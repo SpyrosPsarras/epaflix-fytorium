@@ -104,6 +104,23 @@ test('a callback with the wrong state does not log in', async () => {
   expect((await fetch(base + '/api/me', { headers: { cookie } })).status).toBe(401);
 });
 
+test('OIDC failures log the message and error code without provider details or secrets', async () => {
+  const start = await fetch(base + '/auth/login', { redirect: 'manual' });
+  const transactionCookie = start.headers.getSetCookie()[0].split(';')[0];
+  const authorization = new URL(start.headers.get('location')!);
+  const callbackUrl = new URL('/auth/callback', base);
+  callbackUrl.searchParams.set('state', authorization.searchParams.get('state')!);
+  callbackUrl.searchParams.set('error', 'access_denied');
+  callbackUrl.searchParams.set('error_description', 'synthetic-private-provider-detail');
+  const response = await fetch(callbackUrl, { redirect: 'manual', headers: { cookie: transactionCookie } });
+  expect(response.headers.get('location')).toBe('/auth/failed');
+  await expect.poll(() => appOutput).toContain("oidcError: 'access_denied'");
+  expect(appOutput).toContain('message:');
+  expect(appOutput).not.toContain('synthetic-private-provider-detail');
+  expect(appOutput).not.toContain(TEST_CLIENT_SECRET);
+  expect(appOutput).not.toContain(transactionCookie.split('=')[1]);
+});
+
 test('logout revokes the server-side session and rejects cross-origin form posts', async () => {
   const { cookie } = await login();
   const crossOrigin = await fetch(base + '/auth/logout', { method: 'POST', redirect: 'manual', headers: { cookie, origin: 'https://untrusted.example', 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
@@ -139,6 +156,24 @@ test('health checks the database and metrics expose default and HTTP observation
   expect(metrics).toContain('process_resident_memory_bytes');
   expect(metrics).toContain('fytorium_http_requests_total');
   expect(metrics).toContain('fytorium_http_request_duration_seconds_bucket');
+});
+
+test('production cannot reach or enable the test clock', async () => {
+  expect((await fetch(base + '/__test/clock')).status).toBe(404);
+  expect((await fetch(base + '/__test/clock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'set', at: '2030-01-01T00:00:00Z' }) })).status).toBe(404);
+  const refused = spawn('node', ['scripts/start.mjs'], {
+    env: { ...process.env, NODE_ENV: 'production', FYTORIUM_TEST_CLOCK: 'true' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  refused.stdout!.on('data', data => output += data);
+  refused.stderr!.on('data', data => output += data);
+  const status = await new Promise<number | null>((resolve, reject) => {
+    refused.once('error', reject);
+    refused.once('exit', resolve);
+  });
+  expect(status).not.toBe(0);
+  expect(output).toContain('FYTORIUM_TEST_CLOCK requires NODE_ENV=test');
 });
 
 test('a database outage returns health 503 without killing the app or metrics', async () => {

@@ -12,7 +12,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 docker network create "$network" >/dev/null
 database=$(docker run -d --network "$network" --network-alias postgres -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine)
-for attempt in $(seq 1 60); do
+for _ in $(seq 1 60); do
   if docker exec "$database" pg_isready -U postgres >/dev/null 2>&1; then break; fi
   sleep 1
 done
@@ -22,7 +22,7 @@ start_app() {
     -e OIDC_ISSUER=https://identity.example \
     -e OIDC_CLIENT_ID=synthetic-client -e OIDC_CLIENT_SECRET=synthetic-secret \
     -e OIDC_REDIRECT_URL=http://app:3000/auth/callback -e ORIGIN=http://app:3000 "$image")
-  for attempt in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     if docker run --rm --network "$network" curlimages/curl:8.17.0 -fsS http://app:3000/healthz >/dev/null 2>&1; then return; fi
     sleep 1
   done

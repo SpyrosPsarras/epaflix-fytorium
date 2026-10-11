@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+if [ -n "${STACK_APP_PORT:-}" ]; then
+  export COMPOSE_FILE=compose.yaml:compose.host.yaml
+fi
+command=${1:-}
+[ "$#" -eq 0 ] || shift
+case "$command" in
+  up) docker compose up -d --build --wait "$@" ;;
+  down) docker compose --profile test down --volumes --remove-orphans "$@" ;;
+  logs) docker compose logs "$@" ;;
+  test)
+    if [ "${1:-}" = --screenshots ]; then
+      export PLAYWRIGHT_KEEP_ARTIFACTS=1
+      shift
+    fi
+    ./scripts/container install --frozen-lockfile
+    docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright browser ./node_modules/.bin/playwright test "$@"
+    ;;
+  *) echo 'Usage: ./scripts/stack up|down|logs|test [--screenshots] [Playwright arguments]' >&2; exit 2 ;;
+esac

@@ -4,4 +4,5 @@ node_modules
 .pnpm-store
 .svelte-kit
 build
+test-artifacts
 .env*
