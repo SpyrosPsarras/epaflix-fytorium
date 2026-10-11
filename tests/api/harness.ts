@@ -15,8 +15,34 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
   let gbifStatus = 200;
   let gbifDelay = 0;
   const gbifSpecies = new Map<number, unknown>();
+  const names = {
+    gbif: { payload: { results: [], endOfRecords: true } as unknown, status: 200, delay: 0 },
+    wikidata: { payload: { entities: {} } as unknown, status: 200, delay: 0 },
+    nortaxa: { payload: [] as unknown, status: 200, delay: 0 },
+  };
+  const nameRequests = new Map<string, number>();
+  function nameResponse(source: keyof typeof names, response: import('node:http').ServerResponse, key: string) {
+    const id = source + ':' + key;
+    nameRequests.set(id, (nameRequests.get(id) ?? 0) + 1);
+    const { payload, status, delay } = names[source];
+    setTimeout(() => {
+      response.writeHead(status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(payload));
+    }, delay);
+  }
   const gbif = createServer((request, response) => {
     const url = new URL(request.url!, 'http://fake');
+    if (/^\/species\/\d+\/vernacularNames$/.test(url.pathname)) return nameResponse('gbif', response, url.pathname.split('/')[2]);
+    if (url.pathname === '/wikidata/w/api.php') {
+      if (url.searchParams.get('action') === 'query' && /^haswbstatement:P846=\d+$/.test(url.searchParams.get('srsearch') ?? '')) {
+        const key = url.searchParams.get('srsearch')!.split('=').pop();
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ query: { search: [{ title: 'Q' + key }] } }));
+      } else if (url.searchParams.get('action') === 'wbgetentities') nameResponse('wikidata', response, url.searchParams.get('ids')!.slice(1));
+      else response.writeHead(400).end();
+      return;
+    }
+    if (url.pathname === '/nortaxa/api/v1/TaxonName/Search' && url.searchParams.has('Search')) return nameResponse('nortaxa', response, url.searchParams.get('Search')!);
     if (/^\/species\/\d+$/.test(url.pathname)) {
       const payload = gbifSpecies.get(Number(url.pathname.split('/').pop()));
       response.writeHead(payload ? 200 : 404, { 'content-type': 'application/json' });
@@ -44,7 +70,7 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
     // start.mjs runs migrations before starting the HTTP listener.
-    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -94,6 +120,8 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
     login,
     setGbif(payload: unknown, status = 200, delay = 0) { gbifResponse = payload; gbifStatus = status; gbifDelay = delay; },
     setGbifSpecies(key: number, payload: unknown) { gbifSpecies.set(key, payload); },
+    setNames(source: keyof typeof names, payload: unknown, status = 200, delay = 0) { names[source] = { payload, status, delay }; },
+    nameCalls(source: keyof typeof names, key: string | number) { return nameRequests.get(source + ':' + key) ?? 0; },
     stopPostgres,
   };
 }

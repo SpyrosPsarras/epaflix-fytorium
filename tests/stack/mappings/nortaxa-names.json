@@ -1,0 +1,67 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/TaxonName/Search",
+        "headers": {
+          "Host": {
+            "matches": "nortaxa(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "Search": {
+            "equalTo": "Testoria lucida"
+          },
+          "IncludeVernacularNames": {
+            "equalTo": "true"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": [
+          {
+            "taxonId": 980001,
+            "acceptedScientificName": {
+              "name": "Testoria lucida",
+              "isSearchMatch": true
+            },
+            "preferredVernacularNames": [
+              {
+                "name": "Prøvespire",
+                "nameLanguageIso": "nb",
+                "isSearchMatch": false
+              }
+            ],
+            "scientificNameSynonyms": [],
+            "vernacularNameSynonyms": []
+          }
+        ]
+      }
+    },
+    {
+      "priority": 2,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/TaxonName/Search",
+        "headers": {
+          "Host": {
+            "matches": "nortaxa(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": []
+      }
+    }
+  ]
+}

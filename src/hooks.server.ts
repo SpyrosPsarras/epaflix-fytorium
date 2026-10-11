@@ -1,6 +1,11 @@
 import type { Handle } from '@sveltejs/kit';
+import { building } from '$app/environment';
+import { startNameWorker } from '$lib/server/names';
+
 import { identity } from '$lib/server/auth';
 import { requests, duration } from '$lib/server/metrics';
+
+if (!building) startNameWorker();
 
 export const handle: Handle = async ({ event, resolve }) => {
   const start = performance.now();

@@ -1,5 +1,6 @@
 <script lang="ts">
   import PlantForm from '$lib/PlantForm.svelte';
+  import { nameLanguages } from '$lib/names';
   import type { Candidate, SpeciesSearch } from '$lib/plants';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
@@ -26,7 +27,7 @@
 <h1>Add plant</h1>
 <form onsubmit={search}>
   <label for="species-name">Species name</label>
-  <input id="species-name" bind:value={query} required maxlength="200" placeholder="Scientific name" />
+  <input id="species-name" bind:value={query} required maxlength="200" placeholder="Common or scientific name, English, Norwegian or Greek" />
   <button disabled={busy}>{busy ? 'Searching…' : 'Search species'}</button>
 </form>
 {#if message}<p class="error" role="alert">{message}</p>{/if}
@@ -35,6 +36,7 @@
   {#each result.candidates as candidate, index}
     <article>
       <p>{candidate.scientific_name}</p>
+      {#if candidate.matched_name && candidate.matched_language}<p>Matched {candidate.matched_name} · {nameLanguages[candidate.matched_language]}</p>{/if}
       <p>{candidate.match_type === null ? 'Stored species' : candidate.match_type.toLowerCase()}{candidate.confidence === null ? '' : ' · ' + candidate.confidence + '% confidence'} · {candidate.rank.toLowerCase()}{index > 0 ? ' · alternative' : ''}</p>
       <button onclick={() => { chosen = candidate; confirmed = false; }}>Choose {candidate.canonical_name}</button>
     </article>

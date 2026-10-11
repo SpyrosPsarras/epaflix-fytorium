@@ -84,7 +84,8 @@ test('an exact canonical or scientific name needs no confirmation, even during a
   harness.setGbif({}, 503);
   for (const query of ['  TESTORIA LUCIDA  ', 'testoria lucida inventor']) {
     const result = await search(query);
-    expect(result.candidates).toEqual([expect.objectContaining({ gbif_key: 910001, requires_confirmation: false })]);
+    expect(result.candidates.filter((row: { gbif_key: number }) => row.gbif_key === 910001)).toEqual([expect.objectContaining({ requires_confirmation: false })]);
+    expect(result.candidates.filter((row: { gbif_key: number }) => row.gbif_key !== 910001).every((row: { requires_confirmation: boolean }) => row.requires_confirmation)).toBe(true);
     expect((await add(result.search_id)).status).toBe(201);
   }
 });
@@ -205,7 +206,7 @@ test('fetches an omitted accepted name without replacing a stored name with the 
   harness.setGbifSpecies(910023, { key: 910023, scientificName: 'Testoria stabilis Inventor', canonicalName: 'Testoria stabilis', rank: 'SPECIES', kingdom: 'Plantae' });
   harness.setGbif({ ...exact, usageKey: 910024, acceptedUsageKey: 910023, scientificName: 'Testoria vetusta Inventor', canonicalName: 'Testoria vetusta' });
   const result = await search('Testoria vetusta');
-  expect(result.candidates).toEqual([expect.objectContaining({ gbif_key: 910023, scientific_name: 'Testoria stabilis Inventor', canonical_name: 'Testoria stabilis' })]);
+  expect(result.candidates.filter((row: { gbif_key: number }) => row.gbif_key === 910023)).toEqual([expect.objectContaining({ scientific_name: 'Testoria stabilis Inventor', canonical_name: 'Testoria stabilis', match_type: 'EXACT', confidence: 99, requires_confirmation: false })]);
   expect((await add(result.search_id, 910024)).status).toBe(422);
   expect((await add(result.search_id, 910023)).status).toBe(201);
   const catalogue = await (await request('/api/species')).json();
@@ -269,7 +270,7 @@ test('keeps a sound primary match when an alternative accepted-species lookup fa
 test('adds an exact high-confidence plant and reads its species and attributes', async () => {
   harness.setGbif(exact);
   const result = await search();
-  expect(result.candidates).toEqual([expect.objectContaining({ gbif_key: 910001, scientific_name: 'Testoria lucida Inventor', requires_confirmation: false })]);
+  expect(result.candidates.filter((row: { gbif_key: number }) => row.gbif_key === 910001)).toEqual([expect.objectContaining({ scientific_name: 'Testoria lucida Inventor', requires_confirmation: false })]);
   const response = await add(result.search_id);
   expect(response.status).toBe(201);
   const plant = await response.json();

@@ -1,0 +1,63 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/910001/vernacularNames",
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "results": [
+            {
+              "vernacularName": "Trialleaf",
+              "language": "eng"
+            },
+            {
+              "vernacularName": "Prøveplante",
+              "language": "nor"
+            },
+            {
+              "vernacularName": "Δοκιμόφυτο",
+              "language": "ell"
+            }
+          ],
+          "offset": 0,
+          "limit": 500,
+          "endOfRecords": true
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/species/[0-9]+/vernacularNames",
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "results": [],
+          "endOfRecords": true
+        }
+      }
+    }
+  ]
+}

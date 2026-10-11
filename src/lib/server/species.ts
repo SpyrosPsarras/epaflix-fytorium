@@ -10,16 +10,42 @@ import type { Candidate } from '$lib/plants';
 const searches = new Map<string, { household: string; expires: number; candidates: Candidate[] }>();
 export async function searchSpecies(query: string, household: string) {
   query = query.trim();
-  const local = await db().query('SELECT gbif_key, scientific_name, canonical_name, rank FROM species WHERE position(lower($1) in lower(scientific_name)) > 0 OR position(lower($1) in lower(canonical_name)) > 0 ORDER BY scientific_name LIMIT 20', [query]);
+  const names = await db().query(`
+    WITH input AS (SELECT normalise_species_name($1) AS query, normalise_species_name($2) AS prefix), hits AS (
+      SELECT DISTINCT ON (n.gbif_key) s.gbif_key, s.scientific_name, s.canonical_name, s.rank,
+        n.name AS matched_name, n.language AS matched_language,
+        NOT (s.rank = 'SPECIES' AND n.normalised = input.query AND
+          (SELECT count(DISTINCT gbif_key) FROM species_names WHERE normalised = input.query) = 1) AS requires_confirmation,
+        similarity(n.normalised, input.query) + CASE WHEN starts_with(n.normalised, input.query) THEN 0.2 ELSE 0 END AS score
+      FROM species_names n JOIN species s USING (gbif_key) CROSS JOIN input
+      WHERE n.normalised % input.query OR n.normalised LIKE input.prefix
+      ORDER BY n.gbif_key, score DESC, n.name, n.language, n.source
+    ) SELECT * FROM hits ORDER BY score DESC, scientific_name LIMIT 20`, [query, query.replace(/[\\%_]/g, '\\$&') + '%']);
+  const local = await db().query(`
+    SELECT gbif_key, scientific_name, canonical_name, rank FROM species
+    WHERE position(lower($1) in lower(scientific_name)) > 0 OR position(lower($1) in lower(canonical_name)) > 0
+    ORDER BY (rank = 'SPECIES' AND (lower(scientific_name) = lower($1) OR lower(canonical_name) = lower($1))) DESC, scientific_name
+    LIMIT 20`, [query]);
   const exactName = (row: Candidate) => [row.scientific_name, row.canonical_name].some(name => name.toLowerCase() === query.toLowerCase());
-  let candidates: Candidate[] = local.rows.map(row => ({
+  const nameCandidates: Candidate[] = names.rows.map(({ score: _score, ...row }) => ({ ...row, match_type: null, confidence: null }));
+  const scientificCandidates: Candidate[] = local.rows.map(row => ({
     ...row, match_type: null, confidence: null, requires_confirmation: !exactName(row) || row.rank !== 'SPECIES',
   }));
-  if (!candidates.some(exactName)) {
+  // Scientific exact matches take priority, even when a vernacular neighbour also matches.
+  const merged = new Map(nameCandidates.map(row => [row.gbif_key, row]));
+  for (const row of scientificCandidates) {
+    if (!merged.has(row.gbif_key) || !row.requires_confirmation) merged.set(row.gbif_key, { ...merged.get(row.gbif_key), ...row });
+  }
+  const scientificPriority = (row: Candidate) => !row.requires_confirmation && exactName(row) ? 1 : 0;
+  let candidates = [...merged.values()].sort((a, b) => scientificPriority(b) - scientificPriority(a));
+  if (!candidates.some(row => !row.requires_confirmation)) {
     try {
       const matches = await matchSpecies(query);
-      // Keep GBIF's actual match metadata when the same key is also stored locally.
-      candidates = [...matches, ...candidates.filter(local => !matches.some(match => match.gbif_key === local.gbif_key))];
+      // GBIF can confirm scientific names, but fuzzy or ambiguous vernacular hits still need confirmation.
+      candidates = [...matches.map(match => {
+        const named = nameCandidates.find(row => row.gbif_key === match.gbif_key);
+        return named ? { ...named, ...match, requires_confirmation: (named.matched_language !== 'la' && named.requires_confirmation) || match.requires_confirmation } : match;
+      }), ...candidates.filter(local => !matches.some(match => match.gbif_key === local.gbif_key))];
     } catch (cause) {
       if (!candidates.length || !isHttpError(cause) || ![422, 503].includes(cause.status)) throw cause;
     }
