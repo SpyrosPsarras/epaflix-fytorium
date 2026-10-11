@@ -1,4 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
+import { outdoorMonths } from '$lib/server/weather/outdoor-months';
 import { speciesCare } from '$lib/server/care/catalogue';
 import { getSpecies } from '$lib/server/names';
 import type { PageServerLoad } from './$types';
@@ -9,5 +10,5 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     speciesCare(params.gbifKey, locals.identity.household.id),
     getSpecies(params.gbifKey),
   ]);
-  return { care, species, canEditCare: locals.identity.member.role !== 'sitter', canEdit: locals.identity.member.role === 'owner' };
+  return { care, species, outdoorMonths: await outdoorMonths(params.gbifKey, locals.identity.household.id), canEditCare: locals.identity.member.role !== 'sitter', canEdit: locals.identity.member.role === 'owner' };
 };

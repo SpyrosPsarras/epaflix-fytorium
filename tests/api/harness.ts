@@ -6,7 +6,7 @@ import { createPhotoStorage } from './photo-storage';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
 type FakeResponse = { status: number; body: unknown; headers?: Record<string, string>; delay?: number };
-export function createApiHarness(options: { testClock?: boolean; photos?: boolean; careEnv?: Record<string, string>; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
+export function createApiHarness(options: { testClock?: boolean; photos?: boolean; careEnv?: Record<string, string>; weather?: (url: URL) => FakeResponse; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
   let postgres: StartedPostgreSqlContainer;
   const photos = createPhotoStorage();
   let postgresStopped = false;
@@ -64,6 +64,10 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     }, gbifDelay);
   });
 
+  const weather = createServer((request, response) => {
+    const result = options.weather?.(new URL(request.url!, 'http://fake')) ?? { status: 503, body: {} };
+    setTimeout(() => { response.writeHead(result.status, { 'content-type': 'application/json' }); response.end(JSON.stringify(result.body)); }, result.delay ?? 0);
+  });
   const perenual = createServer((request, response) => {
     const result = options.perenual?.(new URL(request.url!, 'http://fake').pathname) ?? { status: 200, body: { data: [] } };
     setTimeout(() => {
@@ -86,13 +90,14 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     provider = await startOidcProvider();
     const gbifPort = await listen(gbif);
     const perenualPort = await listen(perenual);
+    const weatherPort = await listen(weather);
     const openPlantbookPort = await listen(openPlantbook);
     const portServer = createServer();
     const port = await listen(portServer);
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
     // start.mjs runs migrations before starting the HTTP listener.
-    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '16M' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, OPEN_METEO_BASE_URL: `http://127.0.0.1:${weatherPort}/`, OPEN_METEO_CLIMATE_BASE_URL: `http://127.0.0.1:${weatherPort}/`, WEATHER_WORKER_ENABLED: 'false', OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '16M' }, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -115,6 +120,8 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
       await exited;
     }
     if (provider) await close(provider.server);
+    weather.closeAllConnections();
+    await close(weather);
     openPlantbook.closeAllConnections();
     await close(openPlantbook);
     perenual.closeAllConnections();

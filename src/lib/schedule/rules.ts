@@ -1,5 +1,22 @@
 import type { BasedOn, CareField, ScheduleInput } from './engine';
 
+// Starting estimates, not physiological limits. Weather factors apply before rounding/clamping.
+export const wateringWeatherRules = [
+  { field: 'meanMaxTemperatureC', ruleId: 'water.weather_temperature@1', factor: (value: number) => value >= 28 ? .75 : value <= 12 ? 1.25 : 1,
+    reason: 'Seven-day mean maximum: at least 28 °C ×0.75; at most 12 °C ×1.25; otherwise neutral.' },
+  { field: 'daylightHours', ruleId: 'water.weather_daylight@1', factor: (value: number) => value <= 9 ? 1.25 : 1,
+    reason: 'Today has at most nine daylight hours: ×1.25; otherwise neutral.' },
+] as const;
+export const hardinessRules = {
+  defaultC: 5, defaultId: 'hardiness.default@1',
+  potOffsetC: 5, potId: 'hardiness.pot_offset@1',
+  outdoorMarginC: 2, outdoorMonthsId: 'hardiness.outdoor_months@1',
+  zoneId: 'hardiness.usda_uncertain@1',
+  // Lower edge of whole USDA zones 1–13, °C. Perenual's scale is uncertain, research R5.
+  zoneMinimumC: [-51.1, -45.6, -40, -34.4, -28.9, -23.3, -17.8, -12.2, -6.7, -1.1, 4.4, 10, 15.6],
+} as const;
+export const rainRule = { thresholdMm: 5, ruleId: 'weather.rain@1' } as const;
+
 export const taskTypes = ['water', 'fertilize', 'mist', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'] as const;
 export type TaskType = typeof taskTypes[number];
 export type FactorInput = { [Group in 'site' | 'pot' | 'plant']: { group: Group; field: keyof ScheduleInput[Group] } }['site' | 'pot' | 'plant'];
@@ -61,7 +78,7 @@ export const taskRules: Record<TaskType, TaskRules> = {
     factors: [
       { input: { group: 'site', field: 'light' }, ruleId: 'water.light@1', factors: { full_shade: 1.4, part_shade: 1.2, part_sun: 1, full_sun: .7 }, reason: 'More sunlight increases evaporation and water use.' },
       { input: { group: 'site', field: 'humidity' }, ruleId: 'water.humidity@1', factors: { dry: .75, normal: 1, humid: 1.25 }, reason: 'Dry air speeds transpiration; humid air slows it.' },
-      { input: { group: 'site', field: 'location' }, ruleId: 'water.location@1', factors: { indoor: 1, outdoor: .8 }, reason: 'Outdoor exposure increases evaporation before weather data is available.' },
+      { input: { group: 'site', field: 'location' }, ruleId: 'water.location@1', factors: { indoor: 1, outdoor: .8 }, reason: 'Outdoor exposure increases evaporation; weather factors adjust that estimate.' },
       { input: { group: 'site', field: 'grow_light' }, ruleId: 'water.site-grow-light@1', factors: { true: .8, false: 1 }, reason: 'A grow light increases water use.' },
       { input: { group: 'site', field: 'draft' }, ruleId: 'water.draft@1', factors: { true: .85, false: 1 }, reason: 'Moving air dries soil and foliage faster.' },
       { input: { group: 'pot', field: 'pot_type' }, ruleId: 'water.pot-type@1', factors: { plastic: 1, terracotta: .75, ceramic: 1, glass: 1, metal: 1, wood: .85, fabric: .7, in_ground: 1.4 }, reason: 'Porous pots dry faster; ground soil has a larger moisture reserve.' },

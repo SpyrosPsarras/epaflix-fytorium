@@ -1,0 +1,88 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPath": "/v1/forecast",
+    "queryParameters": {
+      "past_days": {
+        "equalTo": "2"
+      },
+      "forecast_days": {
+        "equalTo": "7"
+      },
+      "daily": {
+        "equalTo": "temperature_2m_min,temperature_2m_max,precipitation_sum,daylight_duration"
+      }
+    },
+    "headers": {
+      "Host": {
+        "matches": "open-meteo(:[0-9]+)?"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "daily": {
+        "time": [
+          "2030-05-30",
+          "2030-05-31",
+          "2030-06-01",
+          "2030-06-02",
+          "2030-06-03",
+          "2030-06-04",
+          "2030-06-05",
+          "2030-06-06",
+          "2030-06-07"
+        ],
+        "temperature_2m_min": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "temperature_2m_max": [
+          30,
+          30,
+          30,
+          30,
+          30,
+          30,
+          30,
+          30,
+          30
+        ],
+        "precipitation_sum": [
+          6,
+          6,
+          6,
+          6,
+          6,
+          6,
+          6,
+          6,
+          6
+        ],
+        "daylight_duration": [
+          43200,
+          43200,
+          43200,
+          43200,
+          43200,
+          43200,
+          43200,
+          43200,
+          43200
+        ]
+      }
+    }
+  }
+}

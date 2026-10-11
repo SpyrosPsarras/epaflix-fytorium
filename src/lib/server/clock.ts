@@ -1,5 +1,10 @@
 import { config } from './config';
 
+// Intl owns time-zone and DST conversion; callers receive plain calendar dates.
+export function calendarDate(at: Date | string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: config().householdTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(at));
+}
+
 let fixed: number | undefined;
 
 export function now(): Date {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import WeatherBanner from '$lib/WeatherBanner.svelte';
   import PhotoUpdateForm from '$lib/PhotoUpdateForm.svelte';
   import PlantRestore from '$lib/PlantRestore.svelte';
   import PhotoUpdates from '$lib/PhotoUpdates.svelte';
@@ -16,6 +17,7 @@
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
 <a href="/plants">Plants</a>
 <h1>{data.plant.display_name}</h1>
+<WeatherBanner report={data.weather} />
 {#if data.plant.status === 'graveyard'}
   <p>In the graveyard since {data.plant.graveyard_on}</p>
   <PlantRestore plant={data.plant} sites={data.sites} />
@@ -58,6 +60,16 @@
 {/each}
 <section aria-labelledby="based-on-title">
   <h2 id="based-on-title">Based on</h2>
+  {#if data.weather.alerts.length}
+    <details>
+      <summary>Low-temperature alerts</summary>
+      {#each data.weather.alerts as alert (alert.id)}
+        <p>Forecast minimum: {alert.payload.minC} °C. Applicable hardiness: {alert.payload.thresholdC} °C.</p>
+        <p>Hardiness source: {alert.payload.hardiness?.source.replaceAll('_', ' ')} · {alert.payload.hardiness?.value} °C{#if alert.payload.hardiness?.ruleId} · {alert.payload.hardiness.ruleId}{/if}{#if alert.payload.potRuleId} · {alert.payload.potRuleId}{/if}</p>
+        {#if alert.payload.hardiness?.ruleId === 'hardiness.usda_uncertain@1'}<p>USDA zone conversion is uncertain. Perenual does not name its hardiness scale.</p>{/if}
+      {/each}
+    </details>
+  {/if}
   <p>Starting estimates, not a substitute for checking the plant. Month factors use the northern hemisphere and the anchor date.</p>
   {#each taskTypes as taskType}
     <details>

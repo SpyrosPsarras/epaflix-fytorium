@@ -8,8 +8,10 @@ vi.mock('../../src/lib/server/db', () => ({ db: () => ({ connect: async () => ({
 vi.mock('../../src/lib/server/plants', () => ({ getPlant: async () => ({}), isUuid: () => true }));
 vi.mock('../../src/lib/server/photo-storage', () => ({ storePhoto: faults.storePhoto, removePhotos: faults.removePhotos }));
 vi.mock('../../src/lib/server/config', () => ({ config: () => ({ householdTimezone: 'Europe/Oslo' }) }));
-vi.mock('../../src/lib/server/clock', () => ({ now: () => new Date('2026-10-25T12:00:00Z') }));
-vi.mock('../../src/lib/server/tasks', () => ({ calendarDate: () => '2026-10-25' }));
+vi.mock('../../src/lib/server/clock', async importOriginal => ({
+  ...await importOriginal<typeof import('../../src/lib/server/clock')>(),
+  now: () => new Date('2026-10-25T12:00:00Z'),
+}));
 afterEach(() => vi.restoreAllMocks());
 
 for (const cleanupFails of [false, true]) {

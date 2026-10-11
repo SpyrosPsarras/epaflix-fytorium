@@ -1,0 +1,27 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPath": "/species/match",
+    "queryParameters": {
+      "name": {
+        "matches": "Testoria weather [0-9]+"
+      }
+    },
+    "headers": {
+      "Host": {
+        "matches": "gbif(:[0-9]+)?"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"usageKey\":{{regexExtract request.query.name '[0-9]+'}},\"scientificName\":\"{{request.query.name}} Inventor\",\"canonicalName\":\"{{request.query.name}}\",\"rank\":\"SPECIES\",\"kingdom\":\"Plantae\",\"matchType\":\"EXACT\",\"confidence\":99}",
+    "transformers": [
+      "response-template"
+    ]
+  }
+}

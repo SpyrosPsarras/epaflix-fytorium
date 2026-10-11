@@ -1,3 +1,4 @@
+import { weatherReport } from '$lib/server/weather/cache';
 import { error } from '@sveltejs/kit';
 import type { TaskList } from '$lib/tasks';
 import type { PageServerLoad } from './$types';
@@ -8,5 +9,5 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
   const { count } = await response.json() as { count: number };
   const tasks = await fetch('/api/tasks?view=today');
   if (!tasks.ok) error(tasks.status, 'Could not load today’s tasks');
-  return { identity: locals.identity, plantCount: count, tasks: await tasks.json() as TaskList };
+  return { identity: locals.identity, plantCount: count, weather: await weatherReport(locals.identity.household.id), tasks: await tasks.json() as TaskList };
 };

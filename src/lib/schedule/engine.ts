@@ -1,6 +1,6 @@
 import type { SiteInput } from '../sites';
 import type { PlantInput } from '../plants';
-import { taskRules, taskTypes, type TaskType, type FactorInput } from './rules';
+import { wateringWeatherRules, taskRules, taskTypes, type TaskType, type FactorInput } from './rules';
 export { taskTypes, type TaskType } from './rules';
 
 export type CareField = { value: unknown; source: 'override' | 'perenual' | 'open_plantbook' | 'rule' | 'unknown'; ruleId?: string; fetchedAt?: string | null };
@@ -55,6 +55,16 @@ function intervalFor(input: ScheduleInput, type: TaskType) {
     interval *= factor;
     basedOn.push({ input: 'month', value: month, source: 'rule', ruleId: rules.monthFactors.ruleId, factor, adjustment: rules.monthFactors.reason });
   }
+  if (type === 'water' && input.site.location === 'outdoor') {
+    for (const rule of wateringWeatherRules) {
+      const value = input.weather?.[rule.field];
+      const known = typeof value === 'number' && Number.isFinite(value);
+      const factor = known ? rule.factor(value) : 1;
+      interval *= factor;
+      basedOn.push({ input: `weather.${rule.field}`, value: known ? value : 'not set', source: 'weather', ruleId: rule.ruleId,
+        factor, fetchedAt: typeof input.weather?.fetchedAt === 'string' ? input.weather.fetchedAt : null, adjustment: known ? rule.reason : 'not set; no adjustment' });
+    }
+  }
   let intervalDays = Math.max(rules.minDays, Math.min(rules.maxDays, Math.round(interval)));
   const override = input.customIntervals[type];
   const validOverride = typeof override === 'number' && Number.isInteger(override) && override >= 1 && override <= 365;
@@ -72,7 +82,7 @@ export function schedule(input: ScheduleInput): Record<TaskType, Task> {
     const applicability = rules.applicability?.(input);
     if (applicability) basedOn.push(...applicability.basedOn);
     basedOn.push({ input: 'weather', value: input.weather ?? 'not set', source: 'weather',
-      adjustment: input.weather ? 'Weather snapshot supplied; weather adjustments arrive in the weather module.' : 'not set; no adjustment' });
+      adjustment: input.weather && input.site.location === 'outdoor' ? 'Household weather snapshot; outdoor watering uses temperature and daylight.' : 'not set; no adjustment' });
     if (applicability && !applicability.applicable) return [taskType, { status: 'not_applicable', basedOn }];
     const completion = input.history[taskType]?.lastCompletedOn;
     const anchor = completion ?? input.addedOn;
