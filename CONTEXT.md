@@ -32,10 +32,20 @@ Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabri
 Plant size is `small`, `medium`, `large` or `very_large`. Growth stage is `seedling`, `young` or `mature`. Window distance in cm is a positive whole number or unknown. Grow light, near AC and near heater are booleans. Fertilizer type is `liquid`, `sticks` or `slow_release`.
 
 **Species**:
-A botanical taxon at species rank or below, in kingdom Plantae. Its **GBIF key** is the backbone `usageKey`, or the `acceptedUsageKey` for a synonym. Scientific name includes the taxonomic authorship; canonical name omits it. Multiple plants share one species row. Common names and the multilingual name index arrive in #11.
+A botanical taxon at species rank or below, in kingdom Plantae. Its **GBIF key** is the backbone `usageKey`, or the `acceptedUsageKey` for a synonym. Scientific name includes the taxonomic authorship; canonical name omits it. Multiple plants share one species. Its common names belong to the shared name index.
+
+**Name index**:
+The instance-wide collection of species names, each tied to a GBIF key, language and name source.
+
+**Vernacular name**:
+A common name for a species in English, Norwegian or Greek. Different species can share a vernacular name.
+_Avoid_: Localized name
+
+**Name source**:
+The origin of a species name: GBIF, Wikidata, NorTaxa or the owner. Owner names remain when external names change.
 
 **Match confirmation**:
-A stored species-rank scientific or canonical name matching the whole trimmed query, ignoring case, needs no confirmation. Local partial hits require confirmation and carry no match type or confidence. An EXACT species-rank GBIF match with confidence at least 90 needs no confirmation. Fuzzy, higher-rank match types, lower confidence, lower taxon ranks and alternatives require explicit confirmation of the chosen key. NONE, genus-or-higher taxa and nonplants are refused. The server keeps the candidates for five minutes, scoped to the household, and checks them when adding a plant. Names and confidence sent by the client are not authoritative.
+A vernacular-name hit needs confirmation unless the whole query matches exactly one species-rank taxon, ignoring case and accents. A stored species-rank scientific or canonical name matching the whole trimmed query, ignoring case, needs no confirmation. Local partial hits require confirmation and carry no match type or confidence. An EXACT species-rank GBIF match with confidence at least 90 needs no confirmation. Fuzzy, higher-rank match types, lower confidence, lower taxon ranks and alternatives require explicit confirmation of the chosen key. NONE, genus-or-higher taxa and nonplants are refused. The server keeps the candidates for five minutes, scoped to the household, and checks them when adding a plant. Names and confidence sent by the client are not authoritative.
 
 **Care profile**:
 The effective care values for a species, with a source for each value. Owner overrides take priority over Perenual, Open Plantbook and Fytorium rules.

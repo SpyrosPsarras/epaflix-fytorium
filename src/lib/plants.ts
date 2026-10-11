@@ -27,5 +27,6 @@ export type Plant = PlantInput & {
 export type Candidate = {
   gbif_key: number; scientific_name: string; canonical_name: string; rank: string;
   match_type: string | null; confidence: number | null; requires_confirmation: boolean;
+  matched_name?: string; matched_language?: import('./names').NameLanguage;
 };
 export type SpeciesSearch = { search_id: string; candidates: Candidate[] };

@@ -24,7 +24,7 @@ test('species care arrives after add, then an override reaches the card and Base
     await page.getByRole('button', { name: 'Save plant', exact: true }).click();
     await expect(page).toHaveURL(/\/plants\/[0-9a-f-]+$/);
     const plant = { id: page.url().split('/').pop()! };
-    await page.getByRole('link', { name: 'Species care card', exact: true }).click();
+    await page.getByRole('link', { name: 'Species care and names', exact: true }).click();
     const water = page.getByRole('article', { name: 'Watering interval in days', exact: true });
     await expect(water).toContainText('Source: rule');
     await expect(water.locator('.value')).toHaveText('7');
@@ -39,7 +39,7 @@ test('species care arrives after add, then an override reaches the card and Base
     await perenualBasis.getByText('Water', { exact: true }).click();
     await expect(perenualBasis).toContainText('Source: perenual');
     await expect(page.getByText('Every 9 days', { exact: true })).toBeVisible();
-    await page.getByRole('link', { name: 'Species care card', exact: true }).click();
+    await page.getByRole('link', { name: 'Species care and names', exact: true }).click();
     await water.getByText('Override watering interval in days', { exact: true }).click();
     await water.getByLabel('Override value for watering interval in days', { exact: true }).fill('20');
     await water.getByRole('button', { name: 'Save override', exact: true }).click();

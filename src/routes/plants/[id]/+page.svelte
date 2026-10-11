@@ -30,7 +30,7 @@
 <section>
   <h2>Species and site</h2>
   <p>{data.plant.scientific_name}</p>
-  <p><a href={'/species/' + data.plant.gbif_key}>Species care card</a></p>
+  <p><a href={'/species/' + data.plant.gbif_key}>Species care and names</a></p>
   <p>{data.plant.canonical_name} · {data.plant.rank.toLowerCase()}</p>
   <p>GBIF key: <a href={'https://www.gbif.org/species/' + data.plant.gbif_key}>{data.plant.gbif_key}</a></p>
   <p>Species data from GBIF, CC BY 4.0</p>

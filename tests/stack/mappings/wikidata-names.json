@@ -1,0 +1,124 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/w/api.php",
+        "headers": {
+          "Host": {
+            "matches": "wikidata(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "action": {
+            "equalTo": "query"
+          },
+          "srsearch": {
+            "equalTo": "haswbstatement:P846=910001"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "query": {
+            "search": [
+              {
+                "title": "Q910001",
+                "ns": 0,
+                "pageid": 910001
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/w/api.php",
+        "headers": {
+          "Host": {
+            "matches": "wikidata(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "action": {
+            "equalTo": "wbgetentities"
+          },
+          "ids": {
+            "equalTo": "Q910001"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "entities": {
+            "Q910001": {
+              "id": "Q910001",
+              "labels": {
+                "en": {
+                  "language": "en",
+                  "value": "Trial Wikileaf"
+                },
+                "nb": {
+                  "language": "nb",
+                  "value": "Prøveblad"
+                },
+                "el": {
+                  "language": "el",
+                  "value": "Δοκιμόφυτο"
+                }
+              },
+              "aliases": {
+                "el": [
+                  {
+                    "language": "el",
+                    "value": "Δοκιμαστικό φύλλο"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "request": {
+        "method": "GET",
+        "urlPath": "/w/api.php",
+        "headers": {
+          "Host": {
+            "matches": "wikidata(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "action": {
+            "equalTo": "query"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "query": {
+            "search": []
+          }
+        }
+      }
+    }
+  ]
+}

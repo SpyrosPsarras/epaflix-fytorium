@@ -1,10 +1,14 @@
 import type { Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
 import { startCareWorker } from '$lib/server/care/worker';
+import { startNameWorker } from '$lib/server/names';
 import { identity } from '$lib/server/auth';
 import { requests, duration } from '$lib/server/metrics';
 
-if (!building) startCareWorker();
+if (!building) {
+  startCareWorker();
+  startNameWorker();
+}
 
 export const handle: Handle = async ({ event, resolve }) => {
   const start = performance.now();
