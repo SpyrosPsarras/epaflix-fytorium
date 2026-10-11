@@ -18,7 +18,7 @@ services:
       NTFY_URL: http://ntfy:80
       PERENUAL_BASE_URL: ${PERENUAL_BASE_URL:-http://perenual:8080}
       PLANTNET_BASE_URL: ${PLANTNET_BASE_URL:-http://plantnet:8080}
-      PERENUAL_API_KEY: "${PERENUAL_API_KEY:-}"
+      PERENUAL_API_KEY: "${PERENUAL_API_KEY:-synthetic-perenual}"
       PLANTNET_API_KEY: "${PLANTNET_API_KEY:-}"
       OPEN_PLANTBOOK_BASE_URL: http://open-plantbook:8080
       GBIF_BASE_URL: http://gbif:8080

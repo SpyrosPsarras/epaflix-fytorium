@@ -14,6 +14,11 @@ export type FactorRule = { [G in 'site' | 'pot' | 'plant']: {
 }[keyof ScheduleInput[G]] }['site' | 'pot' | 'plant'];
 type IntervalRule = CareField & { value: number; reason: string };
 const intervalRule = (value: number, ruleId: string, reason: string): IntervalRule => ({ value, source: 'rule', ruleId, reason });
+export const careRuleDefaults = {
+  wateringIntervalDays: intervalRule(7, 'water.default@1', 'Weekly watering is the starting estimate when species data is missing.'),
+  humidityNeed: { value: 'medium', source: 'rule', ruleId: 'mist.humidity_need@1' },
+  pruningMonths: { value: [3], source: 'rule', ruleId: 'cut_back.pruning_months@1' },
+} satisfies Record<string, CareField>;
 type Anchor = 'added_date' | 'added_plus_interval' | ((input: ScheduleInput, completion: string | undefined) => { dueOn: string; basedOn: BasedOn[] });
 // Northern hemisphere: slower winter growth and evaporation, neutral May–September.
 export const wateringMonthFactors = [1.5, 1.5, 1.25, 1.1, 1, 1, 1, 1, 1, 1.1, 1.25, 1.5] as const;
@@ -28,22 +33,22 @@ export type TaskRules = {
 function pruningAnchor(input: ScheduleInput, completion: string | undefined) {
   const supplied = input.careProfile.pruningMonths;
   const months = Array.isArray(supplied?.value) ? supplied.value.filter((month): month is number => Number.isInteger(month) && month >= 1 && month <= 12).sort((a, b) => a - b) : [];
-  const effective = months.length ? months : [3];
+  const effective = months.length ? months : careRuleDefaults.pruningMonths.value;
   const year = Number((completion ?? input.addedOn).slice(0, 4)) + (completion ? 1 : 0);
   const candidates = effective.map(month => `${year}-${String(month).padStart(2, '0')}-01`);
   const dueOn = completion ? candidates[0] : candidates.find(date => date >= input.addedOn) ?? `${year + 1}-${String(effective[0]).padStart(2, '0')}-01`;
   return { dueOn, basedOn: [{ input: 'pruningMonths', value: effective, source: months.length ? supplied.source : 'rule',
-    ruleId: months.length ? supplied.ruleId : 'cut_back.pruning_months@1', adjustment: 'First pruning month on or after addition; after completion, first pruning month of the next year.' } satisfies BasedOn] };
+    ruleId: months.length ? supplied.ruleId : careRuleDefaults.pruningMonths.ruleId, fetchedAt: months.length ? supplied.fetchedAt : null, adjustment: 'First pruning month on or after addition; after completion, first pruning month of the next year.' } satisfies BasedOn] };
 }
 
 function mistApplicability(input: ScheduleInput) {
-  const need = input.careProfile.humidityNeed ?? { value: 'medium', source: 'rule', ruleId: 'mist.humidity_need@1' };
-  const conditions: { input: string; value: unknown; source: BasedOn['source']; applies: boolean; reason: string; ruleId?: string }[] = [
+  const need = input.careProfile.humidityNeed ?? careRuleDefaults.humidityNeed;
+  const conditions: { input: string; value: unknown; source: BasedOn['source']; applies: boolean; reason: string; ruleId?: string; fetchedAt?: string | null }[] = [
     { input: 'household.misting_enabled', value: input.household?.misting_enabled ?? true, source: 'setting', applies: input.household?.misting_enabled !== false, reason: 'Household misting is disabled.' },
     { input: 'plant.misting_enabled', value: input.plant.misting_enabled ?? true, source: 'setting', applies: input.plant.misting_enabled !== false, reason: 'Plant misting is disabled.' },
     { input: 'site.location', value: input.site.location ?? 'not set', source: 'rule', ruleId: 'mist.applicability@1', applies: input.site.location === 'indoor', reason: 'Misting is only for indoor plants.' },
     { input: 'site.humidity', value: input.site.humidity ?? 'not set', source: 'rule', ruleId: 'mist.applicability@1', applies: input.site.humidity === 'dry' || input.site.humidity === 'normal', reason: 'Misting requires dry or normal site humidity.' },
-    { input: 'humidityNeed', value: need.value, source: need.source, ruleId: need.ruleId, applies: need.value === 'medium' || need.value === 'high', reason: 'This humidity need does not call for misting.' },
+    { input: 'humidityNeed', value: need.value, source: need.source, ruleId: need.ruleId, fetchedAt: need.fetchedAt, applies: need.value === 'medium' || need.value === 'high', reason: 'This humidity need does not call for misting.' },
   ];
   return { applicable: conditions.every(condition => condition.applies), basedOn: conditions.map(({ applies, reason, ...basis }) => ({
     ...basis, adjustment: applies ? 'Misting condition met; no interval adjustment.' : reason,
@@ -52,8 +57,7 @@ function mistApplicability(input: ScheduleInput) {
 export const taskRules: Record<TaskType, TaskRules> = {
   water: {
     label: 'Water', action: 'watering', profileField: 'wateringIntervalDays', minDays: 1, maxDays: 60, monthFactors: { values: wateringMonthFactors, ruleId: 'water.month@1', reason: 'Northern-hemisphere winter months stretch watering intervals.' }, anchor: 'added_date',
-    defaultInterval: { value: 7, source: 'rule', ruleId: 'water.default@1',
-      reason: 'Weekly watering is the starting estimate when species data is missing.' },
+    defaultInterval: careRuleDefaults.wateringIntervalDays,
     factors: [
       { input: { group: 'site', field: 'light' }, ruleId: 'water.light@1', factors: { full_shade: 1.4, part_shade: 1.2, part_sun: 1, full_sun: .7 }, reason: 'More sunlight increases evaporation and water use.' },
       { input: { group: 'site', field: 'humidity' }, ruleId: 'water.humidity@1', factors: { dry: .75, normal: 1, humid: 1.25 }, reason: 'Dry air speeds transpiration; humid air slows it.' },

@@ -3,7 +3,7 @@ import type { PlantInput } from '../plants';
 import { taskRules, taskTypes, type TaskType, type FactorInput } from './rules';
 export { taskTypes, type TaskType } from './rules';
 
-export type CareField = { value: unknown; source: 'override' | 'perenual' | 'open_plantbook' | 'rule'; ruleId?: string };
+export type CareField = { value: unknown; source: 'override' | 'perenual' | 'open_plantbook' | 'rule' | 'unknown'; ruleId?: string; fetchedAt?: string | null };
 export type BasedOn = Omit<CareField, 'source'> & { source: CareField['source'] | 'history' | 'setting' | 'weather'; input: string; adjustment: string; factor?: number };
 export type Task = { status: 'due'; dueOn: string; intervalDays: number; lateDays: number; basedOn: BasedOn[] }
   | { status: 'not_applicable'; basedOn: BasedOn[] };

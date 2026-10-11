@@ -16,7 +16,7 @@ case "${1:-}" in
     export PERENUAL_API_KEY="${VAULT_PASSWORD:?Vault runner did not provide the Perenual key}"
     unset VAULT_PASSWORD
     export PLANTNET_BASE_URL=https://my-api.plantnet.org/v2/
-    export PERENUAL_BASE_URL=https://perenual.com/api/
+    export PERENUAL_BASE_URL=https://perenual.com/
     exec ./scripts/stack up
     ;;
   *) echo 'Usage: ./scripts/stack-real-apis' >&2; exit 2 ;;

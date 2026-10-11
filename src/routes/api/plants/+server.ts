@@ -3,6 +3,7 @@ import { db } from '$lib/server/db';
 import { now } from '$lib/server/clock';
 import { plantFields, plantSelect, readPlant, getPlant, writeError } from '$lib/server/plants';
 import { chosenSpecies } from '$lib/server/species';
+import { enqueueCareFetch } from '$lib/server/care/catalogue';
 import { checkOrigin } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 
@@ -32,6 +33,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       'INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (gbif_key) DO UPDATE SET scientific_name = EXCLUDED.scientific_name, canonical_name = EXCLUDED.canonical_name, rank = EXCLUDED.rank, fetched_at = EXCLUDED.fetched_at',
       [species.gbif_key, species.scientific_name, species.canonical_name, species.rank, now()],
     );
+    await enqueueCareFetch(client, species.gbif_key);
     const fields = ['household_id', 'gbif_key', 'attributes_as_of', 'created_at', ...plantFields];
     const values = [household, species.gbif_key, now().toISOString().slice(0, 10), now(), ...plantFields.map(field => input[field])];
     const result = await client.query('INSERT INTO plants (' + fields.join(', ') + ') VALUES (' + values.map((_, i) => '$' + (i + 1)).join(', ') + ') RETURNING id', values);
