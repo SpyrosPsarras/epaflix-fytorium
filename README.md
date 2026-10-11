@@ -91,6 +91,16 @@ The plant page offers **Handle all tasks**. One request and one transaction comp
 
 New HTTP commands are `POST /api/plants/:id/tasks/:taskType/snooze`, `POST /api/plants/:id/tasks/:taskType/skip` and `POST /api/plants/:id/tasks/complete-all`, each with a UUID `request_id`. Single-task commands return an event and task; complete-all returns events and the recomputed schedule. `POST /api/plants/:id/repot` takes `request_id`, `pot_type`, `pot_size_cm` and `soil_type`. Retry with the same UUID and payload; reuse for a different action returns 409. Replaying an undone action does not redo it. `GET /api/tasks?view=upcoming` returns day sections as well as task-type groups. `GET/PUT /api/tasks/settings` reads or saves `{"sort":"task","filter":"all","show_completed":false}`. Every endpoint requires a household session and writes refuse cross-origin requests.
 
+## Custom tasks
+
+Plant settings and the site page each have a Custom tasks section for adding, renaming, changing intervals and deleting tasks. Names are trimmed and limited to 1–60 characters; intervals are whole days from 1–365. A site task applies to every active plant currently there, including plants added later, with separate care history for each plant. Moving off the site stops that task; graveyard plants have none.
+
+First due date is the later of plant addition and task creation, plus the interval. The pure engine returns customTasks keyed by ID alongside built-in task keys, through the same generic anchoring and history step. Custom tasks appear by name in Today, Upcoming and the plant page, under all sort/filter settings and Show completed. Done, Snooze 2 days, Skip and Undo use the existing careAction path. Handle all tasks includes due custom tasks in its existing per-plant batch. There is no whole-site completion button.
+
+GET /api/custom-tasks?plant_id=:id or ?site_id=:id lists that target's tasks. POST /api/custom-tasks takes name, interval_days and exactly one of plant_id or site_id. GET, PUT and DELETE /api/custom-tasks/:id read, edit or delete one task. PUT takes name and interval_days; its target cannot change. The plant tasks endpoint adds a customTasks record. Use the custom task UUID instead of a built-in task type in /api/plants/:id/tasks/:task/complete, snooze or skip. All endpoints require a household session; foreign targets return 404 and writes reject foreign origins.
+
+Deletion is soft. The definition and its current name remain for care history, while reminders disappear everywhere. Renaming changes the label in past history too. Database triggers validate same-household targets and retire tasks when a plant or site is deleted, retaining the target UUID so graveyard care history survives site deletion. Full plant deletion still removes that plant's care events. Migration 20261012180000 adds custom task identity without changing the built-in task_type CHECK.
+
 ## Photos and journal
 
 On a plant page, add a photo update with a note, optional health and a taken date. The file input supports the phone camera. Choose **Use as cover** on an update, or open **View all updates** to browse that plant's photos. **Journal** on Home shows all plants' updates by taken date then creation time, newest first. Plant settings also allow setting or clearing health. The health precedence rule and equal-date behavior are in CONTEXT.md.

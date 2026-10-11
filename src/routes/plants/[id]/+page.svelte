@@ -6,6 +6,7 @@
   import { healthLabel } from '$lib/photos';
   import { plantLabels, plantBooleans, plantNumbers, plantChoices } from '$lib/plants';
   import { taskTypes } from '$lib/schedule/engine';
+  import { taskPresentation } from '$lib/tasks';
   import { taskRules } from '$lib/schedule/rules';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
@@ -91,6 +92,17 @@
     {:else}<p>{title} is not applicable.</p>{/if}
   </section>
 {/each}
+{#each Object.values(data.tasks.customTasks) as task (task.custom_task_id)}
+  <section aria-label={task.name}>
+    <h2>{task.name}</h2>
+    {#if task.status === 'due'}
+      <p>Next {task.name}: {task.dueOn}</p>
+      <p>Every {task.intervalDays} days</p>
+      {#if task.lateDays > 0}<p>{task.lateDays}d late</p>{/if}
+    {/if}
+    <details><summary>Based on</summary>{#each task.basedOn as basis}<p>{basis.adjustment} · {showValue(basis.value)} · Source: {basis.source}</p>{/each}</details>
+  </section>
+{/each}
 <section aria-labelledby="based-on-title">
   <h2 id="based-on-title">Based on</h2>
   <p>Starting estimates, not a substitute for checking the plant. Month factors use the northern hemisphere and the anchor date.</p>
@@ -120,7 +132,7 @@
   <ul>
     {#each data.history as event (event.id)}
       <li class:undone={event.undone_at}>
-        <time datetime={event.occurred_on}>{event.occurred_on}</time> · {taskRules[event.task_type].label}
+        <time datetime={event.occurred_on}>{event.occurred_on}</time> · {taskPresentation(event).label}
         <p>{event.kind === 'snoozed' ? 'Snoozed' : event.kind === 'skipped' ? 'Skipped' : 'Completed'} by {event.by_name}{#if event.undone_at}{' · Undone'}{/if}</p>
         {#if event.batch_id}<p>Part of a Handle all tasks action.</p>{/if}
         {#if !event.undone_at && data.plant.status === 'active'}<button disabled={busy} onclick={() => undoEvent(event.id)}>Undo</button>{/if}

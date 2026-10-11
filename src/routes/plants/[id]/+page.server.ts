@@ -3,8 +3,7 @@ import { photoToday } from '$lib/server/photos';
 import type { PhotoUpdate } from '$lib/photos';
 import type { PlantSpeciesChange } from '$lib/plants';
 import type { ListedSite } from '$lib/sites';
-import type { CareEvent } from '$lib/tasks';
-import type { Task, TaskType } from '$lib/schedule/engine';
+import type { CareEvent, PlantSchedule } from '$lib/tasks';
 import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ fetch, params, parent }) => {
   const { plant } = await parent();
@@ -21,5 +20,5 @@ export const load: PageServerLoad = async ({ fetch, params, parent }) => {
   if (!history.ok) error(history.status, 'Could not load care history');
   if (!photos.ok) error(photos.status, 'Could not load photo updates');
   if (!changes.ok) error(changes.status, 'Could not load species history');
-  return { sites, speciesChanges: await changes.json() as PlantSpeciesChange[], tasks: await tasks.json() as Record<TaskType, Task>, history: await history.json() as CareEvent[], updates: await photos.json() as PhotoUpdate[], photoToday: photoToday() };
+  return { sites, speciesChanges: await changes.json() as PlantSpeciesChange[], tasks: await tasks.json() as PlantSchedule, history: await history.json() as CareEvent[], updates: await photos.json() as PhotoUpdate[], photoToday: photoToday() };
 };

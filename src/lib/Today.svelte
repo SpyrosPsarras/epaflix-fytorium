@@ -1,8 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import type { CareEvent, ListedTask, TaskList } from '$lib/tasks';
+  import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
   import type { Task } from '$lib/schedule/engine';
-  import { taskRules } from '$lib/schedule/rules';
   let { list }: { list: TaskList } = $props();
   let handled = $state<Record<string, { event: CareEvent; task: Task }>>({});
   let restored = $state<Record<string, Task>>({});
@@ -13,18 +12,18 @@
   let saving = $state(false);
   const title = $derived(list.view === 'upcoming' ? 'Upcoming' : 'Today');
   function actionFor(row: ListedTask) {
-    const id = row.plant_id + ':' + row.task_type;
+    const id = row.plant_id + ':' + taskKey(row);
     return handled[id] ?? (!restored[id] && row.completed_event ? { event: row.completed_event, task: row } : undefined);
   }
   async function act(row: ListedTask, action: 'complete' | 'snooze' | 'skip' | 'undo') {
-    const id = row.plant_id + ':' + row.task_type;
+    const id = row.plant_id + ':' + taskKey(row);
     const done = actionFor(row);
     const key = id + ':' + action;
     busy[id] = true;
     message = '';
     requestIds[key] ??= crypto.randomUUID();
     try {
-      const response = await fetch(action === 'undo' && done ? '/api/care-events/' + done.event.id + '/undo' : '/api/plants/' + row.plant_id + '/tasks/' + row.task_type + '/' + action, {
+      const response = await fetch(action === 'undo' && done ? '/api/care-events/' + done.event.id + '/undo' : '/api/plants/' + row.plant_id + '/tasks/' + taskKey(row) + '/' + action, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: action === 'undo' ? undefined : JSON.stringify({ request_id: requestIds[key] }),
       });
@@ -70,12 +69,12 @@
   {#each list.sections as section (section.key)}
     <h3>{section.label}</h3>
     {#if section.tasks.length === 0}<p>No tasks due today.</p>{/if}
-    {#each section.tasks as row (row.plant_id + ':' + row.task_type)}
-      {@const rules = taskRules[row.task_type]}
-      {@const id = row.plant_id + ':' + row.task_type}
+    {#each section.tasks as row (row.plant_id + ':' + taskKey(row))}
+      {@const rules = taskPresentation(row)}
+      {@const id = row.plant_id + ':' + taskKey(row)}
       {@const done = actionFor(row)}
       {@const task = done?.task ?? restored[id] ?? row}
-      <article data-task-type={row.task_type} aria-label={rules.label + ' for ' + row.plant_name}>
+      <article data-task-type={taskKey(row)} aria-label={rules.label + ' for ' + row.plant_name}>
         <div>
           <a href={'/plants/' + row.plant_id}>{row.plant_name}</a>
           <p>{rules.label} · {row.site_name}</p>

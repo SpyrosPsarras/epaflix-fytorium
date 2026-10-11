@@ -51,7 +51,7 @@ A vernacular-name hit needs confirmation unless the whole query matches exactly 
 The effective care values for a species, with a source for each value. Owner overrides take priority over Perenual, Open Plantbook and Fytorium rules.
 
 **Task**:
-A care action for a plant or site. Task types are `water`, `fertilize`, `mist`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Mist, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by type.
+A care action for a plant or site. Built-in task types are `water`, `fertilize`, `mist`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Mist, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by type.
 
 **Due date**:
 A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Other interval tasks are first due on added date plus interval. Otherwise tasks are due on the last effective completion date plus the current interval. Seasonal cut-back uses pruning months instead. Reads recompute due dates; no command stores or edits them. Anchors have source `history` in Based on.
@@ -81,7 +81,7 @@ Whole days from 1–365, stored per plant and task type in the plant's household
 Both the plant and household have `misting_enabled`, default true. Both must be on for misting to apply. Turning the household switch off preserves each plant's setting. All members can edit household settings until role enforcement arrives in #16.
 
 **Care event**:
-A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable task type. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
+A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable built-in or custom task. Exactly one of task_type or custom_task_id identifies its target. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
 
 **Undo**:
 Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked. Already-undone events and events from another household are refused.
@@ -167,3 +167,16 @@ One care action completing exactly a plant's due and late tasks today, never upc
 
 **Repot flow**:
 A repot completion together with new pot type, pot size and soil type. Undo restores the previous pot data and schedule; multiple repot flows must be undone newest first.
+
+## Custom tasks
+
+**Custom task**:
+A household task with a trimmed name of 1–60 characters and a fixed interval of 1–365 whole days. It targets exactly one plant or site. The pure engine accepts customTasks with id, intervalDays and createdOn, and returns customTasks keyed by ID alongside the unchanged built-in task record. All tasks share the engine's anchoring and history step. First due date is max(plant added date, task created date) plus interval. Completion uses the completion date plus the current interval. Name and interval edits take effect on the next read.
+
+**Plant task**:
+A custom task belonging to one plant. Moving the plant to another site does not change it. A graveyard plant has no tasks; restoring it resumes scheduling from its retained history.
+
+**Site task**:
+A custom task applied on read to every active plant currently on its site, including later additions. Each plant has independent completion, snooze, skip and undo history. Moving off the site or into the graveyard stops that instance. There is no separate whole-site completion action. Handle all tasks includes due custom tasks for one plant in its existing undoable batch.
+
+Deleting a custom task sets deleted_at. Its definition and current name stay available to care history, but it disappears from schedules, Today, Upcoming and settings. Renaming also changes its historical display name. Target deletion retires custom tasks without discarding their definitions. Database triggers validate and lock the same-household target on creation or target changes, then retain the target UUID after retirement. This lets deleting a site keep custom history for its graveyard plants. Full plant deletion still cascades its care events.

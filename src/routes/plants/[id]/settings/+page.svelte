@@ -1,5 +1,6 @@
 <script lang="ts">
   import PlantForm from '$lib/PlantForm.svelte';
+  import CustomTaskSettings from '$lib/CustomTaskSettings.svelte';
   import { goto } from '$app/navigation';
   import { taskTypes, type TaskType } from '$lib/schedule/engine';
   import { taskRules } from '$lib/schedule/rules';
@@ -90,6 +91,7 @@
     <button disabled={busy}>{busy ? 'Saving…' : 'Save care settings'}</button>
   </form>
 </section>
+<CustomTaskSettings tasks={data.customTasks} plantId={data.plant.id} />
 {#key data.plant.id}<PlantForm plant={data.plant} sites={data.sites} />{/key}
 <style>
   section { background: white; border-radius: .75rem; padding: 1rem; margin: 1rem 0; }
