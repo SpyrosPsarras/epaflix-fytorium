@@ -16,11 +16,12 @@ test('sees late watering, completes, undoes and checks the member history on a p
     await page.goto('/sites/new');
     await page.getByLabel('Name', { exact: true }).fill(siteName);
     await page.getByRole('button', { name: 'Save site', exact: true }).click();
+    await expect(page).toHaveURL('/sites');
     await addPlantForSite(page.request, siteName, name);
     expect((await page.request.post('/__test/clock', { data: { action: 'set', at: '2026-10-28T12:00:00Z' } })).ok()).toBe(true);
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible();
-    const row = page.getByRole('article').filter({ has: page.getByRole('link', { name, exact: true }) });
+    const row = page.locator('article[data-task-type="water"]').filter({ has: page.getByRole('link', { name, exact: true }) });
     await expect(row).toContainText(siteName);
     await expect(row).toContainText('3d late');
     await screenshot('watering-today-late.png');

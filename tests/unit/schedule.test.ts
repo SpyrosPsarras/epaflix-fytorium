@@ -3,7 +3,7 @@ import { schedule, type ScheduleInput } from '../../src/lib/schedule/engine';
 
 const input: ScheduleInput = {
   careProfile: {}, site: {}, pot: {}, plant: {}, history: {}, customIntervals: {},
-  today: '2026-10-11', addedOn: '2026-10-11',
+  today: '2026-05-01', addedOn: '2026-05-01',
 };
 
 test.each([
@@ -59,10 +59,10 @@ test.each(factors)('%s gives %j and a %i-day interval', (_name, change, days) =>
 });
 
 test.each([
-  ['2026-10-24', '2026-10-31', '2026-10-31', 0],
-  ['2026-10-20', '2026-10-27', '2026-10-28', 1],
-  ['2026-03-25', '2026-04-01', '2026-04-03', 2],
-  ['2026-12-28', '2027-01-04', '2027-01-01', 0],
+  ['2026-10-24', '2026-11-01', '2026-11-01', 0],
+  ['2026-10-20', '2026-10-28', '2026-10-29', 1],
+  ['2026-03-25', '2026-04-03', '2026-04-05', 2],
+  ['2026-12-28', '2027-01-08', '2027-01-01', 0],
 ] as const)('completion on %s is due on %s, late as of %s by %i calendar days', (lastCompletedOn, dueOn, today, lateDays) => {
   expect(schedule({ ...input, today, history: { water: { lastCompletedOn } } }).water).toMatchObject({ dueOn, lateDays });
 });
@@ -72,14 +72,14 @@ test('no history preserves the added date and counts lateness in calendar days',
 });
 
 test.each([
-  [undefined, 'addedOn', '2026-10-11', 'counted from the date the plant was added, 2026-10-11'],
+  [undefined, 'addedOn', '2026-05-01', 'counted from the date the plant was added, 2026-05-01'],
   ['2026-10-10', 'history.water.lastCompletedOn', '2026-10-10', 'counted from last completion on 2026-10-10'],
 ] as const)('explains the due-date anchor with completion %s', (lastCompletedOn, anchor, value, adjustment) => {
   expect(schedule({ ...input, history: { water: { lastCompletedOn } } }).water).toMatchObject({
     basedOn: expect.arrayContaining([
-      expect.objectContaining({ input: anchor, value, adjustment }),
-      expect.objectContaining({ input: 'customIntervals', value: 'not set', adjustment: 'not set; no adjustment' }),
-      expect.objectContaining({ input: 'weather', value: 'not set', adjustment: 'not set; no adjustment' }),
+      expect.objectContaining({ input: anchor, value, adjustment, source: 'history' }),
+      expect.objectContaining({ input: 'customIntervals', value: 'not set', source: 'setting', adjustment: 'not set; no adjustment' }),
+      expect.objectContaining({ input: 'weather', value: 'not set', source: 'weather', adjustment: 'not set; no adjustment' }),
     ]),
   });
 });
@@ -97,8 +97,8 @@ test('missing and unknown conditions are neutral and each is explained as not se
     light: 'unknown',
   }, pot: { pot_size_cm: null }, plant: { window_distance_cm: null } }).water;
   expect(result).toMatchObject({ intervalDays: 7 });
-  expect(result.basedOn.filter(item => item.factor !== undefined)).toHaveLength(14);
-  for (const item of result.basedOn.filter(item => item.factor !== undefined)) {
+  expect(result.basedOn.filter(item => item.factor !== undefined && item.input !== 'month')).toHaveLength(14);
+  for (const item of result.basedOn.filter(item => item.factor !== undefined && item.input !== 'month')) {
     expect(item).toMatchObject({ value: 'not set', factor: 1, adjustment: 'not set; no adjustment' });
   }
 });
@@ -114,7 +114,7 @@ test('every factor is explained, including neutral factors, without changing the
     'wateringIntervalDays', 'site.light', 'site.humidity', 'site.location', 'site.grow_light', 'site.draft',
     'pot.pot_type', 'pot.pot_size_cm', 'pot.drainage', 'plant.plant_size', 'plant.growth_stage',
     'plant.window_distance_cm', 'plant.grow_light', 'plant.near_ac', 'plant.near_heater',
-    'addedOn', 'customIntervals', 'weather',
+    'month', 'customIntervals', 'weather', 'addedOn',
   ]);
   for (const item of task.basedOn.filter(item => item.factor !== undefined)) expect(item).toMatchObject({ source: 'rule', ruleId: expect.stringMatching(/@1$/), factor: expect.any(Number), adjustment: expect.any(String) });
   expect(full).toEqual(before);
@@ -130,7 +130,7 @@ test('snooze and skip history fields are reserved and do not change watering yet
 
 test('a plant without care history is due on its added date, using a named rule', () => {
   expect(schedule(input).water).toMatchObject({
-    status: 'due', dueOn: '2026-10-11', intervalDays: 7, lateDays: 0,
+    status: 'due', dueOn: '2026-05-01', intervalDays: 7, lateDays: 0,
     basedOn: expect.arrayContaining([
       expect.objectContaining({ input: 'wateringIntervalDays', value: 7, source: 'rule', ruleId: 'water.default@1' }),
     ]),

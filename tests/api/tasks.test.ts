@@ -29,11 +29,11 @@ const undo = (eventId: string) => request('/api/care-events/' + eventId + '/undo
 
 
 test('starts due on the household added date, completes with a member and recomputes from that moment', async () => {
-  expect(await tasks()).toMatchObject({ water: { status: 'due', dueOn: '2026-10-25', lateDays: 0, intervalDays: 7 } });
+  expect(await tasks()).toMatchObject({ water: { status: 'due', dueOn: '2026-10-25', lateDays: 0, intervalDays: 8 } });
   const done = await complete();
   expect(done.status).toBe(200);
   const result = await done.json();
-  expect(result.task).toMatchObject({ dueOn: '2026-11-01', intervalDays: 7, lateDays: 0 });
+  expect(result.task).toMatchObject({ dueOn: '2026-11-02', intervalDays: 8, lateDays: 0 });
   expect(await tasks()).toMatchObject({ water: result.task });
   expect(await history()).toEqual([expect.objectContaining({ id: result.event.id, kind: 'completed', task_type: 'water', occurred_at: '2026-10-24T22:30:00.000Z', occurred_on: '2026-10-25', by_name: 'Test member', undone_at: null })]);
   expect(await (await request('/api/tasks?view=today')).json()).toMatchObject({ today: '2026-10-25', groups: { water: [] } });
@@ -43,14 +43,14 @@ test('clock advancement makes it late, and undo restores both the previous compl
   const first = (await history())[0];
   await request('/__test/clock', 'POST', { action: 'advance', milliseconds: 864000000 });
   ({ request } = await harness.login());
-  expect(await tasks()).toMatchObject({ water: { dueOn: '2026-11-01', lateDays: 2 } });
+  expect(await tasks()).toMatchObject({ water: { dueOn: '2026-11-02', lateDays: 1 } });
   const list = await (await request('/api/tasks?view=today')).json();
-  expect(list).toMatchObject({ today: '2026-11-03', groups: { water: [expect.objectContaining({ plant_id: plantId, plant_name: 'Test thirsty plant', site_name: 'Test watering room', lateDays: 2 })] } });
+  expect(list).toMatchObject({ today: '2026-11-03', groups: { water: [expect.objectContaining({ plant_id: plantId, plant_name: 'Test thirsty plant', site_name: 'Test watering room', lateDays: 1 })] } });
   const second = await (await complete()).json();
-  expect(second.task).toMatchObject({ dueOn: '2026-11-10', lateDays: 0 });
+  expect(second.task).toMatchObject({ dueOn: '2026-11-12', lateDays: 0 });
   const restored = await undo(second.event.id);
   expect(restored.status).toBe(200);
-  expect((await restored.json()).task).toMatchObject({ dueOn: '2026-11-01', lateDays: 2 });
+  expect((await restored.json()).task).toMatchObject({ dueOn: '2026-11-02', lateDays: 1 });
   expect(await history()).toEqual([expect.objectContaining({ id: second.event.id, undone_at: '2026-11-03T22:30:00.000Z', undone_by: expect.any(String), by_name: 'Test member' }), first]);
   expect((await undo(second.event.id)).status).toBe(409);
   const original = await undo(first.id);

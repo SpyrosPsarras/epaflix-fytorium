@@ -45,7 +45,7 @@ test('searches a typo, confirms, adds and edits a plant on a phone', async ({ pa
   await page.getByRole('button', { name: 'Save plant', exact: true }).click();
   await expect(page.getByRole('heading', { name: nickname, exact: true })).toBeVisible();
   await expect(page.getByText('Testoria nebulosa Inventor', { exact: true })).toBeVisible();
-  await expect(page.getByText('terracotta', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Pot and plant attributes', exact: true }).getByText('terracotta', { exact: true })).toBeVisible();
   await screenshot('plants-detail.png');
   const plantUrl = page.url();
   await page.getByRole('link', { name: 'Plants', exact: true }).click();
@@ -71,8 +71,8 @@ test('searches a typo, confirms, adds and edits a plant on a phone', async ({ pa
   await page.getByLabel('Near heater', { exact: true }).uncheck();
   await screenshot('plants-settings.png');
   await page.getByRole('button', { name: 'Save plant', exact: true }).click();
-  await expect(page.getByText('ceramic', { exact: true })).toBeVisible();
-  await expect(page.getByText('120', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Pot and plant attributes', exact: true }).getByText('ceramic', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Pot and plant attributes', exact: true }).getByText('120', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Plant settings', exact: true }).click();
   await expect(page.getByLabel('Pot type', { exact: true })).toHaveValue('ceramic');
   await expect(page.getByLabel('Near heater', { exact: true })).not.toBeChecked();

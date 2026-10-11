@@ -43,7 +43,7 @@
       {@const id = row.plant_id + ':' + row.task_type}
       {@const done = completed[id]}
       {@const task = done?.task ?? restored[id] ?? row}
-      <article>
+      <article data-task-type={row.task_type} aria-label={rules.label + ' for ' + row.plant_name}>
         <div>
           <a href={'/plants/' + row.plant_id}>{row.plant_name}</a>
           <p>{row.site_name}</p>

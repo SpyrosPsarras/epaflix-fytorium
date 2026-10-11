@@ -1,11 +1,12 @@
 import { error } from '@sveltejs/kit';
-import { schedule, taskTypes, type TaskType } from '$lib/schedule/engine';
+import { schedule, taskTypes, type TaskType, type ScheduleInput } from '$lib/schedule/engine';
 import type { CareEvent, ListedTask, TaskList } from '$lib/tasks';
 import type { Identity } from './auth';
 import { getPlant, isUuid, plantSelect } from './plants';
 import { db } from './db';
 import { config } from './config';
 import { now } from './clock';
+import { householdSettings } from './care-settings';
 
 // Intl owns time-zone and DST conversion; the engine receives calendar dates only.
 function calendarDate(at: Date | string): string {
@@ -18,24 +19,42 @@ export async function history(plantId: string, household: string): Promise<CareE
   return result.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) }));
 }
 
-async function schedulePlantTasks(plant: Awaited<ReturnType<typeof getPlant>>, household: string, today: string) {
-  const site = await db().query('SELECT * FROM sites WHERE id = $1 AND household_id = $2', [plant.site_id, household]);
-  const events = await db().query('SELECT task_type, max(occurred_at) AS last_completed FROM care_events WHERE plant_id = $1 AND household_id = $2 AND undone_at IS NULL AND kind = $3 GROUP BY task_type', [plant.id, household, 'completed']);
-  return schedule({ careProfile: {}, site: site.rows[0], pot: plant, plant,
-    history: Object.fromEntries(events.rows.map(event => [event.task_type, { lastCompletedOn: calendarDate(event.last_completed) }])),
-    customIntervals: {}, addedOn: calendarDate(plant.created_at), today });
+async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string) {
+  const plantIds = plants.map(plant => plant.id);
+  const [sites, events, intervals, settings] = await Promise.all([
+    db().query('SELECT * FROM sites WHERE id = ANY($1::uuid[]) AND household_id = $2', [plants.map(plant => plant.site_id), household]),
+    db().query('SELECT plant_id, task_type, max(occurred_at) AS last_completed FROM care_events WHERE plant_id = ANY($1::uuid[]) AND household_id = $2 AND undone_at IS NULL AND kind = $3 GROUP BY plant_id, task_type', [plantIds, household, 'completed']),
+    db().query('SELECT plant_id, task_type, interval_days FROM plant_task_intervals WHERE plant_id = ANY($1::uuid[]) AND household_id = $2', [plantIds, household]),
+    householdSettings(household),
+  ]);
+  const sitesById = new Map(sites.rows.map(site => [site.id, site]));
+  const historyByPlant: Record<string, ScheduleInput['history']> = {};
+  for (const event of events.rows) {
+    (historyByPlant[event.plant_id] ??= {})[event.task_type as TaskType] = { lastCompletedOn: calendarDate(event.last_completed) };
+  }
+  const intervalsByPlant: Record<string, ScheduleInput['customIntervals']> = {};
+  for (const interval of intervals.rows) {
+    (intervalsByPlant[interval.plant_id] ??= {})[interval.task_type as TaskType] = interval.interval_days;
+  }
+  return new Map(plants.map(plant => [plant.id, schedule({
+    careProfile: {}, site: sitesById.get(plant.site_id), pot: plant, plant, household: settings,
+    history: historyByPlant[plant.id] ?? {}, customIntervals: intervalsByPlant[plant.id] ?? {},
+    addedOn: calendarDate(plant.created_at), today,
+  })]));
 }
 
 export async function plantTasks(plantId: string, household: string) {
-  return schedulePlantTasks(await getPlant(plantId, household), household, calendarDate(now()));
+  const plant = await getPlant(plantId, household);
+  return (await schedulePlantTasks([plant], household, calendarDate(now()))).get(plant.id)!;
 }
 
 export async function todayTasks(household: string): Promise<TaskList> {
   const today = calendarDate(now());
   const plants = await db().query(plantSelect + ' WHERE p.household_id = $1 ORDER BY display_name, p.id', [household]);
   const groups = Object.fromEntries(taskTypes.map(type => [type, new Array<ListedTask>()])) as TaskList['groups'];
+  const schedules = await schedulePlantTasks(plants.rows, household, today);
   for (const plant of plants.rows) {
-    const tasks = await schedulePlantTasks(plant, household, today);
+    const tasks = schedules.get(plant.id)!;
     for (const taskType of taskTypes) {
       const task = tasks[taskType];
       if (task.status === 'due' && task.dueOn <= today) groups[taskType].push({ ...task, plant_id: plant.id, plant_name: plant.display_name, site_name: plant.site_name, task_type: taskType });

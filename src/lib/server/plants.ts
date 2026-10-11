@@ -7,7 +7,7 @@ export const plantFields = ['site_id', 'nickname', 'cultivar', 'birthday', 'pot_
 export const plantSelect = `SELECT p.id, p.household_id, p.site_id, p.gbif_key, p.nickname, p.cultivar,
   to_char(p.birthday, 'YYYY-MM-DD') AS birthday, p.created_at, p.attributes_as_of,
   p.pot_type, p.pot_size_cm, p.drainage, p.soil_type, p.plant_size, p.growth_stage,
-  p.window_distance_cm, p.grow_light, p.near_ac, p.near_heater, p.fertilizer_type,
+  p.window_distance_cm, p.grow_light, p.near_ac, p.near_heater, p.fertilizer_type, p.misting_enabled,
   s.scientific_name, s.canonical_name, s.rank, coalesce(nullif(p.nickname, ''), s.canonical_name) AS display_name, t.name AS site_name
   FROM plants p JOIN species s ON s.gbif_key = p.gbif_key JOIN sites t ON t.id = p.site_id AND t.household_id = p.household_id`;
 export function isUuid(id: string) {

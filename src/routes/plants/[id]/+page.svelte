@@ -4,6 +4,9 @@
   import { taskRules } from '$lib/schedule/rules';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
+  function showValue(value: unknown): string {
+    return typeof value === 'object' ? JSON.stringify(value) : String(value).replaceAll('_', ' ');
+  }
   const choices = Object.keys(plantChoices) as (keyof typeof plantChoices)[];
 </script>
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
@@ -22,7 +25,7 @@
 {#each taskTypes as taskType}
   {@const task = data.tasks[taskType]}
   {@const action = taskRules[taskType].action}
-  {@const title = action.charAt(0).toUpperCase() + action.slice(1)}
+  {@const title = taskRules[taskType].label}
   <section aria-labelledby={taskType + '-title'}>
     <h2 id={taskType + '-title'}>{title}</h2>
     {#if task.status === 'due'}
@@ -32,6 +35,25 @@
     {:else}<p>{title} is not applicable.</p>{/if}
   </section>
 {/each}
+<section aria-labelledby="based-on-title">
+  <h2 id="based-on-title">Based on</h2>
+  <p>Starting estimates, not a substitute for checking the plant. Month factors use the northern hemisphere and the anchor date.</p>
+  {#each taskTypes as taskType}
+    <details>
+      <summary>{taskRules[taskType].label}</summary>
+      <dl>
+        {#each data.tasks[taskType].basedOn as basis}
+          <dt>{basis.input}</dt>
+          <dd>
+            <p>{showValue(basis.value)}{#if basis.factor !== undefined} · ×{basis.factor}{/if}</p>
+            <p>{basis.adjustment}</p>
+            <p class="source">Source: {basis.source.replaceAll('_', ' ')}{#if basis.ruleId} · {basis.ruleId}{/if}</p>
+          </dd>
+        {/each}
+      </dl>
+    </details>
+  {/each}
+</section>
 <section aria-labelledby="care-history-title">
   <h2 id="care-history-title">Care history</h2>
   {#if data.history.length === 0}<p>No care events yet.</p>{/if}
@@ -44,8 +66,8 @@
     {/each}
   </ul>
 </section>
-<section>
-  <h2>Pot and plant attributes</h2>
+<section aria-labelledby="attributes-title">
+  <h2 id="attributes-title">Pot and plant attributes</h2>
   <dl>
     {#each choices as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field].replaceAll('_', ' ')}</dd>{/each}
     {#each plantNumbers as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field] ?? 'Not set'}</dd>{/each}
@@ -61,5 +83,8 @@
   ul { padding-left: 1.25rem; }
   li { margin: .75rem 0; }
   li p { margin: .25rem 0; }
-  .undone { color: #57534e; }
+  .undone, .source { color: #57534e; }
+  summary { cursor: pointer; font-weight: 600; padding: .75rem 0; }
+  dd p { margin: .25rem 0; }
+  details { border-top: 1px solid #e7e5e4; }
 </style>
