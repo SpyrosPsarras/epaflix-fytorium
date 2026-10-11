@@ -176,7 +176,32 @@ Care tasks grouped by household calendar day for fourteen days including today, 
 A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show today's completed tasks with Undo. The choice belongs to the member across sessions, not the device.
 
 **Handle all tasks**:
-One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. The completions form one batch; undoing any of its events undoes the whole batch.
+One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. The completions form one care batch. Undo on any event calls the batch undo API to reverse the whole action.
+
+**Care batch**:
+One `care_actions` request identity groups `care_events.batch_id` completions. Handle all tasks and rain watering share this mechanism and `POST /api/task-batches/:id/undo`. Single-event undo refuses batched events. Rain tap aliases live in `care_actions.batch_id`, and `weather_events.batch_id` links to the original `care_actions.request_id`. Undo marks the action and its completions undone without deleting history.
 
 **Repot flow**:
 A repot completion together with new pot type, pot size and soil type. Undo restores the previous pot data and schedule; multiple repot flows must be undone newest first.
+## Household weather
+
+**Location**:
+One latitude and longitude pair on the household, with an optional owner-entered label. Only the owner sets it. Latitude is between -90 and 90, longitude between -180 and 180. Removing the location clears its cache and resolves its alerts. Coordinates go to Open-Meteo, never to logs. Changing only the label does not discard weather.
+
+**Weather snapshot**:
+The server builds today's snapshot from the household's Postgres forecast cache. It contains the mean of today's and the next six daily maximum temperatures, today's daylight hours and the fetch time. Missing days leave the affected input unknown. Only outdoor plants receive it. The pure engine applies water.weather_temperature@1, at least 28 °C ×0.75, at most 12 °C ×1.25, and otherwise neutral. water.weather_daylight@1 stretches days with at most nine daylight hours by ×1.25. These factors precede the existing round, clamp and custom interval, and retain source weather in Based on. Fertilizing's every-second-watering default follows that watering interval.
+
+**Weather cache**:
+Forecast and climate are separate Postgres records. The background loop claims a refresh using the shared clock, at most hourly for forecast and once per calendar month for climate. Failed climate fetches retry after six hours; the monthly limit applies to successful fetches. Failures keep the last good data and the first unavailable_since time until success. An eight-second timeout bounds each Open-Meteo request. Location revision and attempt time prevent stale responses replacing a newer location or refresh.
+
+**Potted hardiness**:
+The minimum survival estimate for a pot is the in-ground minimum plus 5 °C, hardiness.pot_offset@1. Roots in a pot have less soil insulation. Effective hardiness prefers the minimum survival temperature in °C, hardinessC, including an owner override or Open Plantbook value. Without that value, Perenual hardiness remains a separate zone range, whose minimum is interpreted as USDA using hardiness.usda_uncertain@1, explicitly uncertain because Perenual does not name the scale. With neither value, hardiness falls back to 5 °C in ground, hardiness.default@1, labelled as a rule. Alerts and outdoor months share this precedence and show the selected source and value. These estimates are not guarantees against frost damage.
+
+**Weather event and alert**:
+A household record with kind low_temperature or rain, optional plant, start and end dates, payload, creation time and resolution time. A low-temperature alert compares forecast daily minima with each active outdoor plant's applicable hardiness. Consecutive cold days form one cold spell; overlapping refreshes reuse its open event. Separate spells remain distinct. Warming forecasts, moved or graveyard plants and changed locations resolve the old events. Home and the plant page show open cold alerts.
+
+**Rain report**:
+At least 5 mm of precipitation today or yesterday qualifies, weather.rain@1. Mark outdoor plants watered is one client UUID request and one task batch. The tasks module writes a water completion for every active outdoor plant, with one batch ID and member attribution, in one transaction. Indoor and graveyard plants are untouched. Replaying a request returns its original batch even after undo. The qualifying rain events store the batch ID, so another UUID returns the existing batch without new care events. Each tap UUID records its batch and requesting member, including taps that reuse a batch, so retries stay idempotent after undo. One undo marks all its care events undone and makes the action available again. The latest open rain batch remains available to undo after a reload.
+
+**Outdoor months**:
+For each species, the months whose local climate mean daily minimum is at least applicable hardiness plus 2 °C, hardiness.outdoor_months@1. Pot and ground have separate rows on the Species care card. Climate uses Open-Meteo's CMCC_CM2_VHR4 modelled daily minima for 1991 to 2020, averaged by calendar month. No location prompts the owner to set one; a pending refresh is not an empty set of suitable months. Monthly means do not rule out an individual frost.

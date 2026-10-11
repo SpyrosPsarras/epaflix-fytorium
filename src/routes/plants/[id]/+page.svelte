@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
+  import WeatherBanner from '$lib/WeatherBanner.svelte';
   import PhotoUpdateForm from '$lib/PhotoUpdateForm.svelte';
   import PlantRestore from '$lib/PlantRestore.svelte';
   import PhotoUpdates from '$lib/PhotoUpdates.svelte';
   import { healthLabel } from '$lib/photos';
+  import type { CareEvent } from '$lib/tasks';
   import { plantLabels, plantBooleans, plantNumbers, plantChoices } from '$lib/plants';
   import { taskTypes } from '$lib/schedule/engine';
   import { taskRules } from '$lib/schedule/rules';
@@ -30,10 +32,10 @@
     } catch { failure = 'Could not reach Fytorium. Try again.'; }
     finally { busy = false; }
   }
-  async function undoEvent(id: string) {
+  async function undoEvent(event: CareEvent) {
     busy = true; failure = ''; message = '';
     try {
-      const response = await fetch('/api/care-events/' + id + '/undo', { method: 'POST' });
+      const response = await fetch(event.batch_id ? '/api/task-batches/' + event.batch_id + '/undo' : '/api/care-events/' + event.id + '/undo', { method: 'POST' });
       if (!response.ok) { failure = (await response.json()).message ?? 'Could not undo the event.'; return; }
       await invalidateAll();
       message = 'Care action undone.';
@@ -44,6 +46,7 @@
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
 <a href="/plants">Plants</a>
 <h1>{data.plant.display_name}</h1>
+<WeatherBanner report={data.weather} />
 {#if data.plant.status === 'graveyard'}
   <p>In the graveyard since {data.plant.graveyard_on}</p>
   <PlantRestore plant={data.plant} sites={data.sites} />
@@ -62,7 +65,7 @@
 </section>
 {#if data.plant.status === 'active'}
 <button disabled={busy} onclick={handleAll}>Handle all tasks</button>
-<p>Completes only tasks due or late today. Undo any event in the batch to undo the whole action.</p>
+<p>Completes only tasks due or late today. Undo on any event uses batch undo to reverse the whole action.</p>
 <p><a href={'/plants/' + data.plant.id + '/repot'}>Repot with new pot and soil</a></p>
 {/if}
 {#if message}<p role="status">{message}</p>{/if}
@@ -93,6 +96,16 @@
 {/each}
 <section aria-labelledby="based-on-title">
   <h2 id="based-on-title">Based on</h2>
+  {#if data.weather.alerts.length}
+    <details>
+      <summary>Low-temperature alerts</summary>
+      {#each data.weather.alerts as alert (alert.id)}
+        <p>Forecast minimum: {alert.payload.minC} °C. Applicable hardiness: {alert.payload.thresholdC} °C.</p>
+        <p>Hardiness source: {alert.payload.hardiness?.source.replaceAll('_', ' ')} · {alert.payload.hardiness?.value} °C{#if alert.payload.hardiness?.ruleId} · {alert.payload.hardiness.ruleId}{/if}{#if alert.payload.potRuleId} · {alert.payload.potRuleId}{/if}</p>
+        {#if alert.payload.hardiness?.ruleId === 'hardiness.usda_uncertain@1'}<p>USDA zone conversion is uncertain. Perenual does not name its hardiness scale.</p>{/if}
+      {/each}
+    </details>
+  {/if}
   <p>Starting estimates, not a substitute for checking the plant. Month factors use the northern hemisphere and the anchor date.</p>
   {#each taskTypes as taskType}
     <details>
@@ -122,8 +135,8 @@
       <li class:undone={event.undone_at}>
         <time datetime={event.occurred_on}>{event.occurred_on}</time> · {taskRules[event.task_type].label}
         <p>{event.kind === 'snoozed' ? 'Snoozed' : event.kind === 'skipped' ? 'Skipped' : 'Completed'} by {event.by_name}{#if event.undone_at}{' · Undone'}{/if}</p>
-        {#if event.batch_id}<p>Part of a Handle all tasks action.</p>{/if}
-        {#if !event.undone_at && data.plant.status === 'active'}<button disabled={busy} onclick={() => undoEvent(event.id)}>Undo</button>{/if}
+        {#if event.batch_id}<p>Part of a care batch. Undo reverses the whole batch.</p>{/if}
+        {#if !event.undone_at && data.plant.status === 'active'}<button disabled={busy} onclick={() => undoEvent(event)}>Undo</button>{/if}
       </li>
     {/each}
   </ul>

@@ -1,8 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { db } from './db';
 import { getPlant, isUuid } from './plants';
-import { now } from './clock';
-import { calendarDate } from './tasks';
+import { now, calendarDate } from './clock';
 import { removePhotos } from './photo-storage';
 import { chosenSpecies, saveSpecies } from './species';
 import { kickNameFetch } from './names';

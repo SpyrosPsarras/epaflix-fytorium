@@ -114,9 +114,9 @@ test('every factor is explained, including neutral factors, without changing the
     'wateringIntervalDays', 'site.light', 'site.humidity', 'site.location', 'site.grow_light', 'site.draft',
     'pot.pot_type', 'pot.pot_size_cm', 'pot.drainage', 'plant.plant_size', 'plant.growth_stage',
     'plant.window_distance_cm', 'plant.grow_light', 'plant.near_ac', 'plant.near_heater',
-    'month', 'customIntervals', 'weather', 'addedOn',
+    'month', 'weather.meanMaxTemperatureC', 'weather.daylightHours', 'customIntervals', 'weather', 'addedOn',
   ]);
-  for (const item of task.basedOn.filter(item => item.factor !== undefined)) expect(item).toMatchObject({ source: 'rule', ruleId: expect.stringMatching(/@1$/), factor: expect.any(Number), adjustment: expect.any(String) });
+  for (const item of task.basedOn.filter(item => item.factor !== undefined && item.source !== 'weather')) expect(item).toMatchObject({ source: 'rule', ruleId: expect.stringMatching(/@1$/), factor: expect.any(Number), adjustment: expect.any(String) });
   expect(full).toEqual(before);
 });
 

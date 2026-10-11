@@ -24,13 +24,18 @@
     message = '';
     requestIds[key] ??= crypto.randomUUID();
     try {
-      const response = await fetch(action === 'undo' && done ? '/api/care-events/' + done.event.id + '/undo' : '/api/plants/' + row.plant_id + '/tasks/' + row.task_type + '/' + action, {
+      const response = await fetch(action === 'undo' && done ? done.event.batch_id ? '/api/task-batches/' + done.event.batch_id + '/undo' : '/api/care-events/' + done.event.id + '/undo' : '/api/plants/' + row.plant_id + '/tasks/' + row.task_type + '/' + action, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: action === 'undo' ? undefined : JSON.stringify({ request_id: requestIds[key] }),
       });
       const result = await response.json();
       if (!response.ok) { message = result.message ?? 'Could not update the task. Try again.'; return; }
       if (action === 'undo') {
+        if (done?.event.batch_id) {
+          handled = {}; restored = {}; requestIds = {};
+          await invalidateAll();
+          return;
+        }
         restored[id] = result.task;
         delete handled[id];
         for (const command of ['complete', 'snooze', 'skip']) delete requestIds[id + ':' + command];

@@ -1,8 +1,10 @@
 <script lang="ts">
+  import OutdoorMonthsCard from '$lib/OutdoorMonthsCard.svelte';
+  import type { OutdoorMonths } from '$lib/weather';
   import { onMount } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { careLabels, careNames, type CareName, type CareProfile } from '$lib/care';
-  let { gbifKey, profile, fetchStates, canEdit, canRetry }: { gbifKey: number; profile: CareProfile; fetchStates: { source: string; status: string; matchStatus?: string; pid?: string | null }[]; canEdit: boolean; canRetry: boolean } = $props();
+  let { gbifKey, profile, fetchStates, canEdit, canRetry, outdoorMonths }: { outdoorMonths: OutdoorMonths; gbifKey: number; profile: CareProfile; fetchStates: { source: string; status: string; matchStatus?: string; pid?: string | null }[]; canEdit: boolean; canRetry: boolean } = $props();
   let mounted = $state(false);
   const sourceLabel = (name: string) => name.split('_').map(word => word[0].toUpperCase() + word.slice(1)).join(' ');
   let drafts = $state<Partial<Record<CareName, string>>>({});
@@ -69,6 +71,7 @@
   {/each}
   {#if canEdit}<button onclick={refresh}>Refresh care data</button>{/if}
   <p role="status">{message}</p>
+  <OutdoorMonthsCard months={outdoorMonths} />
   {#each careNames as field}
     <article aria-label={careLabels[field]}>
       <h3>{careLabels[field]}</h3>

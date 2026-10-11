@@ -5,8 +5,7 @@ import { healthValues, type PhotoUpdate } from '$lib/photos';
 import type { Identity } from './auth';
 import { db } from './db';
 import { getPlant, isUuid } from './plants';
-import { now } from './clock';
-import { calendarDate } from './tasks';
+import { now, calendarDate } from './clock';
 import { storePhoto, removePhotos } from './photo-storage';
 import { imageForm, maxPhotoBytes, sanitiseImage } from './images';
 

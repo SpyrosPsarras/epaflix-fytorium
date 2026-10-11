@@ -14,6 +14,7 @@ const tasks = () => request(`/api/plants/${plantId}/tasks`).then(r => r.json());
 const history = () => request(`/api/plants/${plantId}/history`).then(r => r.json());
 const act = (action: string, type = 'water', request_id = randomUUID()) => request(`/api/plants/${plantId}/tasks/${type}/${action}`, 'POST', { request_id });
 const undo = (id: string) => request(`/api/care-events/${id}/undo`, 'POST');
+const undoBatch = (id: string) => request(`/api/task-batches/${id}/undo`, 'POST');
 async function addPlant(site_id: string, nickname: string) {
   const search = await (await request('/api/species/search?q=Testoria%20lucida')).json();
   const response = await request('/api/plants', 'POST', { ...fixturePlant, site_id, nickname, search_id: search.search_id, gbif_key: 910001 });
@@ -69,7 +70,8 @@ test('complete-all is one atomic, idempotent action for exactly due or late task
   expect(two.events).toEqual(one.events);
   expect(new Set(one.events.map((event: { batch_id: string }) => event.batch_id))).toEqual(new Set([key]));
   expect(await tasks()).toMatchObject({ water: { dueOn: '2026-06-12' }, mist: { dueOn: '2026-06-08' }, repot: before.repot, cut_back: before.cut_back });
-  const restored = await undo(one.events[0].id);
+  expect((await undo(one.events[0].id)).status).toBe(409);
+  const restored = await undoBatch(key);
   expect(restored.status).toBe(200);
   expect(await tasks()).toEqual(before);
   expect((await undo(one.events[1].id)).status).toBe(409);
@@ -93,7 +95,7 @@ test('a batch failure rolls back all earlier completions and an empty batch rema
   const success = await (await completeAll(key)).json();
   const emptyKey = randomUUID();
   expect((await (await completeAll(emptyKey)).json()).events).toEqual([]);
-  await undo(success.events[0].id);
+  await undoBatch(success.events[0].batch_id);
   expect((await (await completeAll(emptyKey)).json()).events).toEqual([]);
   expect(await tasks()).toEqual(beforeTasks);
 });
@@ -154,7 +156,7 @@ test('Upcoming shares Today\'s household calendar day, groups 14 days, omits ina
   await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
   const bulk = await (await request(`/api/plants/${outdoorId}/tasks/complete-all`, 'POST', { request_id: randomUUID() })).json();
   expect(bulk.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water']);
-  await undo(bulk.events[0].id);
+  await undoBatch(bulk.events[0].batch_id);
 });
 
 test('sorting and each location filter apply on the server and all settings validate before changing persisted values', async () => {
@@ -270,7 +272,7 @@ test('snooze, skip, bulk and task views use catalogue overrides, including appli
     expect(handled.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water', 'cut_back']);
     expect(handled.tasks.water.dueOn).toBe('2026-06-27');
     expect(handled.tasks.cut_back.dueOn).toBe('2027-06-01');
-    await undo(handled.events[0].id);
+    await undoBatch(handled.events[0].batch_id);
     expect(await (await request(path + '/tasks')).json()).toEqual(before);
   } finally {
     for (const field of Object.keys(overrides)) await request('/api/species/910001/care/overrides/' + field, 'DELETE');

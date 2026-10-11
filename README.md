@@ -71,7 +71,7 @@ GET /api/species/:gbifKey reads a species and its names. POST /api/species/:gbif
 
 Home shows **Today** when plants exist, grouped by task type with late badges. Tap **Done** once to record any task and see the next date; the same row offers **Undo**. Water, Fertilize, Mist, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot share the same completion path. Plant pages show the next due date for each task, a **Based on** panel with input values, factors and sources, and care history with the member's OIDC name or email, falling back to "Member". Undone events remain marked in history.
 
-The pure engine in `src/lib/schedule/engine.ts` takes a care profile with sources, site, pot, plant, per-task history, custom intervals, today, added date and optional weather. Weather values are recorded but not yet used for adjustments. The single `taskTypes` list and per-task rules in `src/lib/schedule/rules.ts` define labels, defaults, factors, applicability, anchoring and seasons. Watering starts at seven days, applies site, pot, plant and anchor-month factors, rounds to whole days and clamps to 1–60 days before custom intervals. The northern-hemisphere month table stretches winter watering. Fertilizing defaults to twice the current watering interval, with longer defaults for sticks and slow-release, and shifts out-of-season dates into March–September. Pruning defaults to March. Full defaults and terminology are in `CONTEXT.md`. These are starting estimates, not a substitute for checking soil moisture.
+The pure engine in `src/lib/schedule/engine.ts` takes a care profile with sources, site, pot, plant, per-task history, custom intervals, today, added date and optional weather. Outdoor watering uses the cached weather snapshot for temperature and daylight adjustments. The single `taskTypes` list and per-task rules in `src/lib/schedule/rules.ts` define labels, defaults, factors, applicability, anchoring and seasons. Watering starts at seven days, applies site, pot, plant and anchor-month factors, rounds to whole days and clamps to 1–60 days before custom intervals. The northern-hemisphere month table stretches winter watering. Fertilizing defaults to twice the current watering interval, with longer defaults for sticks and slow-release, and shifts out-of-season dates into March–September. Pruning defaults to March. Full defaults and terminology are in `CONTEXT.md`. These are starting estimates, not a substitute for checking soil moisture.
 
 Dates use `HOUSEHOLD_TIMEZONE`, default `Europe/Oslo`. Server reads use the shared clock and Intl to resolve instants to calendar dates before calling the engine. Watering with no effective completion is due on the plant's added date. Other interval tasks start at added date plus interval. Otherwise, the last non-undone completion plus the current interval determines the next date, subject to seasonal and pruning rules. No due date is stored.
 
@@ -87,7 +87,7 @@ Today and **Upcoming** offer Done, Snooze 2 days and Skip for each task. Snooze 
 
 Upcoming covers fourteen household calendar days including today. Overdue tasks join today's group. Each task appears once, at its next due date. Sort by task type, plant or site, filter all/indoor/outdoor and show completed using **Save task view**. Preferences are stored per member in Postgres and applied by the server. Showing completed adds today's non-undone completions with Undo, including after a reload or new session.
 
-The plant page offers **Handle all tasks**. One request and one transaction complete exactly the tasks due or late today. All its events share a batch id; Undo on any of them undoes the whole batch. Empty actions also keep their request id, so a replay cannot accidentally complete tasks that became due later. **Repot with new pot and soil** opens a form using the same pot validation as plant settings, records a repot completion and updates the pot atomically. Undo restores the previous pot data too. Undo the newest repot first when there have been several.
+The plant page offers **Handle all tasks**. One request and one transaction complete exactly the tasks due or late today. All its events share the `care_actions.request_id` as `care_events.batch_id`; Undo on any of them calls `POST /api/task-batches/:id/undo` to reverse the whole batch. Single-event undo refuses batched events. Empty actions also keep their request id, so a replay cannot accidentally complete tasks that became due later. **Repot with new pot and soil** opens a form using the same pot validation as plant settings, records a repot completion and updates the pot atomically. Undo restores the previous pot data too. Undo the newest repot first when there have been several.
 
 New HTTP commands are `POST /api/plants/:id/tasks/:taskType/snooze`, `POST /api/plants/:id/tasks/:taskType/skip` and `POST /api/plants/:id/tasks/complete-all`, each with a UUID `request_id`. Single-task commands return an event and task; complete-all returns events and the recomputed schedule. `POST /api/plants/:id/repot` takes `request_id`, `pot_type`, `pot_size_cm` and `soil_type`. Retry with the same UUID and payload; reuse for a different action returns 409. Replaying an undone action does not redo it. `GET /api/tasks?view=upcoming` returns day sections as well as task-type groups. `GET/PUT /api/tasks/settings` reads or saves `{"sort":"task","filter":"all","show_completed":false}`. Every endpoint requires a household session and writes refuse cross-origin requests.
 
@@ -168,3 +168,44 @@ Full deletion commits all row deletion first, then deletes both MinIO objects fo
 Schedule reads use the catalogue's `effectiveCareProfiles`, including source caches and household overrides. The API test sets different care overrides for two species through the catalogue API, then verifies changed due dates with unchanged history and plant intervals.
 
 `tests/api/lifecycle.test.ts` covers graveyard exclusions, retained photos and care, restore, mixed active/graveyard site deletion, name confirmation, real MinIO cleanup and a forced delete failure, species confirmation and recomputation, and household/session/origin refusals. `tests/browser/lifecycle.spec.ts` exercises graveyard, restore, species correction and permanent deletion at the phone viewport.
+
+## Weather, rain and outdoor months
+
+The owner sets latitude, longitude and an optional place label in Household settings. Only the owner can change the location. Coordinates are private household data and are never logged. Open-Meteo receives them to provide local forecast and climate. Removing or changing coordinates discards the old cache and resolves old weather events; editing just the label keeps the cache.
+
+`OPEN_METEO_BASE_URL` defaults to `https://api.open-meteo.com/`, and `OPEN_METEO_CLIMATE_BASE_URL` to `https://climate-api.open-meteo.com/`. The client requests `/v1/forecast` with past_days=2, forecast_days=7, the household time zone, and daily temperature_2m_min, temperature_2m_max, precipitation_sum and daylight_duration. Seven forecast days include today. `/v1/climate` requests CMCC_CM2_VHR4 daily temperature_2m_min for 1991 to 2020 and averages them by calendar month. These are modelled climate estimates, not measured frost limits. Both requests have an eight-second timeout. Raw responses and returned coordinates are not retained.
+
+The five-second background loop refreshes Postgres caches at most hourly for forecast and once per calendar month after a successful climate fetch. Failed climate fetches retry after six hours. Event reconciliation runs after a stored forecast, a household date change, or changes to plants and effective care profiles, not on unchanged ticks. Reads never fetch weather. Failed refreshes retain the last good values and unavailable_since; success clears that timestamp. `WEATHER_WORKER_ENABLED=false` disables automatic polling for deterministic tests. `/__test/weather-worker` runs one tick with the test clock enabled, requires membership and refuses foreign origins. The Compose aliases open-meteo and open-meteo-climate point at separate synthetic WireMock mappings.
+
+Rules in `src/lib/schedule/rules.ts` apply only to outdoor watering, before rounding, the 1–60 day clamp and custom intervals:
+
+| Rule | Input and adjustment |
+| --- | --- |
+| water.weather_temperature@1 | Today's and next six days' mean maximum: ≥28 °C ×0.75; ≤12 °C ×1.25; otherwise ×1 |
+| water.weather_daylight@1 | Today's daylight ≤9 hours ×1.25; otherwise ×1 |
+| hardiness.default@1 | Unknown in-ground hardiness defaults to 5 °C |
+| hardiness.pot_offset@1 | Every pot is 5 °C less hardy than in-ground, identified by pot_type=in_ground |
+| hardiness.outdoor_months@1 | Monthly mean daily minimum ≥ applicable hardiness +2 °C |
+| weather.rain@1 | Precipitation today or yesterday ≥5 mm |
+
+Alerts and outdoor months first use effective `hardinessC`, a minimum survival temperature already in °C from Open Plantbook or an owner override. Zero is a present value. Without it, weather converts the effective minimum hardiness zone to °C using hardiness.usda_uncertain@1. The catalogue keeps those zones separate from Celsius. This interpretation is uncertain, research R5 and ADR 0001, and the card and alerts say so. With neither field, hardiness.default@1 supplies 5 °C in ground. The species card and plant Based on show the selected source and Celsius value; pots then add the offset. Whole-zone lower edges, rounded to one decimal, are:
+
+| USDA zone | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Minimum °C | -51.1 | -45.6 | -40 | -34.4 | -28.9 | -23.3 | -17.8 | -12.2 | -6.7 | -1.1 | 4.4 | 10 | 15.6 |
+
+Home and plant pages show forecast cold spells below the active outdoor plant's applicable hardiness. `weather_events` retains low_temperature and rain events with start/end dates, payload and resolved_at, ready for the feed and notifications. The weather migration requires `btree_gist`; its migration role must be allowed to create that extension. A partial unique index prevents duplicate open rain events per household/date. An exclusion constraint prevents overlapping open cold spells per plant. Indoor and graveyard plants do not raise cold alerts. Pot and ground outdoor months appear inside the Species care card, with thresholds, rules and climate source. No location shows a link to set it; climate awaiting its first refresh says pending.
+
+After rain, Home offers **Mark N outdoor plants watered**. This uses the same `care_actions` batch mechanism as Handle all tasks, with a water care event for each active outdoor plant. `weather_events.batch_id` references `care_actions.request_id`. There are no separate rain batch tables. Another tap, even with a new UUID, returns that batch without watering again. Each tap UUID is retained in `care_actions`; taps that reuse a batch link through `care_actions.batch_id`, so replay after undo still returns the undone batch. The button stays hidden after a reload; undo makes it available again. **Undo rain watering** undoes the batch, also after a reload. Retry a failed request with the same UUID. A reused UUID belonging to another member or household is refused. A replay after undo returns the original undone batch, not new completions. Individual care-event undo refuses batched events so a rain action cannot be partly undone.
+
+Endpoints, all scoped to the session household:
+
+- `GET/PUT /api/household/location`, PUT with `{"location":{"latitude":0.5,"longitude":0.5,"label":"Test location"}}`, or location=null to clear. Label is optional, up to 200 characters.
+- `GET /api/weather` for cache state, today's snapshot, open cold alerts, rain report and latest undoable rain batch.
+- `GET /api/species/:gbifKey/outdoor-months`, requiring a household plant of that species.
+- `POST /api/weather/rain/water` with `{"request_id":"<client UUID>"}`.
+- `POST /api/task-batches/:id/undo`.
+
+Malformed JSON returns 400, invalid fields 422, foreign records 404 and action conflicts 409. Every write checks Origin. Forecast and climate HTTP tests use in-process synthetic Open-Meteo daily arrays. The browser scenario covers setting location, a cold alert, rain watering, one undo and outdoor months at the Pixel 7 viewport.
+
+Public endpoint documentation: https://open-meteo.com/en/docs and https://open-meteo.com/en/docs/climate-api. Outdoor months are starting estimates, not permission to leave a frost-sensitive plant outdoors.
