@@ -6,6 +6,7 @@
 <header><img src="/icon.svg" width="48" height="48" alt="" /><h1>Fytorium</h1></header>
 {#if data.identity}
   <p>{data.identity.household.name} · {data.identity.member.role}</p>
+  <a href="/sites">Sites</a>
   <section><h2>No plants yet</h2><p>Your plants and care tasks will appear here.</p></section>
   <form method="POST" action="/auth/logout"><button>Log out</button></form>
 {:else}

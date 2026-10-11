@@ -12,7 +12,15 @@ A person with access to the household. An owner manages it, family members can e
 _Avoid_: User, account
 
 **Site**:
-A room, garden or terrace where plants live. Its light, temperature, humidity and draft describe conditions shared by those plants.
+A room, garden or terrace where plants live. A site belongs to the household. Its conditions are shared by its plants.
+
+- Location: `indoor` or `outdoor`.
+- Light: `full_shade`, `part_shade`, `part_sun` or `full_sun`, matching Perenual's four sunlight tiers.
+- Grow light and draft: booleans.
+- Humidity: `dry`, `normal` or `humid`.
+- Warm-period and cold-period temperatures: optional minimum and maximum in whole °C. If both are known, minimum must not exceed maximum. The warm period is the heating-off or summer half of the year. The cold period is the heating-on or winter half.
+
+A site with plants cannot be deleted. Move or remove its plants first.
 
 **Plant**:
 An individual plant in the household, with a species, site, pot, health and care history. A dead plant can remain in the graveyard with its history.
