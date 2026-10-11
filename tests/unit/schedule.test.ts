@@ -124,8 +124,23 @@ test.each([[1000, 60], [.01, 1]] as const)('clamps a %i-day estimate to %i whole
   expect(schedule({ ...input, careProfile: { wateringIntervalDays: { value, source: 'override' } } }).water).toMatchObject({ intervalDays });
 });
 
-test('snooze and skip history fields are reserved and do not change watering yet', () => {
-  expect(schedule({ ...input, history: { water: { snoozedUntil: '2026-10-15', skippedOn: '2026-10-11' } } })).toEqual(schedule(input));
+test.each([
+  ['snooze', { snoozedUntil: '2026-05-03' }, '2026-05-03', '2026-05-05', 0],
+  ['expired snooze', { snoozedUntil: '2026-05-03' }, '2026-05-07', '2026-05-05', 2],
+  ['skip', { skippedOn: '2026-05-03' }, '2026-05-03', '2026-05-10', 0],
+  ['completion supersedes snooze', { snoozedUntil: '2026-05-03', lastCompletedOn: '2026-05-04' }, '2026-05-04', '2026-05-11', 0],
+  ['completion supersedes skip', { skippedOn: '2026-05-03', lastCompletedOn: '2026-05-04' }, '2026-05-04', '2026-05-11', 0],
+  ['undo removes postponement', {}, '2026-05-03', '2026-05-01', 2],
+  ['latest postponement wins', { snoozedUntil: '2026-05-03', skippedOn: '2026-05-04' }, '2026-05-04', '2026-05-11', 0],
+] as const)('%s has literal due date %s', (_name, water, today, dueOn, lateDays) => {
+  expect(schedule({ ...input, today, history: { water } }).water).toMatchObject({ dueOn, lateDays, intervalDays: 7 });
+});
+
+test.each(['snoozedUntil', 'skippedOn'] as const)('%s is explained as history and cannot make a not-applicable task apply', field => {
+  expect(schedule({ ...input, history: { water: { [field]: '2026-05-03' } } }).water.basedOn).toContainEqual(
+    expect.objectContaining({ input: `history.water.${field}`, source: 'history', value: '2026-05-03' }),
+  );
+  expect(schedule({ ...input, pot: { pot_type: 'in_ground' }, history: { repot: { [field]: '2026-05-03' } } }).repot.status).toBe('not_applicable');
 });
 
 test('a plant without care history is due on its added date, using a named rule', () => {

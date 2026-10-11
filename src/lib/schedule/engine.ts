@@ -93,6 +93,18 @@ export function schedule(input: ScheduleInput): Record<TaskType, Task> {
       basedOn.push({ input: 'season', value: { firstMonth, lastMonth }, source: 'rule', ruleId,
         adjustment: shifted ? `Outside the season; moved to ${due.toISOString().slice(0, 10)}.` : 'Due date is inside the active season; no adjustment.' });
     }
+    // The adapter supplies only the latest effective postponement, after the last completion.
+    const history = input.history[taskType];
+    const postponement = ([['snoozedUntil', history?.snoozedUntil, 2], ['skippedOn', history?.skippedOn, intervalDays]] as const)
+      .filter((entry): entry is typeof entry & { 1: string } => !!entry[1] && (!completion || entry[1] >= completion))
+      .sort((a, b) => b[1].localeCompare(a[1]))[0];
+    if (postponement) {
+      const [field, date, days] = postponement;
+      due = new Date(date + 'T00:00:00Z');
+      due.setUTCDate(due.getUTCDate() + days);
+      basedOn.push({ input: `history.${taskType}.${field}`, value: date, source: 'history',
+        adjustment: `${field === 'snoozedUntil' ? 'Snoozed for 2 days' : 'Skipped until the next interval'} from ${date}.` });
+    }
     const dueOn = due.toISOString().slice(0, 10);
     const lateDays = Math.max(0, Math.round((Date.parse(input.today + 'T00:00:00Z') - due.getTime()) / 86_400_000));
     return [taskType, { status: 'due', dueOn, intervalDays, lateDays, basedOn }];

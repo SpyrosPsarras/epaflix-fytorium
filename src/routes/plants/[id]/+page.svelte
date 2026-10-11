@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invalidateAll } from '$app/navigation';
   import PhotoUpdateForm from '$lib/PhotoUpdateForm.svelte';
   import PlantRestore from '$lib/PlantRestore.svelte';
   import PhotoUpdates from '$lib/PhotoUpdates.svelte';
@@ -12,6 +13,33 @@
     return typeof value === 'object' ? JSON.stringify(value) : String(value).replaceAll('_', ' ');
   }
   const choices = Object.keys(plantChoices) as (keyof typeof plantChoices)[];
+  let busy = $state(false);
+  let message = $state('');
+  let failure = $state('');
+  let bulkRequestId = $state<string>();
+  async function handleAll() {
+    busy = true; message = ''; failure = '';
+    bulkRequestId ??= crypto.randomUUID();
+    try {
+      const response = await fetch('/api/plants/' + data.plant.id + '/tasks/complete-all', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: bulkRequestId }) });
+      const result = await response.json();
+      if (!response.ok) { failure = result.message ?? 'Could not handle the tasks.'; return; }
+      message = 'Handled ' + result.events.length + ' tasks.';
+      bulkRequestId = undefined;
+      await invalidateAll();
+    } catch { failure = 'Could not reach Fytorium. Try again.'; }
+    finally { busy = false; }
+  }
+  async function undoEvent(id: string) {
+    busy = true; failure = ''; message = '';
+    try {
+      const response = await fetch('/api/care-events/' + id + '/undo', { method: 'POST' });
+      if (!response.ok) { failure = (await response.json()).message ?? 'Could not undo the event.'; return; }
+      await invalidateAll();
+      message = 'Care action undone.';
+    } catch { failure = 'Could not reach Fytorium. Try again.'; }
+    finally { busy = false; }
+  }
 </script>
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
 <a href="/plants">Plants</a>
@@ -32,6 +60,13 @@
   <h3>Add a photo update</h3>
   <PhotoUpdateForm plantId={data.plant.id} today={data.photoToday} />
 </section>
+{#if data.plant.status === 'active'}
+<button disabled={busy} onclick={handleAll}>Handle all tasks</button>
+<p>Completes only tasks due or late today. Undo any event in the batch to undo the whole action.</p>
+<p><a href={'/plants/' + data.plant.id + '/repot'}>Repot with new pot and soil</a></p>
+{/if}
+{#if message}<p role="status">{message}</p>{/if}
+{#if failure}<p role="alert">{failure}</p>{/if}
 <section aria-labelledby="species-site-title">
   <h2 id="species-site-title">Species and site</h2>
   <p>{data.plant.scientific_name}</p>
@@ -86,7 +121,9 @@
     {#each data.history as event (event.id)}
       <li class:undone={event.undone_at}>
         <time datetime={event.occurred_on}>{event.occurred_on}</time> · {taskRules[event.task_type].label}
-        <p>Completed by {event.by_name}{#if event.undone_at}{' · Undone'}{/if}</p>
+        <p>{event.kind === 'snoozed' ? 'Snoozed' : event.kind === 'skipped' ? 'Skipped' : 'Completed'} by {event.by_name}{#if event.undone_at}{' · Undone'}{/if}</p>
+        {#if event.batch_id}<p>Part of a Handle all tasks action.</p>{/if}
+        {#if !event.undone_at && data.plant.status === 'active'}<button disabled={busy} onclick={() => undoEvent(event.id)}>Undo</button>{/if}
       </li>
     {/each}
   </ul>

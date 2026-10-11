@@ -81,7 +81,7 @@ Whole days from 1–365, stored per plant and task type in the plant's household
 Both the plant and household have `misting_enabled`, default true. Both must be on for misting to apply. Turning the household switch off preserves each plant's setting. All members can edit household settings until role enforcement arrives in #16.
 
 **Care event**:
-A dated record of care, including the acting member and their display name. Completions exist for every task type; snooze and skip arrive later. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
+A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable task type. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
 
 **Undo**:
 Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked. Already-undone events and events from another household are refused.
@@ -104,7 +104,7 @@ All the household's photo updates, ordered by taken date then creation time, new
 `status = active` is the default. The earlier required-site and occupied-site rules apply to active plants. Only active plants contribute to Today, plant lists, site lists and counts.
 
 **Graveyard**:
-`status = graveyard` records the first move date in `graveyard_on`, using the household calendar. Retries keep that date. The graveyard list shows dates and cover photos. Plant pages retain care history, species history and photos, but return no tasks. Completion and undo are refused until restore. Settings and photo updates remain available.
+`status = graveyard` records the first move date in `graveyard_on`, using the household calendar. Retries keep that date. The graveyard list shows dates and cover photos. Plant pages retain care history, species history and photos, but return no tasks. Complete, snooze, skip, handle-all, repot and undo are refused until restore. Care commands and undo lock the plant row before checking its status. Settings and photo updates remain available.
 
 **Restore**:
 Returns a graveyard plant to active and clears `graveyard_on`, without changing history, photos or custom intervals. Graveyard plants do not block site deletion. Site deletion clears their `site_id` in the same transaction and leaves the RESTRICT FK for active plants. A database CHECK requires every active plant to have a site. A detached graveyard plant stays viewable and editable, but restore requires choosing an existing household site.
@@ -147,3 +147,23 @@ The household's retained care values from one source for a species, with the sou
 
 **Fetch queue**:
 Species care requests waiting for a source quota or retry time. A plant does not wait for a fetch to receive a care profile.
+
+## Task handling
+
+**Snooze**:
+A snoozed care event that moves a task's due date to the action's household calendar date plus two days, without changing its interval or counting as a completion. The latest effective snooze or skip after the last completion applies; undo restores the previous due date.
+
+**Skip**:
+A skipped care event that moves a task's due date to the action's household calendar date plus its current interval, without recording a completion. A later completion supersedes both skip and snooze; neither makes a not-applicable task applicable.
+
+**Upcoming**:
+Care tasks grouped by household calendar day for fourteen days including today, with overdue tasks in today's group. Not-applicable tasks are excluded; today's due and late tasks agree with Today.
+
+**Task view settings**:
+A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show today's completed tasks with Undo. The choice belongs to the member across sessions, not the device.
+
+**Handle all tasks**:
+One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. The completions form one batch; undoing any of its events undoes the whole batch.
+
+**Repot flow**:
+A repot completion together with new pot type, pot size and soil type. Undo restores the previous pot data and schedule; multiple repot flows must be undone newest first.

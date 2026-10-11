@@ -21,6 +21,16 @@ export async function getPlant(id: string, household: string) {
   if (!result.rowCount) error(404, 'Plant not found');
   return result.rows[0];
 }
+export function potErrors(input: Record<string, unknown>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const field of ['pot_type', 'soil_type'] as const) {
+    const values = plantChoices[field];
+    if (!values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
+  }
+  const size = input.pot_size_cm ?? null;
+  if (size !== null && (typeof size !== 'number' || !Number.isInteger(size) || size <= 0 || size > 2147483647)) errors.pot_size_cm = 'Enter a positive whole number or leave blank.';
+  return errors;
+}
 export async function readPlant(request: Request, household: string, allowNoSite = false): Promise<(Omit<PlantInput, 'site_id'> & { site_id: string | null } & { search_id?: unknown; gbif_key?: unknown; confirmed?: unknown }) | Response> {
   let input;
   try {
@@ -28,13 +38,15 @@ export async function readPlant(request: Request, household: string, allowNoSite
     input = await request.json();
   } catch { return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 }); }
   if (!input || typeof input !== 'object' || Array.isArray(input)) return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
-  const errors: Record<string, string> = {};
+  const errors = potErrors(input);
   for (const [field, values] of Object.entries(plantChoices)) {
+    if (field === 'pot_type' || field === 'soil_type') continue;
     if (!values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
   }
   for (const field of plantBooleans) if (typeof input[field] !== 'boolean') errors[field] = 'Choose yes or no.';
   for (const field of plantNumbers) {
     input[field] ??= null;
+    if (field === 'pot_size_cm') continue;
     const value = input[field];
     if (value !== null && (typeof value !== 'number' || !Number.isInteger(value) || value <= 0 || value > 2147483647)) errors[field] = 'Enter a positive whole number or leave blank.';
   }
