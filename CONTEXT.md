@@ -23,7 +23,7 @@ A room, garden or terrace where plants live. A site belongs to the household. It
 A site with plants cannot be deleted. Move or remove its plants first.
 
 **Plant**:
-An individual plant in the household, with a species and a required site in the same household. Its display name is its nickname, or its species' canonical name if no nickname is set. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health, graveyard and care history arrive in later tickets.
+An individual plant in the household, with a species and a required site in the same household. Its display name is its nickname, or its species' canonical name if no nickname is set. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded; graveyard arrives in a later ticket.
 
 **Pot attributes**:
 Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabric` or `in_ground`. Soil type is `all_purpose`, `cactus`, `orchid`, `aroid` or `other`. Pot size in cm is a positive whole number or unknown. Drainage is a boolean.
@@ -77,4 +77,13 @@ A dated record of care, including the acting member and their display name. Comp
 Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked. Already-undone events and events from another household are refused.
 
 **Photo update**:
-A dated plant photo with a note and health value. One photo can be the plant's cover photo.
+A dated plant photo with an optional note and health value. The member chooses `taken_on`, defaulting to today in the household time zone. Past dates are allowed; future or invalid dates are refused. The server applies camera orientation, strips metadata and stores a re-encoded JPEG original and a thumbnail in private MinIO. Postgres stores their server-generated object keys, never image bytes. Uploads are limited to 15 MB and decoded before storage. App photo routes check the session and household before streaming bytes.
+
+**Cover photo**:
+One chosen photo update per plant, enforced by a partial unique index. It appears in plant and site lists and on the plant page. Plants without one show a placeholder. Choosing another replaces the cover. Deleting a photo update deletes both MinIO objects and its row, clearing the cover if needed.
+
+**Health**:
+An optional value: `poor`, `fair`, `good` or `very_good`. Plant settings set it directly. An arriving photo update with health replaces plant health only if no update has a later taken date. On equal taken dates the last arriving upload wins, even if the clock has not advanced. Backdated updates do not overwrite current health; updates without health leave it unchanged. Settings therefore win until another newest-dated photo supplies health. Deleting an update does not change plant health.
+
+**Journal**:
+All the household's photo updates, ordered by taken date then creation time, newest first, with ID as a stable tie-breaker. Each plant also has a View all updates page. No photo or journal entry is shared across households.

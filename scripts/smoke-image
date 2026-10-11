@@ -19,6 +19,8 @@ done
 start_app() {
   app=$(docker run -d --network "$network" --network-alias app \
     -e DATABASE_URL=postgres://postgres@postgres:5432/postgres?sslmode=disable \
+    -e MINIO_ENDPOINT=http://storage.example:9000 -e MINIO_BUCKET=synthetic-photos \
+    -e MINIO_ACCESS_KEY=synthetic-minio -e MINIO_SECRET_KEY=synthetic-minio-password \
     -e OIDC_ISSUER=https://identity.example \
     -e OIDC_CLIENT_ID=synthetic-client -e OIDC_CLIENT_SECRET=synthetic-secret \
     -e OIDC_REDIRECT_URL=http://app:3000/auth/callback -e ORIGIN=http://app:3000 "$image")

@@ -9,7 +9,7 @@ import { now } from './clock';
 import { householdSettings } from './care-settings';
 
 // Intl owns time-zone and DST conversion; the engine receives calendar dates only.
-function calendarDate(at: Date | string): string {
+export function calendarDate(at: Date | string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: config().householdTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(at));
 }
 

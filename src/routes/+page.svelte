@@ -7,7 +7,7 @@
 <header><img src="/icon.svg" width="48" height="48" alt="" /><h1>Fytorium</h1></header>
 {#if data.identity}
   <p>{data.identity.household.name} · {data.identity.member.role}</p>
-  <nav><a href="/plants">Plants</a> · <a href="/sites">Sites</a> · <a href="/settings">Household settings</a></nav>
+  <nav><a href="/plants">Plants</a> · <a href="/sites">Sites</a> · <a href="/journal">Journal</a> · <a href="/settings">Household settings</a></nav>
   <section><h2>{data.plantCount === 0 ? 'No plants yet' : data.plantCount + (data.plantCount === 1 ? ' plant' : ' plants')}</h2><p><a href="/plants">Open your plant collection</a></p></section>
   {#if data.plantCount > 0 && data.tasks}<Today list={data.tasks} />{/if}
   <form method="POST" action="/auth/logout"><button>Log out</button></form>

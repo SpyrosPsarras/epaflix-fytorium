@@ -47,7 +47,7 @@ The UI and API tests use the same JSON endpoints: `GET /api/sites`, `POST /api/s
 
 ## Plants
 
-Open **Plants** from home, then **Add plant**. Search by name, choose a candidate and confirm uncertain matches before filling in its site, optional nickname, cultivar and birthday, pot and plant attributes. The plant page links to its settings and to the site's plant list. Site settings are now at /sites/:id/edit. Plant lists filter by display name or scientific name and show a photo placeholder until photos arrive.
+Open **Plants** from home, then **Add plant**. Search by name, choose a candidate and confirm uncertain matches before filling in its site, optional nickname, cultivar and birthday, pot and plant attributes. The plant page links to its settings and to the site's plant list. Site settings are now at /sites/:id/edit. Plant lists filter by display name or scientific name and show the chosen cover photo, or a placeholder.
 
 API endpoints: `GET /api/species`, `GET /api/species/search?q=...`, `GET /api/plants` with optional `site_id` or `count=true` for a count only, `POST /api/plants`, and `GET` or `PUT /api/plants/:id`. Search returns `search_id` and candidates. POST carries `search_id`, the chosen `gbif_key`, `confirmed: true` when required, and the plant attributes. PUT replaces the attributes without changing the species. Every page and endpoint requires a household session.
 
@@ -70,6 +70,18 @@ API endpoints: `GET /api/tasks?view=today` returns dated task groups, `GET /api/
 Plant settings allow a custom interval per task type, set or cleared, and a misting switch. Custom intervals are whole days from 1–365 and override only the interval, not applicability or the fertilizing season. `GET` and `PUT /api/plants/:id/care-settings` use `{"misting_enabled":true,"customIntervals":{"clean_leaves":30}}`. PUT replaces the interval map; omit a task key to clear its override. Unknown types, fractional or out-of-range intervals and non-boolean switches return 422; malformed JSON returns 400.
 
 **Household settings** on Home controls misting for all plants. `GET` and `PUT /api/household/settings` use `{"misting_enabled":true}`. Household and plant switches both default on; both must be on for indoor misting to apply. These endpoints require a session, reject cross-origin writes and scope settings to the session's household. All members may edit until roles are enforced in #16.
+
+## Photos and journal
+
+On a plant page, add a photo update with a note, optional health and a taken date. The file input supports the phone camera. Choose **Use as cover** on an update, or open **View all updates** to browse that plant's photos. **Journal** on Home shows all plants' updates by taken date then creation time, newest first. Plant settings also allow setting or clearing health. The health precedence rule and equal-date behavior are in CONTEXT.md.
+
+Uploads are limited to 15 MB. Sharp decodes the image, applies EXIF orientation, removes metadata and re-encodes a JPEG original plus a thumbnail up to 400 px. Invalid images, animations, documents and future dates are refused before storage. Dates default to today in HOUSEHOLD_TIMEZONE. The private MinIO bucket stores server-generated `photos/<household>/<plant>/<uuid>-original.jpg` and `-thumb.jpg` keys; Postgres stores only keys and metadata. App routes authenticate and check the household before streaming an image. Do not enable anonymous bucket access. Deleting an update removes both objects before deleting its row; storage failures keep the row so deletion can be retried. Failed uploads roll back the row and remove both object keys.
+
+Configure MINIO_ENDPOINT, MINIO_BUCKET, MINIO_ACCESS_KEY and MINIO_SECRET_KEY at runtime. The endpoint includes http:// or https:// and the port; HTTPS is recommended for deployment. Compose creates its private test bucket. BODY_SIZE_LIMIT is 16M in the runtime image to allow multipart overhead; the app enforces the lower 15 MB file limit even for chunked requests. Runtime dependencies install on Alpine so sharp uses musl-compatible binaries.
+
+Endpoints: `GET/POST /api/plants/:id/photos`, `GET /api/journal`, `PUT /api/photos/:id/cover`, `DELETE /api/photos/:id`, and `GET /api/photos/:id/original|thumb`. POST takes multipart fields photo, note, health and taken_on. Health is optional and uses poor, fair, good or very_good. Plant POST/PUT also accepts optional health. Invalid photo fields return 422, oversized files return 413, and missing or foreign records return 404. All endpoints require a household session and writes refuse cross-origin requests.
+
+The photo API tests start real MinIO through Testcontainers using tests/stack/Minio.Dockerfile, alongside real Postgres. Synthetic JPEGs carry orientation and EXIF GPS, verified before upload. Tests download both stored objects through S3 to check metadata removal and use a fault-injection HTTP proxy to refuse a thumbnail write while the original goes to real MinIO. No personal photos or provider payloads are fixtures.
 
 ## Runtime
 

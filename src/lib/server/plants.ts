@@ -2,12 +2,14 @@ import { error, json } from '@sveltejs/kit';
 import { db } from './db';
 import { plantChoices, plantBooleans, plantNumbers, type PlantInput } from '$lib/plants';
 import { now } from './clock';
+import { healthValues } from '$lib/photos';
 
-export const plantFields = ['site_id', 'nickname', 'cultivar', 'birthday', 'pot_type', 'pot_size_cm', 'drainage', 'soil_type', 'plant_size', 'growth_stage', 'window_distance_cm', 'grow_light', 'near_ac', 'near_heater', 'fertilizer_type'] as const;
+export const plantFields = ['site_id', 'nickname', 'cultivar', 'birthday', 'pot_type', 'pot_size_cm', 'drainage', 'soil_type', 'plant_size', 'growth_stage', 'window_distance_cm', 'grow_light', 'near_ac', 'near_heater', 'fertilizer_type', 'health'] as const;
 export const plantSelect = `SELECT p.id, p.household_id, p.site_id, p.gbif_key, p.nickname, p.cultivar,
   to_char(p.birthday, 'YYYY-MM-DD') AS birthday, p.created_at, p.attributes_as_of,
   p.pot_type, p.pot_size_cm, p.drainage, p.soil_type, p.plant_size, p.growth_stage,
-  p.window_distance_cm, p.grow_light, p.near_ac, p.near_heater, p.fertilizer_type, p.misting_enabled,
+  p.window_distance_cm, p.grow_light, p.near_ac, p.near_heater, p.fertilizer_type, p.misting_enabled, p.health,
+  (SELECT u.id FROM photo_updates u WHERE u.plant_id = p.id AND u.household_id = p.household_id AND u.is_cover) AS cover_photo_id,
   s.scientific_name, s.canonical_name, s.rank, coalesce(nullif(p.nickname, ''), s.canonical_name) AS display_name, t.name AS site_name
   FROM plants p JOIN species s ON s.gbif_key = p.gbif_key JOIN sites t ON t.id = p.site_id AND t.household_id = p.household_id`;
 export function isUuid(id: string) {
@@ -41,6 +43,8 @@ export async function readPlant(request: Request, household: string): Promise<(P
     if (input[field] !== null && typeof input[field] !== 'string') errors[field] = 'Enter text or leave blank.';
     else input[field] = input[field]?.trim() || null;
   }
+  input.health ??= null;
+  if (input.health !== null && !healthValues.some(value => value === input.health)) errors.health = 'Choose a valid health value or leave blank.';
   input.birthday ??= null;
   if (input.birthday !== null) {
     const value = input.birthday;

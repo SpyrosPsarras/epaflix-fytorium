@@ -10,7 +10,9 @@
 {#if filtered.length === 0}<p>No plants found.</p>{/if}
 {#each filtered as plant (plant.id)}
   <article>
-    <div class="photo" role="img" aria-label="No plant photo yet">No photo</div>
+    {#if plant.cover_photo_id}
+      <img class="photo" src={'/api/photos/' + plant.cover_photo_id + '/thumb'} alt={'Cover photo of ' + plant.display_name} loading="lazy" />
+    {:else}<div class="photo" role="img" aria-label="No plant photo yet">No photo</div>{/if}
     <div><h2><a href={'/plants/' + plant.id}>{plant.display_name}</a></h2><p>{plant.scientific_name}</p><a href={'/sites/' + plant.site_id}>{plant.site_name}</a></div>
   </article>
 {/each}
@@ -21,6 +23,7 @@
   article { display: flex; gap: 1rem; background: white; border-radius: .75rem; margin-top: 1rem; padding: 1rem; overflow-wrap: anywhere; }
   article > div:last-child { min-width: 0; }
   .photo { flex-shrink: 0; width: 4.5rem; height: 5rem; display: grid; place-items: center; border-radius: .5rem; background: #ffedd5; color: #57534e; font-size: .8rem; }
+  img.photo { object-fit: cover; }
   h2 { font-size: 1.1rem; margin: 0; }
   p { margin: .25rem 0; }
 </style>

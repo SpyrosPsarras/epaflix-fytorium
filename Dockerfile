@@ -15,14 +15,20 @@ RUN pnpm install --frozen-lockfile
 FROM dependencies AS build
 COPY . .
 RUN pnpm build
-RUN pnpm prune --prod
+
+# Install native runtime dependencies on musl, not in the Debian build stage.
+FROM node:22-alpine AS production-dependencies
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
 
 FROM node:22-alpine AS runtime
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 BODY_SIZE_LIMIT=16M
 WORKDIR /app
 COPY --from=migrations /usr/local/bin/dbmate /usr/local/bin/dbmate
 COPY --from=build --chown=node:node /app/package.json ./
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
 COPY --chown=node:node migrations ./migrations
 COPY --chown=node:node scripts/start.mjs ./scripts/start.mjs

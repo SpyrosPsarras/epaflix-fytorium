@@ -17,6 +17,10 @@ export function config() {
   catch { throw new Error(`Invalid configuration: HOUSEHOLD_TIMEZONE '${householdTimezone}' is not a valid time zone`); }
   return {
     testClockEnabled,
+    minioEndpoint: new URL(required('MINIO_ENDPOINT')),
+    minioBucket: required('MINIO_BUCKET'),
+    minioAccessKey: required('MINIO_ACCESS_KEY'),
+    minioSecretKey: required('MINIO_SECRET_KEY'),
     householdTimezone,
     gbifBaseUrl: new URL(env.GBIF_BASE_URL ?? 'https://api.gbif.org/v1/'),
     databaseUrl: required('DATABASE_URL'),

@@ -1,3 +1,5 @@
+import type { Health } from './photos';
+
 export const plantChoices = {
   pot_type: ['plastic', 'terracotta', 'ceramic', 'glass', 'metal', 'wood', 'fabric', 'in_ground'],
   soil_type: ['all_purpose', 'cactus', 'orchid', 'aroid', 'other'],
@@ -13,13 +15,14 @@ export const plantLabels = {
 export const plantBooleans = ['drainage', 'grow_light', 'near_ac', 'near_heater'] as const;
 export const plantNumbers = ['pot_size_cm', 'window_distance_cm'] as const;
 export type PlantInput = { [K in keyof typeof plantChoices]: typeof plantChoices[K][number] } & {
+  health?: Health | null;
   site_id: string; nickname: string | null; cultivar: string | null; birthday: string | null;
   pot_size_cm: number | null; window_distance_cm: number | null;
   drainage: boolean; grow_light: boolean; near_ac: boolean; near_heater: boolean;
 };
 export type Plant = PlantInput & {
   id: string; gbif_key: number; scientific_name: string; canonical_name: string; rank: string;
-  display_name: string; site_name: string;
+  display_name: string; site_name: string; health: Health | null; cover_photo_id: string | null;
 };
 export type Candidate = {
   gbif_key: number; scientific_name: string; canonical_name: string; rank: string;

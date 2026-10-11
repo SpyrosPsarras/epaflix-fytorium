@@ -1,4 +1,7 @@
 <script lang="ts">
+  import PhotoUpdateForm from '$lib/PhotoUpdateForm.svelte';
+  import PhotoUpdates from '$lib/PhotoUpdates.svelte';
+  import { healthLabel } from '$lib/photos';
   import { plantLabels, plantBooleans, plantNumbers, plantChoices } from '$lib/plants';
   import { taskTypes } from '$lib/schedule/engine';
   import { taskRules } from '$lib/schedule/rules';
@@ -12,7 +15,18 @@
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
 <a href="/plants">Plants</a>
 <h1>{data.plant.display_name}</h1>
-<p><a href={'/plants/' + data.plant.id + '/settings'}>Plant settings</a></p>
+<p><a href={'/plants/' + data.plant.id + '/settings'}>Plant settings</a> · <a href="/journal">Journal</a></p>
+{#if data.plant.cover_photo_id}
+  <img class="cover" src={'/api/photos/' + data.plant.cover_photo_id + '/original'} alt={'Cover photo of ' + data.plant.display_name} />
+{:else}<div class="cover placeholder" role="img" aria-label="No plant photo yet">No photo</div>{/if}
+<p>Health: {healthLabel(data.plant.health)}</p>
+<section aria-labelledby="photo-updates-title">
+  <h2 id="photo-updates-title">Photo updates</h2>
+  <p><a href={'/plants/' + data.plant.id + '/updates'}>View all updates</a></p>
+  <PhotoUpdates updates={data.updates.slice(0, 3)} />
+  <h3>Add a photo update</h3>
+  <PhotoUpdateForm plantId={data.plant.id} today={data.photoToday} />
+</section>
 <section>
   <h2>Species and site</h2>
   <p>{data.plant.scientific_name}</p>
@@ -75,6 +89,8 @@
   </dl>
 </section>
 <style>
+  .cover { display: block; width: 100%; height: 16rem; object-fit: contain; border-radius: .75rem; background: #ffedd5; }
+  .placeholder { display: grid; place-items: center; color: #57534e; }
   h1, section { overflow-wrap: anywhere; }
   section { background: white; border-radius: .75rem; padding: 1rem; margin-top: 1rem; }
   h2 { margin-top: 0; }

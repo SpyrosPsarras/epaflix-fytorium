@@ -2,10 +2,12 @@ import { afterAll, beforeAll, expect } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
+import { createPhotoStorage } from './photo-storage';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
-export function createApiHarness(options: { testClock?: boolean } = {}) {
+export function createApiHarness(options: { testClock?: boolean; photos?: boolean } = {}) {
   let postgres: StartedPostgreSqlContainer;
+  const photos = createPhotoStorage();
   let postgresStopped = false;
   let provider: Awaited<ReturnType<typeof startOidcProvider>>;
   let app: ChildProcess;
@@ -37,6 +39,7 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
 
   beforeAll(async () => {
     postgres = await new PostgreSqlContainer('postgres:17-alpine').start();
+    if (options.photos) await photos.start();
     provider = await startOidcProvider();
     const gbifPort = await listen(gbif);
     const portServer = createServer();
@@ -44,7 +47,7 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
     // start.mjs runs migrations before starting the HTTP listener.
-    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '16M' }, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -53,7 +56,7 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     throw new Error('App did not start: ' + appOutput);
-  });
+  }, options.photos ? 600000 : 120000);
 
   async function stopPostgres() {
     await postgres.stop();
@@ -70,6 +73,7 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
     gbif.closeAllConnections();
     await close(gbif);
     if (postgres && !postgresStopped) await stopPostgres();
+    await photos.stop();
   });
 
   async function login(subject = 'synthetic-owner', claims: { name?: string; email?: string } = { name: 'Test member' }) {
@@ -89,6 +93,10 @@ export function createApiHarness(options: { testClock?: boolean } = {}) {
 
   return {
     get base() { return base; },
+    get storage() { return photos.storage; },
+    bucket: photos.bucket,
+    get minioOrigin() { return photos.minioOrigin; },
+    failThumbnailWrites: photos.failThumbnailWrites,
     get postgres() { return postgres; },
     get appOutput() { return appOutput; },
     login,

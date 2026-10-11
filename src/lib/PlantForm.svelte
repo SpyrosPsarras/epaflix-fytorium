@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { plantChoices, plantLabels, plantBooleans, plantNumbers, type Plant, type Candidate } from '$lib/plants';
+  import { healthValues, healthLabel } from '$lib/photos';
   import type { Site } from '$lib/sites';
   let { sites, plant, candidate, searchId, confirmed = false }: { sites: Site[]; plant?: Plant; candidate?: Candidate; searchId?: string; confirmed?: boolean } = $props();
   let errors = $state<Record<string, string>>({});
@@ -12,6 +13,7 @@
     const form = new FormData(event.currentTarget as HTMLFormElement);
     const input: Record<string, unknown> = { site_id: form.get('site_id'), gbif_key: candidate?.gbif_key, search_id: searchId, confirmed };
     for (const field of ['nickname', 'cultivar', 'birthday']) input[field] = form.get(field) || null;
+    input.health = form.get('health') || null;
     for (const field of choices) input[field] = form.get(field);
     for (const field of plantBooleans) input[field] = form.has(field);
     for (const field of plantNumbers) input[field] = form.get(field) === '' ? null : Number(form.get(field));
@@ -34,6 +36,12 @@
     <input id={field} name={field} type={field === 'birthday' ? 'date' : 'text'} value={plant?.[field as 'nickname' | 'cultivar' | 'birthday'] ?? ''} aria-invalid={!!errors[field]} aria-describedby={errors[field] ? field + '-error' : undefined} />
     {#if errors[field]}<p id={field + '-error'} class="error" role="alert">{errors[field]}</p>{/if}
   {/each}
+  <label for="health">Health</label>
+  <select id="health" name="health" aria-invalid={!!errors.health} aria-describedby={errors.health ? 'health-error' : undefined}>
+    <option value="" selected={!plant?.health}>Not set</option>
+    {#each healthValues as health}<option value={health} selected={plant?.health === health}>{healthLabel(health)}</option>{/each}
+  </select>
+  {#if errors.health}<p id="health-error" class="error" role="alert">{errors.health}</p>{/if}
   <label for="site_id">Site</label>
   <select id="site_id" name="site_id" required aria-invalid={!!errors.site_id} aria-describedby={errors.site_id ? 'site-error' : undefined}>
     <option value="" selected={!plant}>Choose a site</option>
