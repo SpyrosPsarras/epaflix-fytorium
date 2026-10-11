@@ -254,6 +254,18 @@ test('plants and search choices cannot cross household boundaries', async () => 
   expect(await (await request('/api/plants')).json()).toEqual(before);
 });
 
+test('keeps a sound primary match when an alternative accepted-species lookup fails, dedupes and caps alternatives', async () => {
+  harness.setGbif({ ...exact, usageKey: 910041, scientificName: 'Testoria bounded Inventor', canonicalName: 'Testoria bounded', alternatives: [
+    { ...exact, usageKey: 910042, acceptedUsageKey: 910041, acceptedScientificName: 'Testoria bounded Inventor', acceptedCanonicalName: 'Testoria bounded' },
+    { ...exact, usageKey: 910048, acceptedUsageKey: 910049 },
+    { ...exact, usageKey: 910043 }, { ...exact, usageKey: 910044 }, { ...exact, usageKey: 910045 },
+    { ...exact, usageKey: 910046 }, { ...exact, usageKey: 910047 },
+  ] });
+  const result = await search('Boundedia');
+  expect(result.candidates.map((candidate: { gbif_key: number }) => candidate.gbif_key)).toEqual([910041, 910043, 910044, 910045]);
+  expect((await add(result.search_id, 910041)).status).toBe(201);
+});
+
 test('adds an exact high-confidence plant and reads its species and attributes', async () => {
   harness.setGbif(exact);
   const result = await search();

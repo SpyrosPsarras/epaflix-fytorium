@@ -25,12 +25,12 @@ export async function matchSpecies(name: string): Promise<Candidate[]> {
   if (match.matchType === 'NONE') error(422, 'No plant species matched that name. Try another name.');
   const ranks = ['SPECIES', 'SUBSPECIES', 'VARIETY', 'SUBVARIETY', 'FORM', 'SUBFORM', 'CULTIVAR', 'INFRASPECIFIC_NAME'];
   const candidates: Candidate[] = [];
-  for (const [index, item] of [match, ...(match.alternatives ?? [])].entries()) {
+  for (const [index, item] of [match, ...(match.alternatives ?? []).slice(0, 5)].entries()) {
     if (!item || item.kingdom !== 'Plantae' || !ranks.includes(item.rank) || (index > 0 && item.rank !== 'SPECIES') || item.matchType === 'NONE') continue;
     if (!Number.isInteger(item.usageKey) || item.usageKey <= 0 || typeof item.scientificName !== 'string' || typeof item.canonicalName !== 'string') continue;
     const key = item.acceptedUsageKey ?? item.usageKey;
     const confidence = typeof item.confidence === 'number' && Number.isFinite(item.confidence) ? item.confidence : 0;
-    if (!Number.isInteger(key) || key <= 0) continue;
+    if (!Number.isInteger(key) || key <= 0 || candidates.some(candidate => candidate.gbif_key === key)) continue;
     let scientificName = item.scientificName;
     let canonicalName = item.canonicalName;
     let rank = item.rank;
@@ -48,6 +48,7 @@ export async function matchSpecies(name: string): Promise<Candidate[]> {
           canonicalName = accepted.canonicalName;
           rank = accepted.rank;
         } catch {
+          if (index > 0) continue;
           error(503, 'Species search is unavailable. GBIF did not return the accepted species. Try again.');
         }
       }
