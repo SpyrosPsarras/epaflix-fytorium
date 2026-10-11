@@ -68,7 +68,7 @@
           <dd>
             <p>{showValue(basis.value)}{#if basis.factor !== undefined} · ×{basis.factor}{/if}</p>
             <p>{basis.adjustment}</p>
-            <p class="source">Source: {basis.source.replaceAll('_', ' ')}{#if basis.ruleId} · {basis.ruleId}{/if}{#if basis.fetchedAt} · Fetched {basis.fetchedAt}{/if}</p>
+            <p class="source">Source: {basis.source}{#if basis.ruleId} · {basis.ruleId}{/if}{#if basis.fetchedAt} · Fetched {basis.fetchedAt}{/if}</p>
           </dd>
         {/each}
       </dl>

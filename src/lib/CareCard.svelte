@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import { careLabels, careNames, type CareName, type CareProfile } from '$lib/care';
-  let { gbifKey, profile, fetchStates, canEdit }: { gbifKey: number; profile: CareProfile; fetchStates: { source: string; status: string }[]; canEdit: boolean } = $props();
+  let { gbifKey, profile, fetchStates, canEdit, canRetry }: { gbifKey: number; profile: CareProfile; fetchStates: { source: string; status: string; matchStatus?: string; pid?: string | null }[]; canEdit: boolean; canRetry: boolean } = $props();
   let mounted = $state(false);
   const sourceLabel = (name: string) => name.split('_').map(word => word[0].toUpperCase() + word.slice(1)).join(' ');
   let drafts = $state<Partial<Record<CareName, string>>>({});
@@ -12,7 +12,7 @@
     cycle: ['annual', 'biennial', 'perennial'], indoor: ['true', 'false'], poisonousToPets: ['true', 'false'], poisonousToHumans: ['true', 'false'],
   };
   const examples: Partial<Record<CareName, string>> = {
-    temperatureRangeC: '{"min":15,"max":28}', hardiness: '{"min":9,"max":11}', dimensions: '{"min":30,"max":100,"unit":"cm"}', pruningMonths: '[3,4]', pests: '["Scale insects"]',
+    careText: '"Synthetic care advice"', soilMoistureRangePercent: '{"min":20,"max":60}', hardinessC: '-5', temperatureRangeC: '{"min":15,"max":28}', hardiness: '{"min":9,"max":11}', dimensions: '{"min":30,"max":100,"unit":"cm"}', pruningMonths: '[3,4]', pests: '["Scale insects"]',
   };
   function show(field: CareName, value: unknown): string {
     if (value === null) return 'unknown';
@@ -40,6 +40,11 @@
     message = method === 'PUT' ? 'Override saved.' : 'Override removed.';
     await invalidateAll();
   }
+  async function retryMatch() {
+    const response = await fetch(`/api/species/${gbifKey}/care/retry-match`, { method: 'POST' });
+    message = response.ok ? 'Match retry queued.' : 'Could not retry. An owner and configured credentials are required.';
+    await invalidateAll();
+  }
   async function refresh() {
     const response = await fetch(`/api/species/${gbifKey}/care/refresh`, { method: 'POST' });
     message = response.ok ? 'Refresh queued. Existing overrides are kept.' : 'Could not queue a refresh.';
@@ -56,6 +61,10 @@
   <h2 id="care-card-title">Species care</h2>
   <p>Starting estimates. Check the plant and soil before following a watering interval.</p>
   {#each fetchStates as state}
+    {#if state.source === 'open_plantbook' && state.matchStatus}
+      <p>Open Plantbook: {state.matchStatus === 'matched' ? 'matched ' + state.pid : state.matchStatus.replaceAll('_', ' ')}</p>
+      {#if canRetry}<button onclick={retryMatch}>Retry match</button>{/if}
+    {/if}
     <p>{state.status === 'disabled' ? sourceLabel(state.source) + ' not configured' : sourceLabel(state.source) + ' fetch: ' + state.status.replaceAll('_', ' ')}</p>
   {/each}
   {#if canEdit}<button onclick={refresh}>Refresh care data</button>{/if}
@@ -64,7 +73,7 @@
     <article aria-label={careLabels[field]}>
       <h3>{careLabels[field]}</h3>
       <p class="value">{show(field, profile[field].value)}</p>
-      <p>Source: {profile[field].source.replaceAll('_', ' ')}{#if profile[field].ruleId} · {profile[field].ruleId}{/if}</p>
+      <p>Source: {profile[field].source}{#if profile[field].ruleId} · {profile[field].ruleId}{/if}</p>
       <p>Fetch time: {profile[field].fetchedAt ?? 'not fetched'}</p>
       {#if canEdit}
         <details>

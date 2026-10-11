@@ -37,7 +37,7 @@ The clock endpoint `/__test/clock` accepts JSON `{"action":"set","at":"2030-01-0
 
 WireMock mappings in `tests/stack/mappings/` serve synthetic placeholders through seven service aliases. Add endpoint mappings there as the API adapters arrive. MinIO and `mc` build from pinned upstream source tags because their published images are unavailable. `down` removes the disposable stack data.
 
-Optional real APIs: `./scripts/stack-real-apis` uses the owner's existing Vaultwarden runner, requiring Python 3 on the host. It injects only Pl@ntNet and Perenual keys into the app environment and changes those two base URLs. It never saves keys. Do not use this for normal tests; Perenual's quota is 100 requests per day.
+Optional real APIs: `./scripts/stack-real-apis` uses the owner's existing Vaultwarden runner, requiring Python 3 on the host. It injects only Pl@ntNet and Perenual keys into the app environment and changes those two base URLs. It never saves keys. Do not use this for normal tests; Perenual's quota is 100 requests per day. Open Plantbook needs credentials that are not yet in Vaultwarden; the owner will confirm the Vaultwarden path. This script does not enable real Open Plantbook calls.
 
 ## Sites
 
@@ -101,9 +101,26 @@ The plant page links to `/species/:gbifKey`. Its self-contained Species care car
 
 `PERENUAL_BASE_URL` is the server root, default `https://perenual.com/`. `PERENUAL_API_KEY` enables fetching. Without a key the source is disabled, the card says "Perenual not configured", and the card does not poll for it. The Postgres queue claims leased jobs with SKIP LOCKED and recovers expired claims after restart. `PERENUAL_DAILY_CAP` defaults to 100 requests per UTC day, `PERENUAL_PER_MINUTE` to 10 in a rolling minute, and `PERENUAL_MAX_ATTEMPTS` to 5. Search and detail each consume one request. Quota waits preserve attempts and discovered source IDs. 429 sets source-wide backoff, at least 60 seconds and respecting Retry-After. IDs above 3000 are not available on the Personal tier. 401/403 pauses the whole source without discarding jobs or consuming retry attempts. The worker logs that pause once without credentials. Correct the key, restart the app to load it, then request a refresh to resume the source. Transient errors retain a job until the attempt cap. Existing good cache data remains during failures. Completed data refreshes after 30 days, checked at most hourly.
 
-The source list in `src/lib/server/care/registry.ts` owns adapter instances, request limits and priorities. A higher priority wins each available field; owner overrides still win over all sources. Adding Open Plantbook requires its adapter and one registry entry below Perenual, without engine changes. Rule defaults live in `rules.ts`; the card displays them, while absent source fields let the engine apply its own fallback explanations. Task lists batch cache and override reads across species.
+The source list in `src/lib/server/care/registry.ts` owns adapter instances, request limits and priorities. A higher priority wins each available field; owner overrides still win over all sources. Open Plantbook has its own adapter and a registry entry below Perenual, without engine changes. Rule defaults live in `rules.ts`; the card displays them, while absent source fields let the engine apply its own fallback explanations. Task lists batch cache and override reads across species.
 
 The worker polls every two seconds. `PERENUAL_WORKER_ENABLED=false` disables automatic polling for deterministic HTTP tests. `/__test/care-worker` processes one job only when the test clock is enabled in NODE_ENV=test, requires a session and rejects wrong-origin requests. Browser tests use the real loop with synthetic WireMock mappings in `perenual-care.json`.
+
+## Open Plantbook care
+
+`OPEN_PLANTBOOK_API_KEY` enables the source and is sent only in `Authorization: Token <key>`. `OPEN_PLANTBOOK_BASE_URL` is the API root, default `https://open.plantbook.io/api/v1/`, with or without a trailing slash. Compose uses its synthetic WireMock service. Missing credentials disable fetching. `OPEN_PLANTBOOK_DAILY_CAP`, `OPEN_PLANTBOOK_PER_MINUTE` and `OPEN_PLANTBOOK_MAX_ATTEMPTS` default to 100, 10 and 5. These are conservative local caps, not published provider quotas. The existing care worker and quota mechanism handle 401/403 pauses, 429 backoff, retries and thirty-day refreshes.
+
+Search uses `plant/search?alias=<canonical name>&limit=200`. Each result's `display_pid` goes through the existing GBIF client. Only a single EXACT, species-rank, confidence ≥90 candidate with the same accepted GBIF key and no alternatives confirms a pid. Multiple confirmed pids, incomplete search pagination and uncertain candidates are ambiguous. No confirmed pid is no_match. Detail uses `plant/detail/{pid}/?include=care`. The species card shows match status. Owners find unmatched species through Household settings or `/species/unmatched`. `POST /api/species/:gbifKey/care/retry-match` clears only Plantbook's pid, match and source cache and queues a new match; overrides survive. It refuses a running fetch, missing credentials, non-owner callers and foreign-household species. `GET /api/species/unmatched` is the household-scoped owner list.
+
+Versioned mappings in `src/lib/care/open-plantbook.ts`:
+
+- `open_plantbook.humidity@1`: arithmetic midpoint of min/max_env_humid, in 0–100%. Low below 40%, medium from 40% to below 60%, high at 60% or above. The effective humidity need drives the existing indoor misting rule and appears in Based on.
+- `open_plantbook.light@1`: arithmetic midpoint of min/max_light_lux, in 0–100000 lux. Below 2000 is full_shade; 2000 to below 5000 is part_shade; 5000 to below 20000 is part_sun; 20000 or above is full_sun. These are app estimates, not a provider classification.
+- `open_plantbook.temperature@1`: min/max_temp stay in °C, within −60 to 60, minimum not exceeding maximum.
+- `open_plantbook.survival@1`: min_temp_survival stays in °C as `hardinessC`, within −60 to 60. Perenual's `hardiness` remains a separate zone range; there is no zone conversion.
+- `open_plantbook.soil_moisture@1`: min/max_soil_moist stay in 0–100% as a sensor range. They are not a top-layer dryness rule and do not determine watering intervals.
+- `open_plantbook.care_text@1`: retain plain care text or recognised string entries for soil, sunlight, watering, fertilization and pruning, at most 4000 characters. The care extension's schema is undocumented; unknown shapes fall back rather than becoming schedules. Text is displayed as text, never HTML.
+
+Unknown, non-numeric, non-finite, reversed or out-of-range values are omitted field by field. Every retained field has source `open_plantbook` and a fetched-at time. Priority is override > Perenual > Open Plantbook > rules. Only mapped fields and matching metadata stay in the household database. Open Plantbook's data licence remains unstated; no real payloads or catalogue exports belong in the repo. All fixtures are synthetic.
 
 ## Runtime
 

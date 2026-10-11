@@ -117,6 +117,23 @@ Uses the same five-minute household search record, candidate validation and expl
 
 Changing species and adding a plant share species saving, care-fetch queueing and name-index population. Schedule reads use the catalogue's effective care values, including household overrides and cached sources, without storing due dates.
 
+## Open Plantbook matching and care
+
+**Open Plantbook source**:
+`open_plantbook` supplies care below Perenual and above rules. Each retained field includes fetched-at. An owner override wins over both sources.
+
+**Pid**:
+Open Plantbook's plant identifier. Its display_pid is matched through GBIF to the species' accepted key. Only one confirmation-grade EXACT species-rank candidate with confidence at least 90 and no alternatives confirms it. The pid is not a GBIF key.
+
+**Match status**:
+`matched` records a pid; `no_match` means no confirmed candidate; `ambiguous` means multiple pids or an uncertain/incomplete match. Owners see failures on the care card and the household-scoped unmatched list and can retry. A retry clears only Plantbook's matching metadata and cache, not overrides.
+
+**Humidity need mapping**:
+`open_plantbook.humidity@1` uses the arithmetic midpoint of a valid 0–100% environmental humidity range. Low is below 40%, medium is 40% to below 60%, high is at least 60%. The effective need controls misting and retains its source in Based on.
+
+**Other Plantbook mappings**:
+`open_plantbook.light@1` uses midpoint lux in 0–100000: below 2000 full_shade, below 5000 part_shade, below 20000 part_sun, otherwise full_sun. `temperature@1` retains an ordered −60 to 60°C range. `survival@1` retains a −60 to 60°C minimum as hardinessC, separate from Perenual hardiness zones. `soil_moisture@1` retains an ordered 0–100% sensor range, not a watering rule. `care_text@1` keeps plain text or recognised care strings, at most 4000 characters; the provider's care extension has no documented schema. These rule names share the open_plantbook prefix. Unknown or invalid values leave fallback fields intact.
+
 ## Catalogue care data
 
 **Care source**:

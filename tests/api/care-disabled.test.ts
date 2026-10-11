@@ -16,7 +16,7 @@ test('without a key the card shows not configured, with no pollable status or ou
   for (let i = 0; i < 2; i++) {
     await request('/__test/care-worker', 'POST', {});
     const card = await (await request('/api/species/910001/care')).json();
-    expect(card.fetches).toMatchObject([{ source: 'perenual', status: 'disabled', attempts: 0 }]);
+    expect(card.fetches).toContainEqual(expect.objectContaining({ source: 'perenual', status: 'disabled', attempts: 0 }));
   }
   expect(await (await request('/species/910001')).text()).toContain('Perenual not configured');
   expect(calls).toBe(0);

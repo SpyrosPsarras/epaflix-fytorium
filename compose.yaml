@@ -20,7 +20,11 @@ services:
       PLANTNET_BASE_URL: ${PLANTNET_BASE_URL:-http://plantnet:8080}
       PERENUAL_API_KEY: "${PERENUAL_API_KEY:-synthetic-perenual}"
       PLANTNET_API_KEY: "${PLANTNET_API_KEY:-}"
-      OPEN_PLANTBOOK_BASE_URL: http://open-plantbook:8080
+      OPEN_PLANTBOOK_BASE_URL: http://open-plantbook:8080/api/v1/
+      OPEN_PLANTBOOK_API_KEY: synthetic-plantbook-token
+      # Frozen browser clocks must not exhaust a production-sized quota window.
+      OPEN_PLANTBOOK_PER_MINUTE: "200"
+      OPEN_PLANTBOOK_DAILY_CAP: "1000"
       GBIF_BASE_URL: http://gbif:8080
       WIKIDATA_BASE_URL: http://wikidata:8080
       NORTAXA_BASE_URL: http://nortaxa:8080

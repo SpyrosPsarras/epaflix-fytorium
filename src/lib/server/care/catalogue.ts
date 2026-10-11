@@ -37,10 +37,11 @@ export async function effectiveCareProfiles(gbifKeys: number[], household: strin
 }
 export async function speciesCare(key: string, household: string) {
   const species = await getCareSpecies(key, household);
-  const [profiles, jobs, states] = await Promise.all([
+  const [profiles, jobs, states, plantbookMatch] = await Promise.all([
     effectiveCareProfiles([species.gbif_key], household),
     db().query('SELECT source, status, attempts, next_at FROM care_fetch_jobs WHERE gbif_key = $1', [species.gbif_key]),
     db().query('SELECT source, status FROM care_source_limits'),
+    db().query('SELECT status, pid, checked_at FROM open_plantbook_matches WHERE gbif_key = $1', [species.gbif_key]),
   ]);
   const profile = Object.fromEntries(careNames.map(field => [field, { value: null, source: 'unknown', fetchedAt: null }])) as CareProfile;
   for (const [field, rule] of Object.entries(careRuleDefaults)) profile[field as keyof CareProfile] = { ...rule, fetchedAt: null };
@@ -48,9 +49,29 @@ export async function speciesCare(key: string, household: string) {
   const fetches = careSources().map(({ name, source }) => {
     const job = jobs.rows.find(row => row.source === name);
     const state = states.rows.find(row => row.source === name);
-    return { ...job, source: name, status: !source.configured ? 'disabled' : state?.status === 'auth_failed' ? 'auth_failed' : job?.status ?? 'not_queued' };
+    return { ...job, source: name, matchStatus: name === 'open_plantbook' ? plantbookMatch.rows[0]?.status as string | undefined : undefined, pid: name === 'open_plantbook' ? plantbookMatch.rows[0]?.pid as string | null | undefined : undefined, status: !source.configured ? 'disabled' : state?.status === 'auth_failed' ? 'auth_failed' : job?.status ?? 'not_queued' };
   });
-  return { species, profile, fetches, fetch: fetches[0] ?? null };
+  return { species, profile, fetches, fetch: fetches[0] ?? null, openPlantbookMatch: plantbookMatch.rows[0] ?? null };
+}
+export async function unmatchedSpecies(household: string) {
+  const result = await db().query("SELECT s.gbif_key, s.canonical_name, m.status FROM open_plantbook_matches m JOIN species s USING (gbif_key) WHERE m.status IN ('no_match', 'ambiguous') AND EXISTS (SELECT 1 FROM plants p WHERE p.gbif_key = s.gbif_key AND p.household_id = $1) ORDER BY s.canonical_name, s.gbif_key", [household]);
+  return result.rows as { gbif_key: number; canonical_name: string; status: 'no_match' | 'ambiguous' }[];
+}
+export async function retryPlantbookMatch(key: string, household: string) {
+  const species = await getCareSpecies(key, household);
+  const source = careSources().find(source => source.name === 'open_plantbook')!;
+  if (!source.source.configured) error(409, 'Open Plantbook is not configured');
+  const client = await db().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query("INSERT INTO care_fetch_jobs (gbif_key, source, next_at) VALUES ($1, 'open_plantbook', $2) ON CONFLICT (gbif_key, source) DO UPDATE SET status = 'pending', source_key = NULL, attempts = 0, next_at = EXCLUDED.next_at WHERE care_fetch_jobs.status <> 'fetching' RETURNING gbif_key", [species.gbif_key, now()]);
+    if (!result.rowCount) error(409, 'A fetch is already running');
+    await client.query('DELETE FROM open_plantbook_matches WHERE gbif_key = $1', [species.gbif_key]);
+    await client.query("DELETE FROM care_source_cache WHERE gbif_key = $1 AND source = 'open_plantbook'", [species.gbif_key]);
+    await client.query("UPDATE care_source_limits SET status = 'active' WHERE source = 'open_plantbook' AND status = 'auth_failed'");
+    await client.query('COMMIT');
+  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
+  finally { client.release(); }
 }
 export async function setCareOverride(key: string, field: string, value: unknown, household: string) {
   const species = await getCareSpecies(key, household);

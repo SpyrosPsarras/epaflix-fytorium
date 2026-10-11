@@ -32,7 +32,7 @@
 <a href="/plants">Plants</a>
 <h1>{data.species.scientific_name}</h1>
 <p>GBIF key: {data.species.gbif_key}</p>
-<CareCard gbifKey={data.species.gbif_key} profile={data.care.profile} fetchStates={data.care.fetches} canEdit={data.canEditCare} />
+<CareCard gbifKey={data.species.gbif_key} profile={data.care.profile} fetchStates={data.care.fetches} canEdit={data.canEditCare} canRetry={data.canEdit} />
 {#each Object.entries(nameLanguages) as [code, label]}
   <section aria-labelledby={'names-' + code}>
     <h2 id={'names-' + code}>{label}</h2>

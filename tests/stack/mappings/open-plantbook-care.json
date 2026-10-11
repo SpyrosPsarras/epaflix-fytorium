@@ -1,0 +1,147 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/match",
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "name": {
+            "matches": "Testoria (sensor|unmatched) [0-9]+"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"usageKey\":{{regexExtract request.query.name \"[0-9]+\"}},\"scientificName\":\"{{request.query.name}} Inventor\",\"canonicalName\":\"{{request.query.name}}\",\"rank\":\"SPECIES\",\"kingdom\":\"Plantae\",\"matchType\":\"EXACT\",\"confidence\":99}",
+        "transformers": [
+          "response-template"
+        ]
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/plant/search",
+        "headers": {
+          "Host": {
+            "matches": "open-plantbook(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "alias": {
+            "matches": "Testoria sensor [0-9]+"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"results\":[{\"pid\":\"testoria_sensor_{{regexExtract request.query.alias \"[0-9]+\"}}\",\"display_pid\":\"{{request.query.alias}}\"}]}",
+        "transformers": [
+          "response-template"
+        ]
+      }
+    },
+    {
+      "priority": 4,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v1/plant/search",
+        "headers": {
+          "Host": {
+            "matches": "open-plantbook(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "results": []
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/v2/species-list",
+        "headers": {
+          "Host": {
+            "matches": "perenual(:[0-9]+)?"
+          }
+        },
+        "queryParameters": {
+          "q": {
+            "matches": "Testoria (sensor|unmatched) [0-9]+"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "data": []
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/api/v1/plant/detail/testoria_sensor_[0-9]+/",
+        "headers": {
+          "Host": {
+            "matches": "open-plantbook(:[0-9]+)?"
+          },
+          "Authorization": {
+            "equalTo": "Token synthetic-plantbook-token"
+          }
+        },
+        "queryParameters": {
+          "include": {
+            "equalTo": "care"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "min_env_humid": 10,
+          "max_env_humid": 30,
+          "min_light_lux": 1000,
+          "max_light_lux": 3000,
+          "min_temp": 15,
+          "max_temp": 28,
+          "min_temp_survival": -5,
+          "min_soil_moist": 20,
+          "max_soil_moist": 60,
+          "care": {
+            "soil": "Synthetic soil advice.",
+            "watering": "Synthetic watering advice."
+          }
+        }
+      }
+    }
+  ]
+}

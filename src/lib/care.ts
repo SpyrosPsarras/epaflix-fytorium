@@ -8,6 +8,9 @@ export type CareFields = {
   humidityNeed: 'low' | 'medium' | 'high';
   temperatureRangeC: { min: number; max: number };
   hardiness: { min: number; max: number };
+  hardinessC: number;
+  soilMoistureRangePercent: { min: number; max: number };
+  careText: string;
   poisonousToPets: boolean;
   poisonousToHumans: boolean;
   cycle: 'annual' | 'biennial' | 'perennial';
@@ -21,7 +24,8 @@ export type CareProfile = Record<CareName, CareField & { fetchedAt: string | nul
 export const careLabels: Record<CareName, string> = {
   wateringIntervalDays: 'Watering interval in days', fertilizingIntervalDays: 'Fertilizing interval in days',
   light: 'Light', humidityNeed: 'Humidity need', temperatureRangeC: 'Temperature range in °C',
-  hardiness: 'Hardiness zones', poisonousToPets: 'Poisonous to pets', poisonousToHumans: 'Poisonous to humans',
+  soilMoistureRangePercent: 'Soil moisture sensor range in %', careText: 'Source care text',
+  hardinessC: 'Minimum survival temperature in °C', hardiness: 'Hardiness zones', poisonousToPets: 'Poisonous to pets', poisonousToHumans: 'Poisonous to humans',
   cycle: 'Lifecycle', dimensions: 'Size in cm', pruningMonths: 'Pruning months', pests: 'Common pests', indoor: 'Indoor',
 };
 export const careNames = Object.keys(careLabels) as CareName[];
@@ -40,6 +44,9 @@ export function validCareValue(field: string, value: unknown): boolean {
     case 'humidityNeed': return ['low', 'medium', 'high'].includes(String(value)) && typeof value === 'string';
     case 'temperatureRangeC': return range(-60, 60);
     case 'hardiness': return range(1, 13);
+    case 'hardinessC': return number(value, -60, 60);
+    case 'soilMoistureRangePercent': return range(0, 100);
+    case 'careText': return typeof value === 'string' && value.trim().length > 0 && value.length <= 4000;
     case 'dimensions': return range(0, 100000) && (value as { unit?: string }).unit === 'cm';
     case 'poisonousToPets': case 'poisonousToHumans': case 'indoor': return typeof value === 'boolean';
     case 'cycle': return typeof value === 'string' && ['annual', 'biennial', 'perennial'].includes(value);

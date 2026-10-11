@@ -24,6 +24,7 @@
 <svelte:head><title>Household settings | Fytorium</title></svelte:head>
 <a href="/">Home</a>
 <h1>Household settings</h1>
+{#if data.isOwner}<p><a href="/species/unmatched">Open Plantbook unmatched species</a></p>{/if}
 <section>
   <h2>Misting</h2>
   <form onsubmit={save}>

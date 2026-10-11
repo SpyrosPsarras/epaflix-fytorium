@@ -31,6 +31,8 @@ All requests advertised `x-ratelimit-limit: 100`. The 16 calls in this ticket ac
 
 ## Consequences and licensing
 
+Open Plantbook is now implemented for private runtime caching with synthetic tests; credentials are pending in Vaultwarden, at a path the owner will confirm.
+
 Most sampled houseplants need fallback rules now and Open Plantbook later. Rule-based schedules are estimates, and the UI must say so. The default quota is 100 requests per UTC day and a conservative per-minute rate. Retry attempts are capped; the owner can explicitly request a refresh after a terminal failure.
 
 Perenual's terms limit use to personal use and forbid redistribution and derivative uses. Runtime personal caching is a licensing grey area, not permission to publish a dataset. Retain only the mapped care fields needed by the household, not raw responses. Open Plantbook has no stated data licence in the research, so #10 must also cache only for personal use. GBIF names require CC BY 4.0 attribution. No real source payload belongs in this repository.
