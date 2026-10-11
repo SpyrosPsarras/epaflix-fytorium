@@ -3,15 +3,6 @@ import type { HouseholdLocation } from '$lib/weather';
 import { db } from '../db';
 import { now } from '../clock';
 
-export async function readWeatherJson(request: Request): Promise<Record<string, unknown>> {
-  let body;
-  try {
-    if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error();
-    body = await request.json();
-  } catch { error(400, 'Send a valid JSON object.'); }
-  if (!body || typeof body !== 'object' || Array.isArray(body)) error(400, 'Send a valid JSON object.');
-  return body;
-}
 export async function householdLocation(household: string): Promise<{ location: HouseholdLocation | null }> {
   const { rows: [row] } = await db().query('SELECT latitude, longitude, location_label FROM households WHERE id = $1', [household]);
   return { location: row.latitude === null ? null : { latitude: row.latitude, longitude: row.longitude, label: row.location_label } };

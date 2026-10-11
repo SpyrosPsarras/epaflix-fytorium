@@ -205,3 +205,17 @@ At least 5 mm of precipitation today or yesterday qualifies, weather.rain@1. Mar
 
 **Outdoor months**:
 For each species, the months whose local climate mean daily minimum is at least applicable hardiness plus 2 °C, hardiness.outdoor_months@1. Pot and ground have separate rows on the Species care card. Climate uses Open-Meteo's CMCC_CM2_VHR4 modelled daily minima for 1991 to 2020, averaged by calendar month. No location prompts the owner to set one; a pending refresh is not an empty set of suitable months. Monthly means do not rule out an individual frost.
+
+## Notifications
+
+**Push subscription**:
+One member's browser device, stored with a unique HTTPS endpoint, validated p256dh/auth encryption keys, a user-agent label, creation time and last successful delivery time. Enabling a device asks permission only from a tap. Devices are private to their member. Removing one deletes its subscription; a 404 or 410 from its push provider removes it automatically. Public DNS addresses are checked and pinned before sending.
+
+**Reminder time**:
+A member's HH:MM in the household time zone. Daily reminders and weather alerts are independent member switches, both off by default. Device permission and server reminder settings are separate choices.
+
+**Daily reminder**:
+An encrypted push summary of the same due and late task list as Today, respecting that member's location filter and excluding completed tasks and graveyard plants. Its body contains task counts and up to three plant names. One database claim per member and local calendar date leases delivery for five minutes. `sent_at` is set after at least one device accepts, or records a skip if all devices expired. Sent claims never send again. Unsent expired claims recover after a crash or temporary failure on a later tick, only within the same local day. Empty lists send nothing. The `fytorium-daily` tag replaces yesterday's notification. A crash between provider acceptance and storing `sent_at` leaves an ambiguous outcome; a retry uses the same replacement tag.
+
+**Weather alert notification**:
+An encrypted push for an open rain or low-temperature weather event, sent only to members with weather alerts on. The push worker reads open events every thirty seconds, independently of weather reconciliation. One database claim per event and member has the same five-minute lease and `sent_at` completion or expired-device skip as daily reminders. Unsent expired claims retry while the event remains open; sent claims never send again. Resolved events send nothing. Each event has its own notification tag. Both daily reminders and weather alert notifications open Today when tapped. Payloads contain no member identity or coordinates; Android's push provider sees timing and size, not the encrypted text.
