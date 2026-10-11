@@ -45,11 +45,21 @@ After login, open **Sites** from the home screen to create, edit or delete a sit
 
 The UI and API tests use the same JSON endpoints: `GET /api/sites`, `POST /api/sites`, and `GET`, `PUT`, `DELETE /api/sites/:id`. POST and PUT take all site conditions using the vocabulary in `CONTEXT.md`: `name`, `location`, `light`, `grow_light`, `humidity`, `draft`, `warm_min_c`, `warm_max_c`, `cold_min_c`, `cold_max_c`. Temperature bounds may be omitted or null. PUT replaces conditions rather than patching them. Invalid fields return 422 with an `errors` object keyed by field; malformed JSON returns 400. Deletion returns 204 or 409 with a message saying how many plants to move or remove. Every endpoint and page requires a household session.
 
-The minimal plants table is ready for ticket #5. There is no plant API or UI yet, so occupied-site deletion is covered by API and browser tests with synthetic SQL plant fixtures.
+## Plants
+
+Open **Plants** from home, then **Add plant**. Search by name, choose a candidate and confirm uncertain matches before filling in its site, optional nickname, cultivar and birthday, pot and plant attributes. The plant page links to its settings and to the site's plant list. Site settings are now at /sites/:id/edit. Plant lists filter by display name or scientific name and show a photo placeholder until photos arrive.
+
+API endpoints: `GET /api/species`, `GET /api/species/search?q=...`, `GET /api/plants` with optional `site_id` or `count=true` for a count only, `POST /api/plants`, and `GET` or `PUT /api/plants/:id`. Search returns `search_id` and candidates. POST carries `search_id`, the chosen `gbif_key`, `confirmed: true` when required, and the plant attributes. PUT replaces the attributes without changing the species. Every page and endpoint requires a household session.
+
+Search checks stored scientific and canonical names first. Only a full name match, ignoring case and surrounding spaces, can skip confirmation locally. Partial local hits require confirmation and carry no match type or confidence. Without a full local match, the GBIF adapter calls species/match with kingdom=Plantae and verbose=true. GBIF candidates appear alongside local partial hits, which remain available during an outage. The multilingual name index is ticket #11. Species use the accepted GBIF key for synonyms. If the match omits an accepted name, the adapter fetches species/{acceptedUsageKey}. Both requests share a three-second timeout. GBIF names are attributed under CC BY 4.0.
+
+The server retains search results for five minutes, with a maximum of 1,000 records per process, scoped to the household. After expiry or restart, search again. EXACT species-rank matches with confidence at least 90 need no confirmation. Other match types, lower confidence, lower taxon ranks and alternatives require confirmed=true for that exact chosen key. NONE and taxa outside Plantae or above species rank are refused. Client-sent taxonomy is ignored.
+
+All plant fields use the vocabulary in CONTEXT.md. POST and PUT validate on the server; field errors return 422, malformed JSON returns 400, and GBIF outages return 503. Birthday uses the server clock's UTC date. The database checks birthday against the recorded validation date so the test clock and database do not disagree. Enum, positive-integer and household-site constraints also live in Postgres. Occupied-site tests now create plants through the API, and the phone scenario adds one through the UI.
 
 ## Runtime
 
-Runtime config: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL` and `ORIGIN`. Register `/auth/callback` at the provider and set `ORIGIN` to the public app URL. Inject secrets at runtime. Use HTTPS for secure session cookies and PWA installation. `OIDC_ALLOW_INSECURE_HTTP=true` is for the test provider only, never deployment.
+Runtime config: `GBIF_BASE_URL` defaults to `https://api.gbif.org/v1/`; tests override it with an in-process fake or the Compose alias `gbif`. Other config: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL` and `ORIGIN`. Register `/auth/callback` at the provider and set `ORIGIN` to the public app URL. Inject secrets at runtime. Use HTTPS for secure session cookies and PWA installation. `OIDC_ALLOW_INSECURE_HTTP=true` is for the test provider only, never deployment.
 
 The first login becomes the household owner. Other subjects are refused until invitations are implemented. Sessions expire after seven days. `/healthz` checks Postgres; `/metrics` exposes Prometheus metrics. Neither operational endpoint requires login; restrict them at the ingress.
 

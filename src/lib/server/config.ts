@@ -14,6 +14,7 @@ export function config() {
   }
   return {
     testClockEnabled,
+    gbifBaseUrl: new URL(env.GBIF_BASE_URL ?? 'https://api.gbif.org/v1/'),
     databaseUrl: required('DATABASE_URL'),
     origin: new URL(required('ORIGIN')),
     oidcIssuer: new URL(required('OIDC_ISSUER')),

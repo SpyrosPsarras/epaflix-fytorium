@@ -4,23 +4,47 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
-export function createApiHarness() {
+export function createApiHarness(options: { testClock?: boolean } = {}) {
   let postgres: StartedPostgreSqlContainer;
   let postgresStopped = false;
   let provider: Awaited<ReturnType<typeof startOidcProvider>>;
   let app: ChildProcess;
   let base: string;
   let appOutput = '';
+  let gbifResponse: unknown = { usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 };
+  let gbifStatus = 200;
+  let gbifDelay = 0;
+  const gbifSpecies = new Map<number, unknown>();
+  const gbif = createServer((request, response) => {
+    const url = new URL(request.url!, 'http://fake');
+    if (/^\/species\/\d+$/.test(url.pathname)) {
+      const payload = gbifSpecies.get(Number(url.pathname.split('/').pop()));
+      response.writeHead(payload ? 200 : 404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(payload ?? {}));
+      return;
+    }
+    if (url.pathname !== '/species/match' || url.searchParams.get('kingdom') !== 'Plantae' || url.searchParams.get('verbose') !== 'true') {
+      response.writeHead(400).end();
+      return;
+    }
+    const payload = gbifResponse;
+    const status = gbifStatus;
+    setTimeout(() => {
+      response.writeHead(status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(payload));
+    }, gbifDelay);
+  });
 
   beforeAll(async () => {
     postgres = await new PostgreSqlContainer('postgres:17-alpine').start();
     provider = await startOidcProvider();
+    const gbifPort = await listen(gbif);
     const portServer = createServer();
     const port = await listen(portServer);
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
     // start.mjs runs migrations before starting the HTTP listener.
-    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -43,6 +67,8 @@ export function createApiHarness() {
       await exited;
     }
     if (provider) await close(provider.server);
+    gbif.closeAllConnections();
+    await close(gbif);
     if (postgres && !postgresStopped) await stopPostgres();
   });
 
@@ -66,6 +92,8 @@ export function createApiHarness() {
     get postgres() { return postgres; },
     get appOutput() { return appOutput; },
     login,
+    setGbif(payload: unknown, status = 200, delay = 0) { gbifResponse = payload; gbifStatus = status; gbifDelay = delay; },
+    setGbifSpecies(key: number, payload: unknown) { gbifSpecies.set(key, payload); },
     stopPostgres,
   };
 }

@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { checkSiteOrigin, readSite } from '$lib/server/sites';
+import { checkOrigin, readSite } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals }) => {
@@ -16,7 +16,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
-  checkSiteOrigin(request);
+  checkOrigin(request);
   const site = await readSite(request);
   if (site instanceof Response) return site;
   const result = await db().query(

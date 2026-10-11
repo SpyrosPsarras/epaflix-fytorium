@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import pg from 'pg';
 import { createApiHarness } from './harness';
+import { fixturePlant } from '../plant-fixture';
 
 const harness = createApiHarness();
 let base: string;
 let cookie: string;
-let householdId: string;
 let fixtureDb: pg.Pool;
 let request: Awaited<ReturnType<typeof harness.login>>['request'];
 
@@ -13,7 +13,6 @@ beforeAll(async () => {
   base = harness.base;
   fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   ({ cookie, request } = await harness.login());
-  householdId = (await (await request('/api/me')).json()).household.id;
 });
 
 afterAll(async () => {
@@ -30,6 +29,13 @@ async function createSite(name = 'Test room') {
   const response = await request('/api/sites', 'POST', { ...conditions, name });
   expect(response.status).toBe(201);
   return response.json();
+}
+
+async function createPlant(siteId: string, nickname: string) {
+  const search = await request('/api/species/search?q=Testoria%20lucida');
+  expect(search.status).toBe(200);
+  const result = await search.json();
+  expect((await request('/api/plants', 'POST', { ...fixturePlant, nickname, site_id: siteId, search_id: result.search_id, gbif_key: 910001 })).status).toBe(201);
 }
 
 test('rejects cross-origin mutations without changing sites', async () => {
@@ -70,9 +76,8 @@ test('requires a household session for every site API operation', async () => {
 
 test('refuses to delete a site with plants and explains how to fix it', async () => {
   const site = await createSite('Test occupied room');
-  // No plant API exists yet. SQL supplies fixtures, not verification.
-  await fixtureDb.query('INSERT INTO plants (household_id, site_id, nickname) VALUES ($1, $2, $3), ($1, $2, $4)',
-    [householdId, site.id, 'Test plant three', 'Test plant four']);
+  await createPlant(site.id, 'Test plant three');
+  await createPlant(site.id, 'Test plant four');
   const response = await request('/api/sites/' + site.id, 'DELETE');
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({ message: 'Move or remove the 2 plants on this site first.' });
@@ -122,9 +127,8 @@ test('rejects invalid fields on create and edit without writing anything', async
 test('lists site names, locations and counts from real plants', async () => {
   const site = await createSite('Test counted room');
   const empty = await createSite('Test empty terrace');
-  // No plant API exists yet. SQL only supplies the plant fixtures; assertions use HTTP.
-  await fixtureDb.query('INSERT INTO plants (household_id, site_id, nickname) VALUES ($1, $2, $3), ($1, $2, $4)',
-    [householdId, site.id, 'Test plant one', 'Test plant two']);
+  await createPlant(site.id, 'Test plant one');
+  await createPlant(site.id, 'Test plant two');
   const response = await request('/api/sites');
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual(expect.arrayContaining([

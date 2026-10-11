@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { logIn } from './helpers/login';
 import { randomUUID } from 'node:crypto';
-import { insertPlantForSite } from './helpers/db';
+import { addPlantForSite } from './helpers/plants';
 
 test('creates, edits, lists and deletes a site on a phone', async ({ page }, testInfo) => {
   await logIn(page, 'synthetic-browser-owner');
@@ -69,7 +69,7 @@ test('counts a plant and refuses to delete its site on a phone', async ({ page }
   await page.getByRole('button', { name: 'Save site', exact: true }).click();
   const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: siteName, exact: true }) });
   await expect(card).toBeVisible();
-  await insertPlantForSite(siteName, `Test plant ${suffix}`);
+  await addPlantForSite(page.request, siteName, `Test plant ${suffix}`);
   await page.goto('/sites');
   await expect(card).toContainText('1 plant');
   await card.getByRole('button', { name: 'Delete', exact: true }).click();

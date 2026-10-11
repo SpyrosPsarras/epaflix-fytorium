@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { locations, lightLevels, humidityLevels, type SiteInput } from '$lib/sites';
 
-export function checkSiteOrigin(request: Request) {
+export function checkOrigin(request: Request) {
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin) error(403, 'Cross-origin request refused');
 }

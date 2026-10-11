@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { checkSiteOrigin, readSite } from '$lib/server/sites';
+import { checkOrigin, readSite } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 
 function isSiteId(id: string) {
@@ -10,7 +10,7 @@ function isSiteId(id: string) {
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');
   if (!isSiteId(params.id)) error(404, 'Site not found');
-  checkSiteOrigin(request);
+  checkOrigin(request);
   let result;
   try {
     // The FK refuses deletion even when a plant is added concurrently.
@@ -31,7 +31,7 @@ export const DELETE: RequestHandler = async ({ locals, params, request }) => {
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');
   if (!isSiteId(params.id)) error(404, 'Site not found');
-  checkSiteOrigin(request);
+  checkOrigin(request);
   const site = await readSite(request);
   if (site instanceof Response) return site;
   const result = await db().query(

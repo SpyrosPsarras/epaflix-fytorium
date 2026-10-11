@@ -35,10 +35,10 @@
 {/if}
 {#each data.sites as site (site.id)}
   <article>
-    <h2>{site.name}</h2>
+    <h2><a href={'/sites/' + site.id}>{site.name}</a></h2>
     <p>{site.location === 'indoor' ? 'Indoor' : 'Outdoor'} · {site.plant_count} {site.plant_count === 1 ? 'plant' : 'plants'}</p>
     <div class="controls">
-      <a href={'/sites/' + site.id}>Edit</a>
+      <a href={'/sites/' + site.id + '/edit'}>Edit</a>
       <button disabled={busy} onclick={() => { confirming = site.id; message = ''; }}>Delete</button>
     </div>
     {#if confirming === site.id}

@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 import { logIn } from './helpers/login';
 
-test('a chosen OIDC subject sees the empty home and install metadata', async ({ page, request }) => {
+test('a chosen OIDC subject sees the household home and install metadata', async ({ page, request }) => {
   await logIn(page, 'synthetic-browser-owner');
-  await expect(page.getByRole('heading', { name: 'No plants yet' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Plants', exact: true })).toBeVisible();
   await expect(page.getByText('My household · owner')).toBeVisible();
   const href = await page.locator('link[rel="manifest"]').getAttribute('href');
   expect(href).toBe('/manifest.webmanifest');

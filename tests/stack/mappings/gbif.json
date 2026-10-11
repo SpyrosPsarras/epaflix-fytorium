@@ -1,22 +1,147 @@
 {
-  "request": {
-    "method": "ANY",
-    "urlPathPattern": ".*",
-    "headers": {
-      "Host": {
-        "matches": "gbif(:[0-9]+)?"
+  "mappings": [
+    {
+      "request": {
+        "method": "ANY",
+        "urlPathPattern": ".*",
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "synthetic": true,
+          "service": "gbif",
+          "items": []
+        }
+      },
+      "priority": 10
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/match",
+        "queryParameters": {
+          "name": {
+            "equalTo": "Testoria lucida"
+          },
+          "kingdom": {
+            "equalTo": "Plantae"
+          },
+          "verbose": {
+            "equalTo": "true"
+          }
+        },
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "usageKey": 910001,
+          "scientificName": "Testoria lucida Inventor",
+          "canonicalName": "Testoria lucida",
+          "rank": "SPECIES",
+          "kingdom": "Plantae",
+          "matchType": "EXACT",
+          "confidence": 99
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/match",
+        "queryParameters": {
+          "name": {
+            "equalTo": "Testoria neblosa"
+          },
+          "kingdom": {
+            "equalTo": "Plantae"
+          },
+          "verbose": {
+            "equalTo": "true"
+          }
+        },
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "usageKey": 910002,
+          "scientificName": "Testoria nebulosa Inventor",
+          "canonicalName": "Testoria nebulosa",
+          "rank": "SPECIES",
+          "kingdom": "Plantae",
+          "matchType": "FUZZY",
+          "confidence": 96,
+          "alternatives": [
+            {
+              "usageKey": 910003,
+              "scientificName": "Testoria alternativa Inventor",
+              "canonicalName": "Testoria alternativa",
+              "rank": "SPECIES",
+              "kingdom": "Plantae",
+              "matchType": "EXACT",
+              "confidence": 99
+            }
+          ]
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/match",
+        "queryParameters": {
+          "name": {
+            "equalTo": "Unknownia"
+          },
+          "kingdom": {
+            "equalTo": "Plantae"
+          },
+          "verbose": {
+            "equalTo": "true"
+          }
+        },
+        "headers": {
+          "Host": {
+            "matches": "gbif(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "matchType": "NONE",
+          "confidence": 0
+        }
       }
     }
-  },
-  "response": {
-    "status": 200,
-    "headers": {
-      "Content-Type": "application/json"
-    },
-    "jsonBody": {
-      "synthetic": true,
-      "service": "gbif",
-      "items": []
-    }
-  }
+  ]
 }

@@ -6,8 +6,8 @@
 <header><img src="/icon.svg" width="48" height="48" alt="" /><h1>Fytorium</h1></header>
 {#if data.identity}
   <p>{data.identity.household.name} · {data.identity.member.role}</p>
-  <a href="/sites">Sites</a>
-  <section><h2>No plants yet</h2><p>Your plants and care tasks will appear here.</p></section>
+  <nav><a href="/plants">Plants</a> · <a href="/sites">Sites</a></nav>
+  <section><h2>{data.plantCount === 0 ? 'No plants yet' : data.plantCount + (data.plantCount === 1 ? ' plant' : ' plants')}</h2><p><a href="/plants">Open your plant collection</a></p></section>
   <form method="POST" action="/auth/logout"><button>Log out</button></form>
 {:else}
   <p>Plant care for your household.</p>
