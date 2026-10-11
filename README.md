@@ -1,5 +1,7 @@
 <img src="assets/icon.svg" width="64" height="64" alt="">
 
-# epaflix-planta
+# Fytorium
 
-Created in [T3 Code](https://t3.codes).
+Self-hosted plant care for one household: plants, sites, care tasks and reminders. Runs on the Epaflix homelab (k3s).
+
+Status: spec and architecture phase. No app code yet.
