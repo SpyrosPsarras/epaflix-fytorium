@@ -1,0 +1,19 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": { "method": "GET", "urlPath": "/api/v2/species-list", "queryParameters": { "q": { "matches": "Testoria sourced [0-9]+" } }, "headers": { "Host": { "matches": "perenual(:[0-9]+)?" } } },
+      "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "{\"data\":[{\"id\":2093,\"scientific_name\":[\"{{request.query.q}}\"]}]}", "transformers": ["response-template"] }
+    },
+    {
+      "priority": 1,
+      "request": { "method": "GET", "urlPath": "/api/v2/species/details/2093", "headers": { "Host": { "matches": "perenual(:[0-9]+)?" } } },
+      "response": { "status": 200, "fixedDelayMilliseconds": 5000, "headers": { "Content-Type": "application/json" }, "jsonBody": { "watering_general_benchmark": { "value": "10-14", "unit": "days" }, "sunlight": ["part shade"], "pruning_month": ["April"], "hardiness": { "min": "9", "max": "11" }, "poisonous_to_pets": true, "poisonous_to_humans": false, "cycle": "Perennial", "dimensions": { "min_value": 30, "max_value": 100, "unit": "cm" }, "pest_susceptibility": ["Scale insects"], "indoor": true } }
+    },
+    {
+      "priority": 1,
+      "request": { "method": "GET", "urlPath": "/species/match", "queryParameters": { "name": { "matches": "Testoria sourced [0-9]+" } }, "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } } },
+      "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "{\"usageKey\":{{regexExtract request.query.name '[0-9]+'}},\"scientificName\":\"{{request.query.name}} Inventor\",\"canonicalName\":\"{{request.query.name}}\",\"rank\":\"SPECIES\",\"kingdom\":\"Plantae\",\"matchType\":\"EXACT\",\"confidence\":99}", "transformers": ["response-template"] }
+    }
+  ]
+}

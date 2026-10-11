@@ -7,6 +7,7 @@ import { db } from './db';
 import { config } from './config';
 import { now } from './clock';
 import { householdSettings } from './care-settings';
+import { effectiveCareProfiles } from './care/catalogue';
 
 // Intl owns time-zone and DST conversion; the engine receives calendar dates only.
 export function calendarDate(at: Date | string): string {
@@ -21,11 +22,12 @@ export async function history(plantId: string, household: string): Promise<CareE
 
 async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string) {
   const plantIds = plants.map(plant => plant.id);
-  const [sites, events, intervals, settings] = await Promise.all([
+  const [sites, events, intervals, settings, profiles] = await Promise.all([
     db().query('SELECT * FROM sites WHERE id = ANY($1::uuid[]) AND household_id = $2', [plants.map(plant => plant.site_id), household]),
     db().query('SELECT plant_id, task_type, max(occurred_at) AS last_completed FROM care_events WHERE plant_id = ANY($1::uuid[]) AND household_id = $2 AND undone_at IS NULL AND kind = $3 GROUP BY plant_id, task_type', [plantIds, household, 'completed']),
     db().query('SELECT plant_id, task_type, interval_days FROM plant_task_intervals WHERE plant_id = ANY($1::uuid[]) AND household_id = $2', [plantIds, household]),
     householdSettings(household),
+    effectiveCareProfiles(plants.map(plant => plant.gbif_key), household),
   ]);
   const sitesById = new Map(sites.rows.map(site => [site.id, site]));
   const historyByPlant: Record<string, ScheduleInput['history']> = {};
@@ -37,7 +39,7 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
     (intervalsByPlant[interval.plant_id] ??= {})[interval.task_type as TaskType] = interval.interval_days;
   }
   return new Map(plants.map(plant => [plant.id, schedule({
-    careProfile: {}, site: sitesById.get(plant.site_id), pot: plant, plant, household: settings,
+    careProfile: profiles.get(plant.gbif_key)!, site: sitesById.get(plant.site_id), pot: plant, plant, household: settings,
     history: historyByPlant[plant.id] ?? {}, customIntervals: intervalsByPlant[plant.id] ?? {},
     addedOn: calendarDate(plant.created_at), today,
   })]));

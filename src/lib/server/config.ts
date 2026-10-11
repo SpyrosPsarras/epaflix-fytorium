@@ -7,6 +7,12 @@ function required(name: string): string {
   return value;
 }
 
+function positiveInteger(name: string, fallback: number) {
+  const value = env[name] === undefined ? fallback : Number(env[name]);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid configuration: ${name}`);
+  return value;
+}
+
 export function config() {
   const testClockEnabled = env.FYTORIUM_TEST_CLOCK === 'true';
   if (testClockEnabled && env.NODE_ENV !== 'test') {
@@ -22,6 +28,12 @@ export function config() {
     minioAccessKey: required('MINIO_ACCESS_KEY'),
     minioSecretKey: required('MINIO_SECRET_KEY'),
     householdTimezone,
+    perenualBaseUrl: new URL(env.PERENUAL_BASE_URL ?? 'https://perenual.com/'),
+    perenualApiKey: env.PERENUAL_API_KEY ?? '',
+    perenualDailyCap: positiveInteger('PERENUAL_DAILY_CAP', 100),
+    perenualPerMinute: positiveInteger('PERENUAL_PER_MINUTE', 10),
+    perenualMaxAttempts: positiveInteger('PERENUAL_MAX_ATTEMPTS', 5),
+    perenualWorkerEnabled: env.PERENUAL_WORKER_ENABLED !== 'false',
     gbifBaseUrl: new URL(env.GBIF_BASE_URL ?? 'https://api.gbif.org/v1/'),
     databaseUrl: required('DATABASE_URL'),
     origin: new URL(required('ORIGIN')),

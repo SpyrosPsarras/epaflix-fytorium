@@ -87,3 +87,17 @@ An optional value: `poor`, `fair`, `good` or `very_good`. Plant settings set it 
 
 **Journal**:
 All the household's photo updates, ordered by taken date then creation time, newest first, with ID as a stable tie-breaker. Each plant also has a View all updates page. No photo or journal entry is shared across households.
+
+## Catalogue care data
+
+**Care source**:
+An origin of species care values. Perenual and Open Plantbook supply external values; Fytorium rules supply estimates where data is absent. Unknown means no source supplies a value.
+
+**Override**:
+A household correction to one species care field. It takes priority over all source data and remains until a member removes it. A plant custom interval is a separate correction to one plant task.
+
+**Source cache**:
+The household's retained care values from one source for a species, with the source key and fetch time. It is not a distributable catalogue.
+
+**Fetch queue**:
+Species care requests waiting for a source quota or retry time. A plant does not wait for a fetch to receive a care profile.

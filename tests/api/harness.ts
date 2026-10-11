@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { createPhotoStorage } from './photo-storage';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
-export function createApiHarness(options: { testClock?: boolean; photos?: boolean } = {}) {
+export function createApiHarness(options: { testClock?: boolean; photos?: boolean; careEnv?: Record<string, string>; perenual?: (path: string) => { status: number; body: unknown; headers?: Record<string, string>; delay?: number } } = {}) {
   let postgres: StartedPostgreSqlContainer;
   const photos = createPhotoStorage();
   let postgresStopped = false;
@@ -37,17 +37,26 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     }, gbifDelay);
   });
 
+  const perenual = createServer((request, response) => {
+    const result = options.perenual?.(new URL(request.url!, 'http://fake').pathname) ?? { status: 200, body: { data: [] } };
+    setTimeout(() => {
+      response.writeHead(result.status, { 'content-type': 'application/json', ...result.headers });
+      response.end(JSON.stringify(result.body));
+    }, result.delay ?? 0);
+  });
+
   beforeAll(async () => {
     postgres = await new PostgreSqlContainer('postgres:17-alpine').start();
     if (options.photos) await photos.start();
     provider = await startOidcProvider();
     const gbifPort = await listen(gbif);
+    const perenualPort = await listen(perenual);
     const portServer = createServer();
     const port = await listen(portServer);
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
     // start.mjs runs migrations before starting the HTTP listener.
-    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '16M' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '16M' }, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -70,6 +79,8 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
       await exited;
     }
     if (provider) await close(provider.server);
+    perenual.closeAllConnections();
+    await close(perenual);
     gbif.closeAllConnections();
     await close(gbif);
     if (postgres && !postgresStopped) await stopPostgres();
