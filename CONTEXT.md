@@ -235,3 +235,17 @@ A custom task belonging to one plant. Moving the plant to another site does not 
 A custom task applied on read to every active plant currently on its site, including later additions. Each plant has independent completion, snooze, skip and undo history. Moving off the site or into the graveyard stops that instance. There is no separate whole-site completion action. Handle all tasks includes due custom tasks for one plant in its existing undoable batch.
 
 Deleting a custom task sets deleted_at. Its definition and current name stay available to care history, but it disappears from schedules, Today, Upcoming and settings. Renaming also changes its historical display name. Target deletion retires custom tasks without discarding their definitions. Database triggers validate and lock the same-household target on creation or target changes, then retain the target UUID after retirement. This lets deleting a site keep custom history for its graveyard plants. Full plant deletion still cascades its care events.
+
+## Notifications
+
+**Push subscription**:
+One member's browser device, stored with a unique HTTPS endpoint, validated p256dh/auth encryption keys, a user-agent label, creation time and last successful delivery time. Enabling a device asks permission only from a tap. Devices are private to their member. Removing one deletes its subscription; a 404 or 410 from its push provider removes it automatically. Public DNS addresses are checked and pinned before sending.
+
+**Reminder time**:
+A member's HH:MM in the household time zone. Daily reminders and weather alerts are independent member switches, both off by default. Device permission and server reminder settings are separate choices.
+
+**Daily reminder**:
+An encrypted push summary of the same due and late task list as Today, respecting that member's location filter and excluding completed tasks and graveyard plants. Its body contains task counts and up to three plant names. One database claim per member and local calendar date leases delivery for five minutes. `sent_at` is set after at least one device accepts, or records a skip if all devices expired. Sent claims never send again. Unsent expired claims recover after a crash or temporary failure on a later tick, only within the same local day. Empty lists send nothing. The `fytorium-daily` tag replaces yesterday's notification. A crash between provider acceptance and storing `sent_at` leaves an ambiguous outcome; a retry uses the same replacement tag.
+
+**Weather alert notification**:
+An encrypted push for an open rain or low-temperature weather event, sent only to members with weather alerts on. The push worker reads open events every thirty seconds, independently of weather reconciliation. One database claim per event and member has the same five-minute lease and `sent_at` completion or expired-device skip as daily reminders. Unsent expired claims retry while the event remains open; sent claims never send again. Resolved events send nothing. Each event has its own notification tag. Both daily reminders and weather alert notifications open Today when tapped. Payloads contain no member identity or coordinates; Android's push provider sees timing and size, not the encrypted text.

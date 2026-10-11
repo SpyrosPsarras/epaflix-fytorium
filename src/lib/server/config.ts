@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { building } from '$app/environment';
+import webPush from 'web-push';
 
 function required(name: string): string {
   const value = env[name];
@@ -26,6 +27,12 @@ export function config() {
   catch { throw new Error(`Invalid configuration: HOUSEHOLD_TIMEZONE '${householdTimezone}' is not a valid time zone`); }
   return {
     testClockEnabled,
+    vapidPublicKey: env.VAPID_PUBLIC_KEY ?? '',
+    vapidPrivateKey: env.VAPID_PRIVATE_KEY ?? '',
+    vapidSubject: env.VAPID_SUBJECT ?? '',
+    pushWorkerEnabled: env.PUSH_WORKER_ENABLED !== 'false',
+    // The synthetic transport is unreachable in production, including misconfigured deployments.
+    testPushUrl: testClockEnabled && env.FYTORIUM_TEST_PUSH_URL ? new URL(env.FYTORIUM_TEST_PUSH_URL) : null,
     minioEndpoint: new URL(required('MINIO_ENDPOINT')),
     minioBucket: required('MINIO_BUCKET'),
     minioAccessKey: required('MINIO_ACCESS_KEY'),
@@ -62,4 +69,10 @@ export function config() {
   };
 }
 
-if (!building) config();
+if (!building) {
+  const settings = config();
+  if (settings.vapidPublicKey || settings.vapidPrivateKey || settings.vapidSubject) {
+    try { webPush.getVapidHeaders('https://push.example', settings.vapidSubject, settings.vapidPublicKey, settings.vapidPrivateKey, 'aes128gcm'); }
+    catch { throw new Error('Invalid VAPID configuration: set a valid subject and key pair'); }
+  }
+}

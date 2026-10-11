@@ -25,6 +25,7 @@
 <svelte:head><title>Household settings | Fytorium</title></svelte:head>
 <a href="/">Home</a>
 <h1>Household settings</h1>
+<p><a href="/settings/notifications">My notifications</a></p>
 <WeatherLocationForm location={data.location} canEdit={data.canEditLocation} />
 {#if data.isOwner}<p><a href="/species/unmatched">Open Plantbook unmatched species</a></p>{/if}
 <section>

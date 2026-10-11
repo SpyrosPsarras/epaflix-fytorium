@@ -16,7 +16,8 @@ services:
       MINIO_BUCKET: fytorium-test
       MINIO_ACCESS_KEY: synthetic-minio
       MINIO_SECRET_KEY: synthetic-minio-password
-      NTFY_URL: http://ntfy:80
+      FYTORIUM_TEST_PUSH_URL: http://fake-push:8080
+      VAPID_SUBJECT: mailto:push@example.test
       PERENUAL_BASE_URL: ${PERENUAL_BASE_URL:-http://perenual:8080}
       PLANTNET_BASE_URL: ${PLANTNET_BASE_URL:-http://plantnet:8080}
       PERENUAL_API_KEY: "${PERENUAL_API_KEY:-synthetic-perenual}"
@@ -40,7 +41,7 @@ services:
         condition: service_completed_successfully
       oidc:
         condition: service_started
-      ntfy:
+      fake-push:
         condition: service_started
       fakes:
         condition: service_started
@@ -94,12 +95,12 @@ services:
   oidc:
     image: ghcr.io/navikt/mock-oauth2-server:2.3.0
 
-  ntfy:
-    image: binwiederhier/ntfy:v2.16.0
-    command: serve
-    environment:
-      NTFY_CACHE_FILE: /tmp/cache.db
-      NTFY_CACHE_DURATION: 24h
+  fake-push:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    command: [node, tests/push-service.mjs]
 
   fakes:
     image: wiremock/wiremock:3.13.2

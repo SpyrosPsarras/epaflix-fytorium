@@ -1,5 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
+import { startPushWorker } from '$lib/server/notifications/worker';
 import { startWeatherWorker } from '$lib/server/weather/worker';
 import { startCareWorker } from '$lib/server/care/worker';
 import { startNameWorker } from '$lib/server/names';
@@ -7,6 +8,7 @@ import { identity } from '$lib/server/auth';
 import { requests, duration } from '$lib/server/metrics';
 
 if (!building) {
+  startPushWorker();
   startCareWorker();
   startWeatherWorker();
   startNameWorker();

@@ -6,6 +6,34 @@ const cacheName = `fytorium-${version}`;
 const assets = [...build, ...files];
 const assetPaths = new Set(assets);
 
+worker.addEventListener('push', event => {
+  let payload;
+  try {
+    const value = event.data?.json();
+    if (value && typeof value === 'object' && ['title', 'body', 'tag', 'url'].every(key => typeof value[key] === 'string')) payload = value;
+  } catch { /* Still show a visible notification for malformed pushes. */ }
+  event.waitUntil(worker.registration.showNotification(payload?.title ?? 'Fytorium', {
+    body: payload?.body ?? 'Open Today to check your plants.',
+    tag: payload?.tag ?? 'fytorium-fallback',
+    icon: '/icon-192.png',
+    data: { url: payload?.url ?? '/' },
+  }));
+});
+
+worker.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const url = new URL(event.notification.data?.url ?? '/', worker.location.origin);
+    if (url.origin !== worker.location.origin) return;
+    const clients = await worker.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const client = clients.find(client => new URL(client.url).origin === url.origin) as WindowClient | undefined;
+    if (client) {
+      await client.navigate(url.href);
+      await client.focus();
+    } else await worker.clients.openWindow(url.href);
+  })());
+});
+
 worker.addEventListener('install', event => {
   event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(assets)));
 });
