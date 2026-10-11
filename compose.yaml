@@ -26,6 +26,8 @@ services:
       # Frozen browser clocks must not exhaust a production-sized quota window.
       OPEN_PLANTBOOK_PER_MINUTE: "200"
       OPEN_PLANTBOOK_DAILY_CAP: "1000"
+      PLANTA_BASE_URL: http://planta:8080/v1
+      PLANTA_TEST_IMAGE_ORIGIN: https://planta:8443
       GBIF_BASE_URL: http://gbif:8080
       WIKIDATA_BASE_URL: http://wikidata:8080
       NORTAXA_BASE_URL: http://nortaxa:8080
@@ -101,11 +103,12 @@ services:
 
   fakes:
     image: wiremock/wiremock:3.13.2
+    command: [--https-port, "8443"]
     volumes:
       - ./tests/stack/mappings:/home/wiremock/mappings:ro
     networks:
       default:
-        aliases: [perenual, open-plantbook, plantnet, gbif, wikidata, nortaxa, open-meteo, open-meteo-climate]
+        aliases: [perenual, open-plantbook, plantnet, gbif, wikidata, nortaxa, open-meteo, open-meteo-climate, planta]
 
   browser:
     image: mcr.microsoft.com/playwright:v1.58.2-noble

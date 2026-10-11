@@ -26,7 +26,7 @@ A site with plants cannot be deleted. Move or remove its plants first.
 An individual plant in the household, with a species and a required site in the same household. Its display name is its nickname, or its species' canonical name if no nickname is set. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded. Active plants require a site; graveyard plants can keep their history without one.
 
 **Pot attributes**:
-Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabric` or `in_ground`. Soil type is `all_purpose`, `cactus`, `orchid`, `aroid` or `other`. Pot size in cm is a positive whole number or unknown. Drainage is a boolean.
+Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabric`, `in_ground` or `other`. `other` records an unknown material without changing the schedule. Soil type is `all_purpose`, `cactus`, `orchid`, `aroid` or `other`. Pot size in cm is a positive whole number or unknown. Drainage is a boolean.
 
 **Plant attributes**:
 Plant size is `small`, `medium`, `large` or `very_large`. Growth stage is `seedling`, `young` or `mature`. Window distance in cm is a positive whole number or unknown. Grow light, near AC and near heater are booleans. Fertilizer type is `liquid`, `sticks` or `slow_release`.
@@ -160,6 +160,23 @@ The household's retained care values from one source for a species, with the sou
 
 **Fetch queue**:
 Species care requests waiting for a source quota or retry time. A plant does not wait for a fetch to receive a care profile.
+
+## Planta import
+
+**Import run**:
+An owner-only fetch from Planta's official public API using a one-time app code. The server never returns, logs or stores the code or tokens. Tokens exist only in server memory while fetching and are discarded before review. A new successful fetch replaces the prior review; a failed fetch keeps it.
+
+**Staging**:
+ImportStaging stores mapped fields and server-validated species candidates in Postgres, keyed by household and Planta plant ID. Exact matches arrive confirmed; uncertain matches require an explicit choice or a skip. The shared SpeciesPicker can supply a different species. Review and confirmed selections survive restart. Commit refuses outstanding reviews, processes each confirmed row transactionally and records its plant ID. Retrying the same review skips committed rows.
+
+**Planta plant ID**:
+The external identifier of one Planta inventory plant, unique within its household. A fresh fetch updates species, nickname, cultivar, site, pot and soil by this key, including owner edits to those fields. Other Fytorium fields stay local. A graveyard plant is skipped without changing its fields, site, species, history or photos. Only an explicit restore followed by a fresh fetch makes it eligible again. Stored species taxonomy is never replaced by import. The successful cover-import flag stays even if that photo is deleted; later fetches cannot replace the cover or download it again.
+
+**Imported care event**:
+A completed care event with source `planta`, one per plant and action. A fresh fetch replaces its last completed timestamp without duplicating the event or removing an undo. Imported events are standalone, never part of a handle-all batch; their identity remains the same across fetches. Local batches, snoozes and skips are unchanged. Missing dates do not erase events. Future or invalid dates are refused. The existing schedule engine anchors on these events, like ordinary completions.
+
+**Imported site conditions**:
+Planta supplies a site name, not its conditions. Import matches names case-insensitively or creates an indoor site with default conditions and an incomplete-conditions flag. Saving its settings clears the flag. Re-runs never reset site conditions. The pot and soil mapping table and the full re-run rule are in README.md.
 
 ## Task handling
 

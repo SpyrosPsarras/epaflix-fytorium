@@ -18,6 +18,9 @@ export function config() {
   if (testClockEnabled && env.NODE_ENV !== 'test') {
     throw new Error('FYTORIUM_TEST_CLOCK requires NODE_ENV=test');
   }
+  const plantaTestImageOrigin = env.PLANTA_TEST_IMAGE_ORIGIN ?? '';
+  if (plantaTestImageOrigin && (!testClockEnabled || env.NODE_ENV !== 'test')) throw new Error('PLANTA_TEST_IMAGE_ORIGIN requires the test clock and NODE_ENV=test');
+  if (plantaTestImageOrigin && new URL(plantaTestImageOrigin).protocol !== 'https:') throw new Error('PLANTA_TEST_IMAGE_ORIGIN requires HTTPS');
   const householdTimezone = env.HOUSEHOLD_TIMEZONE ?? 'Europe/Oslo';
   try { new Intl.DateTimeFormat('en', { timeZone: householdTimezone }); }
   catch { throw new Error(`Invalid configuration: HOUSEHOLD_TIMEZONE '${householdTimezone}' is not a valid time zone`); }
@@ -37,6 +40,8 @@ export function config() {
     perenualPerMinute: positiveInteger('PERENUAL_PER_MINUTE', 10),
     perenualMaxAttempts: positiveInteger('PERENUAL_MAX_ATTEMPTS', 5),
     perenualWorkerEnabled: env.PERENUAL_WORKER_ENABLED !== 'false',
+    plantaTestImageOrigin,
+    plantaBaseUrl: new URL(env.PLANTA_BASE_URL ?? 'https://public.planta-api.com/v1'),
     openPlantbookBaseUrl: new URL(env.OPEN_PLANTBOOK_BASE_URL ?? 'https://open.plantbook.io/api/v1/'),
     openPlantbookApiKey: env.OPEN_PLANTBOOK_API_KEY ?? '',
     openPlantbookDailyCap: positiveInteger('OPEN_PLANTBOOK_DAILY_CAP', 100),
