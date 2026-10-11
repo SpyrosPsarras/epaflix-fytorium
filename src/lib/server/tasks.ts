@@ -52,7 +52,7 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
   for (const interval of intervals.rows) {
     (intervalsByPlant[interval.plant_id] ??= {})[interval.task_type as TaskType] = interval.interval_days;
   }
-  return new Map(plants.map(plant => {
+  const schedules = new Map(plants.map(plant => {
     const applicable = custom.rows.filter(task => task.plant_id === plant.id || task.site_id === plant.site_id);
     const result = schedule({
       careProfile: profiles.get(plant.gbif_key)!, site: sitesById.get(plant.site_id), pot: plant, plant, household: settings.rows[0],
@@ -64,24 +64,32 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
     const customTasks = Object.fromEntries(applicable.map(task => [task.id, { ...result.customTasks[task.id], name: task.name, custom_task_id: task.id }]));
     return [plant.id, { ...result, customTasks } as PlantSchedule];
   }));
+  return { schedules, sites: sitesById, profiles, weather };
 }
 
 export async function plantTasks(plantId: string, household: string): Promise<Partial<PlantSchedule>> {
   const plant = await getPlant(plantId, household);
   if (plant.status === 'graveyard') return {};
-  return (await schedulePlantTasks([plant], household, calendarDate(now()))).get(plant.id)!;
+  return (await schedulePlantTasks([plant], household, calendarDate(now()))).schedules.get(plant.id)!;
 }
 
 export async function listedTasks(identity: Identity, view: TaskList['view']): Promise<TaskList> {
+  return (await listedTaskContext(identity, view)).tasks;
+}
+
+// The feed reuses this batch, ignoring Today filters and completed-row preferences.
+export async function listedTaskContext(identity: Identity, view: TaskList['view'], forFeed = false,
+  batch?: Awaited<ReturnType<typeof schedulePlantTasks>> & { plants: Awaited<ReturnType<typeof getPlant>>[] }) {
   const household = identity.household.id;
   const today = calendarDate(now());
-  const settings = await taskViewSettings(identity);
+  const settings = forFeed ? { sort: 'task' as const, filter: 'all' as const, show_completed: false } : await taskViewSettings(identity);
   const end = new Date(today + 'T00:00:00Z');
   end.setUTCDate(end.getUTCDate() + (view === 'upcoming' ? 13 : 0));
   const through = end.toISOString().slice(0, 10);
-  const plants = await db().query(plantSelect + " WHERE p.household_id = $1 AND p.status = 'active' AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id", [household, settings.filter]);
+  const plants = batch ? { rows: batch.plants.filter(plant => settings.filter === 'all' || batch.sites.get(plant.site_id)?.location === settings.filter) } : await db().query(plantSelect + " WHERE p.household_id = $1 AND p.status = 'active' AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id", [household, settings.filter]);
   const groups = Object.fromEntries(taskTypes.map(type => [type, new Array<ListedTask>()])) as TaskList['groups'];
-  const schedules = await schedulePlantTasks(plants.rows, household, today);
+  const context = batch ?? await schedulePlantTasks(plants.rows, household, today);
+  const { schedules } = context;
   const completedByTask = new Map<string, CareEvent>();
   if (settings.show_completed) {
     const events = await db().query("SELECT * FROM care_events WHERE plant_id = ANY($1::uuid[]) AND household_id = $2 AND kind = 'completed' AND undone_at IS NULL ORDER BY occurred_at DESC, event_order DESC", [plants.rows.map(plant => plant.id), household]);
@@ -129,7 +137,7 @@ export async function listedTasks(identity: Identity, view: TaskList['view']): P
     const order = (key: string) => taskTypes.includes(key as TaskType) ? taskTypes.indexOf(key as TaskType) : taskTypes.length;
     ordered.sort((a, b) => order(a.key) - order(b.key) || a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
   }
-  return { today, view, settings, groups, sections: ordered };
+  return { ...context, tasks: { today, view, settings, groups, sections: ordered } satisfies TaskList, plants: plants.rows };
 }
 
 export async function undo(identity: Identity, eventId: string) {
@@ -204,7 +212,7 @@ async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: s
 export async function completeAll(identity: Identity, plantId: string, requestId: string) {
   const { events } = await careAction(identity, plantId, requestId, 'complete-all', {}, async (client, [plant], at) => {
     const today = calendarDate(at);
-    const tasks = (await schedulePlantTasks([plant], identity.household.id, today, client)).get(plantId)!;
+    const tasks = (await schedulePlantTasks([plant], identity.household.id, today, client)).schedules.get(plantId)!;
     for (const type of [...taskTypes, ...Object.keys(tasks.customTasks)]) {
       const task = taskTypes.includes(type as TaskType) ? tasks[type as TaskType] : tasks.customTasks[type];
       if (task.status === 'due' && task.dueOn <= today) await recordEvent(client, identity, plantId, type, 'completed', randomUUID(), at, requestId);
@@ -241,7 +249,7 @@ export async function readTaskInput(request: Request): Promise<Record<string, un
 export async function complete(identity: Identity, plantId: string, taskType: string, requestId: string, kind: CareEvent['kind'] = 'completed') {
   if (!taskTypes.includes(taskType as TaskType) && !isUuid(taskType)) error(404, 'Task type not found');
   const { events } = await careAction(identity, plantId, requestId, taskType + ':' + kind, {}, async (client, [plant], at) => {
-    const tasks = (await schedulePlantTasks([plant], identity.household.id, calendarDate(at), client)).get(plantId)!;
+    const tasks = (await schedulePlantTasks([plant], identity.household.id, calendarDate(at), client)).schedules.get(plantId)!;
     const task = isUuid(taskType) ? tasks.customTasks[taskType] : tasks[taskType as TaskType];
     if (!task) error(404, 'Custom task not found for this plant');
     if (task.status === 'not_applicable') error(422, 'This task is not applicable.');

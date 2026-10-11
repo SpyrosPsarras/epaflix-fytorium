@@ -1,11 +1,11 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
   import type { WeatherReport } from '$lib/weather';
-  let { report, showRain = false }: { report: WeatherReport; showRain?: boolean } = $props();
+  let { report, showRain = false, rainOnly = false }: { report: WeatherReport; showRain?: boolean; rainOnly?: boolean } = $props();
   let busy = $state(false), message = $state('');
   let requestId: string | undefined;
   $effect(() => {
-    if (!report.locationSet) return;
+    if (!report.locationSet || rainOnly) return;
     const timer = setInterval(() => { if (!busy) void invalidateAll(); }, report.forecastFetchedAt ? 30000 : 3000);
     return () => clearInterval(timer);
   });
@@ -35,7 +35,8 @@
   }
 </script>
 {#if report.locationSet || report.lastRainBatch}
-<section aria-labelledby="weather-title">
+<section aria-labelledby={rainOnly ? undefined : "weather-title"}>
+  {#if !rainOnly}
   <h2 id="weather-title">Weather</h2>
   {#if report.unavailableSince}<p role="status">Weather unavailable since {report.unavailableSince}. Showing last good data where available.</p>
   {:else if report.locationSet && !report.forecastFetchedAt}<p role="status">Weather is waiting for its background refresh.</p>{/if}
@@ -49,6 +50,7 @@
       {/each}
     </ul>
   {/if}
+  {/if}
   {#if showRain && report.rain}
     <p>It rained: {report.rain.precipitationMm} mm today or yesterday.</p>
     {#if report.rain.batchId}<p>Marked watered.</p>
@@ -56,7 +58,7 @@
   {/if}
   {#if showRain && report.lastRainBatch}<p><button disabled={busy} onclick={undo}>Undo rain watering</button></p>{/if}
   {#if message}<p role="status">{message}</p>{/if}
-  {#if report.forecastFetchedAt}<p>Forecast from Open-Meteo · Fetched {report.forecastFetchedAt}</p>{/if}
+  {#if !rainOnly && report.forecastFetchedAt}<p>Forecast from Open-Meteo · Fetched {report.forecastFetchedAt}</p>{/if}
 </section>
 {/if}
 <style>

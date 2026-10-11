@@ -40,7 +40,9 @@ test('household weather shows cold alerts, waters outdoor plants as one action a
     await screenshot('weather-cold-alert.png');
     // The household may contain outdoor plants from earlier scenarios. The batch covers all of them.
     const report = await (await page.request.get('/api/weather')).json();
-    await page.getByRole('button', { name: `Mark ${report.rain.plantCount} outdoor plants watered`, exact: true }).click();
+    const rainCard = page.getByRole('article', { name: 'Rain report', exact: true });
+    await expect(rainCard.getByRole('link', { name: /Rain report/ })).toHaveAttribute('href', '/settings#weather-location-title');
+    await rainCard.getByRole('button', { name: `Mark ${report.rain.plantCount} outdoor plants watered`, exact: true }).click();
     await expect(page.getByText(`Marked ${report.rain.plantCount} outdoor plants watered.`, { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: `Mark ${report.rain.plantCount} outdoor plants watered`, exact: true })).toHaveCount(0);
     await page.reload();
@@ -49,9 +51,11 @@ test('household weather shows cold alerts, waters outdoor plants as one action a
     expect(outdoorHistory).toContainEqual(expect.objectContaining({ task_type: 'water', batch_id: expect.any(String), undone_at: null }));
     expect(await (await page.request.get('/api/plants/' + plants[1] + '/history')).json()).toEqual([]);
     await screenshot('weather-rain-watered.png');
-    await page.getByRole('button', { name: 'Undo rain watering', exact: true }).click();
+    await rainCard.getByRole('button', { name: 'Undo rain watering', exact: true }).click();
     await expect(page.getByText('Rain watering undone.', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: `Mark ${report.rain.plantCount} outdoor plants watered`, exact: true })).toBeVisible();
+    await rainCard.getByRole('link', { name: /Rain report/ }).tap();
+    await expect(page).toHaveURL('/settings#weather-location-title');
     await page.goto('/plants/' + plants[0]);
     await expect(page.getByRole('list', { name: 'Weather alerts', exact: true })).toContainText('Test weather outdoor ' + key);
     await page.goto('/species/' + key);
