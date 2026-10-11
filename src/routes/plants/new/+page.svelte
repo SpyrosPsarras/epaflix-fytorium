@@ -7,7 +7,7 @@
 <svelte:head><title>Add plant | Fytorium</title></svelte:head>
 <a href="/plants">Plants</a>
 <h1>Add plant</h1>
-<SpeciesPicker>
+<SpeciesPicker allowIdentification remaining={data.remaining}>
   {#snippet children(candidate, searchId, confirmed)}
     <PlantForm sites={data.sites} {candidate} {searchId} {confirmed} />
   {/snippet}

@@ -2,7 +2,9 @@ import { afterAll, beforeAll, expect } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { createPhotoStorage } from './photo-storage';
+import { identificationResponse } from '../identification-fixture';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
 type FakeResponse = { status: number; body: unknown; headers?: Record<string, string>; delay?: number };
@@ -14,6 +16,7 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
   let app: ChildProcess;
   let base: string;
   let appOutput = '';
+  let appEnv: NodeJS.ProcessEnv;
   let gbifResponse: unknown = { usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 };
   let gbifStatus = 200;
   let gbifDelay = 0;
@@ -64,6 +67,28 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     }, gbifDelay);
   });
 
+  const plantnetKey = randomUUID();
+  let plantnetResponse: unknown = identificationResponse;
+  let plantnetStatus = 200;
+  let plantnetDelay = 0;
+  const identificationRequests: { bytes: Buffer; contentType: string; pathname: string; relatedImages: string | null }[] = [];
+  const plantnet = createServer(async (request, response) => {
+    const url = new URL(request.url!, 'http://fake');
+    if (request.method !== 'POST' || url.pathname !== '/identify/all' || url.searchParams.get('api-key') !== plantnetKey) {
+      response.writeHead(401).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk);
+    identificationRequests.push({ bytes: Buffer.concat(chunks), contentType: request.headers['content-type'] ?? '', pathname: url.pathname, relatedImages: url.searchParams.get('include-related-images') });
+    const payload = plantnetResponse;
+    const status = plantnetStatus;
+    setTimeout(() => {
+      response.writeHead(status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(payload));
+    }, plantnetDelay);
+  });
+
   const perenual = createServer((request, response) => {
     const result = options.perenual?.(new URL(request.url!, 'http://fake').pathname) ?? { status: 200, body: { data: [] } };
     setTimeout(() => {
@@ -85,6 +110,7 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     if (options.photos) await photos.start();
     provider = await startOidcProvider();
     const gbifPort = await listen(gbif);
+    const plantnetPort = await listen(plantnet);
     const perenualPort = await listen(perenual);
     const openPlantbookPort = await listen(openPlantbook);
     const portServer = createServer();
@@ -92,7 +118,8 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
     // start.mjs runs migrations before starting the HTTP listener.
-    app = spawn('node', ['scripts/start.mjs'], { env: { ...process.env, OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '16M' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    appEnv = { ...process.env, OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual-key', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, PLANTNET_BASE_URL: `http://127.0.0.1:${plantnetPort}/`, PLANTNET_API_KEY: plantnetKey, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '41M' };
+    app = spawn('node', ['scripts/start.mjs'], { env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -121,6 +148,8 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     await close(perenual);
     gbif.closeAllConnections();
     await close(gbif);
+    plantnet.closeAllConnections();
+    await close(plantnet);
     if (postgres && !postgresStopped) await stopPostgres();
     await photos.stop();
   });
@@ -149,9 +178,26 @@ export function createApiHarness(options: { testClock?: boolean; photos?: boolea
     failPhotoDeletes: photos.failDeletes,
     get postgres() { return postgres; },
     get appOutput() { return appOutput; },
+    get identificationKeyLeaked() { return appOutput.includes(plantnetKey); },
     login,
     setGbif(payload: unknown, status = 200, delay = 0) { gbifResponse = payload; gbifStatus = status; gbifDelay = delay; },
+    identificationRequests,
+    setPlantnet(payload: unknown = identificationResponse, status = 200, delay = 0) { plantnetResponse = payload; plantnetStatus = status; plantnetDelay = delay; },
     setGbifSpecies(key: number, payload: unknown) { gbifSpecies.set(key, payload); },
+    async restartApp(overrides: NodeJS.ProcessEnv = {}) {
+      const exited = new Promise<void>(resolve => app.once('exit', () => resolve()));
+      app.kill('SIGTERM');
+      await exited;
+      app = spawn('node', ['scripts/start.mjs'], { env: { ...appEnv, ...overrides }, stdio: ['ignore', 'pipe', 'pipe'] });
+      app.stdout!.on('data', data => appOutput += data);
+      app.stderr!.on('data', data => appOutput += data);
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (app.exitCode !== null) throw new Error('App restart failed');
+        try { if ((await fetch(base + '/healthz')).ok) return; } catch { /* Wait for startup. */ }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      throw new Error('App restart timed out');
+    },
     setNames(source: keyof typeof names, payload: unknown, status = 200, delay = 0) { names[source] = { payload, status, delay }; },
     nameCalls(source: keyof typeof names, key: string | number) { return nameRequests.get(source + ':' + key) ?? 0; },
     stopPostgres,

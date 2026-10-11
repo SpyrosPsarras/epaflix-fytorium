@@ -28,9 +28,14 @@ test('adds a photo, picks its cover, browses updates and journal, and sets healt
   await expect(page.getByRole('heading', { name: nickname, exact: true, level: 1 })).toBeVisible();
   const plantUrl = page.url();
   await expect(page.getByRole('img', { name: 'No plant photo yet', exact: true })).toBeVisible();
-  const photoInput = page.getByLabel('Photo', { exact: true });
+  const camera = page.getByLabel('Take photo', { exact: true });
+  await expect(camera).toHaveAttribute('accept', 'image/*');
+  await expect(camera).toHaveAttribute('capture', 'environment');
+  await expect(camera).not.toHaveAttribute('multiple');
+  const photoInput = page.getByLabel('Choose photos', { exact: true });
   await expect(photoInput).toHaveAttribute('accept', 'image/*');
-  await expect(photoInput).toHaveAttribute('capture', 'environment');
+  await expect(photoInput).not.toHaveAttribute('capture');
+  await expect(photoInput).not.toHaveAttribute('multiple');
   await photoInput.setInputFiles({ name: 'synthetic.jpg', mimeType: 'image/jpeg', buffer: image });
   await page.getByLabel('Note', { exact: true }).fill('Test new leaf photo');
   await page.getByLabel('Photo health', { exact: true }).selectOption('good');

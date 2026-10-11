@@ -3,6 +3,7 @@ services:
     build: .
     environment:
       NODE_ENV: test
+      BODY_SIZE_LIMIT: 41M
       FYTORIUM_TEST_CLOCK: "true"
       DATABASE_URL: postgres://fytorium@postgres:5432/fytorium?sslmode=disable
       ORIGIN: http://app:3000
@@ -19,7 +20,7 @@ services:
       PERENUAL_BASE_URL: ${PERENUAL_BASE_URL:-http://perenual:8080}
       PLANTNET_BASE_URL: ${PLANTNET_BASE_URL:-http://plantnet:8080}
       PERENUAL_API_KEY: "${PERENUAL_API_KEY:-synthetic-perenual}"
-      PLANTNET_API_KEY: "${PLANTNET_API_KEY:-}"
+      PLANTNET_API_KEY: "${PLANTNET_API_KEY:-synthetic-plantnet}"
       OPEN_PLANTBOOK_BASE_URL: http://open-plantbook:8080/api/v1/
       OPEN_PLANTBOOK_API_KEY: synthetic-plantbook-token
       # Frozen browser clocks must not exhaust a production-sized quota window.

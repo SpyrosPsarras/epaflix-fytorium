@@ -98,6 +98,19 @@ An optional value: `poor`, `fair`, `good` or `very_good`. Plant settings set it 
 **Journal**:
 All the household's photo updates, ordered by taken date then creation time, newest first, with ID as a stable tie-breaker. Each plant also has a View all updates page. No photo or journal entry is shared across households.
 
+## Identification
+
+**Identification**:
+Ranked species suggestions from one to five photos of the same plant, not a saved plant. Identification photos have no location or camera metadata when sent to Pl@ntNet and are not kept as photo updates.
+
+**Identification candidate**:
+A suggested species with a GBIF key, scientific name, common names and score. Every candidate needs the owner's explicit pick followed by Confirm species, even when its score is high. A GBIF-mapped candidate keeps the Pl@ntNet name and score separate from the accepted GBIF name and match confidence.
+
+**Identification score**:
+Pl@ntNet's score for a candidate, displayed as a percentage. It is separate from GBIF name-match confidence and never removes the need for confirmation.
+
+**Identification quota**:
+The remaining daily identification requests reported by Pl@ntNet for this instance. Members see the last known count when it is 50 or fewer, and an exhausted quota means using name search or trying another day.
 ## Plant lifecycle
 
 **Active plant**:

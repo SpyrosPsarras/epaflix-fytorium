@@ -32,6 +32,7 @@ export type PlantSpeciesChange = {
 export type Candidate = {
   gbif_key: number; scientific_name: string; canonical_name: string; rank: string;
   match_type: string | null; confidence: number | null; requires_confirmation: boolean;
+  common_names?: string[]; identification_name?: string;
   matched_name?: string; matched_language?: import('./names').NameLanguage;
-};
+} & ({ source: 'identification'; score: number } | { source?: undefined; score?: undefined });
 export type SpeciesSearch = { search_id: string; candidates: Candidate[] };

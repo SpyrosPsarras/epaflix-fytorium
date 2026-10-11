@@ -8,7 +8,21 @@ type Match = {
   acceptedScientificName?: string; acceptedCanonicalName?: string; alternatives?: Match[];
 };
 
-export async function matchSpecies(name: string): Promise<Candidate[]> {
+const ranks = ['SPECIES', 'SUBSPECIES', 'VARIETY', 'SUBVARIETY', 'FORM', 'SUBFORM', 'CULTIVAR', 'INFRASPECIFIC_NAME'];
+
+// Rank lookup is optional: identification remains usable during a GBIF outage.
+export async function speciesRank(key: number): Promise<string | undefined> {
+  const base = config().gbifBaseUrl.href;
+  const url = new URL('species/' + key, base.endsWith('/') ? base : base + '/');
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) return;
+    const species = await response.json();
+    if (species?.key === key && species.kingdom === 'Plantae' && ranks.includes(species.rank)) return species.rank;
+  } catch { /* Identification still has Pl@ntNet's GBIF key and canonical name. */ }
+}
+
+export async function matchSpecies(name: string, { alternatives = true } = {}): Promise<Candidate[]> {
   const base = config().gbifBaseUrl.href;
   const url = new URL('species/match', base.endsWith('/') ? base : base + '/');
   url.search = new URLSearchParams({ name, kingdom: 'Plantae', verbose: 'true' }).toString();
@@ -23,9 +37,8 @@ export async function matchSpecies(name: string): Promise<Candidate[]> {
     error(503, 'Species search is unavailable. GBIF did not respond. Try again.');
   }
   if (match.matchType === 'NONE') error(422, 'No plant species matched that name. Try another name.');
-  const ranks = ['SPECIES', 'SUBSPECIES', 'VARIETY', 'SUBVARIETY', 'FORM', 'SUBFORM', 'CULTIVAR', 'INFRASPECIFIC_NAME'];
   const candidates: Candidate[] = [];
-  for (const [index, item] of [match, ...(match.alternatives ?? []).slice(0, 5)].entries()) {
+  for (const [index, item] of [match, ...(alternatives ? (match.alternatives ?? []).slice(0, 5) : [])].entries()) {
     if (!item || item.kingdom !== 'Plantae' || !ranks.includes(item.rank) || (index > 0 && item.rank !== 'SPECIES') || item.matchType === 'NONE') continue;
     if (!Number.isInteger(item.usageKey) || item.usageKey <= 0 || typeof item.scientificName !== 'string' || typeof item.canonicalName !== 'string') continue;
     const key = item.acceptedUsageKey ?? item.usageKey;

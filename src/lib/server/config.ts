@@ -40,6 +40,8 @@ export function config() {
     openPlantbookPerMinute: positiveInteger('OPEN_PLANTBOOK_PER_MINUTE', 10),
     openPlantbookMaxAttempts: positiveInteger('OPEN_PLANTBOOK_MAX_ATTEMPTS', 5),
     gbifBaseUrl: new URL(env.GBIF_BASE_URL ?? 'https://api.gbif.org/v1/'),
+    plantnetBaseUrl: new URL(env.PLANTNET_BASE_URL ?? 'https://my-api.plantnet.org/v2/'),
+    plantnetApiKey: env.PLANTNET_API_KEY ?? '',
     wikidataBaseUrl: new URL(env.WIKIDATA_BASE_URL ?? 'https://www.wikidata.org/'),
     nortaxaBaseUrl: new URL(env.NORTAXA_BASE_URL ?? 'https://nortaxa.artsdatabanken.no/'),
     databaseUrl: required('DATABASE_URL'),

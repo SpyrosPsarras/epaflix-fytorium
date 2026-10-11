@@ -1,0 +1,43 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/match",
+        "queryParameters": {
+          "name": { "equalTo": "Testoria lucida Inventor" },
+          "kingdom": { "equalTo": "Plantae" },
+          "verbose": { "equalTo": "true" }
+        },
+        "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "usageKey": 910001,
+          "scientificName": "Testoria lucens Inventor",
+          "canonicalName": "Testoria lucens",
+          "rank": "SPECIES",
+          "kingdom": "Plantae",
+          "matchType": "FUZZY",
+          "confidence": 72
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/species/913001",
+        "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "key": 913001, "rank": "SPECIES", "kingdom": "Plantae" }
+      }
+    }
+  ]
+}

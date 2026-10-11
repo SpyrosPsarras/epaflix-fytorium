@@ -39,6 +39,7 @@ export async function readPlant(request: Request, household: string, allowNoSite
   } catch { return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 }); }
   if (!input || typeof input !== 'object' || Array.isArray(input)) return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
   const errors = potErrors(input);
+  if ('score' in input) errors.score = 'Identification scores are server-owned. Choose a candidate from the results.';
   for (const [field, values] of Object.entries(plantChoices)) {
     if (field === 'pot_type' || field === 'soil_type') continue;
     if (!values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
