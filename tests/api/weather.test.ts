@@ -79,6 +79,7 @@ let outdoorPot: string;
 let outdoorGround: string;
 let indoor: string;
 let graveyard: string;
+let customTaskId: string;
 async function addPlant(location: 'indoor' | 'outdoor', pot_type: 'plastic' | 'in_ground', nickname: string) {
   const site = await (await request('/api/sites', 'POST', { name: nickname + ' site', location, light: 'part_sun', humidity: 'normal', grow_light: false, draft: false })).json();
   const search = await (await request('/api/species/search?q=Testoria%20lucida')).json();
@@ -98,7 +99,17 @@ test('cached weather changes outdoor tasks only and raises deduped cold-spell al
   forecast.daily.temperature_2m_min = dates.map(() => 8);
   const simultaneous = await Promise.all([tick(), tick()]);
   for (const response of simultaneous) expect(response.status).toBe(200);
+  const custom = await request('/api/custom-tasks', 'POST', { plant_id: outdoorPot, name: 'Test inspect after rain', interval_days: 7 });
+  expect(custom.status).toBe(201);
+  customTaskId = (await custom.json()).id;
   const tasks = async (id: string) => (await request('/api/plants/' + id + '/tasks')).json();
+  expect((await tasks(outdoorPot)).customTasks[customTaskId]).toMatchObject({ intervalDays: 7, dueOn: '2030-06-08' });
+  for (const view of ['today', 'upcoming']) {
+    const list = await (await request('/api/tasks?view=' + view)).json();
+    expect(list.groups.water).toContainEqual(expect.objectContaining({ plant_id: outdoorPot, intervalDays: 4,
+      basedOn: expect.arrayContaining([expect.objectContaining({ input: 'weather.meanMaxTemperatureC', factor: .75 })]) }));
+    if (view === 'upcoming') expect(list.groups[customTaskId]).toContainEqual(expect.objectContaining({ plant_id: outdoorPot, intervalDays: 7, dueOn: '2030-06-08' }));
+  }
   expect((await tasks(outdoorPot)).water.intervalDays).toBe(4);
   expect((await tasks(indoor)).water.intervalDays).toBe(7);
   expect((await tasks(outdoorPot)).water.basedOn).toContainEqual(expect.objectContaining({ input: 'weather.meanMaxTemperatureC', value: 30, source: 'weather', factor: .75 }));
@@ -122,6 +133,7 @@ test('cached weather changes outdoor tasks only and raises deduped cold-spell al
 test('rain watering is one atomic idempotent batch for active outdoor plants, with one undo', async () => {
   expect((await report()).rain).toMatchObject({ plantCount: 2, precipitationMm: 6, ruleId: 'weather.rain@1' });
   const history = async (id: string) => (await request('/api/plants/' + id + '/history')).json();
+  const customBefore = (await (await request('/api/plants/' + outdoorPot + '/tasks')).json()).customTasks[customTaskId];
   const request_id = randomUUID();
   const failureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   // Fail the second plant write to verify the shared action, events and rain link roll back together.
@@ -145,9 +157,10 @@ test('rain watering is one atomic idempotent batch for active outdoor plants, wi
   expect(secondTap.status).toBe(200);
   expect(await secondTap.json()).toEqual(batches[0]);
   expect((await report()).rain.batchId).toBe(batches[0].batchId);
-  for (const id of [outdoorPot, outdoorGround]) expect(await history(id)).toEqual([expect.objectContaining({ task_type: 'water', kind: 'completed', batch_id: batches[0].batchId, by_name: 'Test member', undone_at: null })]);
+  for (const id of [outdoorPot, outdoorGround]) expect(await history(id)).toEqual([expect.objectContaining({ task_type: 'water', custom_task_id: null, kind: 'completed', batch_id: batches[0].batchId, by_name: 'Test member', undone_at: null })]);
   expect(await history(indoor)).toEqual([]);
   expect(await history(graveyard)).toEqual([]);
+  expect((await (await request('/api/plants/' + outdoorPot + '/tasks')).json()).customTasks[customTaskId]).toEqual(customBefore);
   expect([request_id, concurrentRequest]).toContain(batches[0].batchId);
   expect((await request('/api/care-events/' + (await history(outdoorPot))[0].id + '/undo', 'POST')).status).toBe(409);
   expect((await request('/api/plants/' + indoor + '/tasks/water/complete', 'POST', { request_id })).status).toBe(409);

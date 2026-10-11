@@ -1,0 +1,72 @@
+import { expect, test } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { logIn } from './helpers/login';
+import { addPlantForSite } from './helpers/plants';
+
+test('creates site and plant tasks, completes, snoozes, plans and undoes them on a phone', async ({ page }, testInfo) => {
+  const siteName = 'Test custom room ' + randomUUID();
+  const plantName = 'Test custom sprout ' + randomUUID();
+  const screenshot = async (file: string) => {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (process.env.PLAYWRIGHT_KEEP_ARTIFACTS === '1') await page.screenshot({ path: testInfo.outputPath(file), fullPage: true });
+  };
+  try {
+    await page.request.post('/__test/clock', { data: { action: 'set', at: '2026-05-01T12:00:00Z' } });
+    await logIn(page, 'synthetic-browser-owner', { name: 'Test browser member' });
+    await page.request.put('/api/tasks/settings', { data: { sort: 'task', filter: 'all', show_completed: false } });
+    await page.goto('/sites/new');
+    await page.getByLabel('Name', { exact: true }).fill(siteName);
+    await page.getByRole('button', { name: 'Save site', exact: true }).click();
+    await expect(page).toHaveURL('/sites');
+    const site = (await (await page.request.get('/api/sites')).json()).find((s: { name: string }) => s.name === siteName);
+    await addPlantForSite(page.request, siteName, plantName);
+    const plant = (await (await page.request.get('/api/plants?site_id=' + site.id)).json())[0];
+    await page.goto('/sites/' + site.id);
+    const create = page.getByRole('form', { name: 'Add custom task', exact: true });
+    await create.getByLabel('Task name', { exact: true }).fill('Test inspect supports');
+    await create.getByLabel('Interval in days', { exact: true }).fill('1');
+    await create.getByRole('button', { name: 'Add task', exact: true }).click();
+    await expect(page.getByRole('form', { name: 'Edit Test inspect supports', exact: true })).toBeVisible();
+    await screenshot('custom-site-task.png');
+    await page.goto('/plants/' + plant.id + '/settings');
+    await create.getByLabel('Task name', { exact: true }).fill('Test check roots');
+    await create.getByLabel('Interval in days', { exact: true }).fill('1');
+    await create.getByRole('button', { name: 'Add task', exact: true }).click();
+    const edit = page.getByRole('form', { name: 'Edit Test check roots', exact: true });
+    await expect(edit).toBeVisible();
+    await edit.getByLabel('Task name', { exact: true }).fill('Test check stakes');
+    await edit.getByRole('button', { name: 'Save task', exact: true }).click();
+    await expect(page.getByRole('form', { name: 'Edit Test check stakes', exact: true })).toBeVisible();
+    await screenshot('custom-plant-task.png');
+    await page.request.post('/__test/clock', { data: { action: 'set', at: '2026-05-02T12:00:00Z' } });
+    await page.goto('/');
+    const row = (name: string) => page.getByRole('article', { name: name + ' for ' + plantName, exact: true });
+    await expect(row('Test inspect supports')).toContainText('Due today');
+    await expect(row('Test check stakes')).toContainText('Due today');
+    await screenshot('custom-today.png');
+    await row('Test inspect supports').getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(row('Test inspect supports')).toContainText('Done');
+    await row('Test check stakes').getByRole('button', { name: 'Snooze 2 days', exact: true }).click();
+    await expect(row('Test check stakes')).toContainText('2026-05-04');
+    await row('Test inspect supports').getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(row('Test inspect supports')).toContainText('Due today');
+    await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '2026-05-04', exact: true })).toBeVisible();
+    await expect(row('Test check stakes')).toContainText('2026-05-04');
+    await screenshot('custom-upcoming.png');
+    await page.goto('/plants/' + plant.id);
+    await expect(page.getByRole('region', { name: 'Test inspect supports', exact: true })).toContainText('2026-05-02');
+    const history = page.getByRole('region', { name: 'Care history', exact: true });
+    await history.getByRole('listitem').filter({ hasText: 'Test check stakes' }).getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Test check stakes', exact: true })).toContainText('2026-05-02');
+    await page.goto('/plants/' + plant.id + '/settings');
+    await page.getByRole('form', { name: 'Edit Test check stakes', exact: true }).getByRole('button', { name: 'Delete task', exact: true }).click();
+    await expect(page.getByRole('form', { name: 'Edit Test check stakes', exact: true })).toHaveCount(0);
+    await page.goto('/plants/' + plant.id);
+    await expect(history).toContainText('Test check stakes');
+    await screenshot('custom-deleted-history.png');
+  } finally {
+    await page.request.put('/api/tasks/settings', { data: { sort: 'task', filter: 'all', show_completed: false } });
+    await page.request.post('/__test/clock', { data: { action: 'reset' } });
+  }
+});

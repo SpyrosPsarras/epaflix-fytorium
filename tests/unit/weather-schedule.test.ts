@@ -16,6 +16,19 @@ test.each([
   expect(schedule({ ...input, weather }).water).toMatchObject({ intervalDays });
 });
 
+test('shared scheduling applies weather to built-in watering but not custom task intervals or history', () => {
+  const example: ScheduleInput = { ...input, weather: { meanMaxTemperatureC: 30, daylightHours: 12 },
+    customTasks: [{ id: 'inspect', intervalDays: 7, createdOn: '2030-05-01' }],
+    history: { water: { lastCompletedOn: '2030-06-01' }, inspect: { lastCompletedOn: '2030-06-01', snoozedUntil: '2030-06-02' } } };
+  const before = structuredClone(example);
+  const result = schedule(example);
+  expect(result.water).toMatchObject({ intervalDays: 6, dueOn: '2030-06-07' });
+  expect(result.fertilize).toMatchObject({ intervalDays: 12 });
+  expect(result.customTasks.inspect).toMatchObject({ intervalDays: 7, dueOn: '2030-06-04' });
+  expect(result.customTasks.inspect.basedOn.filter(row => row.source === 'weather' && row.factor !== undefined)).toEqual([]);
+  expect(example).toEqual(before);
+});
+
 test('indoor watering ignores a supplied hot and short-day snapshot', () => {
   const task = schedule({ ...input, site: { location: 'indoor' }, weather: { meanMaxTemperatureC: 30, daylightHours: 6 } }).water;
   expect(task).toMatchObject({ intervalDays: 10 });
