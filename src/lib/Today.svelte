@@ -2,7 +2,7 @@
   import { invalidateAll } from '$app/navigation';
   import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
   import type { Task } from '$lib/schedule/engine';
-  let { list }: { list: TaskList } = $props();
+  let { list, sitter = false, memberId }: { list: TaskList; sitter?: boolean; memberId?: string } = $props();
   let handled = $state<Record<string, { event: CareEvent; task: Task }>>({});
   let restored = $state<Record<string, Task>>({});
   let requestIds = $state<Record<string, string>>({});
@@ -62,12 +62,14 @@
   <h2 id="task-list-title">{title}</h2>
   <p>{list.today}{#if list.view === 'upcoming'} · Next 14 calendar days, including today{/if}</p>
   <nav><a href="/">Today</a> · <a href="/upcoming">Upcoming</a></nav>
+  {#if !sitter}
   <form onsubmit={saveView}>
     <label for="task-sort">Sort tasks</label><select id="task-sort" name="sort" value={list.settings.sort}><option value="task">Task type</option><option value="plant">Plant</option><option value="site">Site</option></select>
     <label for="task-filter">Filter location</label><select id="task-filter" name="filter" value={list.settings.filter}><option value="all">All</option><option value="indoor">Indoor</option><option value="outdoor">Outdoor</option></select>
     <label class="check"><input name="show_completed" type="checkbox" checked={list.settings.show_completed} /> Show completed</label>
     <button disabled={saving}>Save task view</button>
   </form>
+  {/if}
   {#if saved}<p role="status">{saved}</p>{/if}
   {#if message}<p role="alert">{message}</p>{/if}
   {#if list.sections.length === 0}<p>No tasks in this view.</p>{/if}
@@ -82,7 +84,7 @@
       <article data-task-type={taskKey(row)} aria-label={rules.label + ' for ' + row.plant_name}>
         <div>
           <a href={'/plants/' + row.plant_id}>{row.plant_name}</a>
-          <p>{rules.label} · {row.site_name}</p>
+          <p>{rules.label}{#if row.site_name} · {row.site_name}{/if}</p>
           {#if done}
             <p role="status">{done.event.kind === 'snoozed' ? 'Snoozed' : done.event.kind === 'skipped' ? 'Skipped' : 'Done'}{#if task.status === 'due'} · Next {rules.action}: {task.dueOn}{/if}</p>
           {:else if task.status === 'due'}
@@ -91,12 +93,12 @@
           {/if}
         </div>
         <div class="actions">
-          {#if done}<button disabled={busy[id]} onclick={() => act(row, 'undo')}>Undo</button>
+          {#if done}{#if !sitter || done.event.by_member === memberId}<button disabled={busy[id]} onclick={() => act(row, 'undo')}>Undo</button>{/if}
           {:else}
             <button disabled={busy[id]} onclick={() => act(row, 'complete')}>Done</button>
             <button disabled={busy[id]} onclick={() => act(row, 'snooze')}>Snooze 2 days</button>
             <button disabled={busy[id]} onclick={() => act(row, 'skip')}>Skip</button>
-            {#if row.task_type === 'repot'}<a href={'/plants/' + row.plant_id + '/repot'}>Repot with new pot and soil</a>{/if}
+            {#if !sitter && row.task_type === 'repot'}<a href={'/plants/' + row.plant_id + '/repot'}>Repot with new pot and soil</a>{/if}
           {/if}
         </div>
       </article>

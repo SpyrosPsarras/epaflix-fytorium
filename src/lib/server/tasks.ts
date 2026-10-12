@@ -6,6 +6,7 @@ import { taskViewSettings } from './task-view-settings';
 import { schedule, taskTypes, type TaskType, type ScheduleInput } from '$lib/schedule/engine';
 import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList, type PlantSchedule } from '$lib/tasks';
 import type { Identity } from './auth';
+import { visiblePlantSql, requireSharedPlant, requireOwnUndo } from './policy';
 import { getPlant, isUuid, plantSelect, potErrors } from './plants';
 import { db } from './db';
 import { now, calendarDate } from './clock';
@@ -75,11 +76,13 @@ export async function plantTasks(plantId: string, household: string): Promise<Pa
 export async function listedTasks(identity: Identity, view: TaskList['view']): Promise<TaskList> {
   const household = identity.household.id;
   const today = calendarDate(now());
-  const settings = await taskViewSettings(identity);
+  const savedSettings = await taskViewSettings(identity);
+  // A returning sitter may have saved a site view while they were family. Never expose site headings.
+  const settings = identity.member.role === 'sitter' ? { ...savedSettings, sort: 'task' as const, filter: 'all' as const } : savedSettings;
   const end = new Date(today + 'T00:00:00Z');
   end.setUTCDate(end.getUTCDate() + (view === 'upcoming' ? 13 : 0));
   const through = end.toISOString().slice(0, 10);
-  const plants = await db().query(plantSelect + " WHERE p.household_id = $1 AND p.status = 'active' AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id", [household, settings.filter]);
+  const plants = await db().query(plantSelect + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$3')} AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id`, [household, settings.filter, identity.member.id]);
   const groups = Object.fromEntries(taskTypes.map(type => [type, new Array<ListedTask>()])) as TaskList['groups'];
   const schedules = await schedulePlantTasks(plants.rows, household, today);
   const completedByTask = new Map<string, CareEvent>();
@@ -133,6 +136,7 @@ export async function listedTasks(identity: Identity, view: TaskList['view']): P
 }
 
 export async function undo(identity: Identity, eventId: string) {
+  await requireOwnUndo(identity, eventId);
   if (!isUuid(eventId)) error(404, 'Care event not found');
   const household = identity.household.id;
   const client = await db().connect();
@@ -166,7 +170,10 @@ export async function undo(identity: Identity, eventId: string) {
 async function careAction(identity: Identity, plantId: string | null, requestId: string, action: string, payload: Record<string, unknown>,
   write: (client: pg.PoolClient, plants: Awaited<ReturnType<typeof getPlant>>[], at: Date) => Promise<void>) {
   const household = identity.household.id;
-  if (plantId) await getPlant(plantId, household);
+  if (plantId) {
+    await requireSharedPlant(identity, plantId);
+    await getPlant(plantId, household);
+  }
   if (!isUuid(requestId)) error(422, 'Send a UUID request_id.');
   const client = await db().connect();
   try {
@@ -197,8 +204,14 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
 
 async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, batchId: string | null = null, previousPot: Record<string, unknown> | null = null) {
   const member = await client.query('SELECT display_name FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, identity.household.id]);
-  await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+  const event = await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
     [identity.household.id, plantId, taskTypes.includes(taskType as TaskType) ? taskType : null, kind, at, identity.member.id, member.rows[0].display_name, requestId, batchId, previousPot, isUuid(taskType) ? taskType : null]);
+  // Fix the recipients at completion time. Turning notices on later must not replay history.
+  if (kind === 'completed') await client.query(`INSERT INTO completion_notice_sends (event_id, member_id, attempted_at, claimed_until)
+    SELECT $1, m.id, $2, $2::timestamptz - interval '1 millisecond' FROM members m
+    JOIN plants p ON p.household_id = m.household_id AND p.id = $3
+    WHERE m.completion_notices_enabled AND m.id <> $4 AND ${visiblePlantSql('m.id')}`,
+  [event.rows[0].id, at, plantId, identity.member.id]);
 }
 
 export async function completeAll(identity: Identity, plantId: string, requestId: string) {
@@ -273,6 +286,7 @@ export async function completeRain(identity: Identity, requestId: string) {
 }
 
 export async function undoBatch(identity: Identity, batchId: string) {
+  await requireOwnUndo(identity, batchId, true);
   if (!isUuid(batchId)) error(404, 'Task batch not found');
   const household = identity.household.id;
   const client = await db().connect();

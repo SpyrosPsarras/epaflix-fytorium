@@ -10,5 +10,5 @@ export const load: PageServerLoad = async ({ locals, params }) => {
     speciesCare(params.gbifKey, locals.identity.household.id),
     getSpecies(params.gbifKey),
   ]);
-  return { care, species, outdoorMonths: await outdoorMonths(params.gbifKey, locals.identity.household.id), canEditCare: locals.identity.member.role !== 'sitter', canEdit: locals.identity.member.role === 'owner' };
+  return { care, species, outdoorMonths: await outdoorMonths(params.gbifKey, locals.identity.household.id), canEditCare: locals.identity.member.role !== 'sitter', canEdit: locals.identity.member.role !== 'sitter' };
 };

@@ -5,4 +5,4 @@
 </script>
 <svelte:head><title>Upcoming | Fytorium</title></svelte:head>
 <a href="/">Home</a>
-<Today list={data.tasks} />
+<Today list={data.tasks} sitter={data.identity.member.role === 'sitter'} memberId={data.identity.member.id} />

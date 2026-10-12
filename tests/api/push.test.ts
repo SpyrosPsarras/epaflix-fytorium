@@ -51,12 +51,12 @@ test('the test notification arrives encrypted, decrypts and records device succe
 });
 
 test('each member saves a valid local reminder time and independent switches', async () => {
-  expect(await (await request('/api/notifications/settings')).json()).toEqual({ reminder_time: '09:00', reminders_enabled: false, weather_alerts_enabled: false });
+  expect(await (await request('/api/notifications/settings')).json()).toEqual({ reminder_time: '09:00', reminders_enabled: false, weather_alerts_enabled: false, completion_notices_enabled: false });
   for (const body of [{ reminder_time: '24:00', reminders_enabled: true, weather_alerts_enabled: false }, { reminder_time: '9:00', reminders_enabled: true, weather_alerts_enabled: false }, { reminder_time: '09:00', reminders_enabled: 'yes', weather_alerts_enabled: false }]) {
     expect((await request('/api/notifications/settings', 'PUT', body)).status).toBe(422);
   }
   expect((await request('/api/notifications/settings', 'PUT', { reminder_time: '09:00', reminders_enabled: true, weather_alerts_enabled: false })).status).toBe(200);
-  expect(await (await request('/api/notifications/settings')).json()).toEqual({ reminder_time: '09:00', reminders_enabled: true, weather_alerts_enabled: false });
+  expect(await (await request('/api/notifications/settings')).json()).toEqual({ reminder_time: '09:00', reminders_enabled: true, weather_alerts_enabled: false, completion_notices_enabled: false });
 });
 
 test('expired devices are removed on 404 and 410, while temporary failures retain the device', async () => {
@@ -119,7 +119,7 @@ test('notification reads and writes refuse unauthenticated and wrong-origin acce
   const subscription = harness.push.subscribe();
   expect((await request('/api/notifications/subscriptions', 'POST', subscription)).status).toBe(201);
   expect((await other.request('/api/notifications/subscriptions', 'POST', subscription)).status).toBe(409);
-  expect(await (await other.request('/api/notifications/settings')).json()).toEqual({ reminder_time: '09:00', reminders_enabled: false, weather_alerts_enabled: false });
+  expect(await (await other.request('/api/notifications/settings')).json()).toEqual({ reminder_time: '09:00', reminders_enabled: false, weather_alerts_enabled: false, completion_notices_enabled: false });
   const before = harness.push.received.length;
   expect(await (await other.request('/api/notifications/test', 'POST')).json()).toEqual({ sent: 0 });
   expect(harness.push.received).toHaveLength(before);

@@ -1,8 +1,10 @@
 import { error } from '@sveltejs/kit';
+import { sitterProjection, sitterView } from '$lib/server/policy';
 import type { Plant } from '$lib/plants';
 import type { LayoutServerLoad } from './$types';
-export const load: LayoutServerLoad = async ({ fetch, params }) => {
+export const load: LayoutServerLoad = async ({ fetch, params, locals }) => {
   const response = await fetch('/api/plants/' + params.id);
   if (!response.ok) error(response.status, 'Could not load the plant');
-  return { plant: await response.json() as Plant };
+  const plant = await response.json();
+  return { plant: (locals.identity?.member.role === 'sitter' ? sitterView(plant, sitterProjection('/plants/[id]')) : plant) as Plant };
 };

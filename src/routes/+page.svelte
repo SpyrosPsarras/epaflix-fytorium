@@ -8,10 +8,13 @@
 <header><img src="/icon.svg" width="48" height="48" alt="" /><h1>Fytorium</h1></header>
 {#if data.identity}
   <p>{data.identity.household.name} · {data.identity.member.role}</p>
-  <nav><a href="/plants">Plants</a> · <a href="/sites">Sites</a> · <a href="/journal">Journal</a> · <a href="/settings">Household settings</a>{#if data.identity.member.role === 'owner'} · <a href="/import">Import from Planta</a>{/if}</nav>
+  {#if data.identity.member.role !== 'sitter'}
+  <nav><a href="/plants">Plants</a> · <a href="/sites">Sites</a> · <a href="/journal">Journal</a>{#if data.identity.member.role === 'owner'} · <a href="/settings">Household settings</a>{/if}{#if data.identity.member.role === 'owner'} · <a href="/import">Import from Planta</a>{/if}</nav>
   <section><h2>{data.plantCount === 0 ? 'No plants yet' : data.plantCount + (data.plantCount === 1 ? ' plant' : ' plants')}</h2><p><a href="/plants">Open your plant collection</a></p></section>
+  {/if}
+  <p><a href="/settings/notifications">My notifications</a>{#if data.identity.member.role === 'owner'} · <a href="/members">Members</a>{/if}</p>
   {#if data.weather}<WeatherBanner report={data.weather} showRain />{/if}
-  {#if data.plantCount > 0 && data.tasks}<Today list={data.tasks} />{/if}
+  {#if data.plantCount > 0 && data.tasks}<Today list={data.tasks} sitter={data.identity.member.role === 'sitter'} memberId={data.identity.member.id} />{/if}
   <form method="POST" action="/auth/logout"><button>Log out</button></form>
 {:else}
   <p>Plant care for your household.</p>

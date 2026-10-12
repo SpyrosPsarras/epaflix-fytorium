@@ -78,7 +78,7 @@ Mist every three days only indoors, with dry or normal site humidity and medium 
 Whole days from 1–365, stored per plant and task type in the plant's household. It replaces that task's computed interval after factors and clamps, with source `override`. Clearing restores the computed interval. Applicability and fertilizing season still apply. Fertilizing's default follows the current watering interval, including a watering override.
 
 **Misting setting**:
-Both the plant and household have `misting_enabled`, default true. Both must be on for misting to apply. Turning the household switch off preserves each plant's setting. All members can edit household settings until role enforcement arrives in #16.
+Both the plant and household have `misting_enabled`, default true. Both must be on for misting to apply. Turning the household switch off preserves each plant's setting. Only owners can edit household settings.
 
 **Care event**:
 A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable built-in or custom task. Exactly one of task_type or custom_task_id identifies its target. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
@@ -249,3 +249,20 @@ An encrypted push summary of the same due and late task list as Today, respectin
 
 **Weather alert notification**:
 An encrypted push for an open rain or low-temperature weather event, sent only to members with weather alerts on. The push worker reads open events every thirty seconds, independently of weather reconciliation. One database claim per event and member has the same five-minute lease and `sent_at` completion or expired-device skip as daily reminders. Unsent expired claims retry while the event remains open; sent claims never send again. Resolved events send nothing. Each event has its own notification tag. Both daily reminders and weather alert notifications open Today when tapped. Payloads contain no member identity or coordinates; Android's push provider sees timing and size, not the encrypted text.
+
+## Household access
+
+**Role**:
+Owner, family or sitter. Owners alone manage invites, member removal and plant shares, household settings including misting and location, and Planta import. Family can read and edit all other household data, including species names, care values and unmatched species.
+
+**Invite**:
+An owner's single-use link admitting a new OIDC identity or reactivating a removed member as family or sitter, with chosen plants for a sitter. It expires after seven days and can be revoked. Reactivation applies the invite's role and shares in the same household; an invite cannot move a member between households or change an active member's role.
+
+**Share**:
+Permission for a sitter to see one active household plant's Today and Upcoming tasks and basic page, and to complete, snooze, skip, handle all due tasks or undo their own care. It grants no access to plant lists, sites, photos, journal, history, care explanations or household editing; graveyard and deleted plants are invisible, and personal notifications are the only settings exception.
+
+**Removal**:
+Withdrawal of a member's access, devices and shares, taking effect on their next request while preserving their name in care history. A removed identity cannot log in again without a valid invite. A fresh invite for the same household restores access with its chosen role and shares, not old sessions or devices. An owner cannot remove themself or the last owner.
+
+**Completion notice**:
+An optional push telling a member that someone else completed a task, off by default and limited to shared active plants for sitters. It excludes the actor, snoozes, skips and imports, and enabling it does not replay past care.

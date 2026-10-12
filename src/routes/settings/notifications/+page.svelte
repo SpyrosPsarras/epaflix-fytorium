@@ -5,6 +5,7 @@
   let reminderTime = $state('09:00');
   let reminders = $state(false);
   let weather = $state(false);
+  let completions = $state(false);
   let busy = $state(false);
   let message = $state('');
   let failure = $state('');
@@ -12,6 +13,7 @@
     reminderTime = data.settings.reminder_time;
     reminders = data.settings.reminders_enabled;
     weather = data.settings.weather_alerts_enabled;
+    completions = data.settings.completion_notices_enabled;
   });
   async function call(path: string, method = 'POST', body?: unknown) {
     const response = await fetch('/api/notifications/' + path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -46,7 +48,7 @@
   function save(event: SubmitEvent) {
     event.preventDefault();
     return act(async () => {
-      await call('settings', 'PUT', { reminder_time: reminderTime, reminders_enabled: reminders, weather_alerts_enabled: weather });
+      await call('settings', 'PUT', { reminder_time: reminderTime, reminders_enabled: reminders, weather_alerts_enabled: weather, completion_notices_enabled: completions });
       await invalidateAll();
       message = 'Notification settings saved.';
     });
@@ -68,7 +70,7 @@
   }
 </script>
 <svelte:head><title>Notifications | Fytorium</title></svelte:head>
-<a href="/">Today</a> · <a href="/settings">Household settings</a>
+<a href="/">Today</a>
 <h1>Notifications</h1>
 <p>These choices are yours. Enable each device separately.</p>
 {#if !data.configured}<p role="alert">The owner must configure VAPID before enabling notifications.</p>{/if}
@@ -78,7 +80,8 @@
     <label><input type="checkbox" bind:checked={reminders} /> Daily reminders</label>
     <label>Reminder time <input type="time" required bind:value={reminderTime} /></label>
     <p>Time zone: {data.timezone}. Empty days send nothing. Today's reminder replaces the previous one.</p>
-    <label><input type="checkbox" bind:checked={weather} /> Weather alerts</label>
+    {#if !data.sitter}<label><input type="checkbox" bind:checked={weather} /> Weather alerts</label>{/if}
+    <label><input type="checkbox" bind:checked={completions} /> Task completed by someone else</label>
     <button disabled={busy}>Save notification settings</button>
   </form>
 </section>

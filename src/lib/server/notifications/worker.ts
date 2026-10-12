@@ -3,16 +3,15 @@ import { calendarDate, now } from '../clock';
 import { config } from '../config';
 import { db } from '../db';
 import { listedTasks } from '../tasks';
-import { sendToMember } from './delivery';
-
-const leaseMs = 5 * 60 * 1000;
+import { sendCompletionNotices } from './completions';
+import { leaseMs, sendToMember } from './delivery';
 
 async function sendWeatherAlerts() {
   const { rows } = await db().query(`SELECT e.id, e.kind, m.id AS member_id,
     COALESCE(p.nickname, s.canonical_name) AS plant_name
     FROM weather_events e JOIN members m ON m.household_id = e.household_id
     LEFT JOIN plants p ON p.id = e.plant_id LEFT JOIN species s ON s.gbif_key = p.gbif_key
-    WHERE e.resolved_at IS NULL AND m.weather_alerts_enabled
+    WHERE e.resolved_at IS NULL AND m.weather_alerts_enabled AND m.removed_at IS NULL AND m.role <> 'sitter'
     AND EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = m.id)
     AND NOT EXISTS (SELECT 1 FROM weather_alert_sends WHERE event_id = e.id AND member_id = m.id
       AND (sent_at IS NOT NULL OR claimed_until >= $1))
@@ -22,7 +21,7 @@ async function sendWeatherAlerts() {
       const at = now(), until = new Date(at.getTime() + leaseMs);
       const claimed = await db().query(`INSERT INTO weather_alert_sends (event_id, member_id, attempted_at, claimed_until)
         SELECT e.id, m.id, $3, $4 FROM weather_events e JOIN members m ON m.household_id = e.household_id
-        WHERE e.id = $1 AND m.id = $2 AND e.resolved_at IS NULL AND m.weather_alerts_enabled
+        WHERE e.id = $1 AND m.id = $2 AND e.resolved_at IS NULL AND m.weather_alerts_enabled AND m.removed_at IS NULL AND m.role <> 'sitter'
         ON CONFLICT (event_id, member_id) DO UPDATE SET attempted_at = $3, claimed_until = $4
         WHERE weather_alert_sends.sent_at IS NULL AND weather_alert_sends.claimed_until < $3
         RETURNING event_id`, [row.id, row.member_id, at, until]);
@@ -44,7 +43,7 @@ export async function runPushWorkerOnce() {
   const date = calendarDate(at);
   const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: config().householdTimezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
   const { rows } = await db().query(`SELECT m.id, m.role, m.household_id, h.name FROM members m JOIN households h ON h.id = m.household_id
-    WHERE m.reminders_enabled AND m.reminder_time <= $1
+    WHERE m.removed_at IS NULL AND m.reminders_enabled AND m.reminder_time <= $1
     AND EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = m.id)
     AND NOT EXISTS (SELECT 1 FROM daily_reminder_sends WHERE member_id = m.id AND local_date = $2::date
       AND (sent_at IS NOT NULL OR claimed_until >= $3)) ORDER BY m.id`, [localTime, date, at]);
@@ -57,7 +56,7 @@ export async function runPushWorkerOnce() {
       // Only this local day's summary may be claimed, never yesterday's missed reminder.
       if (!tasks.length || today.today !== date || calendarDate(claimedAt) !== date) continue;
       const claimed = await db().query(`INSERT INTO daily_reminder_sends (member_id, local_date, attempted_at, claimed_until)
-        SELECT id, $2::date, $3, $4 FROM members WHERE id = $1 AND reminders_enabled
+        SELECT id, $2::date, $3, $4 FROM members WHERE id = $1 AND reminders_enabled AND removed_at IS NULL
         ON CONFLICT (member_id, local_date) DO UPDATE SET attempted_at = $3, claimed_until = $4
         WHERE daily_reminder_sends.sent_at IS NULL AND daily_reminder_sends.claimed_until < $3
         RETURNING member_id`, [member.id, date, claimedAt, until]);
@@ -73,6 +72,7 @@ export async function runPushWorkerOnce() {
     } catch { console.error('Daily push failed for one member. Will retry after its lease.'); }
   }
   await sendWeatherAlerts();
+  await sendCompletionNotices();
 }
 let started = false;
 export function startPushWorker() {

@@ -9,7 +9,6 @@ export const GET: RequestHandler = async ({ locals }) => {
 };
 export const PUT: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
-  if (locals.identity.member.role !== 'owner') error(403, 'Only the owner can set household location.');
   checkOrigin(request);
   return json(await setLocation(locals.identity.household.id, (await readJsonObject(request)).location));
 };

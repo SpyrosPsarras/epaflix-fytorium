@@ -9,6 +9,7 @@ import { syntheticPush } from './subscriptions';
 
 export type PushPayload = { title: string; body: string; tag: string; url: '/' };
 const timeoutMs = 5000;
+export const leaseMs = 5 * 60 * 1000;
 
 class PushResponseError extends Error {
   constructor(readonly statusCode: number) {
