@@ -158,8 +158,8 @@ test('match retries and unmatched list refuse unauthenticated, foreign-household
     for (const role of ['family', 'sitter']) {
       await pool.query("INSERT INTO members (household_id, issuer, subject, role) SELECT household_id, issuer, $1, $2 FROM members WHERE subject = 'synthetic-owner' LIMIT 1", ['synthetic-sensor-' + role, role]);
       const member = await harness.login('synthetic-sensor-' + role);
-      expect((await member.request('/api/species/910100/care/retry-match', 'POST')).status).toBe(403);
-      expect((await member.request('/api/species/unmatched')).status).toBe(403);
+      expect((await member.request('/api/species/910100/care/retry-match', 'POST')).status).toBe(role === 'family' ? 202 : 403);
+      expect((await member.request('/api/species/unmatched')).status).toBe(role === 'family' ? 200 : 403);
     }
   } finally { await pool.end(); }
 });

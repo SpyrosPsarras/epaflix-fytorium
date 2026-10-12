@@ -4,18 +4,18 @@
   import type { WeatherReport } from '$lib/weather';
   import WeatherBanner from '$lib/WeatherBanner.svelte';
   import type { PlantWarning } from '$lib/warnings';
-  let { cards, weather }: { cards: FeedCard[]; weather: WeatherReport } = $props();
+  let { cards, weather, sitter = false }: { cards: FeedCard[]; weather?: WeatherReport; sitter?: boolean } = $props();
   let busy = $state(false);
   const rainCardId = $derived([...cards].reverse().find(card => card.kind === 'weather_alerts' && card.event.kind === 'rain')?.id);
   const labels: Record<PlantWarning['kind'], string> = { too_dark: 'Too dark', too_bright: 'Too bright', no_drainage: 'No drainage', missing_info: 'Missing information' };
   $effect(() => {
-    if (!weather.locationSet) return;
+    if (!weather?.locationSet) return;
     const timer = setInterval(() => { if (!busy) void invalidateAll(); }, weather.forecastFetchedAt ? 30000 : 3000);
     return () => clearInterval(timer);
   });
 </script>
 <section aria-labelledby="home-feed-title">
-  <div class="heading"><h2 id="home-feed-title">Home feed</h2><a href="/settings#feed-settings">Customize my feed</a></div>
+  <div class="heading"><h2 id="home-feed-title">Home feed</h2>{#if !sitter}<a href="/settings/notifications#feed-settings">Customize my feed</a>{/if}</div>
   <div class="feed-cards">
   <div class="cards">
     {#each cards as card (card.id)}
@@ -48,7 +48,7 @@
               {#if card.event.payload.hardiness?.ruleId === 'hardiness.usda_uncertain@1'}<p>USDA zone conversion is uncertain.</p>{/if}
             {:else}
               <a class="card-body" href={card.href}><h3>Rain report</h3>{#if card.event.payload.precipitationMm != null}<p>Rain: {card.event.payload.precipitationMm} mm on {card.event.starts_on}.</p>{/if}</a>
-              {#if card.id === rainCardId}<WeatherBanner report={weather} showRain rainOnly bind:busy />{/if}
+              {#if card.id === rainCardId && weather}<WeatherBanner report={weather} showRain rainOnly bind:busy />{/if}
             {/if}
           </article></li>
         {/if}

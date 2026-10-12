@@ -6,7 +6,6 @@ import { isUuid } from '$lib/server/plants';
 import type { RequestHandler } from './$types';
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');
-  if (locals.identity.member.role !== 'owner') error(403, 'Only the owner can edit names');
   checkOrigin(request);
   await getSpecies(params.gbifKey);
   if (!isUuid(params.id)) error(404, 'Owner name not found');

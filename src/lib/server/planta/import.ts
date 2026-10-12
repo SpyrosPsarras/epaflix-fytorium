@@ -1,3 +1,4 @@
+import { requirePermission } from '../policy';
 import { error, isHttpError } from '@sveltejs/kit';
 import type { Identity } from '../auth';
 import { db } from '../db';
@@ -9,7 +10,7 @@ import { PlantaClient } from './client';
 
 export function requireOwner(identity: Identity | null): Identity {
   if (!identity) error(401, 'Login required');
-  if (identity.member.role !== 'owner') error(403, 'Only the owner can import from Planta.');
+  requirePermission(identity, 'owner');
   return identity;
 }
 export async function readImportInput(request: Request): Promise<Record<string, unknown>> {

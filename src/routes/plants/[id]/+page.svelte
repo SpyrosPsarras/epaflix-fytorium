@@ -45,6 +45,13 @@
   }
 </script>
 <svelte:head><title>{data.plant.display_name} | Fytorium</title></svelte:head>
+{#if data.sitter}
+<a href="/">Today</a>
+<h1>{data.plant.display_name}</h1>
+<p>{data.plant.scientific_name}</p>
+<p>{data.plant.cultivar ?? ''}</p>
+<p>Care tasks are on <a href="/">Today</a> and <a href="/upcoming">Upcoming</a>.</p>
+{:else}
 <a href="/plants">Plants</a>
 <h1>{data.plant.display_name}</h1>
 <WeatherBanner report={data.weather} />
@@ -161,6 +168,7 @@
     {#each plantBooleans as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field] ? 'Yes' : 'No'}</dd>{/each}
   </dl>
 </section>
+{/if}
 <style>
   .cover { display: block; width: 100%; height: 16rem; object-fit: contain; border-radius: .75rem; background: #ffedd5; }
   .placeholder { display: grid; place-items: center; color: #57534e; }

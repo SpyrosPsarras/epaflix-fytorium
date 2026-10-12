@@ -34,5 +34,6 @@ export const DELETE: RequestHandler = async ({ locals, params, request }) => {
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.identity) error(401, 'Login required');
-  return json(await getPlant(params.id, locals.identity.household.id));
+  const plant = await getPlant(params.id, locals.identity.household.id);
+  return json(plant);
 };

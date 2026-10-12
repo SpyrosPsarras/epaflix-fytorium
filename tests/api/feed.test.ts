@@ -110,6 +110,45 @@ test('late custom tasks count in the feed exactly as in Today', async () => {
   }
 });
 
+test('sitter feed contains only shared late care, stays fixed-query, and disappears on removal or graveyard', async () => {
+  const search = await (await member.request('/api/species/search?q=Testoria%20lucida')).json();
+  const other = await (await member.request('/api/plants', 'POST', { ...fixturePlant, site_id: siteId, nickname: 'Private feed plant', search_id: search.search_id, gbif_key: 910001 })).json();
+  const invite = await (await member.request('/api/household/invites', 'POST', { role: 'sitter', plant_ids: [plantId] })).json();
+  const sitter = await harness.login('synthetic-feed-sitter', {}, invite.link.split('/').at(-1));
+  const sitterId = (await (await sitter.request('/api/me')).json()).member.id;
+  const calls = async () => Number((await fixtureDb.query('SELECT sum(calls) AS n FROM pg_stat_statements')).rows[0].n);
+  try {
+    const counts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const before = await calls();
+      const response = await sitter.request('/api/feed');
+      counts.push(await calls() - before - 1);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(Object.keys(result)).toEqual(['cards']);
+      expect(result.cards).toEqual([{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/' + plantId, count: 1, plants: [{ id: plantId, name: 'Test feed plant' }] }]);
+    }
+    expect(Math.min(...counts)).toBe(16);
+    expect((await sitter.request('/api/feed/settings')).status).toBe(403);
+    expect(await (await sitter.request('/settings/notifications')).text()).not.toContain('My home feed');
+    expect((await sitter.request('/api/feed/settings', 'PUT', allCards)).status).toBe(403);
+    expect((await sitter.request('/api/weather/rain/water', 'POST', { request_id: randomUUID() })).status).toBe(403);
+    const home = await (await sitter.request('/')).text();
+    expect(home).toContain('Test feed plant');
+    for (const hidden of ['Private feed plant', 'Current weather', 'Weather alerts', 'Warnings for', 'Customize my feed']) expect(home).not.toContain(hidden);
+    expect((await member.request('/api/plants/' + plantId + '/graveyard', 'POST')).status).toBe(200);
+    expect(await (await sitter.request('/api/feed')).json()).toEqual({ cards: [] });
+    expect((await member.request('/api/plants/' + plantId + '/restore', 'POST', {})).status).toBe(200);
+    await member.request('/api/household/members/' + sitterId, 'PUT', { plant_ids: [] });
+    expect(await (await sitter.request('/api/feed')).json()).toEqual({ cards: [] });
+    await member.request('/api/household/members/' + sitterId, 'DELETE');
+    expect((await sitter.request('/api/feed')).status).toBe(401);
+  } finally {
+    await member.request('/api/plants/' + plantId + '/restore', 'POST', {});
+    await member.request('/api/plants/' + other.id, 'DELETE', { confirm_name: 'Private feed plant' });
+  }
+});
+
 test('validated feed preferences survive a fresh session without changing another member', async () => {
   expect(await (await member.request('/api/feed/settings')).json()).toEqual(allCards);
   // This base has no invitation API. Only membership setup uses SQL fixtures.
@@ -124,6 +163,8 @@ test('validated feed preferences survive a fresh session without changing anothe
   expect(await (await freshSession.request('/api/feed/settings')).json()).toEqual(hidden);
   expect((await (await freshSession.request('/api/feed')).json()).cards.some((card: FeedCard) => card.kind === 'plant_warnings')).toBe(false);
   expect(await (await family.request('/api/feed/settings')).json()).toEqual(allCards);
+  expect(await (await family.request('/settings/notifications')).text()).toContain('My home feed');
+  expect((await family.request('/api/feed/settings', 'PUT', allCards)).status).toBe(200);
   expect((await (await family.request('/api/feed')).json()).cards.some((card: FeedCard) => card.kind === 'plant_warnings')).toBe(true);
   for (const kind of ['late_tasks', 'current_weather', 'weather_alerts', 'plant_warnings']) {
     expect((await member.request('/api/feed/settings', 'PUT', { ...allCards, [kind]: false })).status).toBe(200);

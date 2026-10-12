@@ -11,7 +11,6 @@ export const GET: RequestHandler = async ({ locals }) => {
 export const PUT: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  // shortcut: all members may edit until household role enforcement arrives in #16.
   const input = await readSettings(request);
   const result = await db().query('UPDATE households SET misting_enabled = $1 WHERE id = $2 RETURNING misting_enabled', [input.misting_enabled, locals.identity.household.id]);
   return json(result.rows[0]);

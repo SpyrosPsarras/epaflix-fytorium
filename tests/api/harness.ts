@@ -169,14 +169,16 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     await photos.stop();
   });
 
-  async function login(subject = 'synthetic-owner', claims: { name?: string; email?: string } = { name: 'Test member' }) {
+  async function login(subject = 'synthetic-owner', claims: { name?: string; email?: string } = { name: 'Test member' }, invite?: string) {
     provider.setSubject(subject, claims);
-    const start = await fetch(base + '/auth/login', { redirect: 'manual' });
+    const pending = invite ? await fetch(base + '/invite/' + invite, { redirect: 'manual' }) : null;
+    const pendingCookie = pending?.headers.getSetCookie()[0]?.split(';')[0] ?? '';
+    const start = await fetch(base + '/auth/login', { redirect: 'manual', headers: { cookie: pendingCookie } });
     expect(start.status).toBe(303);
     const transactionCookie = start.headers.getSetCookie()[0].split(';')[0];
     const authorization = await fetch(start.headers.get('location')!, { redirect: 'manual' });
     const callbackUrl = authorization.headers.get('location')!;
-    const callback = await fetch(callbackUrl, { redirect: 'manual', headers: { cookie: transactionCookie } });
+    const callback = await fetch(callbackUrl, { redirect: 'manual', headers: { cookie: [transactionCookie, pendingCookie].filter(Boolean).join('; ') } });
     const cookie = callback.headers.getSetCookie().find(value => value.startsWith('fytorium_session='))?.split(';')[0] ?? '';
     function request(path: string, method = 'GET', body?: unknown, session = cookie) {
       return fetch(base + path, { method, redirect: 'manual', headers: { cookie: session, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
