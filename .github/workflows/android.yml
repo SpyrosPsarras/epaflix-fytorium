@@ -1,0 +1,20 @@
+name: Android
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@41ad77ca97e46ee2e825d5e6b9a95d8169fcc44c # v4.4.2
+      - name: Build
+        run: ./scripts/android build
+      - name: Release shrinking and APK size
+        run: ./scripts/android release-check
+      - name: Unit and screen tests
+        run: ./scripts/android test
+      - name: Lint
+        run: ./scripts/android lint

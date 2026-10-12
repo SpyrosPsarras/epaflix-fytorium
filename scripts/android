@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+command=${1:-}
+case "$command" in
+  build|test|lint|screenshots|release-check|release-launch|e2e) ;;
+  *) echo 'Usage: ./scripts/android build|test|lint|screenshots|release-check|release-launch|e2e' >&2; exit 2;;
+esac
+id=$(printf '%s' "$PWD" | sha256sum | cut -c1-12)
+image="fytorium-android-$id"
+target=sdk
+case "$command" in e2e|release-launch) target=emulator;; esac
+docker build --target "$target" -t "$image-$target" android/docker
+if [ "$target" = emulator ]; then
+  if [ -n "${STACK_APP_PORT:-}" ]; then export COMPOSE_FILE=compose.yaml:compose.host.yaml; fi
+  app=$(docker compose ps -q app)
+  if [ -z "$app" ] || [ "$(docker inspect -f '{{.State.Running}}' "$app")" != true ]; then
+    echo 'Start this worktree stack with ./scripts/stack up before e2e.' >&2
+    exit 1
+  fi
+  name="fytorium-android-e2e-$id-$$"
+  cleanup() {
+    docker rm -f "$name" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  echo "Reusing stack app $app; only the emulator will be removed."
+  network=$(docker inspect -f '{{range $name, $config := .NetworkSettings.Networks}}{{$name}}{{end}}' "$app")
+  docker run --rm --name "$name" --user "$(id -u):$(id -g)" \
+    --group-add "$(stat -c %g /dev/kvm)" --device /dev/kvm --network "$network" \
+    -e E2E_RELEASE="$command" -e E2E_LOGIN="${E2E_LOGIN:-0}" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+    -v "$PWD":/work -w /work/android "$image-$target" ./docker/e2e
+else
+  case "$command" in
+    build) task=assembleDebug;;
+    release-check) task=assembleRelease;;
+    test) task=testDebugUnitTest;;
+    lint) task=lintDebug;;
+    screenshots)
+      task=verifyRoborazziDebug
+      [ "${ANDROID_RECORD_SCREENSHOTS:-0}" != 1 ] || task=recordRoborazziDebug
+      ;;
+  esac
+  docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e ANDROID_USER_HOME=/tmp/.android \
+    -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp \
+    -v "$PWD":/work -w /work/android "$image-$target" sh -ec './gradlew --no-daemon --console=plain "$1"; if [ "$1" = assembleRelease ]; then bytes=$(stat -c %s app/build/outputs/apk/release/app-release-unsigned.apk); echo "Release APK size: $bytes bytes"; fi' sh "$task"
+fi

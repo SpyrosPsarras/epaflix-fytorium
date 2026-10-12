@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+export HOME=/tmp/android-home ANDROID_USER_HOME=/tmp/android-home/.android
+mkdir -p "$ANDROID_USER_HOME"
+cleanup() {
+  adb emu kill >/dev/null 2>&1 || true
+  [ -z "${emulator_pid:-}" ] || kill "$emulator_pid" 2>/dev/null || true
+  [ -z "${dns_pid:-}" ] || kill "$dns_pid" 2>/dev/null || true
+  if [ "$(id -u)" = 0 ]; then
+    chown -R "$HOST_UID:$HOST_GID" /work/android/.gradle /work/android/.gradle-cache /work/android/app/build /work/android/build 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# The guest uses Docker's DNS through a container-local forwarder. Both app and oidc retain their canonical URLs.
+ip=$(ip -4 -o addr show eth0 | awk '{split($4,a,"/"); print a[1]}')
+dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --listen-address="$ip" --bind-interfaces --no-hosts >/tmp/dns.log 2>&1 &
+dns_pid=$!
+curl --fail --retry 5 --retry-delay 1 http://app:3000/healthz
+curl --fail http://oidc:8080/default/.well-known/openid-configuration >/dev/null
+printf 'no\n' | avdmanager create avd -n fytorium -k 'system-images;android-35;google_apis;x86_64' -d pixel_2 --force
+emulator -avd fytorium -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -dns-server "$ip" -memory 2048 >/tmp/emulator.log 2>&1 &
+emulator_pid=$!
+adb start-server
+booted=0
+for attempt in $(seq 1 180); do
+  if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then booted=1; break; fi
+  kill -0 "$emulator_pid" || { tail -50 /tmp/emulator.log; exit 1; }
+  sleep 2
+done
+[ "$booted" = 1 ] || { tail -50 /tmp/emulator.log; echo 'Emulator boot timed out'; exit 1; }
+adb shell settings put global window_animation_scale 0
+adb shell settings put global transition_animation_scale 0
+adb shell settings put global animator_duration_scale 0
+adb shell input keyevent 82
+if [ "${E2E_RELEASE:-}" = release-launch ]; then
+  ./gradlew --no-daemon --console=plain assembleRelease
+  keytool -genkeypair -keystore /tmp/release-check.jks -storepass android -keypass android -alias check -dname 'CN=Release check' -keyalg RSA -validity 1
+  /opt/android/build-tools/35.0.0/apksigner sign --ks /tmp/release-check.jks --ks-pass pass:android --out /tmp/release-check.apk app/build/outputs/apk/release/app-release-unsigned.apk
+  adb install /tmp/release-check.apk
+  adb logcat -c
+  adb shell am start -W -n com.epaflix.fytorium/.MainActivity
+  sleep 10
+  adb shell pidof com.epaflix.fytorium
+  adb shell uiautomator dump /sdcard/window.xml
+  adb pull /sdcard/window.xml /tmp/window.xml
+  grep -q 'text="Log in"' /tmp/window.xml
+  adb logcat -d > /tmp/release-logcat.txt
+  if grep -E 'FATAL EXCEPTION|Force finishing activity.*com.epaflix.fytorium' /tmp/release-logcat.txt; then exit 1; fi
+  echo 'Release launch PASS: minified APK installed, MainActivity shows Log in, process alive, no crash'
+  exit 0
+fi
+# A fresh AVD each run prevents cookies and tokens from changing the scenario on the second run.
+login=false
+[ "$E2E_LOGIN" != 1 ] || login=true
+./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" connectedDebugAndroidTest
+echo 'E2E launch scenario PASS; pending A01 login scenario unless E2E_LOGIN=1'

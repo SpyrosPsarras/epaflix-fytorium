@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+curl --retry 3 -fsSL "https://dl.google.com/android/repository/$1" -o /tmp/sdk.zip
+echo "$2  /tmp/sdk.zip" | sha1sum -c -
+rm -rf /tmp/sdk-unpack
+unzip -q /tmp/sdk.zip -d /tmp/sdk-unpack
+mkdir -p "$ANDROID_HOME/$(dirname "$3")"
+mv /tmp/sdk-unpack/* "$ANDROID_HOME/$3"
+rm -rf /tmp/sdk.zip /tmp/sdk-unpack
