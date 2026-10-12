@@ -1,7 +1,7 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import type { Identity } from '../auth';
 import { db } from '../db';
-import { now } from '../clock';
+import { now, calendarDate } from '../clock';
 import { chosenSpecies, recordSpeciesSearch, searchSpecies } from '../species';
 import { isUuid } from '../plants';
 import type { ImportedFields, ImportStaging } from '$lib/import';
@@ -43,8 +43,9 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
     const date = new Date(value);
     const day = value.slice(0, 10);
     const validDay = day >= '0001-01-01' && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day;
-    if (!validDay || !Number.isFinite(date.getTime()) || date.getTime() > now().getTime()) error(422, 'Planta supplied an invalid or future last care date.');
-    care[task] = date.toISOString();
+    const dateOnly = value.length === 10;
+    if (!validDay || !Number.isFinite(date.getTime()) || (dateOnly ? day > calendarDate(now()) : date.getTime() > now().getTime())) error(422, 'Planta supplied an invalid or future last care date.');
+    care[task] = dateOnly ? day : date.toISOString();
   }
   return { id: raw.id, mapped: {
     nickname: text(raw.names?.custom), cultivar: text(raw.names?.variety), scientific_name: text(raw.names?.scientific) ?? text(raw.names?.localizedName) ?? '',
@@ -54,9 +55,16 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
     care, cover_url: typeof raw.image?.url === 'string' && raw.image.url.length <= 4096 ? raw.image.url : null,
   } };
 }
-export async function staging(household: string): Promise<ImportStaging[]> {
-  const result = await db().query('SELECT id, planta_plant_id, mapped, candidates, selected, status, plant_id FROM import_staging WHERE household_id = $1 ORDER BY planta_plant_id', [household]);
+export type StoredImportStaging = Omit<ImportStaging, 'mapped'> & { mapped: ImportedFields };
+export async function storedStaging(household: string): Promise<StoredImportStaging[]> {
+  const result = await db().query('SELECT id, planta_plant_id, mapped, candidates, selected, status, plant_id, cover_error FROM import_staging WHERE household_id = $1 ORDER BY planta_plant_id', [household]);
   return result.rows;
+}
+export async function staging(household: string): Promise<ImportStaging[]> {
+  return (await storedStaging(household)).map(row => {
+    const { cover_url, ...mapped } = row.mapped;
+    return { ...row, mapped: { ...mapped, has_cover: Boolean(cover_url) } };
+  });
 }
 export async function stageImport(code: string, household: string) {
   const api = new PlantaClient();
@@ -105,7 +113,7 @@ export async function reviewImport(id: string, household: string, input: Record<
     await client.query('BEGIN');
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
     const result = await client.query('SELECT * FROM import_staging WHERE id = $1 AND household_id = $2 FOR UPDATE', [id, household]);
-    const row = result.rows[0] as ImportStaging | undefined;
+    const row = result.rows[0] as StoredImportStaging | undefined;
     if (!row) error(404, 'Import plant not found');
     if (row.status === 'committed') error(409, 'This plant is already imported. Fetch again to update it.');
     let selected = null;

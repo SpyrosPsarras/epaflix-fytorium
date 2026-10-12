@@ -2,9 +2,9 @@ import { isHttpError } from '@sveltejs/kit';
 import { mapOpenPlantbook } from '../../care/open-plantbook';
 import { matchSpecies } from '../gbif';
 import type { CareSource, CareResult } from './source';
+import { careResponse, type RequestResult } from './response';
 
 export type PlantbookMatch = { status: 'matched'; pid: string } | { status: 'no_match' | 'ambiguous'; pid: null };
-type RequestResult = { body: unknown } | { retryLater: Date; quota?: boolean } | 'not_available' | 'auth_failed';
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
 export function openPlantbookSource(options: {
@@ -20,17 +20,7 @@ export function openPlantbookSource(options: {
     url.search = new URLSearchParams(query).toString();
     try {
       const response = await fetch(url, { headers: { Authorization: 'Token ' + options.apiKey }, signal: AbortSignal.timeout(8000) });
-      if (response.status === 429) {
-        const retry = response.headers.get('retry-after');
-        const milliseconds = retry && /^\d+$/.test(retry) ? Number(retry) * 1000 : retry ? Date.parse(retry) - options.now().getTime() : 60000;
-        const until = new Date(options.now().getTime() + Math.max(60000, Number.isFinite(milliseconds) ? milliseconds : 60000));
-        await options.backoff(until);
-        return { retryLater: until };
-      }
-      if ([401, 403].includes(response.status)) return 'auth_failed';
-      if (response.status === 404) return 'not_available';
-      if (!response.ok) return { retryLater: new Date(options.now().getTime() + 60000) };
-      return { body: await response.json() };
+      return await careResponse(response, options);
     } catch {
       // Never propagate fetch exceptions, which can contain credentials.
       return { retryLater: new Date(options.now().getTime() + 60000) };

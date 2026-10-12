@@ -17,11 +17,11 @@ export async function getCareSpecies(key: string | number, household: string) {
   return result.rows[0];
 }
 
-export async function effectiveCareProfiles(gbifKeys: number[], household: string): Promise<Map<number, ScheduleInput['careProfile']>> {
+export async function effectiveCareProfiles(gbifKeys: number[], household: string, client: Pick<PoolClient, 'query'> = db()): Promise<Map<number, ScheduleInput['careProfile']>> {
   const keys = [...new Set(gbifKeys)];
   const [cached, overrides] = await Promise.all([
-    db().query('SELECT gbif_key, source, fields, fetched_at FROM care_source_cache WHERE gbif_key = ANY($1::integer[])', [keys]),
-    db().query('SELECT gbif_key, field, value, updated_at FROM care_overrides WHERE gbif_key = ANY($1::integer[]) AND household_id = $2', [keys, household]),
+    client.query('SELECT gbif_key, source, fields, fetched_at FROM care_source_cache WHERE gbif_key = ANY($1::integer[])', [keys]),
+    client.query('SELECT gbif_key, field, value, updated_at FROM care_overrides WHERE gbif_key = ANY($1::integer[]) AND household_id = $2', [keys, household]),
   ]);
   const profiles = new Map(keys.map(key => [key, {} as ScheduleInput['careProfile']]));
   // Lower-priority sources go first; missing values stay out so the engine applies its rules.
@@ -46,10 +46,10 @@ export async function speciesCare(key: string, household: string) {
   const profile = Object.fromEntries(careNames.map(field => [field, { value: null, source: 'unknown', fetchedAt: null }])) as CareProfile;
   for (const [field, rule] of Object.entries(careRuleDefaults)) profile[field as keyof CareProfile] = { ...rule, fetchedAt: null };
   Object.assign(profile, profiles.get(species.gbif_key));
-  const fetches = careSources().map(({ name, source }) => {
+  const fetches = careSources().map(({ name, source, matchesByName }) => {
     const job = jobs.rows.find(row => row.source === name);
     const state = states.rows.find(row => row.source === name);
-    return { ...job, source: name, matchStatus: name === 'open_plantbook' ? plantbookMatch.rows[0]?.status as string | undefined : undefined, pid: name === 'open_plantbook' ? plantbookMatch.rows[0]?.pid as string | null | undefined : undefined, status: !source.configured ? 'disabled' : state?.status === 'auth_failed' ? 'auth_failed' : job?.status ?? 'not_queued' };
+    return { ...job, source: name, matchStatus: matchesByName ? plantbookMatch.rows[0]?.status as string | undefined : undefined, pid: matchesByName ? plantbookMatch.rows[0]?.pid as string | null | undefined : undefined, status: !source.configured ? 'disabled' : state?.status === 'auth_failed' ? 'auth_failed' : job?.status ?? 'not_queued' };
   });
   return { species, profile, fetches, fetch: fetches[0] ?? null, openPlantbookMatch: plantbookMatch.rows[0] ?? null };
 }
@@ -59,7 +59,7 @@ export async function unmatchedSpecies(household: string) {
 }
 export async function retryPlantbookMatch(key: string, household: string) {
   const species = await getCareSpecies(key, household);
-  const source = careSources().find(source => source.name === 'open_plantbook')!;
+  const source = careSources().find(source => source.matchesByName)!;
   if (!source.source.configured) error(409, 'Open Plantbook is not configured');
   const client = await db().connect();
   try {

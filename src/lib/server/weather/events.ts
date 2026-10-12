@@ -18,7 +18,7 @@ export async function reconcileWeatherEvents(household: string) {
     const today = calendarDate(now());
     const forecast = days.filter(day => day.date >= today);
     const plants = await client.query("SELECT p.id, p.gbif_key, p.pot_type FROM plants p JOIN sites s ON s.id = p.site_id WHERE p.household_id = $1 AND p.status = 'active' AND s.location = 'outdoor'", [household]);
-    const profiles = await effectiveCareProfiles(plants.rows.map(plant => plant.gbif_key), household);
+    const profiles = await effectiveCareProfiles(plants.rows.map(plant => plant.gbif_key), household, client);
     const open = await client.query('SELECT *, starts_on::text, ends_on::text FROM weather_events WHERE household_id = $1 AND resolved_at IS NULL', [household]);
     const retained = new Set<string>();
     // Resolve first so a newly joined spell can reuse one event without overlapping the others.

@@ -3,7 +3,6 @@ services:
     build: .
     environment:
       NODE_ENV: test
-      BODY_SIZE_LIMIT: 41M
       FYTORIUM_TEST_CLOCK: "true"
       DATABASE_URL: postgres://fytorium@postgres:5432/fytorium?sslmode=disable
       ORIGIN: http://app:3000

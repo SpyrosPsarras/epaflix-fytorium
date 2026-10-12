@@ -1,8 +1,8 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
   import type { WeatherReport } from '$lib/weather';
-  let { report, showRain = false, rainOnly = false }: { report: WeatherReport; showRain?: boolean; rainOnly?: boolean } = $props();
-  let busy = $state(false), message = $state('');
+  let { report, showRain = false, rainOnly = false, busy = $bindable(false) }: { report: WeatherReport; showRain?: boolean; rainOnly?: boolean; busy?: boolean } = $props();
+  let message = $state('');
   let requestId: string | undefined;
   $effect(() => {
     if (!report.locationSet || rainOnly) return;
@@ -15,7 +15,7 @@
     try {
       const response = await fetch('/api/weather/rain/water', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: requestId }) });
       const result = await response.json();
-      if (!response.ok) { message = result.message ?? 'Could not mark outdoor plants watered.'; return; }
+      if (!response.ok) { message = response.status === 409 && result.message === 'No recent rain report for outdoor plants.' ? 'Rain watering is not ready. Try again in a moment.' : result.message ?? 'Could not mark outdoor plants watered.'; return; }
       requestId = undefined;
       message = `Marked ${result.plantCount} outdoor plants watered.`;
       await invalidateAll();
@@ -34,7 +34,7 @@
     finally { busy = false; }
   }
 </script>
-{#if report.locationSet || report.lastRainBatch}
+{#if report.locationSet || report.lastRainBatch || rainOnly}
 <section aria-labelledby={rainOnly ? undefined : "weather-title"}>
   {#if !rainOnly}
   <h2 id="weather-title">Weather</h2>
@@ -56,6 +56,7 @@
     {#if report.rain.batchId}<p>Marked watered.</p>
     {:else}<button disabled={busy} onclick={water}>Mark {report.rain.plantCount} outdoor plants watered</button>{/if}
   {/if}
+  {#if rainOnly && !report.rain && !report.lastRainBatch}<p role="status">Rain watering is no longer available for this report.</p>{/if}
   {#if showRain && report.lastRainBatch}<p><button disabled={busy} onclick={undo}>Undo rain watering</button></p>{/if}
   {#if message}<p role="status">{message}</p>{/if}
   {#if !rainOnly && report.forecastFetchedAt}<p>Forecast from Open-Meteo · Fetched {report.forecastFetchedAt}</p>{/if}

@@ -10,6 +10,7 @@ export function createPushService() {
   const vapid = webPush.generateVAPIDKeys();
   const devices = new Map();
   const received = [];
+  const attempted = [];
   function subscribe() {
     const id = randomUUID();
     const dh = createECDH('prime256v1');
@@ -39,6 +40,7 @@ export function createPushService() {
       const verified = await jwtVerify(authorization[1], key, { audience: 'https://push.invalid', algorithms: ['ES256'] });
       if (verified.payload.sub !== 'mailto:push@example.test') throw new Error('Wrong VAPID subject');
       const plaintext = ece.decrypt(Buffer.concat(chunks), { version: 'aes128gcm', privateKey: device.dh, authSecret: device.auth });
+      attempted.push({ endpoint: `https://push.invalid${url.pathname}`, payload: JSON.parse(plaintext.toString()) });
       if (device.status === 201) received.push({ endpoint: `https://push.invalid${url.pathname}`, payload: JSON.parse(plaintext.toString()) });
       if (device.bodyBytes) {
         response.writeHead(device.status);
@@ -51,7 +53,7 @@ export function createPushService() {
       response.on('close', () => clearTimeout(timer));
     } catch { response.writeHead(400).end(); }
   });
-  return { server, vapid, received, subscribe,
+  return { server, vapid, received, attempted, subscribe,
     respond(endpoint, status, delay = 0, bodyBytes = 0) { Object.assign(devices.get(endpoint.split('/').pop()), { status, delay, bodyBytes }); },
   };
 }

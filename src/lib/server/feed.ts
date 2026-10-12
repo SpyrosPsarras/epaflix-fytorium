@@ -11,7 +11,7 @@ export async function homeFeed(identity: Identity, batch?: Awaited<ReturnType<ty
   const late = Object.values(tasks.groups).flat().filter(task => task.status === 'due' && task.lateDays > 0);
   const latePlants = [...new Map(late.map(task => [task.plant_id, { id: task.plant_id, name: task.plant_name }])).values()];
   if (late.length) cards.push({ id: 'late_tasks', kind: 'late_tasks', href: latePlants.length === 1 ? '/plants/' + latePlants[0].id : '/#today', count: late.length,
-    plants: latePlants.slice(0, 3) });
+    plants: latePlants });
   if (weather.locationSet) cards.push({ id: 'current_weather', kind: 'current_weather', href: '/settings#weather-location-title',
     current: weather.current, unavailableSince: weather.unavailableSince });
   const hasOutdoorPlants = plants.some(plant => sites.get(plant.site_id)?.location === 'outdoor');
