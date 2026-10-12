@@ -17,6 +17,16 @@ test.each(['owner', 'family', 'sitter', null] as const)('unlisted pages and non-
   }
 });
 
+test('home and feed projections allow only late-care fields, including nested plant keys', () => {
+  const feed = { cards: [{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/shared', count: 1,
+    plants: [{ id: 'shared', name: 'Shared fern', private: 'hidden' }], private: 'hidden' },
+    { id: 'weather', kind: 'weather_alerts' }, { id: 'warnings', kind: 'plant_warnings' }], weather: { private: 'hidden' }, settings: {} };
+  const expected = { cards: [{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/shared', count: 1, plants: [{ id: 'shared', name: 'Shared fern' }] }] };
+  expect(sitterView(feed, 'feed')).toEqual(expected);
+  expect(sitterView({ identity: {}, plantCount: 1, tasks: { today: '2030-06-01', view: 'today', settings: {}, groups: {}, sections: [] }, feed, private: 'hidden' }, 'home'))
+    .toEqual({ identity: {}, plantCount: 1, tasks: { today: '2030-06-01', view: 'today', settings: {}, groups: {}, sections: [] }, feed: expected });
+});
+
 test('sitter projections are selected by policy, never by response shape', () => {
   const payload = { display_name: 'Private name', batchId: 'private-batch', water: { status: 'due', dueOn: '2030-06-01', private: 'hidden' } };
   expect(sitterView(payload, 'schedule')).toEqual({ water: { status: 'due', dueOn: '2030-06-01', basedOn: [] }, customTasks: {} });

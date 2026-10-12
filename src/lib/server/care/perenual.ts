@@ -1,5 +1,6 @@
 import { validCareValue, type CareFields } from '../../care';
 import type { CareSource, CareResult } from './source';
+import { careResponse, type RequestResult } from './response';
 
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {};
@@ -35,7 +36,6 @@ export function mapPerenual(payload: unknown): Partial<CareFields> {
   return Object.fromEntries(Object.entries(mapped).filter(([field, value]) => validCareValue(field, value)));
 }
 
-type RequestResult = { body: unknown } | { retryLater: Date; quota?: boolean } | 'not_available' | 'auth_failed';
 export function perenualSource(options: {
   baseUrl: URL; apiKey: string; now: () => Date;
   reserve: () => Promise<Date | null>;
@@ -49,17 +49,7 @@ export function perenualSource(options: {
     if (query) url.searchParams.set('q', query);
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (response.status === 429) {
-        const retry = response.headers.get('retry-after');
-        const milliseconds = retry && /^\d+$/.test(retry) ? Number(retry) * 1000 : retry ? Date.parse(retry) - options.now().getTime() : 60000;
-        const until = new Date(options.now().getTime() + Math.max(60000, Number.isFinite(milliseconds) ? milliseconds : 60000));
-        await options.backoff(until);
-        return { retryLater: until };
-      }
-      if ([401, 403].includes(response.status)) return 'auth_failed';
-      if (response.status === 404) return 'not_available';
-      if (!response.ok) return { retryLater: new Date(options.now().getTime() + 60000) };
-      return { body: await response.json() };
+      return await careResponse(response, options);
     } catch {
       // Fetch errors can include URLs with keys. Never log or return the exception.
       return { retryLater: new Date(options.now().getTime() + 60000) };

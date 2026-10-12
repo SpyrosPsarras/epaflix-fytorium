@@ -15,6 +15,9 @@ const shared = (status: number) => [status, status, status, 404, 401, 401];
 // Statuses for a valid household fixture with an empty write body. Denied roles must
 // fail before validation or resource lookup. Owner/family exercise the actual handler.
 const expectations: Record<string, Record<string, number[]>> = {
+  '/__test/care-quota/[source]': { DELETE: ownerOnly(200) },
+  '/api/feed': { GET: self(200) },
+  '/api/feed/settings': { GET: edit(200), PUT: edit(422) },
   '/api/care-events/[id]/undo': { POST: [404, 404, 404, 404, 401, 401] },
   '/api/custom-tasks': { GET: edit(422), POST: edit(422) },
   '/api/custom-tasks/[id]': { GET: edit(404), PUT: edit(404), DELETE: edit(404) },
@@ -165,7 +168,7 @@ for (const { route, method } of routes) {
     const expected = expectations[route]?.[method]?.[index];
     expect(expected, 'Missing authorization expectation for ' + method + ' ' + route).toBeDefined();
     const usePlant = route === '/api/plants/[id]' && method === 'GET' || route.includes('/tasks');
-    const path = route.replace('[id]', usePlant ? plant : ghost).replace('[gbifKey]', '910001').replace('[taskType]', 'water').replace('[action]', 'complete').replace('[variant]', 'thumb').replace('[field]', 'invalid_field');
+    const path = route.replace('[id]', usePlant ? plant : ghost).replace('[gbifKey]', '910001').replace('[taskType]', 'water').replace('[action]', 'complete').replace('[variant]', 'thumb').replace('[field]', 'invalid_field').replace('[source]', 'perenual');
     const response = await fetch(harness.base + path, { method, redirect: 'manual', headers: { cookie: sessions[index], 'content-type': 'application/json' }, body: method === 'GET' || method === 'HEAD' ? undefined : '{}' });
     expect(response.status).toBe(expected);
   });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
+  import FeedSettings from '$lib/FeedSettings.svelte';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
   let reminderTime = $state('09:00');
@@ -73,6 +74,7 @@
 <a href="/">Today</a>
 <h1>Notifications</h1>
 <p>These choices are yours. Enable each device separately.</p>
+{#if data.feedSettings}<FeedSettings settings={data.feedSettings} />{/if}
 {#if !data.configured}<p role="alert">The owner must configure VAPID before enabling notifications.</p>{/if}
 <section>
   <h2>Reminders and alerts</h2>

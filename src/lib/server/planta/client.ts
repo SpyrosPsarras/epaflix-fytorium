@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { config } from '../config';
+import { plantaTokens } from './tokens';
 
 type Tokens = { accessToken: string; refreshToken: string; tokenType: string };
 // One instance belongs to one fetch run. Nothing survives into review or commit.
@@ -55,9 +56,7 @@ export class PlantaClient {
     }
   }
   private acceptTokens(result: any) {
-    const tokens = result?.data;
-    if (typeof tokens?.accessToken !== 'string' || !tokens.accessToken || typeof tokens.refreshToken !== 'string' || !tokens.refreshToken || tokens.tokenType !== 'Bearer') error(502, 'Planta returned invalid authorization.');
-    this.tokens = tokens;
+    this.tokens = plantaTokens(result);
   }
   async authorize(code: string) { this.acceptTokens(await this.request('auth/authorize', { code })); }
   async refresh() {

@@ -135,7 +135,8 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
     expect(response.status).toBe(200);
     const body = await response.json();
     const data = pageNode(body.nodes.find((node: any) => node?.type === 'data'));
-    only(data, path === '/' ? ['identity', 'plantCount', 'tasks'] : ['identity', 'tasks']);
+    only(data, path === '/' ? ['identity', 'plantCount', 'tasks', 'feed'] : ['identity', 'tasks']);
+    if (path === '/') expect(Object.keys(data.feed)).toEqual(['cards']);
     list(data.tasks);
   }
   const plantFields = ['id', 'display_name', 'nickname', 'scientific_name', 'canonical_name', 'cultivar', 'birthday', 'status'];

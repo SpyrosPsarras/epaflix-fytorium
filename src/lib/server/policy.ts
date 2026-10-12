@@ -4,9 +4,12 @@ import { db } from './db';
 import { isUuid } from './plants';
 import { taskTypes } from '$lib/schedule/engine';
 import type { TaskList } from '$lib/tasks';
+import type { FeedCard } from '$lib/feed';
+type SitterFeed = { cards: Extract<FeedCard, { kind: 'late_tasks' }>[] };
+type SitterHome = { identity: Identity; plantCount: number; tasks: TaskList; feed: SitterFeed };
 
 type Action = 'owner' | 'edit' | 'self' | 'tasks' | 'plant' | 'undo';
-export type SitterProjection = 'self' | 'taskList' | 'plantHeader' | 'schedule' | 'task' | 'batch' | 'batchUndo';
+export type SitterProjection = 'home' | 'feed' | 'self' | 'taskList' | 'plantHeader' | 'schedule' | 'task' | 'batch' | 'batchUndo';
 // Every permission that admits sitters must name its response projection.
 type Permission = 'owner' | 'edit' | { action: Exclude<Action, 'owner' | 'edit'>; projection: SitterProjection };
 type RoutePolicy = Permission | { read: Permission; write: Permission };
@@ -48,11 +51,15 @@ export async function requireOwnUndo(identity: Identity, id: string, batch = fal
 
 // Public handlers retain their own origin, login-transaction, token and test-mode checks.
 export function publicRoute(route: string) {
+  if (route === '/__test/care-quota/[source]') return false;
   return route.startsWith('/auth/') || route === '/invite/[token]' || route === '/healthz'
     || route === '/metrics' || route.startsWith('/__test/');
 }
 const policies: Record<string, RoutePolicy> = {
-  '/': { action: 'tasks', projection: 'taskList' },
+  '/': { action: 'tasks', projection: 'home' },
+  '/api/feed': { action: 'tasks', projection: 'feed' },
+  '/api/feed/settings': 'edit',
+  '/__test/care-quota/[source]': 'owner',
   '/upcoming': { action: 'tasks', projection: 'taskList' },
   '/api/tasks': { action: 'tasks', projection: 'taskList' },
   '/members': 'owner', '/import': 'owner', '/settings': 'owner',
@@ -144,6 +151,8 @@ function sitterSchedule(resource: unknown) {
 }
 
 // Build every sitter response from named fields. New source fields are private until added here.
+export function sitterView(resource: unknown, projection: 'home'): SitterHome;
+export function sitterView(resource: unknown, projection: 'feed'): SitterFeed;
 export function sitterView(resource: TaskList, projection: SitterProjection): TaskList;
 export function sitterView(resource: Record<string, unknown>, projection: SitterProjection): Record<string, unknown>;
 export function sitterView(resource: unknown, projection: SitterProjection): unknown;
@@ -152,6 +161,14 @@ export function sitterView(resource: unknown, projection: SitterProjection): unk
   switch (projection) {
   // These endpoints contain only the member's own identity and notification settings.
   case 'self': return resource;
+  case 'home': return { ...fields(value, ['identity', 'plantCount']),
+    tasks: sitterView(value.tasks, 'taskList'), feed: sitterView(value.feed, 'feed') };
+  case 'feed': return { cards: (Array.isArray(value.cards) ? value.cards : [])
+    .filter(card => record(card).kind === 'late_tasks').map(card => ({
+      ...fields(record(card), ['id', 'kind', 'href', 'count']),
+      plants: (Array.isArray(record(card).plants) ? record(card).plants as unknown[] : [])
+        .map(plant => fields(record(plant), ['id', 'name'])),
+    })) };
   case 'taskList': {
     const tasks = (rows: unknown) => Array.isArray(rows) ? rows.map(sitterTask) : [];
     return { ...fields(value, ['today', 'view']), settings: fields(record(value.settings), ['sort', 'filter', 'show_completed']),

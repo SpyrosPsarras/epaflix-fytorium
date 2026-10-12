@@ -6,6 +6,6 @@ export type ImportedFields = {
   care: Partial<Record<TaskType, string>>; cover_url: string | null;
 };
 export type ImportStaging = {
-  id: string; planta_plant_id: string; mapped: ImportedFields; candidates: Candidate[]; selected: Candidate | null;
+  id: string; planta_plant_id: string; mapped: Omit<ImportedFields, 'cover_url'> & { has_cover: boolean }; cover_error: string | null; candidates: Candidate[]; selected: Candidate | null;
   status: 'review' | 'confirmed' | 'skipped' | 'committed'; plant_id: string | null;
 };

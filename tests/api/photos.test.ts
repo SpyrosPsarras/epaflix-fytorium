@@ -42,6 +42,14 @@ async function objectKeys() {
 }
 
 // The S3 read is the agreed storage boundary, not a query against DB internals.
+test('checks whether the plant exists before rejecting an undecodable photo', async () => {
+  const missing = randomUUID();
+  const undecodable = Buffer.from('synthetic-not-an-image');
+  expect((await upload(undecodable, {}, owner.cookie, missing)).status).toBe(404);
+  expect((await upload(undecodable)).status).toBe(422);
+  expect((await upload(gpsImage, {}, owner.cookie, missing)).status).toBe(404);
+});
+
 test('stores an oriented original and thumbnail without EXIF GPS, privately served after login', async () => {
   const source = await sharp(gpsImage).metadata();
   expect(source.orientation).toBe(6);

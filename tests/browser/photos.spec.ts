@@ -32,7 +32,7 @@ test('adds a photo, picks its cover, browses updates and journal, and sets healt
   await expect(camera).toHaveAttribute('accept', 'image/*');
   await expect(camera).toHaveAttribute('capture', 'environment');
   await expect(camera).not.toHaveAttribute('multiple');
-  const photoInput = page.getByLabel('Choose photos', { exact: true });
+  const photoInput = page.getByLabel('Choose photo', { exact: true });
   await expect(photoInput).toHaveAttribute('accept', 'image/*');
   await expect(photoInput).not.toHaveAttribute('capture');
   await expect(photoInput).not.toHaveAttribute('multiple');

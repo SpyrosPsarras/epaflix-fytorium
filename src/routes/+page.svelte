@@ -1,5 +1,5 @@
 <script lang="ts">
-  import WeatherBanner from '$lib/WeatherBanner.svelte';
+  import HomeFeed from '$lib/HomeFeed.svelte';
   import Today from '$lib/Today.svelte';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
@@ -13,8 +13,10 @@
   <section><h2>{data.plantCount === 0 ? 'No plants yet' : data.plantCount + (data.plantCount === 1 ? ' plant' : ' plants')}</h2><p><a href="/plants">Open your plant collection</a></p></section>
   {/if}
   <p><a href="/settings/notifications">My notifications</a>{#if data.identity.member.role === 'owner'} · <a href="/members">Members</a>{/if}</p>
-  {#if data.weather}<WeatherBanner report={data.weather} showRain />{/if}
-  {#if data.plantCount > 0 && data.tasks}<Today list={data.tasks} sitter={data.identity.member.role === 'sitter'} memberId={data.identity.member.id} />{/if}
+  {#if data.feed}
+    <HomeFeed cards={data.feed.cards} weather={'weather' in data.feed ? data.feed.weather : undefined} sitter={data.identity.member.role === 'sitter'} />
+  {/if}
+  <div id="today">{#if data.plantCount > 0 && data.tasks}<Today list={data.tasks} sitter={data.identity.member.role === 'sitter'} memberId={data.identity.member.id} />{/if}</div>
   <form method="POST" action="/auth/logout"><button>Log out</button></form>
 {:else}
   <p>Plant care for your household.</p>

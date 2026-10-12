@@ -4,11 +4,10 @@ import webPush from 'web-push';
 import { config } from '../config';
 import { now } from '../clock';
 import { db } from '../db';
-import { publicAddress } from '../net/public-url';
+import { publicAddress, pinnedLookup, publicUrlLimits } from '../net/public-url';
 import { syntheticPush } from './subscriptions';
 
 export type PushPayload = { title: string; body: string; tag: string; url: '/' };
-const timeoutMs = 5000;
 export const leaseMs = 5 * 60 * 1000;
 
 class PushResponseError extends Error {
@@ -25,21 +24,19 @@ async function deliver(subscription: { endpoint: string; keys: { p256dh: string;
     contentEncoding: 'aes128gcm', TTL: 3600,
   });
   const endpoint = new URL(subscription.endpoint);
+  const signal = AbortSignal.timeout(publicUrlLimits.timeoutMs);
   let target = endpoint;
   let agent: Agent | undefined;
   if (syntheticPush(endpoint)) target = new URL(endpoint.pathname, settings.testPushUrl!);
   else {
-    const address = await publicAddress(endpoint);
-    agent = new Agent({ lookup: (_host, options, callback) => {
-      if (options.all) callback(null, [address]);
-      else callback(null, address.address, address.family);
-    } });
+    const address = await publicAddress(endpoint, { signal });
+    agent = new Agent({ lookup: pinnedLookup(address) });
   }
   try {
     await new Promise<void>((resolve, reject) => {
       const request = (target.protocol === 'https:' ? httpsRequest : httpRequest)(target, {
         method: details.method, headers: details.headers, agent,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal,
       }, response => {
         const status = response.statusCode ?? 502;
         // Only the status matters. Read zero body bytes instead of buffering web-push responseText.
@@ -64,7 +61,7 @@ export async function sendToMember(member: string, payload: PushPayload) {
         sent++;
         await db().query('UPDATE push_subscriptions SET last_success_at = $2 WHERE id = $1', [row.id, now()]);
       } catch (cause) {
-        const status = (cause as { statusCode?: number })?.statusCode;
+        const status = cause instanceof PushResponseError ? cause.statusCode : undefined;
         if (status === 404 || status === 410) await db().query('DELETE FROM push_subscriptions WHERE id = $1', [row.id]);
         else console.error('Push delivery failed. No immediate retry.');
       }

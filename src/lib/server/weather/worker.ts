@@ -43,6 +43,7 @@ export async function runWeatherWorkerOnce() {
     const profiles = await effectiveCareProfiles(plants.rows.map(plant => plant.gbif_key), id);
     const inputs = JSON.stringify([calendarDate(now()), plants.rows, [...profiles]]);
     if (forecastStored || reconciledInputs.get(id) !== inputs) {
+      reconciledInputs.delete(id);
       await reconcileWeatherEvents(id);
       reconciledInputs.set(id, inputs);
     }
