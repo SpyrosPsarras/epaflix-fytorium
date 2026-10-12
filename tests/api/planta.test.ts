@@ -187,7 +187,7 @@ test('a cover decode failure imports the plant and explains why there is no cove
   const response = await owner.request(endpoint + '/commit', 'POST', {});
   expect(response.status).toBe(200);
   const row = (await response.json())[0];
-  expect(row).toMatchObject({ status: 'committed', cover_error: expect.stringContaining('decodable') });
+  expect(row).toMatchObject({ status: 'committed', cover_error: 'the image could not be read.' });
   expect(await (await owner.request('/api/plants/' + row.plant_id + '/photos')).json()).toEqual([]);
 });
 
@@ -202,7 +202,8 @@ test('a thumbnail failure still imports the plant and records a cover error', as
     const response = await owner.request(endpoint + '/commit', 'POST', {});
     expect(response.status).toBe(200);
     const row = (await response.json())[0];
-    expect(row).toMatchObject({ status: 'committed', cover_error: expect.stringContaining('decodable') });
+    expect(row).toMatchObject({ status: 'committed', cover_error: 'the image could not be read.' });
+    expect(await (await owner.request('/import')).text()).toContain('Cover not imported: the image could not be read.');
     expect((await owner.request('/api/plants/' + row.plant_id)).status).toBe(200);
     expect(await (await owner.request('/api/plants/' + row.plant_id + '/photos')).json()).toEqual([]);
   } finally {
@@ -413,7 +414,9 @@ test('allows only owners, scopes review and commit to the household, and checks 
     for (const cookie of ['', 'fytorium_session=invalid']) expect((await owner.request(path, method, body, cookie)).status).toBe(401);
     if (method !== 'GET') expect((await fetch(harness.base + path, { method, headers: { cookie: owner.cookie, origin: 'https://untrusted.example', 'content-type': 'application/json' }, body: JSON.stringify(body) })).status).toBe(403);
   }
-  expect((await owner.request('/import', 'GET', undefined, '')).status).toBe(401);
+  const loggedOut = await owner.request('/import', 'GET', undefined, '');
+  expect(loggedOut.status).toBe(303);
+  expect(loggedOut.headers.get('location')).toBe('/auth/login');
   // This base has no invitation interface. SQL creates members only; import behavior stays at HTTP.
   const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   try {

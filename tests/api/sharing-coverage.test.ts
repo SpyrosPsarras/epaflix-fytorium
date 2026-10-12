@@ -8,10 +8,10 @@ import ts from 'typescript';
 
 const harness = createApiHarness({ testClock: true });
 const ghost = '00000000-0000-4000-8000-000000000000';
-const edit = (status: number) => [status, status, 403, 403, 401, 401];
-const ownerOnly = (status: number) => [status, 403, 403, 403, 401, 401];
-const self = (status: number) => [status, status, status, status, 401, 401];
-const shared = (status: number) => [status, status, status, 404, 401, 401];
+const edit = (status: number, loggedOut = 401) => [status, status, 403, 403, loggedOut, loggedOut];
+const ownerOnly = (status: number, loggedOut = 401) => [status, 403, 403, 403, loggedOut, loggedOut];
+const self = (status: number, loggedOut = 401) => [status, status, status, status, loggedOut, loggedOut];
+const shared = (status: number, loggedOut = 401) => [status, status, status, 404, loggedOut, loggedOut];
 // Statuses for a valid household fixture with an empty write body. Denied roles must
 // fail before validation or resource lookup. Owner/family exercise the actual handler.
 const expectations: Record<string, Record<string, number[]>> = {
@@ -75,14 +75,14 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/weather/rain/water': { POST: edit(422) },
 };
 const pages: Record<string, number[]> = {
-  '/': [200, 200, 200, 200, 200, 200], '/upcoming': [200, 200, 200, 200, 303, 303],
-  '/members': ownerOnly(200), '/import': ownerOnly(200), '/settings': ownerOnly(200),
-  '/settings/notifications': self(200), '/journal': edit(200),
-  '/plants': edit(200), '/plants/new': edit(200), '/plants/graveyard': edit(200),
-  '/plants/[id]': shared(200), '/plants/[id]/settings': edit(200),
-  '/plants/[id]/updates': edit(200), '/plants/[id]/repot': edit(200), '/plants/[id]/species': edit(200),
-  '/sites': edit(200), '/sites/new': edit(200), '/sites/[id]': edit(404), '/sites/[id]/edit': edit(404),
-  '/species/[gbifKey]': [200, 200, 403, 403, 303, 303], '/species/unmatched': edit(200),
+  '/': [200, 200, 200, 200, 303, 303], '/upcoming': [200, 200, 200, 200, 303, 303],
+  '/members': ownerOnly(200, 303), '/import': ownerOnly(200, 303), '/settings': ownerOnly(200, 303),
+  '/settings/notifications': self(200, 303), '/journal': edit(200, 303),
+  '/plants': edit(200, 303), '/plants/new': edit(200, 303), '/plants/graveyard': edit(200, 303),
+  '/plants/[id]': shared(200, 303), '/plants/[id]/settings': edit(200, 303),
+  '/plants/[id]/updates': edit(200, 303), '/plants/[id]/repot': edit(200, 303), '/plants/[id]/species': edit(200, 303),
+  '/sites': edit(200, 303), '/sites/new': edit(200, 303), '/sites/[id]': edit(404, 303), '/sites/[id]/edit': edit(404, 303),
+  '/species/[gbifKey]': [200, 200, 403, 403, 303, 303], '/species/unmatched': edit(200, 303),
 };
 const root = 'src/routes';
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -106,11 +106,15 @@ function handlerMethods(source: string) {
   return methods.filter(method => names.has(method) || names.has('fallback'));
 }
 const files = readdirSync(root, { recursive: true }).filter((file): file is string => typeof file === 'string');
-const pageRoutes = [...new Set(files.filter(file => file.endsWith('+page.svelte')
-  || /\+(?:page\.server|layout\.server|page)\.ts$/.test(file) && exportedNames(readFileSync(root + '/' + file, 'utf8')).has('load'))
+function pageFile(file: string, source: string) {
+  return file.endsWith('+page.svelte')
+    || /\+(?:page|layout)(?:\.server)?\.[tj]s$/.test(file) && exportedNames(source).has('load');
+}
+function serverFile(file: string) { return /\+server\.[tj]s$/.test(file); }
+const pageRoutes = [...new Set(files.filter(file => /\+(?:page|layout)/.test(file) && pageFile(file, readFileSync(root + '/' + file, 'utf8')))
   .map(file => '/' + file.replace(/\/?\+[^/]+$/, '')).filter(route => !publicRoute(route)))];
-const routes = files.filter(file => file.endsWith('+server.ts')).flatMap(file => {
-  const route = '/' + file.replace(/\/?\+server.ts$/, '');
+const routes = files.filter(serverFile).flatMap(file => {
+  const route = '/' + file.replace(/\/?\+server\.[tj]s$/, '');
   return publicRoute(route) ? [] : handlerMethods(readFileSync(root + '/' + file, 'utf8')).map(method => ({ route, method }));
 });
 const labels = ['owner', 'family', 'sitter with share', 'sitter without share', 'removed member', 'unauthenticated'];
@@ -134,6 +138,11 @@ beforeAll(async () => {
 });
 test('route discovery handles fallback and named handler/load exports', () => {
   expect([...exportedNames('const x = () => {}; export { x as GET }; export const fallback = x;')].sort()).toEqual(['GET', 'fallback']);
+  expect(serverFile('api/export/+server.js')).toBe(true);
+  for (const file of ['+page.ts', '+layout.ts', '+page.server.ts', '+layout.server.ts']) {
+    expect(pageFile(file, 'export const load = () => ({});')).toBe(true);
+    expect(pageFile(file, 'export const prerender = true;')).toBe(false);
+  }
   expect([...exportedNames('export { read as load } from "./reader";')]).toEqual(['load']);
   expect(handlerMethods('const x = () => {}; export { x as GET };')).toEqual(['GET']);
   expect(handlerMethods('export { handler as fallback } from "./handler";')).toEqual(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
@@ -161,6 +170,7 @@ for (const route of pageRoutes) {
     const path = route.replace('[id]', route.startsWith('/plants/') ? plant : ghost).replace('[gbifKey]', '910001');
     const response = await fetch(harness.base + path, { redirect: 'manual', headers: { cookie: sessions[index] } });
     expect(response.status).toBe(expected);
+    if (index >= 4) expect(response.headers.get('location')).toBe('/auth/login');
   });
 }
 for (const { route, method } of routes) {

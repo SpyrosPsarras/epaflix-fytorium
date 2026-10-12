@@ -4,6 +4,24 @@ import { calendarDate, now } from '../clock';
 import { rainRule } from '$lib/schedule/rules';
 import { recentRain } from './rain';
 
+function scheduleSnapshot(days: ForecastDay[], fetchedAt: Date | null, today: string): WeatherReport['snapshot'] {
+  const endOfWeek = new Date(today + 'T00:00:00Z'); endOfWeek.setUTCDate(endOfWeek.getUTCDate() + 6);
+  const week = days.filter(day => day.date >= today && day.date <= endOfWeek.toISOString().slice(0, 10));
+  const todayDay = days.find(day => day.date === today);
+  return fetchedAt && (week.length === 7 || todayDay) ? {
+    today, fetchedAt: fetchedAt.toISOString(),
+    ...(week.length === 7 ? { meanMaxTemperatureC: week.reduce((sum, day) => sum + day.maxC, 0) / 7 } : {}),
+    ...(todayDay ? { daylightHours: todayDay.daylightSeconds / 3600 } : {}),
+  } : null;
+}
+
+// Task-only readers need forecast factors, not the private feed weather report.
+export async function taskWeather(household: string): Promise<WeatherReport> {
+  const { rows } = await db().query("SELECT data, fetched_at FROM weather_cache WHERE household_id = $1 AND kind = 'forecast'", [household]);
+  return { locationSet: false, forecastFetchedAt: null, unavailableSince: null, current: null, alerts: [], events: [], lastRainBatch: null, rain: null,
+    snapshot: scheduleSnapshot(rows[0]?.data ?? [], rows[0]?.fetched_at ?? null, calendarDate(now())) };
+}
+
 export async function weatherReport(household: string, plantId?: string): Promise<WeatherReport> {
   const [location, cache, events, count, batches, rainBatches] = await Promise.all([
     db().query('SELECT latitude FROM households WHERE id = $1', [household]),
@@ -19,14 +37,8 @@ export async function weatherReport(household: string, plantId?: string): Promis
   const recent = recentRain(days, today);
   const batchId = rainBatches.rows.find(row => recent.some(day => day.date === row.starts_on))?.id ?? null;
   const precipitationMm = Math.max(0, ...recent.map(day => day.precipitationMm));
-  const endOfWeek = new Date(today + 'T00:00:00Z'); endOfWeek.setUTCDate(endOfWeek.getUTCDate() + 6);
-  const week = days.filter(day => day.date >= today && day.date <= endOfWeek.toISOString().slice(0, 10));
   const todayDay = days.find(day => day.date === today);
-  const snapshot = forecast?.fetched_at && (week.length === 7 || todayDay) ? {
-    today, fetchedAt: forecast.fetched_at.toISOString(),
-    ...(week.length === 7 ? { meanMaxTemperatureC: week.reduce((sum, day) => sum + day.maxC, 0) / 7 } : {}),
-    ...(todayDay ? { daylightHours: todayDay.daylightSeconds / 3600 } : {}),
-  } : null;
+  const snapshot = scheduleSnapshot(days, forecast?.fetched_at ?? null, today);
   const failures = cache.rows.map(row => row.unavailable_since as Date | null).filter((date): date is Date => !!date).sort((a, b) => a.getTime() - b.getTime());
   return { locationSet: location.rows[0].latitude !== null, forecastFetchedAt: forecast?.fetched_at?.toISOString() ?? null,
     unavailableSince: failures[0]?.toISOString() ?? null, snapshot, alerts: events.rows.filter(event => event.kind === 'low_temperature'),

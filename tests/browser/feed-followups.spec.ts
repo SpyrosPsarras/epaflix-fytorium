@@ -52,11 +52,16 @@ test('home refresh pauses during rain watering and undo, and late care lists eve
     const late = page.getByRole('article', { name: 'Late tasks', exact: true });
     for (const plant of plants) await expect.soft(late.getByRole('link', { name: plant.name, exact: true })).toHaveAttribute('href', '/plants/' + plant.id);
     // A forecast may reach the UI just before its rain event is reconciled.
-    for (const message of ['No recent rain report for outdoor plants.', 'No active outdoor plants.', 'request_id already used for another action.']) {
-      await page.route('**/api/weather/rain/water', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message }) }));
+    for (const response of [
+      { message: 'Synthetic rain event is pending.', reason: 'rain_report_not_ready' },
+      { message: 'No recent rain report for outdoor plants.' },
+      { message: 'No active outdoor plants.' },
+      { message: 'request_id already used for another action.' },
+    ]) {
+      await page.route('**/api/weather/rain/water', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify(response) }));
       await water.click();
-      await expect(rain).toContainText(message === 'No recent rain report for outdoor plants.' ? 'Try again in a moment.' : message);
-      if (message !== 'No recent rain report for outdoor plants.') await expect(rain).not.toContainText('Try again in a moment.');
+      await expect(rain).toContainText(response.reason ? 'Try again in a moment.' : response.message);
+      if (!response.reason) await expect(rain).not.toContainText('Try again in a moment.');
       await page.unroute('**/api/weather/rain/water');
     }
   } finally {

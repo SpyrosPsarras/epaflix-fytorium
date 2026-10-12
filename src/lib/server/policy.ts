@@ -27,10 +27,6 @@ export function visiblePlantSql(memberParameter: string) {
     AND (vm.role <> 'sitter' OR EXISTS (SELECT 1 FROM plant_shares ps
       WHERE ps.member_id = vm.id AND ps.plant_id = p.id AND ps.household_id = p.household_id))))`;
 }
-export async function visiblePlantsForIdentity(identity: Identity): Promise<string[]> {
-  const result = await db().query(`SELECT p.id FROM plants p WHERE p.household_id = $1 AND ${visiblePlantSql('$2')}`, [identity.household.id, identity.member.id]);
-  return result.rows.map(row => row.id);
-}
 export async function requireSharedPlant(identity: Identity, plantId: string) {
   if (identity.member.role !== 'sitter') return;
   if (!isUuid(plantId)) error(404, 'Plant not found');
@@ -104,23 +100,21 @@ function routePermission(route: string, method: string): Permission | undefined 
     ? method === 'GET' || method === 'HEAD' ? policy.read : policy.write
     : policy;
 }
-export function sitterProjection(route: string, method = 'GET'): SitterProjection {
-  const permission = routePermission(route, method);
+export function sitterProjection(route: string | null, method = 'GET'): SitterProjection {
+  const permission = route === null ? undefined : routePermission(route, method);
   if (!permission || typeof permission === 'string') error(500, 'Missing sitter projection');
   return permission.projection;
 }
 
 // Called before every handler and page load, including internal fetches. Unlisted routes are denied.
-export async function authorizeRoute(identity: Identity | null, route: string, method: string, params: Record<string, string>) {
-  if (publicRoute(route)) return;
+export async function authorizeRoute(identity: Identity | null, route: string | null, method: string, params: Record<string, string>) {
+  if (route === null || publicRoute(route)) return;
   const permission = routePermission(route, method);
   if (!permission) {
     console.warn(`Missing authorization policy for route ${route}`);
     error(404, 'Not found');
   }
-  // The landing page shows only a login link without an identity.
-  if (route === '/' && !identity && (method === 'GET' || method === 'HEAD')) return;
-  if (!identity && (route === '/species/[gbifKey]' || route === '/upcoming')) redirect(303, '/auth/login');
+  if (!identity && !route.startsWith('/api/') && !route.startsWith('/__test/')) redirect(303, '/auth/login');
   const action = typeof permission === 'string' ? permission : permission.action;
   const member = requirePermission(identity, action);
   if (action === 'plant') await requireSharedPlant(member, params.id);

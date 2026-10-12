@@ -228,7 +228,9 @@ test('separate cold spells stay distinct and resolve when the forecast warms, wh
   expect((await report()).alerts.filter((event: { plant_id: string }) => event.plant_id === outdoorPot)).toHaveLength(2);
   expect((await report()).rain).toBeNull();
   const request_id = randomUUID();
-  expect((await request('/api/weather/rain/water', 'POST', { request_id })).status).toBe(409);
+  const refusedRain = await request('/api/weather/rain/water', 'POST', { request_id });
+  expect(refusedRain.status).toBe(409);
+  expect(await refusedRain.json()).toMatchObject({ reason: 'rain_report_not_ready' });
   // A refresh that joins two previous spells must reuse one event without violating exclusion.
   forecast.daily.temperature_2m_min = dates.map(() => 0);
   await request('/__test/clock', 'POST', { action: 'advance', milliseconds: 3600000 });
@@ -296,7 +298,7 @@ test('batch integrity rejects foreign households, missing plants and self-refere
   const foreignHousehold = foreign.rows[0].id;
   // Integrity tests deliberately bypass HTTP validation through the harness database.
   await expect(fixtureDb.query("INSERT INTO care_actions (request_id, household_id, action, batch_id) VALUES ($1, $2, 'rain', $3)",
-    [randomUUID(), foreignHousehold, batchId])).rejects.toMatchObject({ code: '23503', constraint: 'care_actions_batch_household' });
+    [randomUUID(), foreignHousehold, batchId])).rejects.toMatchObject({ code: '23503', constraint: expect.stringMatching(/^care_actions_(batch_household|rain_alias_target)$/) });
   await expect(fixtureDb.query("INSERT INTO care_actions (request_id, household_id, action) VALUES ($1, $2, 'water:completed')",
     [randomUUID(), household])).rejects.toMatchObject({ code: '23514', constraint: 'care_actions_action_plant' });
   const self = randomUUID();

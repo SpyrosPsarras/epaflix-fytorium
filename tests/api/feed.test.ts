@@ -128,7 +128,12 @@ test('sitter feed contains only shared late care, stays fixed-query, and disappe
       expect(Object.keys(result)).toEqual(['cards']);
       expect(result.cards).toEqual([{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/' + plantId, count: 1, plants: [{ id: plantId, name: 'Test feed plant' }] }]);
     }
-    expect(Math.min(...counts)).toBe(16);
+    expect(Math.min(...counts)).toBe(10);
+    const feedOnlyReads = async () => Number((await fixtureDb.query(`SELECT COALESCE(sum(calls), 0) AS n FROM pg_stat_statements
+      WHERE query ILIKE 'SELECT%' AND (query ILIKE '%feed_late_tasks%' OR query ILIKE '%FROM weather_events%' OR query ILIKE '%AS plant_count FROM care_actions%' OR query ILIKE '%count(*)%location%outdoor%')`)).rows[0].n);
+    const beforeHome = await feedOnlyReads();
+    expect((await sitter.request('/')).status).toBe(200);
+    expect(await feedOnlyReads()).toBe(beforeHome);
     expect((await sitter.request('/api/feed/settings')).status).toBe(403);
     expect(await (await sitter.request('/settings/notifications')).text()).not.toContain('My home feed');
     expect((await sitter.request('/api/feed/settings', 'PUT', allCards)).status).toBe(403);
@@ -147,6 +152,21 @@ test('sitter feed contains only shared late care, stays fixed-query, and disappe
     await member.request('/api/plants/' + plantId + '/restore', 'POST', {});
     await member.request('/api/plants/' + other.id, 'DELETE', { confirm_name: 'Private feed plant' });
   }
+});
+
+test('a returning sitter ignores feed switches saved as family', async () => {
+  const invite = await (await member.request('/api/household/invites', 'POST', { role: 'family' })).json();
+  const family = await harness.login('synthetic-feed-returning', {}, invite.link.split('/').at(-1));
+  const id = (await (await family.request('/api/me')).json()).member.id;
+  expect((await family.request('/api/feed/settings', 'PUT', { late_tasks: false, current_weather: false, weather_alerts: false, plant_warnings: false })).status).toBe(200);
+  expect(await (await family.request('/api/feed')).json()).toMatchObject({ cards: [] });
+  await member.request('/api/household/members/' + id, 'DELETE');
+  const holiday = await (await member.request('/api/household/invites', 'POST', { role: 'sitter', plant_ids: [plantId] })).json();
+  const sitter = await harness.login('synthetic-feed-returning', {}, holiday.link.split('/').at(-1));
+  try {
+    expect(await (await sitter.request('/api/feed')).json()).toEqual({ cards: [{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/' + plantId, count: 1, plants: [{ id: plantId, name: 'Test feed plant' }] }] });
+    expect(await (await sitter.request('/')).text()).toContain('aria-label="Late tasks"');
+  } finally { await member.request('/api/household/members/' + id, 'DELETE'); }
 });
 
 test('validated feed preferences survive a fresh session without changing another member', async () => {

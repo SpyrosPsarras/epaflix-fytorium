@@ -13,7 +13,7 @@ import { db, withTransaction } from './db';
 import { now, calendarDate } from './clock';
 import type { ForecastDay } from '$lib/weather';
 import { recentRain } from './weather/rain';
-import { weatherReport } from './weather/cache';
+import { taskWeather, weatherReport } from './weather/cache';
 import { effectiveCareProfiles } from './care/catalogue';
 type Database = pg.Pool | pg.PoolClient;
 
@@ -27,7 +27,7 @@ export async function history(plantId: string, household: string): Promise<CareE
   return result.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) }));
 }
 
-async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string, database: Database = db()) {
+async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string, database: Database = db(), taskOnly = false) {
   const plantIds = plants.map(plant => plant.id);
   const [sites, events, intervals, settings, profiles, custom, weather] = await Promise.all([
     database.query('SELECT * FROM sites WHERE id = ANY($1::uuid[]) AND household_id = $2', [plants.map(plant => plant.site_id), household]),
@@ -36,7 +36,7 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
     householdSettings(household, database),
     effectiveCareProfiles(plants.map(plant => plant.gbif_key), household),
     database.query('SELECT * FROM custom_tasks WHERE household_id = $1 AND deleted_at IS NULL AND (plant_id = ANY($2::uuid[]) OR site_id = ANY($3::uuid[])) ORDER BY name, id', [household, plantIds, plants.map(plant => plant.site_id)]),
-    weatherReport(household),
+    taskOnly ? taskWeather(household) : weatherReport(household),
   ]);
   const sitesById = new Map(sites.rows.map(site => [site.id, site]));
   const historyByPlant: Record<string, ScheduleInput['history']> = {};
@@ -99,7 +99,7 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
   const plants = batch ? { rows: batch.plants.filter(plant => settings.filter === 'all' || batch.sites.get(plant.site_id)?.location === settings.filter) }
     : await db().query(plantSelect + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$3')} AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id`, [household, settings.filter, identity.member.id]);
   const groups = Object.fromEntries(taskTypes.map(type => [type, new Array<ListedTask>()])) as TaskList['groups'];
-  const context = batch ?? await schedulePlantTasks(plants.rows, household, today);
+  const context = batch ?? await schedulePlantTasks(plants.rows, household, today, db(), identity.member.role === 'sitter');
   const { schedules } = context;
   const completedByTask = new Map<string, CareEvent>();
   if (settings.show_completed) {
@@ -275,7 +275,7 @@ export async function completeRain(identity: Identity, requestId: string) {
     const cache = await client.query("SELECT data FROM weather_cache WHERE household_id = $1 AND kind = 'forecast'", [household]);
     const days: ForecastDay[] = cache.rows[0]?.data ?? [];
     const rain = await client.query("SELECT id, batch_id FROM weather_events WHERE household_id = $1 AND kind = 'rain' AND resolved_at IS NULL AND starts_on = ANY($2::date[]) ORDER BY starts_on DESC", [household, recentRain(days, calendarDate(at)).map(day => day.date)]);
-    if (!rain.rowCount) error(409, 'No recent rain report for outdoor plants.');
+    if (!rain.rowCount) error(409, { message: 'No recent rain report for outdoor plants.', reason: 'rain_report_not_ready' });
     const existing = await client.query('SELECT request_id FROM care_actions WHERE request_id = ANY($1::uuid[]) AND household_id = $2 AND undone_at IS NULL ORDER BY created_at DESC, request_id DESC LIMIT 1', [rain.rows.map(row => row.batch_id).filter(Boolean), household]);
     const batchId: string = existing.rows[0]?.request_id ?? requestId;
     if (existing.rowCount) {

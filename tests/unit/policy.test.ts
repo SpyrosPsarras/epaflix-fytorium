@@ -17,6 +17,12 @@ test.each(['owner', 'family', 'sitter', null] as const)('unlisted pages and non-
   }
 });
 
+test('unmatched requests leave the 404 to routing without policy warnings', async () => {
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  await expect(authorizeRoute(null, null, 'GET', {})).resolves.toBeUndefined();
+  expect(warning).not.toHaveBeenCalled();
+});
+
 test('home and feed projections allow only late-care fields, including nested plant keys', () => {
   const feed = { cards: [{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/shared', count: 1,
     plants: [{ id: 'shared', name: 'Shared fern', private: 'hidden' }], private: 'hidden' },

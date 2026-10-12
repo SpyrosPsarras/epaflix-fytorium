@@ -63,14 +63,23 @@ test('care action integrity rejects foreign plants and rain aliases targeting a 
   const history = await (await request(`/api/plants/${plant.id}/history`)).json();
   const db = new pg.Client({ connectionString: harness.postgres.getConnectionUri() });
   await db.connect();
+  let foreign: string | undefined;
+  let dropped = false;
   try {
     await db.query('DROP INDEX households_singleton');
-    const foreign = (await db.query("INSERT INTO households (name) VALUES ('Synthetic foreign batch household') RETURNING id")).rows[0].id;
+    dropped = true;
+    foreign = (await db.query("INSERT INTO households (name) VALUES ('Synthetic foreign batch household') RETURNING id")).rows[0].id;
     await expect(db.query("INSERT INTO care_actions (request_id, household_id, plant_id, action) VALUES ($1,$2,$3,'complete-all')", [randomUUID(), foreign, plant.id])).rejects.toMatchObject({ code: '23503' });
     await expect(db.query("INSERT INTO care_actions (request_id, household_id, action, batch_id) VALUES ($1,$2,'rain',$3)", [randomUUID(), plant.household_id, key])).rejects.toMatchObject({ code: '23503', constraint: 'care_actions_rain_alias_target' });
     expect((await request('/api/weather/rain/water', 'POST', { request_id: key })).status).toBe(409);
     expect(await (await request(`/api/plants/${plant.id}/history`)).json()).toEqual(history);
-  } finally { await db.end(); }
+  } finally {
+    try { if (foreign) await db.query('DELETE FROM households WHERE id = $1', [foreign]); }
+    finally {
+      try { if (dropped) await db.query('CREATE UNIQUE INDEX households_singleton ON households ((true))'); }
+      finally { await db.end(); }
+    }
+  }
 });
 test('multi-row inserts reject aliases before non-rain targets but accept original rain targets', async () => {
   const { plants: [plant] } = await setup('indoor', 1);

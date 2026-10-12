@@ -13,7 +13,7 @@ test('owner invites a sitter for one plant and removes their access on a phone',
   const unshared = await add('Private fern ' + suffix);
   await page.goto('/members');
   await page.getByRole('combobox', { name: 'Role', exact: true }).selectOption('sitter');
-  await page.getByRole('checkbox', { name: shared.display_name, exact: true }).check();
+  await page.getByRole('group', { name: 'Share plants', exact: true }).getByRole('checkbox', { name: shared.display_name, exact: true }).check();
   await page.getByRole('button', { name: 'Create invite', exact: true }).click();
   const linkField = page.getByLabel('Invite link', { exact: true });
   await expect(linkField).toHaveValue(/\/invite\//);
@@ -44,14 +44,19 @@ test('owner invites a sitter for one plant and removes their access on a phone',
     await screenshot(sitter, 'sharing-sitter-completed.png');
     expect((await sitter.goto('/plants/' + unshared.id))?.status()).toBe(404);
     await screenshot(sitter, 'sharing-unshared-refused.png');
+    await page.bringToFront();
     await page.reload();
     const member = page.getByRole('article', { name: 'Test sitter ' + suffix, exact: true });
+    const removed = page.waitForResponse(response => response.url().includes('/api/household/members/') && response.request().method() === 'DELETE');
     page.once('dialog', dialog => dialog.accept());
     await member.getByRole('button', { name: 'Remove member', exact: true }).click();
+    expect((await removed).status()).toBe(204);
     await expect(member).toHaveCount(0);
     await screenshot(page, 'sharing-owner-removed.png');
     expect((await sitter.request.get('/api/tasks')).status()).toBe(401);
-    expect((await sitter.goto('/plants/' + shared.id))?.status()).toBe(401);
+    expect((await sitter.request.get('/plants/' + shared.id, { maxRedirects: 0 })).status()).toBe(303);
+    await sitter.goto('/plants/' + shared.id);
+    await expect(sitter).toHaveURL(url => url.origin === 'http://oidc:8080' && url.pathname === '/default/authorize');
     await screenshot(sitter, 'sharing-removed-refused.png');
   } finally { await context.close(); }
 });
