@@ -1,10 +1,13 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
-tools_image="fytorium-tools-$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
-docker build --target tools -t "$tools_image" .
+# Overrides let us exercise CI identities against a disposable checkout.
+uid="${FYTORIUM_CONTAINER_UID:-$(id -u)}"
+gid="${FYTORIUM_CONTAINER_GID:-$(id -g)}"
+tools_image="fytorium-tools-$(printf '%s' "$PWD" | sha256sum | cut -c1-12)-$uid-$gid"
+docker build --target tools --build-arg UID="$uid" --build-arg GID="$gid" -t "$tools_image" .
 exec docker run --rm --network host \
-  --user "$(id -u):$(id -g)" \
+  --user "$uid:$gid" \
   --group-add "$(stat -c %g /var/run/docker.sock)" \
   -e HOME=/tmp -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
   -v /var/run/docker.sock:/var/run/docker.sock \

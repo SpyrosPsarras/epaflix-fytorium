@@ -1,6 +1,6 @@
 FROM ghcr.io/amacneil/dbmate:2.28.0 AS migrations
 
-FROM node:22-bookworm-slim AS tools
+FROM node:22-bookworm-slim AS tools-base
 COPY --from=migrations /usr/local/bin/dbmate /usr/local/bin/dbmate
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -8,7 +8,18 @@ RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 
-FROM tools AS dependencies
+# Caller identities belong only in the interactive tools image, not the app build.
+# An existing UID (node, root) already resolves; docker run sets the group and HOME.
+FROM tools-base AS tools
+ARG UID=1000
+ARG GID=1000
+RUN set -eu; \
+    if ! getent group "$GID" >/dev/null; then groupadd --gid "$GID" "tools-$GID"; fi; \
+    if ! getent passwd "$UID" >/dev/null; then \
+      useradd --uid "$UID" --gid "$GID" --home-dir /tmp --no-create-home --no-log-init "tools-$UID"; \
+    fi
+
+FROM tools-base AS dependencies
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
