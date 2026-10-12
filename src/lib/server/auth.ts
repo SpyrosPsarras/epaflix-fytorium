@@ -92,7 +92,7 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
         return false;
       }
       if (previousMember) {
-        await client.query('UPDATE members SET removed_at = NULL, role = $2 WHERE id = $1', [memberId, invite.role]);
+        await client.query('UPDATE members SET removed_at = NULL, role = $2, completion_notices_enabled = false WHERE id = $1', [memberId, invite.role]);
         await client.query('DELETE FROM plant_shares WHERE member_id = $1', [memberId]);
       } else {
         const member = await client.query<{ id: string }>('INSERT INTO members (issuer, subject, role, household_id) VALUES ($1,$2,$3,$4) RETURNING id', [claims.iss, claims.sub, invite.role, invite.household_id]);

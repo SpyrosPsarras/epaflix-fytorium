@@ -140,7 +140,9 @@ test('429 respects Retry-After with persisted backoff', async () => {
 
 test('match retries and unmatched list refuse unauthenticated, foreign-household and non-owner callers', async () => {
   for (const [path, method] of [['/api/species/910100/care/retry-match', 'POST'], ['/api/species/unmatched', 'GET'], ['/species/unmatched', 'GET']] as const) {
-    expect((await request(path, method, undefined, '')).status).toBe(401);
+    const response = await request(path, method, undefined, '');
+    expect(response.status).toBe(path.startsWith('/api/') ? 401 : 303);
+    if (!path.startsWith('/api/')) expect(response.headers.get('location')).toBe('/auth/login');
   }
   const { cookie } = await harness.login();
   expect((await fetch(harness.base + '/api/species/910100/care/retry-match', { method: 'POST', headers: { cookie, origin: 'https://wrong.invalid' } })).status).toBe(403);

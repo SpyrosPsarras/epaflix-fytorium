@@ -62,6 +62,7 @@ test('a fresh invite reactivates a removed subject with its new role and shares,
   const memberId = (await (await first.request('/api/me')).json()).member.id;
   await first.request('/api/tasks/settings', 'PUT', { sort: 'site', filter: 'all', show_completed: true });
   await first.request('/api/notifications/subscriptions', 'POST', harness.push.subscribe());
+  expect((await first.request('/api/notifications/settings', 'PUT', { reminder_time: '09:00', reminders_enabled: false, weather_alerts_enabled: false, completion_notices_enabled: true })).status).toBe(200);
   expect((await owner.request('/api/household/members/' + memberId, 'DELETE')).status).toBe(204);
   for (const token of [undefined, 'x'.repeat(43), firstInvite.link.split('/').at(-1)]) {
     expect((await harness.login('returning-sitter', {}, token)).callback.headers.get('location')).toBe('/auth/not-member');
@@ -75,6 +76,7 @@ test('a fresh invite reactivates a removed subject with its new role and shares,
   expect(await (await returning.request('/api/me')).json()).toMatchObject({ member: { id: memberId, role: 'sitter' } });
   expect((await first.request('/api/me')).status).toBe(401);
   expect(await (await returning.request('/api/notifications/subscriptions')).json()).toEqual([]);
+  expect(await (await returning.request('/api/notifications/settings')).json()).toMatchObject({ completion_notices_enabled: false });
   expect((await returning.request('/api/plants/' + shared)).status).toBe(200);
   expect((await returning.request('/api/plants/' + privatePlant)).status).toBe(404);
   expect((await harness.login('holiday-replay', {}, holiday.link.split('/').at(-1))).callback.headers.get('location')).toBe('/auth/not-member');

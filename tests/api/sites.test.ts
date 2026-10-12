@@ -69,7 +69,9 @@ test('requires a household session for every site API operation', async () => {
     }
   }
   for (const path of ['/sites', '/sites/new', '/sites/' + site.id]) {
-    expect((await request(path, 'GET', undefined, '')).status).toBe(401);
+    const response = await request(path, 'GET', undefined, '');
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/auth/login');
   }
   expect(await (await request('/api/sites')).json()).toEqual(before);
 });
@@ -165,6 +167,8 @@ test('a session loses site access when its member is removed from the household'
     ['/api/sites/' + site.id, 'DELETE', undefined],
     ['/sites', 'GET', undefined], ['/sites/new', 'GET', undefined], ['/sites/' + site.id, 'GET', undefined],
   ] as const) {
-    expect((await request(path, method, body)).status).toBe(401);
+    const response = await request(path, method, body);
+    expect(response.status).toBe(path.startsWith('/api/') ? 401 : 303);
+    if (!path.startsWith('/api/')) expect(response.headers.get('location')).toBe('/auth/login');
   }
 });

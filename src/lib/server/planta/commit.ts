@@ -24,10 +24,12 @@ export async function commitImport(identity: Identity) {
     // Download, decode and resize before holding the household lock. A bad cover must not lose the plant.
     if (candidate.mapped.cover_url && !previous.rows[0]?.planta_cover_imported && previous.rows[0]?.status !== 'graveyard') {
       try {
-        original = await sanitiseImage(await downloadCover(candidate.mapped.cover_url));
-        thumb = await photoThumbnail(original);
-      }
-      catch (cause) { coverError = isHttpError(cause) ? cause.body.message : 'Cover image could not be decoded.'; }
+        const downloaded = await downloadCover(candidate.mapped.cover_url);
+        try {
+          original = await sanitiseImage(downloaded);
+          thumb = await photoThumbnail(original);
+        } catch { coverError = 'the image could not be read.'; }
+      } catch (cause) { coverError = isHttpError(cause) ? cause.body.message : 'Cover image could not be decoded.'; }
     }
     const photoKeys: string[] = [];
     try {

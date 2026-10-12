@@ -1,10 +1,11 @@
-import { isHttpError, isRedirect, type Handle } from '@sveltejs/kit';
+import { error, isHttpError, isRedirect, type Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
 import { startPushWorker } from '$lib/server/notifications/worker';
 import { startWeatherWorker } from '$lib/server/weather/worker';
 import { startCareWorker } from '$lib/server/care/worker';
 import { startNameWorker } from '$lib/server/names';
 import { identity } from '$lib/server/auth';
+import { config } from '$lib/server/config';
 import { authorizeRoute, sitterView } from '$lib/server/policy';
 import { requests, duration } from '$lib/server/metrics';
 
@@ -19,9 +20,10 @@ export const handle: Handle = async ({ event, resolve }) => {
   const start = performance.now();
   let status = 500;
   try {
+    if (event.route.id?.startsWith('/__test/') && !config().testClockEnabled) error(404, 'Not found');
     const operational = event.route.id === '/healthz' || event.route.id === '/metrics';
     event.locals.identity = operational ? null : await identity(event.cookies);
-    const projection = await authorizeRoute(event.locals.identity, event.route.id ?? '', event.request.method, event.params);
+    const projection = await authorizeRoute(event.locals.identity, event.route.id, event.request.method, event.params);
     let response = await resolve(event);
     if (event.locals.identity?.member.role === 'sitter' && response.ok && response.headers.get('content-type')?.includes('application/json')
       && !event.isDataRequest && projection) {

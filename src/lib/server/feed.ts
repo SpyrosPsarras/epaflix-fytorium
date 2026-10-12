@@ -5,14 +5,16 @@ import { listedTaskContext } from './tasks';
 import { feedSettings } from './feed-settings';
 
 export async function homeFeed(identity: Identity, batch?: Awaited<ReturnType<typeof listedTaskContext>>) {
-  const [context, settings] = await Promise.all([batch ?? listedTaskContext(identity, { view: 'today', forFeed: true }), feedSettings(identity)]);
+  const context = batch ?? await listedTaskContext(identity, { view: 'today', forFeed: true });
   const { tasks, plants, sites, profiles, weather } = context;
   const cards: FeedCard[] = [];
   const late = Object.values(tasks.groups).flat().filter(task => task.status === 'due' && task.lateDays > 0);
   const latePlants = [...new Map(late.map(task => [task.plant_id, { id: task.plant_id, name: task.plant_name }])).values()];
   if (late.length) cards.push({ id: 'late_tasks', kind: 'late_tasks', href: latePlants.length === 1 ? '/plants/' + latePlants[0].id : '/#today', count: late.length,
     plants: latePlants });
-  if (identity.member.role === 'sitter') return { cards: cards.filter(card => settings[card.kind]), settings, weather };
+  // A sitter cannot edit feed preferences, so former family preferences never hide shared care.
+  if (identity.member.role === 'sitter') return { cards };
+  const settings = await feedSettings(identity);
   if (weather.locationSet) cards.push({ id: 'current_weather', kind: 'current_weather', href: '/settings#weather-location-title',
     current: weather.current, unavailableSince: weather.unavailableSince });
   const hasOutdoorPlants = plants.some(plant => sites.get(plant.site_id)?.location === 'outdoor');

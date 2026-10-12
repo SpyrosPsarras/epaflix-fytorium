@@ -15,7 +15,7 @@
     try {
       const response = await fetch('/api/weather/rain/water', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: requestId }) });
       const result = await response.json();
-      if (!response.ok) { message = response.status === 409 && result.message === 'No recent rain report for outdoor plants.' ? 'Rain watering is not ready. Try again in a moment.' : result.message ?? 'Could not mark outdoor plants watered.'; return; }
+      if (!response.ok) { message = response.status === 409 && result.reason === 'rain_report_not_ready' ? 'Rain watering is not ready. Try again in a moment.' : result.message ?? 'Could not mark outdoor plants watered.'; return; }
       requestId = undefined;
       message = `Marked ${result.plantCount} outdoor plants watered.`;
       await invalidateAll();

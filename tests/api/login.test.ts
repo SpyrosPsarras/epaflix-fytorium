@@ -98,7 +98,8 @@ test('PWA manifest, generated icons and service worker are served', async () => 
   for (const path of ['/icon-192.png', '/icon-512.png', '/icon.svg', '/service-worker.js']) {
     expect((await fetch(harness.base + path)).status).toBe(200);
   }
-  expect(await (await fetch(harness.base)).text()).toContain('/service-worker.js');
+  const owner = await login();
+  expect(await (await owner.request('/')).text()).toContain('/service-worker.js');
 });
 
 test('health checks the database and metrics expose default and HTTP observations', async () => {
@@ -110,6 +111,43 @@ test('health checks the database and metrics expose default and HTTP observation
   expect(metrics).toContain('process_resident_memory_bytes');
   expect(metrics).toContain('fytorium_http_requests_total');
   expect(metrics).toContain('fytorium_http_request_duration_seconds_bucket');
+});
+
+test.each(['/', '/journal', '/plants'])('logged-out page %s redirects to login while APIs remain 401', async path => {
+  const response = await fetch(harness.base + path, { redirect: 'manual' });
+  expect(response.status).toBe(303);
+  expect(response.headers.get('location')).toBe('/auth/login');
+  expect((await fetch(harness.base + '/api/me')).status).toBe(401);
+});
+
+test('an encoded API path still returns 401 rather than a page redirect', async () => {
+  const response = await fetch(harness.base + '/%61pi/me', { redirect: 'manual' });
+  expect(response.status).toBe(401);
+  expect(response.headers.has('location')).toBe(false);
+});
+
+test.each(['/__data.json', '/journal/__data.json'])('logged-out page data %s contains only the SvelteKit login redirect', async path => {
+  const response = await fetch(harness.base + path, { redirect: 'manual' });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ type: 'redirect', location: '/auth/login' });
+});
+
+test.each([
+  ['/__test/clock', 'GET'], ['/__test/clock', 'POST'],
+  ['/%5F_test/clock', 'GET'], ['/%5F_test/care-quota/perenual', 'DELETE'],
+  ['/__test/care-worker', 'POST'], ['/__test/weather-worker', 'POST'],
+  ['/__test/push-worker', 'POST'], ['/__test/care-quota/perenual', 'DELETE'],
+])('production hides %s %s before authorization', async (path, method) => {
+  const owner = await login();
+  for (const cookie of ['', owner.cookie]) {
+    expect((await fetch(harness.base + path, { method, headers: { cookie, 'content-type': 'application/json' },
+      body: method === 'GET' ? undefined : '{}' })).status).toBe(404);
+  }
+});
+
+test('unmatched requests return 404 without a missing-policy warning', async () => {
+  expect((await fetch(harness.base + '/not-a-route')).status).toBe(404);
+  expect(harness.appOutput).not.toContain('Missing authorization policy');
 });
 
 test('production cannot reach or enable the test clock', async () => {

@@ -180,7 +180,11 @@ test('refuses anonymous, cross-origin and cross-household lifecycle operations a
     for (const cookie of ['', 'fytorium_session=invalid']) expect((await owner.request(endpoint, method, body, cookie)).status).toBe(401);
     if (method !== 'GET') expect((await fetch(harness.base + endpoint, { method, headers: { cookie: owner.cookie, origin: 'https://untrusted.example', 'content-type': 'application/json' }, body: JSON.stringify(body) })).status).toBe(403);
   }
-  for (const page of ['/plants/graveyard', '/plants/' + plant.id + '/species']) expect((await owner.request(page, 'GET', undefined, '')).status).toBe(401);
+  for (const page of ['/plants/graveyard', '/plants/' + plant.id + '/species']) {
+    const response = await owner.request(page, 'GET', undefined, '');
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/auth/login');
+  }
   const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   try {
     // Membership has no invitation API on this base. All lifecycle operations use HTTP.
