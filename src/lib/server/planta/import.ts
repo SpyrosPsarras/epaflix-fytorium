@@ -1,7 +1,7 @@
 import { requirePermission } from '../policy';
 import { error, isHttpError } from '@sveltejs/kit';
 import type { Identity } from '../auth';
-import { db } from '../db';
+import { db, withTransaction } from '../db';
 import { now, calendarDate } from '../clock';
 import { chosenSpecies, recordSpeciesSearch, searchSpecies } from '../species';
 import { isUuid } from '../plants';
@@ -12,14 +12,6 @@ export function requireOwner(identity: Identity | null): Identity {
   if (!identity) error(401, 'Login required');
   requirePermission(identity, 'owner');
   return identity;
-}
-export async function readImportInput(request: Request): Promise<Record<string, unknown>> {
-  try {
-    if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error();
-    const input = await request.json();
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
-    return input;
-  } catch { error(400, 'Send a valid JSON object.'); }
 }
 const pots: Record<string, ImportedFields['pot_type']> = {
   potplastic: 'plastic', potoriginalplastic: 'plastic', potterracotta: 'terracotta', potporcelain: 'ceramic',
@@ -74,7 +66,7 @@ export async function stageImport(code: string, household: string) {
     await api.authorize(code);
     plants = (await api.addedPlants()).map(mapPlant);
   } finally { api.discard(); }
-  const mappedRows = [];
+  const mappedRows: { id: string; mapped: ImportedFields; candidates: ImportStaging['candidates']; selected: ImportStaging['selected'] }[] = [];
   for (const plant of plants) {
     let candidates: ImportStaging['candidates'] = [];
     let selected: ImportStaging['selected'] = null;
@@ -89,9 +81,7 @@ export async function stageImport(code: string, household: string) {
     }
     mappedRows.push({ ...plant, candidates, selected });
   }
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
     // Replace only after a complete fetch and match. A failed fetch keeps the prior review intact.
     await client.query('DELETE FROM import_staging WHERE household_id = $1', [household]);
@@ -101,17 +91,13 @@ export async function stageImport(code: string, household: string) {
         SET mapped = EXCLUDED.mapped, candidates = EXCLUDED.candidates, selected = EXCLUDED.selected, status = EXCLUDED.status`,
         [household, plant.id, JSON.stringify(plant.mapped), JSON.stringify(plant.candidates), plant.selected ? JSON.stringify(plant.selected) : null, plant.selected ? 'confirmed' : 'review']);
     }
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
   return staging(household);
 }
 
 export async function reviewImport(id: string, household: string, input: Record<string, unknown>) {
   if (!isUuid(id)) error(404, 'Import plant not found');
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
     const result = await client.query('SELECT * FROM import_staging WHERE id = $1 AND household_id = $2 FOR UPDATE', [id, household]);
     const row = result.rows[0] as StoredImportStaging | undefined;
@@ -128,8 +114,6 @@ export async function reviewImport(id: string, household: string, input: Record<
       status = 'confirmed';
     }
     await client.query('UPDATE import_staging SET selected = $1, status = $2 WHERE id = $3 AND household_id = $4', [selected ? JSON.stringify(selected) : null, status, id, household]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
   return (await staging(household)).find(row => row.id === id)!;
 }

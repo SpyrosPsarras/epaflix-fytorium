@@ -53,7 +53,7 @@ test('cares for several task types, customizes intervals and disables misting on
     await basedOn.getByText('Clean leaves', { exact: true }).click();
     await expect(basedOn).toContainText('Source: override');
     await expect(basedOn).toContainText('Source: setting');
-    await expect(basedOn).toContainText('Source: weather');
+    await expect(basedOn).not.toContainText('Source: weather');
     await screenshot('all-tasks-based-on.png');
     const plantUrl = page.url();
     await page.getByRole('link', { name: 'Plant settings', exact: true }).click();

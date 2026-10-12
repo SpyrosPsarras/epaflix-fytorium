@@ -205,18 +205,44 @@ test('all new commands validate JSON and request keys, refuse inapplicable care 
   expect((await history()).length).toBe(before.length + 1);
 });
 
-test('same-day postponements after completion take precedence, and each undo restores the preceding action exactly', async () => {
+test('snooze refuses future tasks without changing history, and due postponements undo exactly', async () => {
   const before = await tasks();
   const done = await (await act('complete')).json();
   expect(done.task.dueOn).toBe('2026-06-13');
+  const completedHistory = await history();
+  const refused = await act('snooze');
+  expect(refused.status).toBe(409);
+  expect((await refused.json()).message).toBe('Only due or late tasks can be snoozed.');
+  expect(await history()).toEqual(completedHistory);
+  expect((await tasks()).water).toEqual(done.task);
+  await undo(done.event.id);
   const snoozed = await (await act('snooze')).json();
   expect(snoozed.task.dueOn).toBe('2026-06-08');
   const skipped = await (await act('skip')).json();
   expect(skipped.task.dueOn).toBe('2026-06-13');
   expect((await (await undo(skipped.event.id)).json()).task.dueOn).toBe('2026-06-08');
-  expect((await (await undo(snoozed.event.id)).json()).task.dueOn).toBe('2026-06-13');
-  await undo(done.event.id);
+  expect((await (await undo(snoozed.event.id)).json()).task).toEqual(before.water);
   expect(await tasks()).toEqual(before);
+});
+
+test('repot undo refuses later edits to every pot field and keeps both the edit and event intact', async () => {
+  for (const edit of [{ pot_type: 'metal' }, { pot_size_cm: 31 }, { soil_type: 'cactus' }]) {
+    const name = 'Synthetic edited repot ' + randomUUID();
+    const id = await addPlant(siteId, name);
+    const path = `/api/plants/${id}`;
+    try {
+      const repotted = await (await request(path + '/repot', 'POST', { ...newPot, request_id: randomUUID() })).json();
+      const plant = await (await request(path)).json();
+      expect((await request(path, 'PUT', { ...plant, ...edit })).status).toBe(200);
+      const edited = await (await request(path)).json();
+      const beforeHistory = await (await request(path + '/history')).json();
+      const refused = await undo(repotted.event.id);
+      expect(refused.status).toBe(409);
+      expect((await refused.json()).message).toBe('Pot fields changed after this repot. Undo would overwrite those edits.');
+      expect(await (await request(path)).json()).toEqual(edited);
+      expect(await (await request(path + '/history')).json()).toEqual(beforeHistory);
+    } finally { expect((await request(path, 'DELETE', { confirm_name: name })).status).toBe(204); }
+  }
 });
 
 test('multiple repots undo newest first without losing later pot data or undoing a refused event', async () => {

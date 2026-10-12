@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { HouseholdLocation } from '$lib/weather';
-import { db } from '../db';
+import { db, withTransaction } from '../db';
 import { now } from '../clock';
 
 export async function householdLocation(household: string): Promise<{ location: HouseholdLocation | null }> {
@@ -17,16 +17,12 @@ export async function setLocation(household: string, value: unknown) {
     if (v.label != null && (typeof v.label !== 'string' || v.label.trim().length > 200)) error(422, 'Place label must be text up to 200 characters.');
     location = { latitude: v.latitude, longitude: v.longitude, label: typeof v.label === 'string' ? v.label.trim() || null : null };
   }
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     const changed = await client.query('UPDATE households SET latitude = $2, longitude = $3, location_label = $4, location_revision = location_revision + 1 WHERE id = $1 AND (latitude IS DISTINCT FROM $2 OR longitude IS DISTINCT FROM $3) RETURNING id', [household, location?.latitude ?? null, location?.longitude ?? null, location?.label ?? null]);
     if (changed.rowCount) {
       await client.query('DELETE FROM weather_cache WHERE household_id = $1', [household]);
       await client.query('UPDATE weather_events SET resolved_at = $2 WHERE household_id = $1 AND resolved_at IS NULL', [household, now()]);
     } else await client.query('UPDATE households SET location_label = $2 WHERE id = $1', [household, location?.label ?? null]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
   return householdLocation(household);
 }

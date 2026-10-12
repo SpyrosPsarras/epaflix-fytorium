@@ -1,20 +1,18 @@
 import type { ForecastDay } from '$lib/weather';
 import { rainRule } from '$lib/schedule/rules';
-import { db } from '../db';
+import { withTransaction } from '../db';
 import { now, calendarDate } from '../clock';
 import { effectiveCareProfiles } from '../care/catalogue';
 import { applicableHardiness } from './hardiness';
 import { recentRain } from './rain';
 
 export async function reconcileWeatherEvents(household: string) {
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     // Serialize event reconciliation with location changes, not external HTTP requests.
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
     const cache = await client.query("SELECT data FROM weather_cache WHERE household_id = $1 AND kind = 'forecast'", [household]);
     const days: ForecastDay[] = cache.rows[0]?.data ?? [];
-    if (!days.length) { await client.query('COMMIT'); return; }
+    if (!days.length) { return; }
     const today = calendarDate(now());
     const forecast = days.filter(day => day.date >= today);
     const plants = await client.query("SELECT p.id, p.gbif_key, p.pot_type FROM plants p JOIN sites s ON s.id = p.site_id WHERE p.household_id = $1 AND p.status = 'active' AND s.location = 'outdoor'", [household]);
@@ -51,7 +49,5 @@ export async function reconcileWeatherEvents(household: string) {
       else await client.query("INSERT INTO weather_events (kind, household_id, starts_on, ends_on, payload, created_at) VALUES ('rain', $1, $2, $2, $3, $4) ON CONFLICT DO NOTHING", [household, day.date, JSON.stringify({ precipitationMm: day.precipitationMm, ruleId: rainRule.ruleId }), now()]);
     }
     for (const event of open.rows) if (!retained.has(event.id)) await client.query('UPDATE weather_events SET resolved_at = $2 WHERE id = $1', [event.id, now()]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }

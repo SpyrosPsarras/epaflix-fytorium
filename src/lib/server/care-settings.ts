@@ -1,23 +1,20 @@
 import { error } from '@sveltejs/kit';
+import { readJsonObject } from './json';
 import { taskTypes, type TaskType } from '$lib/schedule/engine';
-import { db } from './db';
+import type pg from 'pg';
+import { db, withTransaction } from './db';
 import { getPlant } from './plants';
 
 export type PlantCareSettings = { misting_enabled: boolean; customIntervals: Partial<Record<TaskType, number>> };
 
 export async function readSettings(request: Request): Promise<Record<string, unknown>> {
-  let input;
-  try {
-    if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error('Expected JSON');
-    input = await request.json();
-  } catch { error(400, 'Send a valid JSON object.'); }
-  if (!input || typeof input !== 'object' || Array.isArray(input)) error(400, 'Send a valid JSON object.');
+  const input = await readJsonObject(request);
   if (typeof input.misting_enabled !== 'boolean') error(422, 'misting_enabled must be true or false.');
   return input;
 }
 
-export async function householdSettings(household: string): Promise<{ misting_enabled: boolean }> {
-  const result = await db().query('SELECT misting_enabled FROM households WHERE id = $1', [household]);
+export async function householdSettings(household: string, database: pg.Pool | pg.PoolClient = db()): Promise<{ misting_enabled: boolean }> {
+  const result = await database.query('SELECT misting_enabled FROM households WHERE id = $1', [household]);
   return result.rows[0];
 }
 
@@ -35,14 +32,10 @@ export async function savePlantCareSettings(plantId: string, household: string, 
     if (!taskTypes.some(task => task === type)) error(422, 'Unknown task type: ' + type);
     if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 365) error(422, 'Intervals must be whole days from 1 to 365.');
   }
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('UPDATE plants SET misting_enabled = $1 WHERE id = $2 AND household_id = $3', [input.misting_enabled, plantId, household]);
     await client.query('DELETE FROM plant_task_intervals WHERE plant_id = $1 AND household_id = $2', [plantId, household]);
     for (const [type, days] of Object.entries(intervals)) await client.query('INSERT INTO plant_task_intervals (plant_id, household_id, task_type, interval_days) VALUES ($1, $2, $3, $4)', [plantId, household, type, days]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
   return plantCareSettings(plantId, household);
 }

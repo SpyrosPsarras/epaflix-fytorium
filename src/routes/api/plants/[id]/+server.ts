@@ -3,7 +3,8 @@ import { getPlant, plantFields, readPlant, writeError } from '$lib/server/plants
 import { db } from '$lib/server/db';
 import { now } from '$lib/server/clock';
 import { checkOrigin } from '$lib/server/sites';
-import { deletePlant, readLifecycleInput } from '$lib/server/plant-lifecycle';
+import { deletePlant } from '$lib/server/plant-lifecycle';
+import { readJsonObject } from '$lib/server/json';
 import type { RequestHandler } from './$types';
 
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
@@ -28,7 +29,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  await deletePlant(params.id, locals.identity.household.id, await readLifecycleInput(request));
+  await deletePlant(params.id, locals.identity.household.id, await readJsonObject(request));
   return new Response(null, { status: 204 });
 };
 

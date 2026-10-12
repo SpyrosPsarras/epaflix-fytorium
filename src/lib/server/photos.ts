@@ -3,7 +3,7 @@ import { error } from '@sveltejs/kit';
 import sharp from 'sharp';
 import { healthValues, type PhotoUpdate } from '$lib/photos';
 import type { Identity } from './auth';
-import { db } from './db';
+import { db, withTransaction } from './db';
 import { getPlant, isUuid } from './plants';
 import { now, calendarDate } from './clock';
 import { storePhoto, removePhotos } from './photo-storage';
@@ -59,53 +59,42 @@ export async function addPhoto(identity: Identity, plant: string, request: Reque
   const id = randomUUID();
   const prefix = `photos/${household}/${plant}/${id}`;
   const keys = [prefix + '-original.jpg', prefix + '-thumb.jpg'];
-  const client = await db().connect();
   try {
-    await client.query('BEGIN');
-    const locked = await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [plant, household]);
-    if (!locked.rowCount) error(404, 'Plant not found');
-    await storePhotoPair(keys, original, thumb);
-    await client.query('INSERT INTO photo_updates (id, household_id, plant_id, original_key, thumb_key, note, health, taken_on, validated_on, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, household, plant, ...keys, note, health, takenOn, today, identity.member.id, now()]);
-    const newer = await client.query('SELECT id FROM photo_updates WHERE plant_id = $1 AND household_id = $2 AND taken_on > $3 LIMIT 1', [plant, household, takenOn]);
-    if (health !== null && !newer.rowCount) await client.query('UPDATE plants SET health = $1 WHERE id = $2 AND household_id = $3', [health, plant, household]);
-    await client.query('COMMIT');
+    await withTransaction(async (client) => {
+      const locked = await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [plant, household]);
+      if (!locked.rowCount) error(404, 'Plant not found');
+      await storePhotoPair(keys, original, thumb);
+      await client.query('INSERT INTO photo_updates (id, household_id, plant_id, original_key, thumb_key, note, health, taken_on, validated_on, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, household, plant, ...keys, note, health, takenOn, today, identity.member.id, now()]);
+      const newer = await client.query('SELECT id FROM photo_updates WHERE plant_id = $1 AND household_id = $2 AND taken_on > $3 LIMIT 1', [plant, household, takenOn]);
+      if (health !== null && !newer.rowCount) await client.query('UPDATE plants SET health = $1 WHERE id = $2 AND household_id = $3', [health, plant, household]);
+    });
   } catch (cause) {
     // A dropped DB connection must not prevent S3 cleanup or replace the upload error.
-    try { await client.query('ROLLBACK'); }
-    catch { console.error('Photo upload rollback failed.'); }
     try { await removePhotos(keys); }
     catch { console.error('Photo upload object cleanup failed.'); }
     throw cause;
-  } finally { client.release(); }
+  }
   return getPhoto(id, household);
 }
 
 export async function deletePhoto(id: string, household: string) {
   const photo = await getPhoto(id, household);
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [photo.plant_id, household]);
     // Keep the row on storage failure so the member can retry deletion.
     await removePhotos([photo.original_key, photo.thumb_key]);
     await client.query('DELETE FROM photo_updates WHERE id = $1 AND household_id = $2', [id, household]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }
 
 export async function setCover(id: string, household: string) {
   const photo = await getPhoto(id, household);
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     // Serialize cover changes with uploads and deletion for this plant.
     await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [photo.plant_id, household]);
     await client.query('UPDATE photo_updates SET is_cover = false WHERE plant_id = $1 AND household_id = $2 AND is_cover', [photo.plant_id, household]);
     const result = await client.query('UPDATE photo_updates SET is_cover = true WHERE id = $1 AND household_id = $2 RETURNING id', [id, household]);
     if (!result.rowCount) error(404, 'Photo update not found');
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
   return getPhoto(id, household);
 }

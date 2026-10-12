@@ -75,7 +75,7 @@ test.each([
   [undefined, 'addedOn', '2026-05-01', 'counted from the date the plant was added, 2026-05-01'],
   ['2026-10-10', 'history.water.lastCompletedOn', '2026-10-10', 'counted from last completion on 2026-10-10'],
 ] as const)('explains the due-date anchor with completion %s', (lastCompletedOn, anchor, value, adjustment) => {
-  expect(schedule({ ...input, history: { water: { lastCompletedOn } } }).water).toMatchObject({
+  expect(schedule({ ...input, site: { location: 'outdoor' }, history: { water: { lastCompletedOn } } }).water).toMatchObject({
     basedOn: expect.arrayContaining([
       expect.objectContaining({ input: anchor, value, adjustment, source: 'history' }),
       expect.objectContaining({ input: 'customIntervals', value: 'not set', source: 'setting', adjustment: 'not set; no adjustment' }),

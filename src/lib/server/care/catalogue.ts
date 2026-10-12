@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { careNames, validCareValue, type CareProfile } from '$lib/care';
 import type { ScheduleInput } from '$lib/schedule/engine';
 import { careRuleDefaults } from '$lib/schedule/rules';
-import { db } from '../db';
+import { db, withTransaction } from '../db';
 import { now } from '../clock';
 import { careSources } from './registry';
 
@@ -61,17 +61,13 @@ export async function retryPlantbookMatch(key: string, household: string) {
   const species = await getCareSpecies(key, household);
   const source = careSources().find(source => source.matchesByName)!;
   if (!source.source.configured) error(409, 'Open Plantbook is not configured');
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     const result = await client.query("INSERT INTO care_fetch_jobs (gbif_key, source, next_at) VALUES ($1, 'open_plantbook', $2) ON CONFLICT (gbif_key, source) DO UPDATE SET status = 'pending', source_key = NULL, attempts = 0, next_at = EXCLUDED.next_at WHERE care_fetch_jobs.status <> 'fetching' RETURNING gbif_key", [species.gbif_key, now()]);
     if (!result.rowCount) error(409, 'A fetch is already running');
     await client.query('DELETE FROM open_plantbook_matches WHERE gbif_key = $1', [species.gbif_key]);
     await client.query("DELETE FROM care_source_cache WHERE gbif_key = $1 AND source = 'open_plantbook'", [species.gbif_key]);
     await client.query("UPDATE care_source_limits SET status = 'active' WHERE source = 'open_plantbook' AND status = 'auth_failed'");
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }
 export async function setCareOverride(key: string, field: string, value: unknown, household: string) {
   const species = await getCareSpecies(key, household);
@@ -86,15 +82,11 @@ export async function removeCareOverride(key: string, field: string, household: 
 }
 export async function refreshCare(key: string, household: string) {
   const species = await getCareSpecies(key, household);
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     for (const { name, source } of careSources()) {
       const result = await client.query("INSERT INTO care_fetch_jobs (gbif_key, source, next_at) VALUES ($1, $2, $3) ON CONFLICT (gbif_key, source) DO UPDATE SET status = 'pending', attempts = 0, next_at = EXCLUDED.next_at WHERE care_fetch_jobs.status <> 'fetching' RETURNING gbif_key", [species.gbif_key, name, now()]);
       if (!result.rowCount) error(409, 'A fetch is already running');
       if (source.configured) await client.query("UPDATE care_source_limits SET status = 'active' WHERE source = $1 AND status = 'auth_failed'", [name]);
     }
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }

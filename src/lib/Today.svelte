@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
+  import { careEventLabel, taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
   import type { Task } from '$lib/schedule/engine';
   let { list, sitter = false, memberId }: { list: TaskList; sitter?: boolean; memberId?: string } = $props();
   let handled = $state<Record<string, { event: CareEvent; task: Task }>>({});
@@ -86,7 +86,7 @@
           <a href={'/plants/' + row.plant_id}>{row.plant_name}</a>
           <p>{rules.label}{#if row.site_name} · {row.site_name}{/if}</p>
           {#if done}
-            <p role="status">{done.event.kind === 'snoozed' ? 'Snoozed' : done.event.kind === 'skipped' ? 'Skipped' : 'Done'}{#if task.status === 'due'} · Next {rules.action}: {task.dueOn}{/if}</p>
+            <p role="status">{careEventLabel(done.event.kind, 'Done')}{#if task.status === 'due'} · Next {rules.action}: {task.dueOn}{/if}</p>
           {:else if task.status === 'due'}
             {#if task.lateDays > 0}<span class="late">{task.lateDays}d late</span>
             {:else}<span>{task.dueOn === list.today ? 'Due today' : 'Due ' + task.dueOn}</span>{/if}
@@ -96,7 +96,7 @@
           {#if done}{#if !sitter || done.event.by_member === memberId}<button disabled={busy[id]} onclick={() => act(row, 'undo')}>Undo</button>{/if}
           {:else}
             <button disabled={busy[id]} onclick={() => act(row, 'complete')}>Done</button>
-            <button disabled={busy[id]} onclick={() => act(row, 'snooze')}>Snooze 2 days</button>
+            {#if task.status === 'due' && task.dueOn <= list.today}<button disabled={busy[id]} onclick={() => act(row, 'snooze')}>Snooze 2 days</button>{/if}
             <button disabled={busy[id]} onclick={() => act(row, 'skip')}>Skip</button>
             {#if !sitter && row.task_type === 'repot'}<a href={'/plants/' + row.plant_id + '/repot'}>Repot with new pot and soil</a>{/if}
           {/if}

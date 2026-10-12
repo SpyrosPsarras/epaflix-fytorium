@@ -1,4 +1,4 @@
-import { db } from '../db';
+import { db, withTransaction } from '../db';
 import { calendarDate, now } from '../clock';
 import { effectiveCareProfiles } from '../care/catalogue';
 import { config } from '../config';
@@ -6,21 +6,17 @@ import { reconcileWeatherEvents } from './events';
 import { fetchClimate, fetchForecast } from './open-meteo';
 
 async function refresh(household: string, kind: 'forecast' | 'climate') {
-  const client = await db().connect();
   const time = now();
-  let location;
-  try {
-    await client.query('BEGIN');
+  const location = await withTransaction(async (client) => {
     const row = await client.query('SELECT * FROM households WHERE id = $1 AND latitude IS NOT NULL FOR UPDATE', [household]);
-    location = row.rows[0];
+    let location = row.rows[0];
     if (location) {
       await client.query('INSERT INTO weather_cache (household_id, kind, location_revision) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [household, kind, location.location_revision]);
       const claim = await client.query("UPDATE weather_cache SET attempted_at = $3 WHERE household_id = $1 AND kind = $2 AND (attempted_at IS NULL OR attempted_at <= $3::timestamptz - CASE WHEN kind = 'forecast' THEN interval '1 hour' WHEN unavailable_since IS NOT NULL THEN interval '6 hours' ELSE interval '1 month' END) RETURNING kind", [household, kind, time]);
       if (!claim.rowCount) location = undefined;
     }
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+    return location;
+  });
   if (!location) return false;
   try {
     const coordinates = { latitude: location.latitude, longitude: location.longitude, label: null };

@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { customTasks, createCustomTask } from '$lib/server/custom-tasks';
-import { readTaskInput } from '$lib/server/tasks';
+
+import { readJsonObject } from '$lib/server/json';
 import { checkOrigin } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ locals, url }) => {
@@ -10,5 +11,5 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  return createCustomTask(locals.identity.household.id, await readTaskInput(request));
+  return createCustomTask(locals.identity.household.id, await readJsonObject(request));
 };

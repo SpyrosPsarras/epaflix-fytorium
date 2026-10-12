@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { taskViewSettings, saveTaskViewSettings } from '$lib/server/task-view-settings';
-import { readTaskInput } from '$lib/server/tasks';
+
+import { readJsonObject } from '$lib/server/json';
 import { checkOrigin } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ locals }) => {
@@ -10,5 +11,5 @@ export const GET: RequestHandler = async ({ locals }) => {
 export const PUT: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  return json(await saveTaskViewSettings(locals.identity, await readTaskInput(request)));
+  return json(await saveTaskViewSettings(locals.identity, await readJsonObject(request)));
 };

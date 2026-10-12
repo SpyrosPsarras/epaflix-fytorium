@@ -8,5 +8,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   checkOrigin(request);
   const key = (await readJsonObject(request)).request_id;
   if (typeof key !== 'string') error(422, 'Send a UUID request_id.');
-  return json(await completeRain(locals.identity, key));
+  try { return json(await completeRain(locals.identity, key)); }
+  catch (cause) {
+    if (cause instanceof Error && 'code' in cause && cause.code === '23503'
+      && 'constraint' in cause && cause.constraint === 'care_actions_rain_alias_target') {
+      return json({ errors: { _form: 'A rain alias must reference an original rain action in its household.' } }, { status: 422 });
+    }
+    throw cause;
+  }
 };

@@ -111,7 +111,7 @@ test('every-second-watering fertilizing follows even a long custom watering inte
 });
 
 test('basedOn records real weather, the anchor source and month adjustment without mutating input', () => {
-  const example = { ...input, weather: { temperature_c: 25, rain_mm: 4 }, customIntervals: { water: 12 } };
+  const example = { ...input, site: { ...input.site, location: 'outdoor' as const }, weather: { temperature_c: 25, rain_mm: 4 }, customIntervals: { water: 12 } };
   const before = structuredClone(example);
   expect(schedule(example).water).toMatchObject({ basedOn: expect.arrayContaining([
     expect.objectContaining({ input: 'weather', value: { temperature_c: 25, rain_mm: 4 }, source: 'weather' }),

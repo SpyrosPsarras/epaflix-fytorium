@@ -81,22 +81,21 @@ function intervalFor(input: ScheduleInput, type: TaskType) {
 export function schedule(input: ScheduleInput): Schedule {
   const builtIn = Object.fromEntries(taskTypes.map(type => [type, scheduleTask(input, type, taskRules[type], intervalFor(input, type))])) as Record<TaskType, Task>;
   const customTasks = Object.fromEntries((input.customTasks ?? []).map(task => {
-    const rules: TaskRules = { label: task.id, action: task.id, defaultInterval: { value: task.intervalDays, source: 'override', reason: 'Custom task interval.' }, minDays: 1, maxDays: 365, factors: [], anchor: 'added_plus_interval' };
     const addedOn = task.createdOn > input.addedOn ? task.createdOn : input.addedOn;
     const basedOn: BasedOn[] = [{ input: 'customTask.intervalDays', value: task.intervalDays, source: 'override', adjustment: 'Custom task uses a fixed interval.' }];
     const anchorBasis: BasedOn = { input: 'customTask.anchor', value: { addedOn: input.addedOn, createdOn: task.createdOn, anchor: addedOn }, source: 'history', adjustment: 'First due date counts from the later of plant addition and task creation.' };
-    return [task.id, scheduleTask({ ...input, addedOn }, task.id, rules, { intervalDays: task.intervalDays, basedOn, overridden: false, anchorBasis })];
+    return [task.id, scheduleTask({ ...input, addedOn }, task.id, { anchor: 'added_plus_interval' }, { intervalDays: task.intervalDays, basedOn, overridden: false, anchorBasis })];
   }));
   return { ...builtIn, customTasks };
 }
 
 // Built-in and custom tasks share anchoring, completion and postponement handling.
-function scheduleTask(input: ScheduleInput, taskType: string, rules: TaskRules, computed: { intervalDays: number; basedOn: BasedOn[]; overridden: boolean; anchorBasis?: BasedOn }): Task {
+function scheduleTask(input: ScheduleInput, taskType: string, rules: Pick<TaskRules, 'anchor' | 'applicability' | 'season'>, computed: { intervalDays: number; basedOn: BasedOn[]; overridden: boolean; anchorBasis?: BasedOn }): Task {
   const { intervalDays, basedOn, overridden } = computed;
   const applicability = rules.applicability?.(input);
   if (applicability) basedOn.push(...applicability.basedOn);
-  basedOn.push({ input: 'weather', value: input.weather ?? 'not set', source: 'weather',
-    adjustment: input.weather && input.site.location === 'outdoor' ? 'Household weather snapshot; outdoor watering uses temperature and daylight.' : 'not set; no adjustment' });
+  if (taskType === 'water' && input.site.location === 'outdoor') basedOn.push({ input: 'weather', value: input.weather ?? 'not set', source: 'weather',
+    adjustment: input.weather ? 'Household weather snapshot; outdoor watering uses temperature and daylight.' : 'not set; no adjustment' });
   if (applicability && !applicability.applicable) return { status: 'not_applicable', basedOn };
   const completion = input.history[taskType]?.lastCompletedOn;
   const anchor = completion ?? input.addedOn;

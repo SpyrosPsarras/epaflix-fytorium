@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as oidc from 'openid-client';
 import type { Cookies } from '@sveltejs/kit';
 import { config } from './config';
-import { db } from './db';
+import { db, withTransaction } from './db';
 import { now } from './clock';
 import { INVITE_COOKIE, inviteHash } from './household';
 
@@ -77,10 +77,8 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
   });
   const claims = tokens.claims();
   if (!claims?.sub) throw new Error('Missing OIDC subject');
-  const client = await db().connect();
   const session = randomToken();
-  try {
-    await client.query('BEGIN');
+  const accepted = await withTransaction(async (client) => {
     // Serialize first login across app replicas so only one subject becomes owner.
     await client.query('SELECT pg_advisory_xact_lock(20261011)');
     const existing = await client.query<{ id: string; household_id: string; removed_at: Date | null }>('SELECT id, household_id, removed_at FROM members WHERE issuer = $1 AND subject = $2 FOR UPDATE', [claims.iss, claims.sub]);
@@ -91,7 +89,7 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
         AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > $2 FOR UPDATE`, [inviteHash(pendingInvite), now()])).rows[0];
       // A repeat holiday can restore a removed member, but cannot move them to another household.
       if (!invite || previousMember && (!previousMember.removed_at || previousMember.household_id !== invite.household_id)) {
-        await client.query('ROLLBACK'); return false;
+        return false;
       }
       if (previousMember) {
         await client.query('UPDATE members SET removed_at = NULL, role = $2 WHERE id = $1', [memberId, invite.role]);
@@ -105,10 +103,10 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
         WHERE ip.invite_id = $2 AND p.status = 'active'`, [memberId, invite.id]);
       await client.query('UPDATE household_invites SET consumed_at = $2 WHERE id = $1', [invite.id, now()]);
     } else if (previousMember?.removed_at) {
-      await client.query('ROLLBACK'); return false;
+      return false;
     } else if (!memberId) {
       const household = await client.query<{ id: string }>('INSERT INTO households DEFAULT VALUES ON CONFLICT DO NOTHING RETURNING id');
-      if (!household.rowCount) { await client.query('ROLLBACK'); return false; }
+      if (!household.rowCount) { return false; }
       const member = await client.query<{ id: string }>("INSERT INTO members (issuer, subject, role, household_id) VALUES ($1, $2, 'owner', $3) RETURNING id", [claims.iss, claims.sub, household.rows[0].id]);
       memberId = member.rows[0].id;
     }
@@ -117,13 +115,9 @@ export async function finishLogin(url: URL, cookies: Cookies): Promise<boolean> 
     const previous = cookies.get(SESSION_COOKIE);
     if (previous) await client.query('DELETE FROM sessions WHERE token_hash = $1', [hash(previous)]);
     await client.query('INSERT INTO sessions (token_hash, member_id, expires_at) VALUES ($1, $2, $3)', [hash(session), memberId, new Date(now().getTime() + SESSION_SECONDS * 1000)]);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+    return true;
+  });
+  if (!accepted) return false;
   cookies.set(SESSION_COOKIE, session, cookieOptions(SESSION_SECONDS));
   return true;
 }

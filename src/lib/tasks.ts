@@ -1,6 +1,11 @@
 import type { Task, TaskType } from './schedule/engine';
 import { taskRules } from './schedule/rules';
 
+const eventLabels = { completed: 'Completed', snoozed: 'Snoozed', skipped: 'Skipped' };
+export function careEventLabel(kind: CareEvent['kind'], completedLabel = eventLabels.completed) {
+  return kind === 'completed' ? completedLabel : eventLabels[kind];
+}
+
 export type PlantSchedule = Record<TaskType, Task> & { customTasks: Record<string, Task & { name: string; custom_task_id: string }> };
 export function taskKey(task: { task_type: TaskType | null; custom_task_id?: string | null }): string {
   return task.custom_task_id ?? task.task_type!;

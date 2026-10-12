@@ -36,6 +36,7 @@ test('snoozes, skips, plans upcoming care, keeps filters, handles all tasks and 
     await expect(page.getByRole('heading', { name: '2026-06-05', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '2026-06-12', exact: true })).toBeVisible();
     await expect(row('water')).toContainText('2026-06-12');
+    await expect(row('water').getByRole('button', { name: 'Snooze 2 days', exact: true })).toHaveCount(0);
     await page.getByLabel('Sort tasks', { exact: true }).selectOption('site');
     await page.getByLabel('Filter location', { exact: true }).selectOption('indoor');
     await page.getByLabel('Show completed', { exact: true }).check();
