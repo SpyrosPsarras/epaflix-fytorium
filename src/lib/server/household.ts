@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { error } from '@sveltejs/kit';
 import type pg from 'pg';
 import type { Identity } from './auth';
-import { db } from './db';
+import { db, withTransaction } from './db';
 import { now } from './clock';
 import { isUuid } from './plants';
 import { requirePermission } from './policy';
@@ -20,18 +20,14 @@ export async function createInvite(identity: Identity, input: Record<string, unk
   requirePermission(identity, 'owner');
   if (!['family', 'sitter'].includes(String(input.role))) error(422, 'Choose family or sitter');
   const token = randomBytes(32).toString('base64url');
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  return await withTransaction(async (client) => {
     const ids = await chosenPlants(client, identity.household.id, input.plant_ids ?? []);
     if (input.role === 'family' && ids.length) error(422, 'Family members do not need plant shares');
     const result = await client.query(`INSERT INTO household_invites (household_id, token_hash, role, created_at, expires_at)
       VALUES ($1,$2,$3,$4,$5) RETURNING id, role, expires_at`, [identity.household.id, inviteHash(token), input.role, now(), new Date(now().getTime() + 7 * 86400000)]);
     for (const id of ids) await client.query('INSERT INTO invite_plants (invite_id, household_id, plant_id) VALUES ($1,$2,$3)', [result.rows[0].id, identity.household.id, id]);
-    await client.query('COMMIT');
     return { ...result.rows[0], link: '/invite/' + token };
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }
 export async function members(identity: Identity) {
   requirePermission(identity, 'owner');
@@ -54,25 +50,19 @@ export async function revokeInvite(identity: Identity, id: string) {
 export async function changeShares(identity: Identity, memberId: string, input: Record<string, unknown>) {
   requirePermission(identity, 'owner');
   if (!isUuid(memberId)) error(404, 'Member not found');
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     const member = await client.query("SELECT id FROM members WHERE id = $1 AND household_id = $2 AND role = 'sitter' AND removed_at IS NULL FOR UPDATE", [memberId, identity.household.id]);
     if (!member.rowCount) error(404, 'Sitter not found');
     const ids = await chosenPlants(client, identity.household.id, input.plant_ids);
     await client.query('DELETE FROM plant_shares WHERE member_id = $1', [memberId]);
     for (const id of ids) await client.query('INSERT INTO plant_shares (member_id, household_id, plant_id) VALUES ($1,$2,$3)', [memberId, identity.household.id, id]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }
 export async function removeMember(identity: Identity, memberId: string) {
   requirePermission(identity, 'owner');
   if (!isUuid(memberId)) error(404, 'Member not found');
   if (memberId === identity.member.id) error(409, 'You cannot remove yourself');
-  const client = await db().connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [identity.household.id]);
     const target = await client.query('SELECT role FROM members WHERE id = $1 AND household_id = $2 AND removed_at IS NULL FOR UPDATE', [memberId, identity.household.id]);
     if (!target.rowCount) error(404, 'Member not found');
@@ -85,7 +75,5 @@ export async function removeMember(identity: Identity, memberId: string) {
     await client.query('DELETE FROM sessions WHERE member_id = $1', [memberId]);
     await client.query('DELETE FROM push_subscriptions WHERE member_id = $1', [memberId]);
     await client.query('DELETE FROM plant_shares WHERE member_id = $1', [memberId]);
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+  });
 }

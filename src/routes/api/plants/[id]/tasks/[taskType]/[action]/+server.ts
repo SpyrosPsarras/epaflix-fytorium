@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
-import { complete, readTaskInput } from '$lib/server/tasks';
+import { complete } from '$lib/server/tasks';
+import { readJsonObject } from '$lib/server/json';
 import { taskTypes } from '$lib/schedule/engine';
 import { isUuid } from '$lib/server/plants';
 import { checkOrigin } from '$lib/server/sites';
@@ -11,7 +12,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!taskType) error(404, 'Task type not found');
   const kind = params.action === 'complete' ? 'completed' : params.action === 'snooze' ? 'snoozed' : params.action === 'skip' ? 'skipped' : null;
   if (!kind) error(404, 'Task action not found');
-  const input = await readTaskInput(request);
+  const input = await readJsonObject(request);
   if (typeof input.request_id !== 'string') error(422, 'Send a UUID request_id.');
   return json(await complete(locals.identity, params.id, taskType, input.request_id, kind));
 };

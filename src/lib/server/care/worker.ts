@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { db } from '../db';
+import { db, withTransaction } from '../db';
 import { config } from '../config';
 import { now } from '../clock';
 import { careSources, type SourceName } from './registry';
@@ -14,13 +14,10 @@ async function runSource(name: SourceName, source: CareSource, limits: SourceLim
   // Persist the hourly check so multiple workers do not each scan every two seconds.
   const refresh = await db().query('UPDATE care_source_limits SET last_refresh_check = $2 WHERE source = $1 AND (last_refresh_check IS NULL OR last_refresh_check <= $3) RETURNING source', [name, time, new Date(time.getTime() - 3600000)]);
   if (refresh.rowCount) await db().query("UPDATE care_fetch_jobs j SET status = 'pending', attempts = 0, next_at = $2 FROM care_source_cache c WHERE j.gbif_key = c.gbif_key AND j.source = c.source AND j.source = $1 AND j.status = 'complete' AND c.fetched_at <= $3", [name, time, new Date(time.getTime() - 30 * 86400000)]);
-  const client = await db().connect();
-  let job;
   const claim = randomUUID();
-  try {
-    await client.query('BEGIN');
+  const job = await withTransaction(async (client) => {
     const result = await client.query("SELECT j.*, s.canonical_name FROM care_fetch_jobs j JOIN species s USING (gbif_key) WHERE j.source = $2 AND ((j.status = 'pending' AND j.next_at <= $1) OR (j.status = 'fetching' AND j.lease_until <= $1)) ORDER BY j.next_at, j.gbif_key LIMIT 1 FOR UPDATE OF j SKIP LOCKED", [time, name]);
-    job = result.rows[0];
+    let job = result.rows[0];
     if (job) {
       if (job.attempts >= limits.maxAttempts) {
         await client.query("UPDATE care_fetch_jobs SET status = 'failed', lease_until = NULL WHERE gbif_key = $1 AND source = $2", [job.gbif_key, name]);
@@ -29,15 +26,12 @@ async function runSource(name: SourceName, source: CareSource, limits: SourceLim
         await client.query("UPDATE care_fetch_jobs SET status = 'fetching', attempts = attempts + 1, lease_until = $2, claim_id = $3 WHERE gbif_key = $1 AND source = $4", [job.gbif_key, new Date(time.getTime() + 60000), claim, name]);
       }
     }
-    await client.query('COMMIT');
-  } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-  finally { client.release(); }
+    return job;
+  });
   if (!job) return;
   const result = await source.fetch({ gbif_key: job.gbif_key, canonical_name: job.canonical_name, sourceKey: job.source_key });
-  const finish = await db().connect();
   let authPaused = false;
-  try {
-    await finish.query('BEGIN');
+  await withTransaction(async (finish) => {
     const owned = await finish.query("SELECT gbif_key FROM care_fetch_jobs WHERE gbif_key = $1 AND source = $3 AND claim_id = $2 AND status = 'fetching' FOR UPDATE", [job.gbif_key, claim, name]);
     if (owned.rowCount) {
       if (result === 'auth_failed') {
@@ -55,9 +49,7 @@ async function runSource(name: SourceName, source: CareSource, limits: SourceLim
         await finish.query("UPDATE care_fetch_jobs SET status = 'complete', source_key = $2, lease_until = NULL WHERE gbif_key = $1 AND source = $3", [job.gbif_key, result.key, name]);
       }
     }
-    await finish.query('COMMIT');
-  } catch (cause) { await finish.query('ROLLBACK'); throw cause; }
-  finally { finish.release(); }
+  });
   if (authPaused) console.error('Care source ' + name + ' paused after an authentication failure. Check its credentials before requesting a refresh.');
 }
 export async function runCareWorkerOnce() {

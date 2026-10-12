@@ -62,13 +62,14 @@ test('plant and site tasks complete, snooze, skip, replay and undo through the s
     expect(done).toMatchObject({ event: { task_type: null, custom_task_id: id, kind: 'completed', occurred_on: '2026-05-13' }, task: { intervalDays: 3, dueOn: '2026-05-16' } });
     expect((await (await act(id, 'complete', plantId, key)).json()).event.id).toBe(done.event.id);
     expect((await act(id, 'snooze', plantId, key)).status).toBe(409);
+    expect((await act(id, 'snooze')).status).toBe(409);
+    expect((await (await undo(done.event.id)).json()).task.dueOn).toBe('2026-05-13');
     const snoozed = await (await act(id, 'snooze')).json();
     expect(snoozed.task.dueOn).toBe('2026-05-15');
     const skipped = await (await act(id, 'skip')).json();
     expect(skipped.task.dueOn).toBe('2026-05-16');
     expect((await (await undo(skipped.event.id)).json()).task.dueOn).toBe('2026-05-15');
-    expect((await (await undo(snoozed.event.id)).json()).task.dueOn).toBe('2026-05-16');
-    expect((await (await undo(done.event.id)).json()).task.dueOn).toBe('2026-05-13');
+    expect((await (await undo(snoozed.event.id)).json()).task.dueOn).toBe('2026-05-13');
     expect((await undo(done.event.id)).status).toBe(409);
     expect((await (await act(id, 'complete', plantId, key)).json()).event.undone_at).not.toBeNull();
     expect((await tasks()).customTasks[id].dueOn).toBe('2026-05-13');

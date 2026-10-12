@@ -37,7 +37,11 @@ test('home feed prioritizes late care, weather and light warnings, opens the pla
     const cards: FeedCard[] = (await (await page.request.get('/api/feed')).json()).cards;
     const late = cards.find(card => card.kind === 'late_tasks');
     if (!late || late.kind !== 'late_tasks') throw new Error('Expected late tasks');
-    for (const plant of late.plants) await expect(lateCard.getByRole('link', { name: plant.name, exact: true })).toHaveAttribute('href', '/plants/' + plant.id);
+    for (const plant of late.plants) {
+      const link = lateCard.getByRole('link', { name: plant.name, exact: true }).and(lateCard.locator(`a[href="/plants/${plant.id}"]`));
+      await expect(link).toHaveAttribute('href', '/plants/' + plant.id);
+      await expect(link).toHaveText(plant.name);
+    }
     await expect(lateCard.getByRole('link', { name: /tasks? (is|are) late/ })).toHaveAttribute('href', late.plants.length === 1 ? '/plants/' + late.plants[0].id : '/#today');
     const alerts = feed.getByRole('list', { name: 'Weather alerts', exact: true });
     await expect(alerts).toContainText(nickname, { timeout: 25000 });

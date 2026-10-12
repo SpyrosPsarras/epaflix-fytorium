@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { db } from './db';
+import { db, withTransaction } from './db';
 import { now } from './clock';
 import { gbifNames } from './name-sources/gbif';
 import { wikidataNames } from './name-sources/wikidata';
@@ -57,17 +57,13 @@ async function fillNames() {
       try {
         const names = await source.fetchNames(species);
         if (names.some(row => nameValidationError(row.name, row.language))) throw new Error('Invalid source name');
-        const client = await db().connect();
-        try {
-          await client.query('BEGIN');
+        await withTransaction(async (client) => {
           const current = await client.query('SELECT 1 FROM species_name_fetches WHERE gbif_key = $1 AND source = $2 AND version = $3 FOR UPDATE', [species.gbif_key, source.source, species.version]);
-          if (!current.rowCount) { await client.query('ROLLBACK'); continue; }
+          if (!current.rowCount) { return; }
           await client.query("DELETE FROM species_names WHERE gbif_key = $1 AND source = $2 AND language <> 'la'", [species.gbif_key, source.source]);
           for (const row of names) await client.query('INSERT INTO species_names (gbif_key, name, language, source) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING', [species.gbif_key, row.name.trim(), row.language, source.source]);
           await client.query('UPDATE species_name_fetches SET completed = true WHERE gbif_key = $1 AND source = $2 AND version = $3', [species.gbif_key, source.source, species.version]);
-          await client.query('COMMIT');
-        } catch (cause) { await client.query('ROLLBACK'); throw cause; }
-        finally { client.release(); }
+        });
       } catch {
         const failures = species.failures + 1;
         const delay = Math.min(60000 * 2 ** (failures - 1), 86400000);

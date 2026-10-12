@@ -25,14 +25,17 @@ test('shared scheduling applies weather to built-in watering but not custom task
   expect(result.water).toMatchObject({ intervalDays: 6, dueOn: '2030-06-07' });
   expect(result.fertilize).toMatchObject({ intervalDays: 12 });
   expect(result.customTasks.inspect).toMatchObject({ intervalDays: 7, dueOn: '2030-06-04' });
-  expect(result.customTasks.inspect.basedOn.filter(row => row.source === 'weather' && row.factor !== undefined)).toEqual([]);
+  expect(result.customTasks.inspect.basedOn.filter(row => row.source === 'weather')).toEqual([]);
+  for (const type of ['mist', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'] as const) {
+    expect(result[type].basedOn.filter(row => row.input === 'weather')).toEqual([]);
+  }
   expect(example).toEqual(before);
 });
 
 test('indoor watering ignores a supplied hot and short-day snapshot', () => {
   const task = schedule({ ...input, site: { location: 'indoor' }, weather: { meanMaxTemperatureC: 30, daylightHours: 6 } }).water;
   expect(task).toMatchObject({ intervalDays: 10 });
-  expect(task.basedOn.filter(row => row.factor !== undefined && row.source === 'weather')).toEqual([]);
+  expect(task.basedOn.filter(row => row.source === 'weather')).toEqual([]);
 });
 
 test('outdoor weather inputs explain their source and versioned adjustments before the clamp', () => {

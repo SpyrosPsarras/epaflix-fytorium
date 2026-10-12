@@ -1,4 +1,5 @@
-import { error, json } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
+import { readJsonObject } from './json';
 import { locations, lightLevels, humidityLevels, type SiteInput } from '$lib/sites';
 
 export function checkOrigin(request: Request) {
@@ -7,17 +8,13 @@ export function checkOrigin(request: Request) {
 }
 
 export async function readSite(request: Request): Promise<SiteInput | Response> {
-  let input: unknown;
-  try {
-    if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error('Expected JSON');
-    input = await request.json();
-  } catch {
+  let input: Record<string, unknown>;
+  try { input = await readJsonObject(request); }
+  catch (cause) {
+    if (!isHttpError(cause) || cause.status !== 400) throw cause;
     return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
   }
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
-  }
-  const site = input as Record<string, unknown>;
+  const site = input;
   const errors: Record<string, string> = {};
   if (typeof site.name !== 'string' || !site.name.trim()) errors.name = 'Enter a site name.';
   else site.name = site.name.trim();

@@ -5,7 +5,7 @@ import { listedTaskContext } from './tasks';
 import { feedSettings } from './feed-settings';
 
 export async function homeFeed(identity: Identity, batch?: Awaited<ReturnType<typeof listedTaskContext>>) {
-  const [context, settings] = await Promise.all([batch ?? listedTaskContext(identity, 'today', true), feedSettings(identity)]);
+  const [context, settings] = await Promise.all([batch ?? listedTaskContext(identity, { view: 'today', forFeed: true }), feedSettings(identity)]);
   const { tasks, plants, sites, profiles, weather } = context;
   const cards: FeedCard[] = [];
   const late = Object.values(tasks.groups).flat().filter(task => task.status === 'due' && task.lateDays > 0);

@@ -1,4 +1,5 @@
-import { error, json } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
+import { readJsonObject } from './json';
 import { db } from './db';
 import { plantChoices, plantBooleans, plantNumbers, type PlantInput } from '$lib/plants';
 import { now } from './clock';
@@ -32,12 +33,12 @@ export function potErrors(input: Record<string, unknown>): Record<string, string
   return errors;
 }
 export async function readPlant(request: Request, household: string, allowNoSite = false): Promise<(Omit<PlantInput, 'site_id'> & { site_id: string | null } & { search_id?: unknown; gbif_key?: unknown; confirmed?: unknown }) | Response> {
-  let input;
-  try {
-    if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error('Expected JSON');
-    input = await request.json();
-  } catch { return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 }); }
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
+  let input: Record<string, unknown>;
+  try { input = await readJsonObject(request); }
+  catch (cause) {
+    if (!isHttpError(cause) || cause.status !== 400) throw cause;
+    return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
+  }
   const errors = potErrors(input);
   if ('score' in input) errors.score = 'Identification scores are server-owned. Choose a candidate from the results.';
   for (const [field, values] of Object.entries(plantChoices)) {
@@ -54,7 +55,7 @@ export async function readPlant(request: Request, household: string, allowNoSite
   for (const field of ['nickname', 'cultivar']) {
     input[field] ??= null;
     if (input[field] !== null && typeof input[field] !== 'string') errors[field] = 'Enter text or leave blank.';
-    else input[field] = input[field]?.trim() || null;
+    else input[field] = typeof input[field] === 'string' ? input[field].trim() || null : null;
   }
   input.health ??= null;
   if (input.health !== null && !healthValues.some(value => value === input.health)) errors.health = 'Choose a valid health value or leave blank.';
@@ -73,9 +74,16 @@ export async function readPlant(request: Request, household: string, allowNoSite
     }
   }
   if (Object.keys(errors).length) return json({ errors }, { status: 422 });
-  return input;
+  return input as Omit<PlantInput, 'site_id'> & { site_id: string | null };
 }
 
 export function writeError(cause: unknown): Response | undefined {
-  if (cause instanceof Error && 'code' in cause && cause.code === '23503') return json({ errors: { site_id: 'Choose a site in your household.' } }, { status: 422 });
+  if (!(cause instanceof Error) || !('code' in cause)) return;
+  if (cause.code === '23503') return json({ errors: { site_id: 'Choose a site in your household.' } }, { status: 422 });
+  if (cause.code === '23514') {
+    const errors = 'constraint' in cause && cause.constraint === 'plants_active_site'
+      ? { site_id: 'Active plants must have a site.' }
+      : { _form: 'Plant data does not meet required constraints.' };
+    return json({ errors }, { status: 422 });
+  }
 }

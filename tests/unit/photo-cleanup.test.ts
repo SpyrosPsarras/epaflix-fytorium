@@ -1,10 +1,11 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import sharp from 'sharp';
+import { EventEmitter } from 'node:events';
 import { addPhoto } from '../../src/lib/server/photos';
 import type { Identity } from '../../src/lib/server/auth';
 
 const faults = vi.hoisted(() => ({ query: vi.fn(), removePhotos: vi.fn(), storePhoto: vi.fn(), release: vi.fn() }));
-vi.mock('../../src/lib/server/db', () => ({ db: () => ({ connect: async () => ({ query: faults.query, release: faults.release }) }) }));
+vi.mock('pg', () => ({ default: { Pool: class { on() {} async connect() { return Object.assign(new EventEmitter(), { query: faults.query, release: faults.release }); } } } }));
 vi.mock('../../src/lib/server/plants', () => ({ getPlant: async () => ({}), isUuid: () => true }));
 vi.mock('../../src/lib/server/photo-storage', () => ({ storePhoto: faults.storePhoto, removePhotos: faults.removePhotos }));
 vi.mock('../../src/lib/server/config', () => ({ config: () => ({ householdTimezone: 'Europe/Oslo' }) }));
@@ -35,5 +36,6 @@ for (const cleanupFails of [false, true]) {
     expect(faults.removePhotos).toHaveBeenCalledWith(faults.storePhoto.mock.calls.map(([key]) => key));
     expect(log.mock.calls.flat().join(' ')).not.toContain('secret');
     expect(log).toHaveBeenCalledTimes(cleanupFails ? 2 : 1);
+    expect(faults.release).toHaveBeenCalledWith(true);
   });
 }
