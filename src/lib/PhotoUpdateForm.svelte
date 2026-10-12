@@ -33,7 +33,7 @@
 <form onsubmit={upload}>
   <label for="photo-camera">Take photo</label>
   <input id="photo-camera" type="file" accept="image/*" capture="environment" onchange={choosePhoto} disabled={busy} />
-  <label for="photo">Choose photos</label>
+  <label for="photo">Choose photo</label>
   <input id="photo" type="file" accept="image/*" onchange={choosePhoto} disabled={busy} />
   {#if photo}<p>Selected photo: {photo.name}</p>{/if}
   <p>Up to 15 MB. Location and camera metadata are removed.</p>

@@ -5,11 +5,12 @@
   import WeatherBanner from '$lib/WeatherBanner.svelte';
   import type { PlantWarning } from '$lib/warnings';
   let { cards, weather }: { cards: FeedCard[]; weather: WeatherReport } = $props();
+  let busy = $state(false);
   const rainCardId = $derived([...cards].reverse().find(card => card.kind === 'weather_alerts' && card.event.kind === 'rain')?.id);
   const labels: Record<PlantWarning['kind'], string> = { too_dark: 'Too dark', too_bright: 'Too bright', no_drainage: 'No drainage', missing_info: 'Missing information' };
   $effect(() => {
     if (!weather.locationSet) return;
-    const timer = setInterval(() => { void invalidateAll(); }, weather.forecastFetchedAt ? 30000 : 3000);
+    const timer = setInterval(() => { if (!busy) void invalidateAll(); }, weather.forecastFetchedAt ? 30000 : 3000);
     return () => clearInterval(timer);
   });
 </script>
@@ -41,13 +42,13 @@
         {#if card.kind === 'weather_alerts'}
           <li><article aria-label={card.event.kind === 'rain' ? card.id === rainCardId ? 'Rain report' : 'Rain report for ' + card.event.starts_on : undefined}>
             {#if card.event.kind === 'low_temperature'}
-            <h3><a href={card.href}>{card.event.plant_name ?? 'Rain report'}</a></h3>
+            <h3><a href={card.href}>{card.event.plant_name ?? 'Low temperature alert'}</a></h3>
               <p>Low temperature {card.event.payload.minC} °C, below {card.event.payload.thresholdC} °C hardiness, {card.event.starts_on} to {card.event.ends_on}. Bring it in or protect it.</p>
               <p>Hardiness source: {card.event.payload.hardiness?.source.replaceAll('_', ' ')} · {card.event.payload.hardiness?.value} °C{#if card.event.payload.hardiness?.ruleId} · {card.event.payload.hardiness.ruleId}{/if}{#if card.event.payload.potRuleId} · {card.event.payload.potRuleId}{/if}</p>
               {#if card.event.payload.hardiness?.ruleId === 'hardiness.usda_uncertain@1'}<p>USDA zone conversion is uncertain.</p>{/if}
             {:else}
               <a class="card-body" href={card.href}><h3>Rain report</h3>{#if card.event.payload.precipitationMm != null}<p>Rain: {card.event.payload.precipitationMm} mm on {card.event.starts_on}.</p>{/if}</a>
-              {#if card.id === rainCardId}<WeatherBanner report={weather} showRain rainOnly />{/if}
+              {#if card.id === rainCardId}<WeatherBanner report={weather} showRain rainOnly bind:busy />{/if}
             {/if}
           </article></li>
         {/if}

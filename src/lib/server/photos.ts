@@ -9,6 +9,17 @@ import { now, calendarDate } from './clock';
 import { storePhoto, removePhotos } from './photo-storage';
 import { imageForm, maxPhotoBytes, sanitiseImage } from './images';
 
+export async function photoThumbnail(original: Buffer): Promise<Buffer> {
+  try { return await sharp(original).resize(400, 400, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(); }
+  catch { error(422, 'Choose a decodable still image.'); }
+}
+
+// Callers own rollback cleanup for both keys, including a partial storage failure.
+export async function storePhotoPair(keys: string[], original: Buffer, thumb: Buffer) {
+  await storePhoto(keys[0], original);
+  await storePhoto(keys[1], thumb);
+}
+
 export function photoToday() {
   return calendarDate(now());
 }
@@ -44,9 +55,7 @@ export async function addPhoto(identity: Identity, plant: string, request: Reque
   if (health !== null && !healthValues.some(value => value === health)) error(422, 'Choose a valid health value.');
   if (typeof takenOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(takenOn) || takenOn < '0001-01-01' || !Number.isFinite(Date.parse(takenOn)) || new Date(takenOn).toISOString().slice(0, 10) !== takenOn || takenOn > today) error(422, 'Choose a valid date that is not in the future.');
   const original = await sanitiseImage(Buffer.from(await file.arrayBuffer()));
-  let thumb: Buffer;
-  try { thumb = await sharp(original).resize(400, 400, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(); }
-  catch { error(422, 'Choose a decodable still image.'); }
+  const thumb = await photoThumbnail(original);
   const id = randomUUID();
   const prefix = `photos/${household}/${plant}/${id}`;
   const keys = [prefix + '-original.jpg', prefix + '-thumb.jpg'];
@@ -55,8 +64,7 @@ export async function addPhoto(identity: Identity, plant: string, request: Reque
     await client.query('BEGIN');
     const locked = await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [plant, household]);
     if (!locked.rowCount) error(404, 'Plant not found');
-    await storePhoto(keys[0], original);
-    await storePhoto(keys[1], thumb);
+    await storePhotoPair(keys, original, thumb);
     await client.query('INSERT INTO photo_updates (id, household_id, plant_id, original_key, thumb_key, note, health, taken_on, validated_on, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, household, plant, ...keys, note, health, takenOn, today, identity.member.id, now()]);
     const newer = await client.query('SELECT id FROM photo_updates WHERE plant_id = $1 AND household_id = $2 AND taken_on > $3 LIMIT 1', [plant, household, takenOn]);
     if (health !== null && !newer.rowCount) await client.query('UPDATE plants SET health = $1 WHERE id = $2 AND household_id = $3', [health, plant, household]);

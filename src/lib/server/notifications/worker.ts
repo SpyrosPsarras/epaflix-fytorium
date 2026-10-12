@@ -15,27 +15,38 @@ async function sendWeatherAlerts() {
     WHERE e.resolved_at IS NULL AND m.weather_alerts_enabled
     AND EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = m.id)
     AND NOT EXISTS (SELECT 1 FROM weather_alert_sends WHERE event_id = e.id AND member_id = m.id
-      AND (sent_at IS NOT NULL OR claimed_until >= $1))
+      AND (sent_at IS NOT NULL OR claimed_until >= $1 OR attempts >= 6))
     ORDER BY e.created_at, e.id, m.id`, [now()]);
   for (const row of rows) {
+    let attempt = 0;
+    let finished = false;
     try {
-      const at = now(), until = new Date(at.getTime() + leaseMs);
+      const at = now();
       const claimed = await db().query(`INSERT INTO weather_alert_sends (event_id, member_id, attempted_at, claimed_until)
         SELECT e.id, m.id, $3, $4 FROM weather_events e JOIN members m ON m.household_id = e.household_id
         WHERE e.id = $1 AND m.id = $2 AND e.resolved_at IS NULL AND m.weather_alerts_enabled
-        ON CONFLICT (event_id, member_id) DO UPDATE SET attempted_at = $3, claimed_until = $4
-        WHERE weather_alert_sends.sent_at IS NULL AND weather_alert_sends.claimed_until < $3
-        RETURNING event_id`, [row.id, row.member_id, at, until]);
+        ON CONFLICT (event_id, member_id) DO UPDATE SET attempted_at = $3,
+          attempts = weather_alert_sends.attempts + 1,
+          claimed_until = $3::timestamptz + $5::double precision * interval '1 millisecond' * power(2, weather_alert_sends.attempts)
+        WHERE weather_alert_sends.sent_at IS NULL AND weather_alert_sends.claimed_until < $3 AND weather_alert_sends.attempts < 6
+        RETURNING claimed_until, attempts`, [row.id, row.member_id, at, new Date(at.getTime() + leaseMs), leaseMs]);
       if (!claimed.rowCount) continue;
+      const until = claimed.rows[0].claimed_until;
+      attempt = claimed.rows[0].attempts;
       const { sent } = await sendToMember(row.member_id, { title: 'Fytorium weather alert',
         body: row.kind === 'rain' ? 'Rain reported. Check outdoor watering on Today.' : `Low temperature forecast${row.plant_name ? ' · ' + row.plant_name.slice(0, 80) : ''}. Check Today.`,
         tag: 'fytorium-weather-' + row.id, url: '/' });
       // sent_at also marks a skip when every device expired, so new devices do not replay it.
-      await db().query(`UPDATE weather_alert_sends SET sent_at = $3
+      const completion = await db().query(`UPDATE weather_alert_sends SET sent_at = $3
         WHERE event_id = $1 AND member_id = $2 AND claimed_until = $4 AND sent_at IS NULL
         AND ($5::boolean OR NOT EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = $2))`,
       [row.id, row.member_id, now(), until, sent > 0]);
-    } catch { console.error('Weather push failed for one member. Will retry after its lease.'); }
+      finished = Boolean(completion.rowCount);
+    } catch {
+      if (attempt !== 6) console.error('Weather push failed for one member. Will retry after its lease.');
+    } finally {
+      if (attempt === 6 && !finished) console.error('Weather push gave up after 6 attempts.');
+    }
   }
 }
 export async function runPushWorkerOnce() {

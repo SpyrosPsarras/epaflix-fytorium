@@ -127,20 +127,31 @@ test('future or invalid dates refuse the fetch and leave the prior staging intac
   expect((await (await owner.request(endpoint, 'POST', { code: fake.code })).json())[0].mapped).toMatchObject({ pot_type: 'terracotta', soil_type: 'cactus', pot_size_cm: 20 });
 });
 
-test('imports a sanitised cover once, and retries a failed commit from persistent staging after restart', async () => {
+test('imports without a failed cover, retains the reason across restart and retries on a fresh fetch', async () => {
   harness.setGbif({ usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
   const a = syntheticPlant('synthetic-photo-a', 'Test photo lantern');
   const b = syntheticPlant('synthetic-photo-b', 'Test photo glow');
   b.image.url = imageHost.url;
   fake.setPlants([a, b]);
-  const rows = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  const stagingResponse = await owner.request(endpoint, 'POST', { code: fake.code });
+  const stagedOutput = await stagingResponse.text();
+  expect(stagedOutput).not.toContain(imageHost.url);
+  expect(stagedOutput).not.toContain('cover_url');
+  const rows = JSON.parse(stagedOutput);
+  expect(rows[1].mapped.has_cover).toBe(true);
   await imageHost.setStatus(503);
-  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(503);
+  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   const failed = await (await owner.request(endpoint)).json();
-  expect(failed).toEqual([expect.objectContaining({ id: rows[0].id, status: 'committed' }), expect.objectContaining({ id: rows[1].id, status: 'confirmed' })]);
+  expect(failed).toEqual([expect.objectContaining({ id: rows[0].id, status: 'committed' }), expect.objectContaining({ id: rows[1].id, status: 'committed', cover_error: expect.stringContaining('download failed') })]);
+  const withoutCover = await (await owner.request('/api/plants/' + failed[1].plant_id)).json();
+  expect(withoutCover.cover_photo_id).toBeNull();
+  expect(await (await owner.request('/api/plants/' + failed[1].plant_id + '/photos')).json()).toEqual([]);
+  expect(await (await owner.request('/import')).text()).toContain('Cover not imported');
   await harness.restartApp();
   await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-06-10T12:00:00Z' });
+  expect(await (await owner.request(endpoint)).json()).toEqual(failed);
   await imageHost.setStatus(200);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   const plants = await (await owner.request('/api/plants')).json();
   const plant = plants.find((plant: { nickname: string }) => plant.nickname === 'Test photo glow');
@@ -165,6 +176,39 @@ test('imports a sanitised cover once, and retries a failed commit from persisten
   expect(await imageHost.calls()).toBe(calls);
   expect(await (await owner.request('/api/plants/' + plant.id + '/photos')).json()).toEqual(photos);
   expect((await (await owner.request('/api/plants')).json()).filter((plant: { nickname: string }) => plant.nickname.startsWith('Test photo'))).toHaveLength(2);
+});
+
+test('a cover decode failure imports the plant and explains why there is no cover', async () => {
+  const plant = syntheticPlant('synthetic-decode-cover');
+  plant.image.url = imageHost.url.replace('cover.jpg', 'invalid.jpg');
+  await imageHost.stub(200, '/invalid.jpg', {}, 'synthetic-not-an-image');
+  fake.setPlants([plant]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  const response = await owner.request(endpoint + '/commit', 'POST', {});
+  expect(response.status).toBe(200);
+  const row = (await response.json())[0];
+  expect(row).toMatchObject({ status: 'committed', cover_error: expect.stringContaining('decodable') });
+  expect(await (await owner.request('/api/plants/' + row.plant_id + '/photos')).json()).toEqual([]);
+});
+
+test('a thumbnail failure still imports the plant and records a cover error', async () => {
+  const plant = syntheticPlant('synthetic-thumbnail-cover');
+  plant.image.url = imageHost.url;
+  fake.setPlants([plant]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  await harness.restartApp({ NODE_OPTIONS: '--import ./tests/api/fail-thumbnail.mjs' });
+  try {
+    await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-06-10T12:00:00Z' });
+    const response = await owner.request(endpoint + '/commit', 'POST', {});
+    expect(response.status).toBe(200);
+    const row = (await response.json())[0];
+    expect(row).toMatchObject({ status: 'committed', cover_error: expect.stringContaining('decodable') });
+    expect((await owner.request('/api/plants/' + row.plant_id)).status).toBe(200);
+    expect(await (await owner.request('/api/plants/' + row.plant_id + '/photos')).json()).toEqual([]);
+  } finally {
+    await harness.restartApp();
+    await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-06-10T12:00:00Z' });
+  }
 });
 
 test('refreshes exactly once after 401, bounds 429 retries and never relays upstream credentials', async () => {
@@ -206,8 +250,10 @@ test('refuses HTTP and private, loopback, link-local or mapped-IP cover hosts, n
     fake.setPlants([plant]);
     expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
     const response = await owner.request(endpoint + '/commit', 'POST', {});
-    expect(response.status).toBe(422);
-    expect((await (await owner.request(endpoint)).json())[0].status).toBe('confirmed');
+    expect(response.status).toBe(200);
+    const row = (await response.json())[0];
+    expect(row).toMatchObject({ status: 'committed', cover_error: expect.stringMatching(/HTTPS|private or reserved/) });
+    expect(await (await owner.request('/api/plants/' + row.plant_id + '/photos')).json()).toEqual([]);
   }
   expect(await imageHost.calls()).toBe(before);
   await imageHost.stub(302, '/redirect.jpg', { Location: 'https://127.0.0.1/cover.jpg' });
@@ -215,16 +261,22 @@ test('refuses HTTP and private, loopback, link-local or mapped-IP cover hosts, n
   plant.image.url = imageHost.url.replace('cover.jpg', 'redirect.jpg');
   fake.setPlants([plant]);
   expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
-  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(503);
+  const redirected = await owner.request(endpoint + '/commit', 'POST', {});
+  expect(redirected.status).toBe(200);
+  expect((await redirected.json())[0].cover_error).toContain('download failed');
   expect(await imageHost.calls()).toBe(before);
   await imageHost.stub(200, '/oversized.jpg', {}, 'x'.repeat(15 * 1024 * 1024 + 1));
   plant.image.url = imageHost.url.replace('cover.jpg', 'oversized.jpg');
   fake.setPlants([plant]);
   expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
-  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(503);
+  const oversized = await owner.request(endpoint + '/commit', 'POST', {});
+  expect(oversized.status).toBe(200);
+  const oversizedRow = (await oversized.json())[0];
+  expect(oversizedRow.cover_error).toContain('exceeded 15 MB');
+  expect(await (await owner.request('/api/plants/' + oversizedRow.plant_id + '/photos')).json()).toEqual([]);
 });
 
-test('bounds Planta and image timeouts and preserves the review for retry', async () => {
+test('bounds Planta and image timeouts, preserving review or importing without a cover', async () => {
   const before = await (await owner.request(endpoint)).json();
   fake.setMode('timeout');
   const start = Date.now();
@@ -238,9 +290,11 @@ test('bounds Planta and image timeouts and preserves the review for retry', asyn
   fake.setPlants([plant]);
   expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
   const imageStart = Date.now();
-  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(503);
+  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   expect(Date.now() - imageStart).toBeLessThan(9000);
-  expect((await (await owner.request(endpoint)).json())[0].status).toBe('confirmed');
+  const row = (await (await owner.request(endpoint)).json())[0];
+  expect(row).toMatchObject({ status: 'committed', cover_error: expect.stringContaining('download failed') });
+  expect(await (await owner.request('/api/plants/' + row.plant_id + '/photos')).json()).toEqual([]);
 });
 
 test('re-import preserves standalone import undo, local batches, request IDs, snoozes and skips', async () => {

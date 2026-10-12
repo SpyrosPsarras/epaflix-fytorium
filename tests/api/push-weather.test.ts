@@ -75,6 +75,33 @@ test('weather reconciliation never waits for push, and temporary failure recover
   expect(harness.push.received).toHaveLength(2);
 });
 
+test('weather failures back off and stop after six attempts, even after restart', async () => {
+  await switches(true);
+  const event = await raiseAnotherEvent();
+  harness.push.respond(device.endpoint, 503);
+  const attempts = () => harness.push.attempted.filter(row => row.payload.tag === 'fytorium-weather-' + event.id).length;
+  expect((await request('/__test/push-worker', 'POST')).status).toBe(200);
+  expect(attempts()).toBe(1);
+  // The successive leases are 5, 10, 20, 40 and 80 minutes.
+  for (const [index, minutes] of [5, 10, 20, 40, 80].entries()) {
+    await request('/__test/clock', 'POST', { action: 'advance', milliseconds: (minutes - 1) * 60000 });
+    await request('/__test/push-worker', 'POST');
+    expect(attempts()).toBe(index + 1);
+    await request('/__test/clock', 'POST', { action: 'advance', milliseconds: 60001 });
+    await Promise.all([request('/__test/push-worker', 'POST'), request('/__test/push-worker', 'POST')]);
+    expect(attempts()).toBe(index + 2);
+  }
+  expect(harness.appOutput).toContain('Weather push gave up after 6 attempts.');
+  await harness.restartApp();
+  await request('/__test/clock', 'POST', { action: 'set', at: '2030-06-01T23:00:00Z' });
+  harness.push.respond(device.endpoint, 201);
+  await request('/__test/push-worker', 'POST');
+  expect(attempts()).toBe(6);
+  // Resolve the exhausted event before the later crash-recovery scenario.
+  min = 20;
+  await tick();
+});
+
 test('an unsent weather claim recovers after a crash, but resolved unsent events do not replay', async () => {
   const event = await raiseAnotherEvent();
   const at = (await (await request('/__test/clock')).json()).now;

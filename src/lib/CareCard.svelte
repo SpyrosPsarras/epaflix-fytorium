@@ -63,7 +63,7 @@
   <h2 id="care-card-title">Species care</h2>
   <p>Starting estimates. Check the plant and soil before following a watering interval.</p>
   {#each fetchStates as state}
-    {#if state.source === 'open_plantbook' && state.matchStatus}
+    {#if state.matchStatus}
       <p>Open Plantbook: {state.matchStatus === 'matched' ? 'matched ' + state.pid : state.matchStatus.replaceAll('_', ' ')}</p>
       {#if canRetry}<button onclick={retryMatch}>Retry match</button>{/if}
     {/if}

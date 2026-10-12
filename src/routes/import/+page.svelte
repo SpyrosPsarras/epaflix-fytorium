@@ -52,6 +52,7 @@
       <h3>{row.mapped.nickname ?? row.mapped.scientific_name ?? row.planta_plant_id}</h3>
       <p>{row.mapped.scientific_name} · {row.mapped.site_name}</p>
       <p>Pot: {row.mapped.pot_type.replaceAll('_', ' ')} · {row.mapped.pot_size_cm ?? 'unknown'} cm · Soil: {row.mapped.soil_type.replaceAll('_', ' ')}</p>
+      {#if row.cover_error}<p role="status">Cover not imported: {row.cover_error} Fetch again to retry the cover.</p>{/if}
       {#if row.status === 'committed'}
         <p>Imported</p>
         {#if row.plant_id}<a href={'/plants/' + row.plant_id}>Open imported plant</a>{/if}
