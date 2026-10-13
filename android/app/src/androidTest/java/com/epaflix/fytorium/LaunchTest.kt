@@ -1,9 +1,9 @@
 package com.epaflix.fytorium
 
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.*
+import org.json.JSONObject
+import org.json.JSONArray
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -61,7 +61,7 @@ class LaunchTest {
         assertNull(store.tokens); assertNull(store.pending)
     }
     // Enable the real stack login with E2E_LOGIN=1 ./scripts/android e2e.
-    @Test fun chosenOidcSubjectSeesEmptyHome() {
+    @Test fun chosenOidcSubjectCompletesUndoesAndReadsCachedTodayOffline() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("login") == "true")
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         compose.waitUntil(30_000) { compose.onNodeWithText("Log in").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled).not() }
@@ -91,8 +91,121 @@ class LaunchTest {
         device.wait(Until.findObject(By.textContains("Open")), 2_000)?.click()
         val returned = device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 30_000)
         assertTrue("OIDC redirect did not return to Fytorium", returned)
-        compose.waitUntil(30_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("No tasks yet.")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("No tasks yet.").assertIsDisplayed()
-        compose.onNodeWithText("Plants").assertIsDisplayed()
+        val app = compose.activity.application as FytoriumApplication
+        try {
+            try { compose.waitUntil(30_000) { app.repository.state.value.member != null && !app.repository.state.value.busy } }
+            catch (error: Throwable) { throw AssertionError("Initial care refresh: member=${app.repository.state.value.member}, busy=${app.repository.state.value.busy}, offline=${app.repository.state.value.offline}, message=${app.repository.state.value.message}, signedIn=${app.store.tokens != null}", error) }
+            compose.onNodeWithText("Plants").assertIsDisplayed()
+            careScenarios(app, device)
+        } finally { if (app.store.tokens != null) app.api.logout() }
+    }
+
+    private fun careScenarios(app: FytoriumApplication, device: UiDevice) {
+        var plantId: String? = null
+        var siteId: String? = null
+        var failure: Throwable? = null
+        fun json(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
+            app.api.request(path, method = method, body = body, query = query).use {
+                val text = it.body?.string().orEmpty()
+                assertTrue("API $path returned ${it.code}: $text", it.isSuccessful)
+                text
+            }
+        try {
+            // Recover only this scenario's synthetic fixtures after an interrupted run.
+            val previousPlants = JSONArray(json("/api/plants"))
+            (0 until previousPlants.length()).map { previousPlants.getJSONObject(it) }.filter { it.optString("nickname") == "Synthetic A04 fern" }.forEach {
+                json("/api/plants/${it.getString("id")}", "DELETE", JSONObject().put("confirm_name", "Synthetic A04 fern"))
+            }
+            val previousSites = JSONArray(json("/api/sites"))
+            (0 until previousSites.length()).map { previousSites.getJSONObject(it) }.filter { it.getString("name") == "Synthetic A04 site" }.forEach {
+                json("/api/sites/${it.getString("id")}", "DELETE")
+            }
+            // Login, all API reads and writes use the real server. Only the clock uses a __test route.
+            clock("set", "2030-06-01T10:00:00Z")
+            siteId = JSONObject(json("/api/sites", "POST", JSONObject("""{"name":"Synthetic A04 site","location":"indoor","light":"part_shade","humidity":"normal","grow_light":false,"draft":false}"""))).getString("id")
+            val search = JSONObject(json("/api/species/search", query = mapOf("q" to "Testoria lucida")))
+            val plant = JSONObject("""{"nickname":"Synthetic A04 fern","pot_type":"plastic","soil_type":"all_purpose","plant_size":"small","growth_stage":"young","fertilizer_type":"liquid","pot_size_cm":null,"window_distance_cm":null,"drainage":true,"grow_light":false,"near_ac":false,"near_heater":false}""")
+                .put("site_id", siteId).put("search_id", search.getString("search_id")).put("gbif_key", 910001)
+            plantId = JSONObject(json("/api/plants", "POST", plant)).getString("id")
+            json("/api/tasks/settings", "PUT", JSONObject("""{"sort":"task","filter":"all","show_completed":false}"""))
+            clock("set", "2030-06-02T10:00:00Z")
+            app.care.refresh()
+            compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.today == "2030-06-02" }
+            val waterTag = "task:$plantId:water"
+            fun button(tag: String, label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag(tag)))
+            compose.onNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
+            button(waterTag, "Done").performScrollTo().performClick()
+            compose.waitUntil(30_000) { app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
+            button(waterTag, "Undo").performScrollTo().performClick()
+            compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent == null && it.lateDays == 1 } == true }
+            val history = JSONArray(json("/api/plants/$plantId/history"))
+            assertTrue("Server did not undo the care event", (0 until history.length()).any { val e = history.getJSONObject(it); e.optString("task_type") == "water" && !e.isNull("undone_at") })
+            compose.onNodeWithTag("view-upcoming").performClick()
+            val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.first { it.plantId == plantId && it.dueOn!! > "2030-06-02" }
+            val futureTag = "task:$plantId:${future.key}"
+            compose.onNodeWithTag(futureTag).performScrollTo()
+            button(futureTag, "Snooze 2 days").assertDoesNotExist()
+            compose.onNodeWithTag("view-today").performClick()
+            device.executeShellCommand("cmd connectivity airplane-mode enable")
+            app.care.refresh()
+            compose.waitUntil(30_000) { app.repository.state.value.offline }
+            compose.waitUntil(30_000) { !app.repository.state.value.busy }
+            compose.onNode(hasText("Offline, last updated", substring = true)).performScrollTo().assertIsDisplayed()
+            button(waterTag, "Done").performScrollTo().assertIsNotEnabled().performClick()
+            button(waterTag, "Snooze 2 days").assertIsNotEnabled()
+            assertEquals("Cached Today was lost in airplane mode", "Synthetic A04 fern", app.repository.state.value.today!!.sections.flatMap { it.tasks }.first { it.plantId == plantId }.plantName)
+            device.executeShellCommand("cmd connectivity airplane-mode disable")
+            waitForGuestNetwork(app)
+            app.care.refresh()
+            compose.waitUntil(30_000) { !app.repository.state.value.busy && !app.repository.state.value.offline }
+            assertEquals("Offline click queued a write", history.length(), JSONArray(json("/api/plants/$plantId/history")).length())
+            println("A04 E2E PASS: late complete/undo, future snooze absent, cached Today in airplane mode, writes disabled and not queued")
+        } catch (error: Throwable) { failure = error; throw error } finally {
+            device.executeShellCommand("cmd connectivity airplane-mode disable")
+            device.executeShellCommand("svc wifi enable")
+            device.executeShellCommand("svc data enable")
+            val cleanup = runCatching {
+            waitForGuestNetwork(app)
+            if (plantId != null) json("/api/plants/$plantId", "DELETE", JSONObject().put("confirm_name", "Synthetic A04 fern"))
+            if (siteId != null) json("/api/sites/$siteId", "DELETE")
+            clock("reset")
+            app.api.logout()
+            compose.waitUntil(30_000) { !app.session.state.value.loggedIn }
+            assertNull(app.repository.state.value.member)
+            assertTrue(androidx.work.WorkManager.getInstance(app).getWorkInfosForUniqueWork(CareController.WORK_NAME).get().all { it.state == androidx.work.WorkInfo.State.CANCELLED })
+            }
+            if (failure == null) cleanup.getOrThrow()
+        }
+    }
+    private fun waitForGuestNetwork(app: FytoriumApplication) {
+        val connectivity = app.getSystemService(android.net.ConnectivityManager::class.java)
+        var lastFailure: Throwable? = null
+        try {
+            compose.waitUntil(45_000) {
+                val network = connectivity.activeNetwork
+                if (network == null || !app.care.connected()) false else runCatching {
+                    // Probe readiness only, never retry a repository refresh or scenario API call.
+                    check(java.net.InetAddress.getAllByName("app").isNotEmpty())
+                    val connection = java.net.URL("http://app:3000/healthz").openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 2_000
+                    connection.readTimeout = 2_000
+                    connection.setRequestProperty("Connection", "close")
+                    try { connection.responseCode == 200 && network == connectivity.activeNetwork && app.care.connected() }
+                    finally { connection.disconnect() }
+                }.getOrElse { lastFailure = it; false }
+            }
+        } catch (error: Throwable) {
+            throw AssertionError("Guest did not regain a validated network, app DNS and HTTP within 45s; last probe: $lastFailure", error)
+        }
+    }
+    private fun clock(action: String, at: String? = null) {
+        val connection = java.net.URL("http://app:3000/__test/clock").openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "POST"; connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.connectTimeout = 10_000; connection.readTimeout = 10_000
+        try {
+            connection.outputStream.use { it.write(JSONObject().put("action", action).apply { if (at != null) put("at", at) }.toString().toByteArray()) }
+            assertEquals(200, connection.responseCode)
+        } finally { connection.disconnect() }
     }
 }

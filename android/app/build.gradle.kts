@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.roborazzi)
 }
 val releaseTag = providers.environmentVariable("ANDROID_RELEASE_TAG").orNull
@@ -58,6 +59,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     testOptions { unitTests.isIncludeAndroidResources = true; animationsDisabled = true }
 }
+kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
 dependencies {
     implementation(libs.activity.compose)
     implementation(libs.compose.ui)
@@ -67,6 +69,9 @@ dependencies {
     implementation(libs.browser)
     implementation(libs.coroutines)
     implementation(libs.okhttp)
+    implementation(libs.room.runtime)
+    kapt(libs.room.compiler)
+    implementation(libs.work.runtime)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.mockwebserver)

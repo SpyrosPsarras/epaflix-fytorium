@@ -97,7 +97,7 @@ test('a fresh invite reactivates a removed subject with its new role and shares,
 test('sitter Today and Upcoming page data and task APIs contain only the public projection, including completed repots', async () => {
   const repot = await (await owner.request(`/api/plants/${shared}/repot`, 'POST', { request_id: randomUUID(), pot_type: 'terracotta', pot_size_cm: 20, soil_type: 'all_purpose' })).json();
   expect(repot.event.previous_pot).not.toBeNull();
-  const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id'];
+  const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo'];
   const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'completed_event'];
   const only = (value: Record<string, unknown>, fields: string[]) => expect(Object.keys(value).filter(key => !fields.includes(key))).toEqual([]);
   const event = (value: Record<string, unknown>) => only(value, eventFields);
@@ -157,6 +157,26 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
   const batchUndo = await (await returning.request('/api/task-batches/' + batch.events[0].batch_id + '/undo', 'POST')).json();
   only(batchUndo, ['batchId', 'undoneAt']);
   await owner.request('/api/care-events/' + repot.event.id + '/undo', 'POST');
+});
+
+test('a former family member cannot undo their own repot after returning as a sitter', async () => {
+  const familyInvite = await (await owner.request('/api/household/invites', 'POST', { role: 'family', plant_ids: [] })).json();
+  const family = await harness.login('synthetic-a04-former-family', {}, familyInvite.link.split('/').at(-1));
+  const memberId = (await (await family.request('/api/me')).json()).member.id;
+  await family.request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: true });
+  const repot = await (await family.request(`/api/plants/${shared}/repot`, 'POST', { request_id: randomUUID(), pot_type: 'plastic', pot_size_cm: 18, soil_type: 'all_purpose' })).json();
+  expect(repot.event.previous_pot).not.toBeNull();
+  await owner.request('/api/household/members/' + memberId, 'DELETE');
+  const sitterInvite = await (await owner.request('/api/household/invites', 'POST', { role: 'sitter', plant_ids: [shared] })).json();
+  const changed = await harness.login('synthetic-a04-former-family', {}, sitterInvite.link.split('/').at(-1));
+  for (const view of ['today', 'upcoming']) {
+    const list = await (await changed.request('/api/tasks?view=' + view)).json();
+    const event = (Object.values(list.groups).flat() as any[]).find(row => row.completed_event?.id === repot.event.id)?.completed_event;
+    expect(event).toMatchObject({ by_member: memberId, can_undo: false });
+    expect(event).not.toHaveProperty('previous_pot');
+  }
+  expect((await changed.request('/api/care-events/' + repot.event.id + '/undo', 'POST')).status).toBe(403);
+  expect((await owner.request('/api/care-events/' + repot.event.id + '/undo', 'POST')).status).toBe(200);
 });
 
 test('unlisted pages fail closed and authorization metrics retain the response status', async () => {

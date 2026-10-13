@@ -16,19 +16,31 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
-                         onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {}) {
+                         onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
+                         careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null) {
     var tab by rememberSaveable { mutableStateOf("Today") }
     var about by rememberSaveable { mutableStateOf(false) }
+    var taskView by rememberSaveable { mutableStateOf("today") }
     BackHandler(enabled = about) { about = false }
     Scaffold(bottomBar = {
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
-                "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).forEach { (title, icon) ->
+                "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
                 NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
+                    onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
+                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, onLoadPot = { controller?.plant(it) })
+                else CachedPlants(careState, onPlant = { controller?.plant(it) }, thumbnails = thumbnails)
+            }
+            return@Scaffold
+        }
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Fytorium", style = MaterialTheme.typography.headlineLarge)

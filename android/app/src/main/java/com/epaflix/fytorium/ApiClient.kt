@@ -22,6 +22,10 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).build()
     // Single-use grants cannot retry if a pooled socket expires during browser login.
     private val tokenHttp = http.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()
+    fun networkLost() {
+        // Airplane mode can abort idle sockets without making them look closed to OkHttp.
+        http.connectionPool.evictAll()
+    }
     fun loginUrl(): String {
         val attempt = Pkce.create()
         store.pending = attempt
@@ -57,13 +61,19 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
             Tokens(access, refresh)
         }
     }
-    fun request(path: String, post: Boolean = false): Response {
+    fun request(path: String, post: Boolean = false, method: String = if (post) "POST" else "GET",
+                body: JSONObject? = null, query: Map<String, String> = emptyMap()): Response {
         require(path.startsWith("/api/") && !path.contains("..") && !path.contains('?') && !path.contains('#'))
+        require(method in listOf("GET", "POST", "PUT", "DELETE"))
         val original = store.tokens
         fun send(tokens: Tokens?): Response {
-            val builder = Request.Builder().url(baseUrl + path).header("X-App-Version", BuildConfig.VERSION_NAME)
+            val url = (baseUrl + path).toHttpUrl().newBuilder().apply {
+                query.forEach { (key, value) -> addQueryParameter(key, value) }
+            }.build()
+            val builder = Request.Builder().url(url).header("X-App-Version", BuildConfig.VERSION_NAME).header("Accept", "application/json")
             tokens?.let { builder.header("Authorization", "Bearer " + it.access) }
-            if (post) builder.post(ByteArray(0).toRequestBody(null))
+            if (method != "GET") builder.method(method, body?.toString()?.toRequestBody("application/json".toMediaType())
+                ?: ByteArray(0).toRequestBody(null))
             return http.newCall(builder.build()).execute()
         }
         val response = send(original)
@@ -80,9 +90,9 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
                         .also { if (it == null) loseSession() else store.tokens = it }
                 }
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             rejected.close()
-            throw IOException("Refresh unavailable. Please retry.")
+            throw if (error is IOException) error else IOException("Refresh unavailable. Please retry.", error)
         }
         // No unauthenticated replay and no recursive refresh.
         if (refreshed == null) return rejected

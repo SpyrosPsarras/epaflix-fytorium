@@ -3999,6 +3999,9 @@ components:
     CareEvent:
       type: object
       properties:
+        can_undo:
+          type: boolean
+          description: Whether this member can undo this event now. Use the batch undo endpoint when batch_id is present. Includes role, ownership, batch, plant and repot checks.
         source:
           enum:
             - fytorium
@@ -4103,6 +4106,7 @@ components:
               additionalProperties: false
             - type: "null"
       required:
+        - can_undo
         - id
         - plant_id
         - task_type

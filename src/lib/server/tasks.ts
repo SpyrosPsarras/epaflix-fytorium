@@ -8,6 +8,7 @@ import { schedule, taskTypes, type TaskType, type ScheduleInput } from '$lib/sch
 import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList, type PlantSchedule } from '$lib/tasks';
 import type { Identity } from './auth';
 import { visiblePlantSql, requireSharedPlant, requireOwnUndo } from './policy';
+import { requireUndo, withUndoFlag, withUndoFlags } from './undo-policy';
 import { getPlant, isUuid, plantSelect, potErrors } from './plants';
 import { db, withTransaction } from './db';
 import { now, calendarDate } from './clock';
@@ -21,10 +22,11 @@ function taskIn(schedule: Partial<PlantSchedule>, key: string) {
   return isUuid(key) ? schedule.customTasks?.[key] : schedule[key as TaskType];
 }
 
-export async function history(plantId: string, household: string): Promise<CareEvent[]> {
+export async function history(plantId: string, identity: Identity): Promise<CareEvent[]> {
+  const household = identity.household.id;
   await getPlant(plantId, household);
   const result = await db().query('SELECT e.*, c.name AS custom_task_name FROM care_events e LEFT JOIN custom_tasks c ON c.id = e.custom_task_id AND c.household_id = e.household_id WHERE e.plant_id = $1 AND e.household_id = $2 ORDER BY e.occurred_at DESC, e.event_order DESC', [plantId, household]);
-  return result.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) }));
+  return withUndoFlags(identity, result.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) })));
 }
 
 async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string, database: Database = db(), taskOnly = false) {
@@ -104,9 +106,13 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
   const completedByTask = new Map<string, CareEvent>();
   if (settings.show_completed) {
     const events = await db().query("SELECT * FROM care_events WHERE plant_id = ANY($1::uuid[]) AND household_id = $2 AND kind = 'completed' AND undone_at IS NULL ORDER BY occurred_at DESC, event_order DESC", [plants.rows.map(plant => plant.id), household]);
+    const latest = new Map<string, typeof events.rows[number]>();
     for (const event of events.rows) {
       const key = event.plant_id + ':' + taskKey(event);
-      if (calendarDate(event.occurred_at) === today && !completedByTask.has(key)) completedByTask.set(key, { ...event, occurred_on: today });
+      if (calendarDate(event.occurred_at) === today && !latest.has(key)) latest.set(key, event);
+    }
+    for (const event of await withUndoFlags(identity, [...latest.values()].map(event => ({ ...event, occurred_on: today })))) {
+      completedByTask.set(event.plant_id + ':' + taskKey(event), event);
     }
   }
   for (const plant of plants.rows) {
@@ -158,28 +164,20 @@ export async function undo(identity: Identity, eventId: string) {
   const event = await withTransaction(async (client) => {
     const existing = await client.query('SELECT * FROM care_events WHERE id = $1 AND household_id = $2', [eventId, household]);
     if (!existing.rowCount) error(404, 'Care event not found');
-    if (existing.rows[0].batch_id) error(409, 'Undo this care action as one batch.');
     const plant = await client.query('SELECT status, pot_type, pot_size_cm, soil_type FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [existing.rows[0].plant_id, household]);
     if (!plant.rowCount) error(404, 'Plant not found');
-    if (plant.rows[0].status !== 'active') error(409, 'Graveyard plants have no tasks. Restore the plant first.');
+    await requireUndo(identity, eventId, false, client);
     const result = await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE id = $3 AND household_id = $4 AND undone_at IS NULL RETURNING *', [now(), identity.member.id, eventId, household]);
     const event = result.rows.find(row => row.id === eventId);
     if (!event) error(409, 'Care event already undone');
     if (event.previous_pot) {
-      const later = await client.query('SELECT id FROM care_events WHERE plant_id = $1 AND household_id = $2 AND previous_pot IS NOT NULL AND undone_at IS NULL AND event_order > $3', [event.plant_id, household, event.event_order]);
-      if (later.rowCount) error(409, 'Undo the later repot first.');
-      const repotAction = await client.query("SELECT payload FROM care_actions WHERE request_id = $1 AND household_id = $2 AND action = 'repot'", [event.request_id, household]);
-      const applied = repotAction.rows[0]?.payload;
-      if (!applied || ['pot_type', 'pot_size_cm', 'soil_type'].some(field => plant.rows[0][field] !== applied[field])) {
-        error(409, 'Pot fields changed after this repot. Undo would overwrite those edits.');
-      }
       const pot = event.previous_pot;
       await client.query('UPDATE plants SET pot_type = $1, pot_size_cm = $2, soil_type = $3 WHERE id = $4 AND household_id = $5', [pot.pot_type, pot.pot_size_cm, pot.soil_type, event.plant_id, household]);
     }
     return event;
   });
   const tasks = await plantTasks(event.plant_id, household);
-  return { event: { ...event, occurred_on: calendarDate(event.occurred_at) }, task: taskIn(tasks, taskKey(event)) };
+  return { event: await withUndoFlag(identity, { ...event, occurred_on: calendarDate(event.occurred_at) }), task: taskIn(tasks, taskKey(event)) };
 }
 
 // Care commands take the household lock before plant locks.
@@ -211,7 +209,7 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
     if (claimed.rowCount) await write(client, plants, now());
     const batch = (await client.query('SELECT b.request_id, b.undone_at FROM care_actions a JOIN care_actions b ON b.request_id = COALESCE(a.batch_id, a.request_id) WHERE a.request_id = $1 AND a.household_id = $2', [requestId, household])).rows[0];
     const events = await client.query('SELECT * FROM care_events WHERE (request_id = $1 OR batch_id = $1) AND household_id = $2 ORDER BY event_order', [batch.request_id, household]);
-    return { action: batch, events: events.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) })) };
+    return { action: batch, events: await withUndoFlags(identity, events.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) })), client) };
   });
 }
 
@@ -300,8 +298,7 @@ export async function undoBatch(identity: Identity, batchId: string) {
     const plants = await client.query('SELECT p.status FROM plants p WHERE p.household_id = $2 AND (p.id IN (SELECT plant_id FROM care_events WHERE batch_id = $1 AND household_id = $2) OR p.id IN (SELECT plant_id FROM care_actions WHERE request_id = $1 AND household_id = $2)) ORDER BY p.id FOR UPDATE', [batchId, household]);
     const batch = await client.query("SELECT undone_at FROM care_actions WHERE request_id = $1 AND household_id = $2 AND action IN ('complete-all', 'rain') AND batch_id IS NULL FOR UPDATE", [batchId, household]);
     if (!batch.rowCount) error(404, 'Task batch not found');
-    if (batch.rows[0].undone_at) error(409, 'Task batch already undone');
-    if (plants.rows.some(plant => plant.status !== 'active')) error(409, 'Restore graveyard plants before undoing their care.');
+    await requireUndo(identity, batchId, true, client);
     const time = now();
     await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE batch_id = $3 AND household_id = $4 AND undone_at IS NULL', [time, identity.member.id, batchId, household]);
     await client.query('UPDATE care_actions SET undone_at = $1, undone_by = $2 WHERE request_id = $3 AND household_id = $4', [time, identity.member.id, batchId, household]);

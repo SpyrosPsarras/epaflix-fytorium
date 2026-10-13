@@ -1,8 +1,12 @@
 #!/bin/sh
 set -eu
 export HOME=/tmp/android-home ANDROID_USER_HOME=/tmp/android-home/.android
+# Always use this container's loopback server, never an inherited host adb endpoint.
+unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_ADDRESS
+export ANDROID_ADB_SERVER_PORT=5037 ANDROID_SERIAL=emulator-5554
 mkdir -p "$ANDROID_USER_HOME"
 cleanup() {
+  if [ "${E2E_LOGIN:-0}" = 1 ]; then curl --silent --fail -H 'Content-Type: application/json' -d '{"action":"reset"}' http://app:3000/__test/clock >/dev/null || true; fi
   adb emu kill >/dev/null 2>&1 || true
   [ -z "${emulator_pid:-}" ] || kill "$emulator_pid" 2>/dev/null || true
   [ -z "${dns_pid:-}" ] || kill "$dns_pid" 2>/dev/null || true
@@ -16,12 +20,36 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # The guest uses Docker's DNS through a container-local forwarder. Both app and oidc retain their canonical URLs.
 ip=$(ip -4 -o addr show eth0 | awk '{split($4,a,"/"); print a[1]}')
-dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --listen-address="$ip" --bind-interfaces --no-hosts >/tmp/dns.log 2>&1 &
+dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --listen-address="$ip" --bind-interfaces --no-hosts --no-negcache >/tmp/dns.log 2>&1 &
 dns_pid=$!
-curl --fail --retry 5 --retry-delay 1 http://app:3000/healthz
-curl --fail http://oidc:8080/default/.well-known/openid-configuration >/dev/null
+wait_ready() {
+  description=$1
+  shift
+  deadline=$(($(date +%s) + 90))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if "$@" >/tmp/network-check.log 2>&1; then
+      echo "Network ready: $description"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Network readiness timed out after 90s: $description" >&2
+  tail -20 /tmp/network-check.log /tmp/dns.log >&2
+  adb shell -n dumpsys connectivity >&2 || true
+  return 1
+}
+dns_ready() {
+  kill -0 "$dns_pid" || return 1
+  for host in app oidc; do
+    dig +time=2 +tries=1 +short @"$ip" "$host" A > /tmp/dns-answer
+    grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' /tmp/dns-answer || return 1
+  done
+  curl --silent --show-error --fail --max-time 5 http://app:3000/healthz || return 1
+  curl --silent --show-error --fail --max-time 5 http://oidc:8080/default/.well-known/openid-configuration >/dev/null
+}
+wait_ready 'dnsmasq resolves app/oidc and stack HTTP responds' dns_ready
 printf 'no\n' | avdmanager create avd -n fytorium -k 'system-images;android-35;google_apis;x86_64' -d pixel_2 --force
-emulator -avd fytorium -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -dns-server "$ip" -memory 2048 >/tmp/emulator.log 2>&1 &
+emulator -avd fytorium -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -dns-server "$ip" -memory 2048 >/tmp/emulator.log 2>&1 &
 emulator_pid=$!
 adb start-server
 booted=0
@@ -35,6 +63,16 @@ adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0
 adb shell settings put global animator_duration_scale 0
 adb shell input keyevent 82
+guest_http() {
+  # Keep stdin open until the response; toybox nc otherwise exits at pipe EOF.
+  timeout 10 adb shell -n "{ printf 'GET $3 HTTP/1.1\r\nHost: $1\r\nConnection: close\r\n\r\n'; sleep 5; } | toybox nc -w 3 -W 3 $1 $2" > /tmp/guest-http || return 1
+  grep -Eq '^HTTP/1\.[01] 200 ' /tmp/guest-http || { tail -10 /tmp/guest-http; return 1; }
+}
+guest_ready() {
+  guest_http app 3000 /healthz || return 1
+  guest_http oidc 8080 /default/.well-known/openid-configuration
+}
+wait_ready 'guest resolves app/oidc and both HTTP endpoints return 200' guest_ready
 if [ "${E2E_RELEASE:-}" = release-launch ]; then
   ./gradlew --no-daemon --console=plain assembleRelease
   keytool -genkeypair -keystore /tmp/release-check.jks -storepass android -keypass android -alias check -dname 'CN=Release check' -keyalg RSA -validity 1
@@ -60,6 +98,10 @@ adb shell 'echo "chrome --disable-fre --no-default-browser-check --no-first-run"
 adb shell am force-stop com.android.chrome
 # A fresh AVD each run prevents cookies and tokens from changing the scenario on the second run.
 login=false
-[ "$E2E_LOGIN" != 1 ] || login=true
+if [ "$E2E_LOGIN" = 1 ]; then
+  login=true
+  curl --fail -H 'Content-Type: application/json' -d '{"action":"set","at":"2030-06-01T10:00:00Z"}' http://app:3000/__test/clock
+fi
 ./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" connectedDebugAndroidTest
 echo "E2E launch scenario PASS; real OIDC login enabled: $login"
+[ "$login" != true ] || echo 'A04 E2E PASS: late complete/undo, future snooze absent, airplane-mode cached Today, disabled writes, seed cleanup and logout wipe'
