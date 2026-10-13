@@ -19,9 +19,10 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}) {
-    var page by rememberSaveable { mutableStateOf("list") }
-    var id by rememberSaveable { mutableStateOf<String?>(null) }
+@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, initialPlant: String? = null,
+    speciesApi: ApiClient? = null, speciesConnected: () -> Boolean = { false }, onCareChanged: () -> Unit = {}) {
+    var page by rememberSaveable { mutableStateOf(if (initialPlant == null) "list" else "detail") }
+    var id by rememberSaveable { mutableStateOf(initialPlant) }
     var graveyard by remember { mutableStateOf<List<Plant>>(emptyList()) }
     var options by remember { mutableStateOf<PlantOptions?>(null) }
     var sites by remember { mutableStateOf<List<PlantSite>>(emptyList()) }
@@ -54,7 +55,10 @@ import org.json.JSONObject
         else page = "detail"
     }
     BackHandler { back() }
-    LaunchedEffect(state.member) { loadOptions() }
+    LaunchedEffect(state.member, page) {
+        if (page == "species-care" && state.member?.role == Role.sitter) page = "detail"
+        loadOptions()
+    }
     // Reads never change the form's saving gate or discard its remembered input.
     LaunchedEffect(id) { id?.let { refreshDetail(it) } }
     var wasOnline by remember { mutableStateOf(request.online) }
@@ -90,11 +94,16 @@ import org.json.JSONObject
             }
         }
     }
+    if (page == "species-care" && detail != null && speciesApi != null && state.member != null && state.member.role != Role.sitter) {
+        com.epaflix.fytorium.species.SpeciesCareRoute(speciesApi, JSONObject(detail.plant.attributesJson).getLong("gbif_key"), state, speciesConnected,
+            onBack = { page = "detail"; run { refreshDetail(detail.plant.id) } }, onChanged = onCareChanged)
+        return
+    }
     val title = when (page) {
         "list" -> "Plants"; "graveyard" -> "Graveyard"; "detail" -> detail?.plant?.displayName ?: "Plant"
         "search" -> "Add plant"; "form" -> if (id == null) "Add plant" else "Edit plant"
         "change-species" -> "Change species"; "care" -> "Care settings"; "repot" -> "Repot plant"
-        "restore" -> "Restore plant"; else -> "Species names"
+        "restore" -> "Restore plant"; "species-care" -> "Species care"; else -> "Species names"
     }
     Column(Modifier.fillMaxSize()) {
         if (page != "detail" || detail == null) TopAppBar(title = { Heading(title) }, navigationIcon = {
@@ -119,7 +128,12 @@ import org.json.JSONObject
                 onUndo = { event -> run(save = true) {
                     val success = withContext(Dispatchers.IO) { repository!!.undoHistory(event) }
                     if (success) scope.launch { refreshDetail(event.plantId) }
-                } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back)
+                } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
+                onSpeciesCare = speciesApi?.let { { page = "species-care" } })
+            "species-care" -> PlantColumn {
+                Text("Connect to load species care for this plant.")
+                OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
+            }
             "search", "change-species" -> Column(Modifier.weight(1f)) {
                 if (page == "change-species") Text("${detail?.plant?.displayName} is currently ${detail?.plant?.scientificName}. Care history, photos and custom intervals will stay. The schedule will use the new species.", Modifier.padding(16.dp))
                 if (page == "change-species" && selection != null) {

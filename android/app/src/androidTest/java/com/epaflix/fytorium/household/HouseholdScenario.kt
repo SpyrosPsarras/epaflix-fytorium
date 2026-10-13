@@ -119,7 +119,7 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         if (inviteId != null) runCatching { repo.refresh(); if (repo.state.value.invites.any { it.id == inviteId }) repo.revokeInvite(inviteId!!) }
         val cleanup = runCatching {
             cleanupPlants()
-            // Restore the owner session for the existing care scenario, which revokes it during cleanup.
+            // Restore the owner on Today; the final care scenario revokes this session.
             app.store.tokens = ownerStore.tokens
             app.api.networkLost()
             device.executeShellCommand("am force-stop com.android.chrome")
@@ -127,7 +127,7 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
             app.startActivity(android.content.Intent(app, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             assertTrue(device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 30_000))
             compose.waitUntil(60_000) { app.repository.state.value.member?.role == Role.owner && !app.repository.state.value.busy }
-            compose.onNodeWithText("Today").performClick()
+            compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
         }
         if (failure == null) cleanup.getOrThrow()
     }

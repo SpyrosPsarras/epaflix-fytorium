@@ -120,15 +120,15 @@ class HouseholdScreenTest {
             compose.onNodeWithText("Target: ").assertIsNotEnabled()
         }
     }
-    @Test fun sittersHaveNoHouseholdScreensAndFamilyHasNoMembers() {
+    @Test fun householdScreensAreOwnerOnly() {
         val role = mutableStateOf(Role.owner)
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("synthetic", role.value))) } }
         compose.onNodeWithText("More").performClick()
         compose.onNodeWithText("Members").assertIsDisplayed()
         compose.runOnIdle { role.value = Role.family }
         compose.onNodeWithText("Members").assertDoesNotExist()
-        compose.onNodeWithText("Household settings").assertIsDisplayed()
-        compose.onNodeWithText("Custom tasks").assertIsDisplayed()
+        compose.onNodeWithText("Household settings").assertDoesNotExist()
+        compose.onNodeWithText("Custom tasks").assertDoesNotExist()
         compose.runOnIdle { role.value = Role.sitter }
         compose.onNodeWithText("Household settings").assertDoesNotExist()
         compose.onNodeWithText("Custom tasks").assertDoesNotExist()

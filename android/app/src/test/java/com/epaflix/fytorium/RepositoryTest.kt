@@ -235,7 +235,7 @@ class RepositoryTest {
             assertTrue(repository.state.value.serverUnavailable)
         }
     }
-    @Test fun validatedNetworkDistinguishesDnsFromRefusedAndUnansweredConnections() {
+    @Test fun validatedNetworkTreatsDnsRefusedAndUnansweredConnectionsAsServerFailures() {
         MockWebServer().use { server ->
             server.start()
             val timeoutUrl = server.url("").toString().trimEnd('/')
@@ -248,9 +248,8 @@ class RepositoryTest {
                 val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
                 val repository = Repository(ApiClient(url, credentials) {}, CareCache(db), { true })
                 repository.refresh()
-                val dns = url.contains(".invalid")
-                assertEquals(dns, repository.state.value.offline)
-                assertEquals(!dns, repository.state.value.serverUnavailable)
+                assertFalse(repository.state.value.offline)
+                assertTrue(repository.state.value.serverUnavailable)
                 db.close()
             }
         }
