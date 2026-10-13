@@ -16,6 +16,7 @@ const shared = (status: number, loggedOut = 401) => [status, status, status, 404
 // fail before validation or resource lookup. Owner/family exercise the actual handler.
 const expectations: Record<string, Record<string, number[]>> = {
   '/__test/care-quota/[source]': { DELETE: ownerOnly(200) },
+  '/api/app/logout': { POST: self(401) },
   '/api/feed': { GET: self(200) },
   '/api/feed/settings': { GET: edit(200), PUT: edit(422) },
   '/api/care-events/[id]/undo': { POST: [404, 404, 404, 404, 401, 401] },
@@ -118,23 +119,30 @@ const routes = files.filter(serverFile).flatMap(file => {
   return publicRoute(route) ? [] : handlerMethods(readFileSync(root + '/' + file, 'utf8')).map(method => ({ route, method }));
 });
 const labels = ['owner', 'family', 'sitter with share', 'sitter without share', 'removed member', 'unauthenticated'];
-let sessions: string[], plant: string;
+let sessions: string[], accessTokens: string[], plant: string;
+const transports = ['cookie', 'bearer'] as const;
+function authHeaders(transport: typeof transports[number], index: number): Record<string, string> {
+  return transport === 'cookie' ? { cookie: sessions[index] } : accessTokens[index] ? { authorization: 'Bearer ' + accessTokens[index] } : {};
+}
 beforeAll(async () => {
   const owner = await harness.login();
   const site = await (await owner.request('/api/sites', 'POST', { name: 'Coverage room', location: 'indoor', light: 'part_sun', humidity: 'normal', grow_light: false, draft: false })).json();
   const search = await (await owner.request('/api/species/search?q=Testoria%20lucida')).json();
   plant = (await (await owner.request('/api/plants', 'POST', { ...fixturePlant, site_id: site.id, search_id: search.search_id, gbif_key: 910001 })).json()).id;
   sessions = [owner.cookie];
+  accessTokens = [(await harness.appDevice()).access_token];
   for (const [index, role, shares] of [[1, 'family', []], [2, 'sitter', [plant]], [3, 'sitter', []], [4, 'family', []]] as const) {
     const invite = await (await owner.request('/api/household/invites', 'POST', { role, plant_ids: shares })).json();
     const member = await harness.login('coverage-' + index, {}, invite.link.split('/').at(-1));
     sessions.push(member.cookie);
+    accessTokens.push((await harness.appDevice('coverage-' + index)).access_token);
     if (index === 4) {
       const id = (await (await member.request('/api/me')).json()).member.id;
       expect((await owner.request('/api/household/members/' + id, 'DELETE')).status).toBe(204);
     }
   }
   sessions.push('');
+  accessTokens.push('');
 });
 test('route discovery handles fallback and named handler/load exports', () => {
   expect([...exportedNames('const x = () => {}; export { x as GET }; export const fallback = x;')].sort()).toEqual(['GET', 'fallback']);
@@ -163,23 +171,43 @@ test('the authorization table covers every page and server handler method derive
   const specified = Object.entries(expectations).flatMap(([route, methods]) => Object.keys(methods).map(method => method + ' ' + route)).sort();
   expect(actual).toEqual(specified);
 });
-for (const route of pageRoutes) {
-  test.each(labels.map((label, index) => ({ label, index })))(`GET page ${route}: $label`, async ({ index }) => {
-    const expected = pages[route]?.[index];
-    expect(expected, 'Missing page authorization expectation for ' + route).toBeDefined();
-    const path = route.replace('[id]', route.startsWith('/plants/') ? plant : ghost).replace('[gbifKey]', '910001');
-    const response = await fetch(harness.base + path, { redirect: 'manual', headers: { cookie: sessions[index] } });
-    expect(response.status).toBe(expected);
-    if (index >= 4) expect(response.headers.get('location')).toBe('/auth/login');
-  });
+for (const transport of transports) {
+  for (const route of pageRoutes) {
+    test.each(labels.map((label, index) => ({ label, index })))(`GET page ${route} via ${transport}: $label`, async ({ index }) => {
+      const expected = pages[route]?.[index];
+      expect(expected, 'Missing page authorization expectation for ' + route).toBeDefined();
+      const path = route.replace('[id]', route.startsWith('/plants/') ? plant : ghost).replace('[gbifKey]', '910001');
+      const response = await fetch(harness.base + path, { redirect: 'manual', headers: authHeaders(transport, index) });
+      expect(response.status).toBe(expected);
+      if (index >= 4) expect(response.headers.get('location')).toBe('/auth/login');
+    });
+  }
+  for (const { route, method } of routes) {
+    test.each(labels.map((label, index) => ({ label, index })))(`${method} ${route} via ${transport}: $label`, async ({ index }) => {
+      const expected = expectations[route]?.[method]?.[index];
+      expect(expected, 'Missing authorization expectation for ' + method + ' ' + route).toBeDefined();
+      const usePlant = route === '/api/plants/[id]' && method === 'GET' || route.includes('/tasks');
+      const path = route.replace('[id]', usePlant ? plant : ghost).replace('[gbifKey]', '910001').replace('[taskType]', 'water').replace('[action]', 'complete').replace('[variant]', 'thumb').replace('[field]', 'invalid_field').replace('[source]', 'perenual');
+      // Logout requires bearer proof and revokes it. Use a fresh device so coverage stays independent.
+      const headers = transport === 'bearer' && route === '/api/app/logout' && index < 4
+        ? { authorization: 'Bearer ' + (await harness.appDevice(index === 0 ? 'synthetic-owner' : 'coverage-' + index)).access_token }
+        : authHeaders(transport, index);
+      const response = await fetch(harness.base + path, { method, redirect: 'manual', headers: { ...headers, 'content-type': 'application/json' }, body: method === 'GET' || method === 'HEAD' ? undefined : '{}' });
+      expect(response.status).toBe(transport === 'bearer' && route === '/api/app/logout' && index < 4 ? 204 : expected);
+    });
+  }
 }
-for (const { route, method } of routes) {
-  test.each(labels.map((label, index) => ({ label, index })))(`${method} ${route}: $label`, async ({ index }) => {
-    const expected = expectations[route]?.[method]?.[index];
-    expect(expected, 'Missing authorization expectation for ' + method + ' ' + route).toBeDefined();
-    const usePlant = route === '/api/plants/[id]' && method === 'GET' || route.includes('/tasks');
-    const path = route.replace('[id]', usePlant ? plant : ghost).replace('[gbifKey]', '910001').replace('[taskType]', 'water').replace('[action]', 'complete').replace('[variant]', 'thumb').replace('[field]', 'invalid_field').replace('[source]', 'perenual');
-    const response = await fetch(harness.base + path, { method, redirect: 'manual', headers: { cookie: sessions[index], 'content-type': 'application/json' }, body: method === 'GET' || method === 'HEAD' ? undefined : '{}' });
-    expect(response.status).toBe(expected);
-  });
-}
+
+test('bearer and cookie identities return the same sitter projections, and both deny unknown routes', async () => {
+  for (let index = 0; index < labels.length; index++) {
+    for (const path of ['/api/me', '/api/feed', '/api/tasks', '/api/plants/' + plant]) {
+      const cookie = await fetch(harness.base + path, { headers: authHeaders('cookie', index) });
+      const bearer = await fetch(harness.base + path, { headers: authHeaders('bearer', index) });
+      expect(bearer.status).toBe(cookie.status);
+      if (cookie.ok) expect(await bearer.json()).toEqual(await cookie.json());
+    }
+    for (const transport of transports) {
+      expect((await fetch(harness.base + '/api/not-a-route', { headers: authHeaders(transport, index) })).status).toBe(404);
+    }
+  }
+});

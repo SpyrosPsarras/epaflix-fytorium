@@ -73,6 +73,8 @@ export async function removeMember(identity: Identity, memberId: string) {
     // Keep the member row and care-event name snapshots for historical attribution.
     await client.query('UPDATE members SET removed_at = $2 WHERE id = $1', [memberId, now()]);
     await client.query('DELETE FROM sessions WHERE member_id = $1', [memberId]);
+    await client.query('UPDATE app_devices SET revoked_at = $2 WHERE member_id = $1 AND revoked_at IS NULL', [memberId, now()]);
+    await client.query('DELETE FROM app_login_codes WHERE member_id = $1', [memberId]);
     await client.query('DELETE FROM push_subscriptions WHERE member_id = $1', [memberId]);
     await client.query('DELETE FROM plant_shares WHERE member_id = $1', [memberId]);
   });
