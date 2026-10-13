@@ -134,6 +134,7 @@ class LaunchTest {
             catch (error: Throwable) { throw AssertionError("Initial care refresh: member=${app.repository.state.value.member}, busy=${app.repository.state.value.busy}, offline=${app.repository.state.value.offline}, message=${app.repository.state.value.message}, signedIn=${app.store.tokens != null}", error) }
             compose.onNodeWithText("Plants").assertIsDisplayed()
             com.epaflix.fytorium.sites.runSiteScenario(compose, app)
+            com.epaflix.fytorium.species.runSpeciesCareScenario(compose, app)
             careScenarios(app, device)
         } finally { if (app.store.tokens != null) app.api.logout() }
     }

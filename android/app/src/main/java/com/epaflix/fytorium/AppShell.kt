@@ -24,18 +24,39 @@ import kotlinx.coroutines.withContext
     var tab by rememberSaveable { mutableStateOf("Today") }
     var about by rememberSaveable { mutableStateOf(false) }
     var sites by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) sites = false }
+    var unmatched by rememberSaveable { mutableStateOf(false) }
+    var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
+    var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
+    LaunchedEffect(loggedIn, careState?.member) {
+        val member = careState?.member
+        if (!loggedIn || member?.role == Role.sitter ||
+            (previousMemberId != null && member != null && previousMemberId != member.id)) {
+            sites = false; unmatched = false; careSpecies = null
+        }
+        if (!loggedIn) previousMemberId = null
+        else if (member != null) previousMemberId = member.id
+    }
     var taskView by rememberSaveable { mutableStateOf("today") }
     BackHandler(enabled = about) { about = false }
     Scaffold(bottomBar = {
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; unmatched = false; careSpecies = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        if (loggedIn && !updateRequired && tab == "More" && unmatched && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careSpecies) {
+                    com.epaflix.fytorium.species.SpeciesCareRoute(sitesApi, careSpecies, careState, sitesConnected,
+                        onBack = { if (careSpecies != null) careSpecies = null else unmatched = false },
+                        onChanged = { controller?.refresh() }, onSpecies = { careSpecies = it })
+                }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && tab == "More" && sites && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false })
@@ -48,7 +69,8 @@ import kotlinx.coroutines.withContext
                 if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
                     onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
                     onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } })
-                else key(careState.member) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails, onBack = { tab = "Today" }) }
+                else key(careState.member?.id) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails, onBack = { tab = "Today" },
+                    speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() }) }
             }
             return@Scaffold
         }
@@ -74,6 +96,7 @@ import kotlinx.coroutines.withContext
                     Text("More", style = MaterialTheme.typography.headlineMedium)
                     if (careState?.member != null && careState.member.role != Role.sitter) {
                         Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
+                        Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }
                     }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
                     Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }
