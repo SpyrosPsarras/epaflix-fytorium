@@ -48,7 +48,7 @@ import org.json.JSONObject
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantDetailScreen(state: CareState, detail: PlantDetail, onEdit: () -> Unit,
     onCommand: (String, JSONObject) -> Unit, onSpecies: () -> Unit, onUndo: (CareEvent) -> Unit, thumbnails: Thumbnails? = null,
-    enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}) {
+    enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null) {
     val plant = detail.plant
     val attributes = remember(plant.attributesJson) { JSONObject(plant.attributesJson) }
     val changes = remember(detail.speciesChangesJson) { JSONArray(detail.speciesChangesJson).mapObjects { change ->
@@ -67,6 +67,7 @@ import org.json.JSONObject
                     IconButton(onClick = { menu = true }, enabled = enabled) { Icon(Icons.Default.MoreVert, contentDescription = "Plant settings") }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Care settings") }, onClick = { menu = false; onCommand("care-form", JSONObject()) }, enabled = enabled && detail.careSettingsJson != null)
+                        onSpeciesCare?.let { open -> DropdownMenuItem(text = { Text("Species care") }, onClick = { menu = false; open() }) }
                         DropdownMenuItem(text = { Text("Species names") }, onClick = { menu = false; onSpecies() }, enabled = enabled)
                         DropdownMenuItem(text = { Text("Change species") }, onClick = { menu = false; onCommand("change-species", JSONObject()) }, enabled = enabled)
                         if (plant.status == "active") DropdownMenuItem(text = { Text("Move to graveyard") }, onClick = { menu = false; onCommand("graveyard", JSONObject()) }, enabled = enabled)

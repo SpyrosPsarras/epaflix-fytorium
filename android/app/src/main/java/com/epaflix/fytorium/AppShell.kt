@@ -33,28 +33,54 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val scope = rememberCoroutineScope()
     var feedSettings by rememberSaveable { mutableStateOf(false) }
     fun openFeedSettings() { feedSettings = true; scope.launch(Dispatchers.IO) { feed?.loadLocation() } }
-    LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) feedSettings = false }
     BackHandler(enabled = feedSettings) { feedSettings = false }
     var feedPlant by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableStateOf("Today") }
     var sites by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) sites = false }
+    var unmatched by rememberSaveable { mutableStateOf(false) }
+    var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
     var taskView by rememberSaveable { mutableStateOf("today") }
+    var about by rememberSaveable { mutableStateOf(false) }
+    var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
+    var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }
+    LaunchedEffect(loggedIn, careState?.member) {
+        val member = careState?.member
+        val memberChanged = previousMemberId != null && member != null && previousMemberId != member.id
+        val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
+        if (!loggedIn || memberChanged || member?.role == Role.sitter) {
+            if (!loggedIn || memberChanged || tab == "Journal") {
+                tab = "Today"; taskView = "today"; about = false
+            }
+            sites = false; unmatched = false; careSpecies = null; feedSettings = false
+            if (!loggedIn || memberChanged || becameSitter) feedPlant = null
+        }
+        if (!loggedIn) { previousMemberId = null; previousRole = null }
+        else if (member != null) { previousMemberId = member.id; previousRole = member.role }
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(feed, lifecycle, loggedIn, updateRequired, tab, taskView, feedSettings, careState?.member) {
         if (loggedIn && !updateRequired && careState != null && homeFeedVisible(tab, taskView, feedSettings)) feed?.poll(lifecycle)
     }
-    var about by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = about) { about = false }
     Scaffold(bottomBar = {
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; feedSettings = false; feedPlant = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        if (loggedIn && !updateRequired && tab == "More" && unmatched && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careSpecies) {
+                    com.epaflix.fytorium.species.SpeciesCareRoute(sitesApi, careSpecies, careState, sitesConnected,
+                        onBack = { if (careSpecies != null) careSpecies = null else unmatched = false },
+                        onChanged = { controller?.refresh() }, onSpecies = { careSpecies = it })
+                }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && feedSettings && feedState != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
             Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = { feedSettings = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back") }
@@ -86,8 +112,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             else -> openFeedSettings()
                         } }, onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
                         onUndo = { scope.launch(Dispatchers.IO) { if (feed?.undoRain() == true) controller?.refresh() } }) })
-                else key(careState.member) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
-                    onBack = { tab = "Today" }, initialPlant = feedPlant) }
+                else key(careState.member?.id, careState.member?.role == Role.sitter) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
+                    onBack = { tab = "Today"; feedPlant = null }, initialPlant = feedPlant,
+                    speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() }) }
             }
             return@Scaffold
         }
@@ -114,6 +141,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
                     if (careState?.member != null && careState.member.role != Role.sitter) {
                         Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
+                        Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }
                     }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
                     Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }

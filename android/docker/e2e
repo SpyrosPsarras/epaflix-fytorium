@@ -124,3 +124,4 @@ fi
 echo "E2E launch scenario PASS; real OIDC login enabled: $login"
 [ "$login" != true ] || echo 'A04 E2E PASS: late complete/undo, future snooze absent, airplane-mode cached Today, disabled writes, seed cleanup and logout wipe'
 [ "$login" != true ] || echo 'A08 E2E PASS: outdoor cold alert from fake weather, rain mark watered and undo verified through API history'
+[ "$login" != true ] || echo 'A10 E2E PASS: override 9 days, task Based on changes to override/9, reset restores original value/source'
