@@ -111,6 +111,16 @@ All entries below are pinned in the version catalog. Android's built-in Keystore
 | androidx.test runner and ext junit | Device instrumentation runner and AndroidJUnit4 |
 | uiautomator | Drive the real browser/OIDC provider outside the app process |
 
+## Plants and species
+
+A05 adds native editing to the baseline cached Plants view described above. Plant forms use a Material 3 birthday picker and exposed choice fields, field-level server validation, a plant-settings overflow menu and an exact-name delete dialog. Species changes require a separate Save species action. Plant requests have their own reading, saving and error state; validated connectivity and session permissions gate writes, not Today or care refreshes. Background detail reads preserve enabled fields and unsaved input.
+
+The Plants tab has a Material 3 app bar, text search by display/scientific name and the graveyard. Detail shows pot and placement attributes, schedules with Based on, care and species-change history, server-controlled Undo and Handle all. Add/edit includes the web's nickname, cultivar, birthday, health, site, pot, soil, size, growth stage, fertilizer and placement fields. Care settings support misting and per-task intervals. Restore requires a site; permanent deletion requires the exact display name. Species changes use the same search/confirmation flow as adding. Species names can be read, added, removed when owner-sourced and refreshed.
+
+`/api/choices` serves the web's plant choice lists and name languages, instead of duplicating them in the app. English, Norwegian and Greek searches use `/api/species/search`; the app accepts `requires_confirmation` directly, without calculating match confidence or fuzzy distance. Sitters receive only shared active plant headers from `/api/plants`, including plants without upcoming tasks. Private history/settings/species calls and editing controls are absent. Allowed care actions remain on Today/Upcoming.
+
+Plant detail JSON snapshots now also preserve complete attributes, care settings and species-change history. Room's table definition and schema version are unchanged. Offline reads use these snapshots and the existing thumbnail cache; no write is queued. Robolectric checks and light/dark references cover list, graveyard, add/edit, search/confirmation, detail/history, care settings, restore, repot, deletion confirmation and species names. `PlantsE2eTest` uses real OIDC and server APIs, adds through the native typo-confirmation flow, edits pot/placement, moves to the graveyard, restores and permanently deletes the synthetic plant. It cleans up only its exact synthetic fixture names.
+
 ## Android releases
 
 Only tag pushes matching `android-vX.Y.Z` on `SpyrosPsarras/epaflix-fytorium` can run the release job. Pull requests and forks cannot sign or publish. Actions are SHA-pinned. Only that job has `contents: write`; checkout does not persist the token.

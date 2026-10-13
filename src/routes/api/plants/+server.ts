@@ -4,12 +4,18 @@ import { now } from '$lib/server/clock';
 import { plantFields, plantSelect, readPlant, getPlant, writeError } from '$lib/server/plants';
 import { chosenSpecies, saveSpecies } from '$lib/server/species';
 import { kickNameFetch } from '$lib/server/names';
+import { visiblePlantSql } from '$lib/server/policy';
 import { checkOrigin } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, url }) => {
   if (!locals.identity) error(401, 'Login required');
   const status = url.searchParams.get('status') ?? 'active';
+  if (locals.identity.member.role === 'sitter') {
+    if (status !== 'active' || url.searchParams.get('count') === 'true' || url.searchParams.has('site_id')) error(403, 'Sitters can only list shared active plants.');
+    const result = await db().query(plantSelect + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$2')} ORDER BY display_name, p.id`, [locals.identity.household.id, locals.identity.member.id]);
+    return json(result.rows);
+  }
   if (!['active', 'graveyard'].includes(status)) error(422, 'Choose active or graveyard status.');
   if (url.searchParams.get('count') === 'true') {
     const result = await db().query('SELECT count(*)::integer AS count FROM plants WHERE household_id = $1 AND ($2::text IS NULL OR site_id::text = $2) AND status = $3', [locals.identity.household.id, url.searchParams.get('site_id'), status]);
