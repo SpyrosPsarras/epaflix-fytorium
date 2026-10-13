@@ -1,4 +1,5 @@
 import { error, isHttpError, isRedirect, json, type Handle } from '@sveltejs/kit';
+import { lt } from 'semver';
 import { building } from '$app/environment';
 import { startPushWorker } from '$lib/server/notifications/worker';
 import { startWeatherWorker } from '$lib/server/weather/worker';
@@ -7,7 +8,7 @@ import { startNameWorker } from '$lib/server/names';
 import { identity } from '$lib/server/auth';
 import { bearerDevice, startAppTokenMaintenance } from '$lib/server/app-auth';
 import { checkOrigin } from '$lib/server/sites';
-import { config } from '$lib/server/config';
+import { config, validAppVersion } from '$lib/server/config';
 import { authorizeRoute, sitterView } from '$lib/server/policy';
 import { requests, duration } from '$lib/server/metrics';
 
@@ -23,6 +24,16 @@ export const handle: Handle = async ({ event, resolve }) => {
   const start = performance.now();
   let status = 500;
   try {
+    const minimum = config().minAppVersion;
+    const version = event.request.headers.get('X-App-Version');
+    if (minimum && version !== null && (!validAppVersion(version) || lt(version, minimum))
+      && (event.url.pathname === '/api' || event.url.pathname.startsWith('/api/'))
+      && event.url.pathname !== '/api/meta' && !event.url.pathname.startsWith('/api/app/')) {
+      status = 426;
+      return json({ error: 'update_required', minAppVersion: minimum }, { status, headers: {
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+      } });
+    }
     if (event.route.id?.startsWith('/__test/') && !config().testClockEnabled) error(404, 'Not found');
     const operational = event.route.id === '/healthz' || event.route.id === '/metrics';
     event.locals.identity = operational ? null : await identity(event.cookies, event.request);

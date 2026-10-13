@@ -34,6 +34,7 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/import/planta/commit': { POST: ownerOnly(200) },
   '/api/journal': { GET: edit(200) },
   '/api/me': { GET: self(200) },
+  '/api/meta': { GET: self(200) },
   '/api/notifications/key': { GET: self(200) },
   '/api/notifications/settings': { GET: self(200), PUT: self(422) },
   '/api/notifications/subscriptions': { GET: self(200), POST: self(422) },
@@ -43,6 +44,8 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/photos/[id]/[variant]': { GET: edit(404) },
   '/api/photos/[id]/cover': { PUT: edit(404) },
   '/api/plants': { GET: edit(200), POST: edit(422) },
+  '/api/plants/count': { GET: self(200) },
+  '/api/plants/[id]/weather': { GET: edit(200) },
   '/api/plants/[id]': { GET: shared(200), PUT: edit(404), DELETE: edit(404) },
   '/api/plants/[id]/care-settings': { GET: edit(404), PUT: edit(422) },
   '/api/plants/[id]/graveyard': { POST: edit(404) },
@@ -186,7 +189,7 @@ for (const transport of transports) {
     test.each(labels.map((label, index) => ({ label, index })))(`${method} ${route} via ${transport}: $label`, async ({ index }) => {
       const expected = expectations[route]?.[method]?.[index];
       expect(expected, 'Missing authorization expectation for ' + method + ' ' + route).toBeDefined();
-      const usePlant = route === '/api/plants/[id]' && method === 'GET' || route.includes('/tasks');
+      const usePlant = route === '/api/plants/[id]' && method === 'GET' || route.includes('/tasks') || route.endsWith('/weather');
       const path = route.replace('[id]', usePlant ? plant : ghost).replace('[gbifKey]', '910001').replace('[taskType]', 'water').replace('[action]', 'complete').replace('[variant]', 'thumb').replace('[field]', 'invalid_field').replace('[source]', 'perenual');
       // Logout requires bearer proof and revokes it. Use a fresh device so coverage stays independent.
       const headers = transport === 'bearer' && route === '/api/app/logout' && index < 4
@@ -200,7 +203,7 @@ for (const transport of transports) {
 
 test('bearer and cookie identities return the same sitter projections, and both deny unknown routes', async () => {
   for (let index = 0; index < labels.length; index++) {
-    for (const path of ['/api/me', '/api/feed', '/api/tasks', '/api/plants/' + plant]) {
+    for (const path of ['/api/me', '/api/meta', '/api/plants/count', '/api/feed', '/api/tasks', '/api/plants/' + plant]) {
       const cookie = await fetch(harness.base + path, { headers: authHeaders('cookie', index) });
       const bearer = await fetch(harness.base + path, { headers: authHeaders('bearer', index) });
       expect(bearer.status).toBe(cookie.status);

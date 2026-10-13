@@ -35,6 +35,8 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 
 FROM node:22-alpine AS runtime
+ARG SERVER_VERSION=dev
+ENV SERVER_VERSION=$SERVER_VERSION
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 BODY_SIZE_LIMIT=41M
 WORKDIR /app
 COPY --from=migrations /usr/local/bin/dbmate /usr/local/bin/dbmate

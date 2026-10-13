@@ -289,3 +289,14 @@ One member's registered Fytorium app installation. Browser sessions are not devi
 **Device token**:
 A credential belonging to one app device that grants only its member's current household role and shares. Revoking the device or removing the member ends that access; a fresh invite does not restore old device tokens.
 _Avoid_: App password, API key
+
+## Native client compatibility
+
+**App metadata**:
+The member's role, the household's calendar date and timezone, the server version and the optional minimum app version. These facts are available to every member, including sitters; the calendar date agrees with schedules and photo validation.
+
+**Minimum app version**:
+The oldest native app release the household server supports, or no minimum when every release remains supported. It limits native app requests, not web access, and never prevents an old app from checking compatibility or logging out.
+
+**Visible plant count**:
+The number of active household plants a member may read, independent of task preferences. For sitters, it includes only their shared active plants; graveyard plants never count.

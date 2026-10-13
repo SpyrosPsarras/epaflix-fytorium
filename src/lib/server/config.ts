@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { building } from '$app/environment';
 import webPush from 'web-push';
+import { valid } from 'semver';
 
 function required(name: string): string {
   const value = env[name];
@@ -14,6 +15,10 @@ function positiveInteger(name: string, fallback: number) {
   return value;
 }
 
+export function validAppVersion(value: string) {
+  return valid(value) !== null && /^\d/.test(value) && !/\s/.test(value);
+}
+
 export function config() {
   const testClockEnabled = env.FYTORIUM_TEST_CLOCK === 'true';
   if (testClockEnabled && env.NODE_ENV !== 'test') {
@@ -22,11 +27,15 @@ export function config() {
   const plantaTestImageOrigin = env.PLANTA_TEST_IMAGE_ORIGIN ?? '';
   if (plantaTestImageOrigin && (!testClockEnabled || env.NODE_ENV !== 'test')) throw new Error('PLANTA_TEST_IMAGE_ORIGIN requires the test clock and NODE_ENV=test');
   if (plantaTestImageOrigin && new URL(plantaTestImageOrigin).protocol !== 'https:') throw new Error('PLANTA_TEST_IMAGE_ORIGIN requires HTTPS');
+  const minAppVersion = env.MIN_APP_VERSION || null;
+  if (minAppVersion && !validAppVersion(minAppVersion)) throw new Error('Invalid configuration: MIN_APP_VERSION must be a semantic version such as 1.2.3');
   const householdTimezone = env.HOUSEHOLD_TIMEZONE ?? 'Europe/Oslo';
   try { new Intl.DateTimeFormat('en', { timeZone: householdTimezone }); }
   catch { throw new Error(`Invalid configuration: HOUSEHOLD_TIMEZONE '${householdTimezone}' is not a valid time zone`); }
   return {
     testClockEnabled,
+    minAppVersion,
+    serverVersion: env.SERVER_VERSION || 'dev',
     vapidPublicKey: env.VAPID_PUBLIC_KEY ?? '',
     vapidPrivateKey: env.VAPID_PRIVATE_KEY ?? '',
     vapidSubject: env.VAPID_SUBJECT ?? '',

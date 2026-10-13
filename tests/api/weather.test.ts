@@ -127,6 +127,11 @@ test('cached weather changes outdoor tasks only and raises deduped cold-spell al
   await request('/__test/clock', 'POST', { action: 'advance', milliseconds: 3600000 });
   await tick();
   expect((await report()).alerts.map((event: { plant_id: string }) => event.plant_id).sort()).toEqual([outdoorPot, outdoorGround].sort());
+  for (const plant of [outdoorPot, outdoorGround]) {
+    const response = await request('/api/plants/' + plant + '/weather');
+    expect(response.status).toBe(200);
+    expect((await response.json()).alerts.map((event: { plant_id: string }) => event.plant_id)).toEqual([plant]);
+  }
   expect((await report()).alerts.find((event: { plant_id: string }) => event.plant_id === outdoorGround).payload.thresholdC).toBe(4.4);
 });
 
