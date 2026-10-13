@@ -4,6 +4,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.waitForNode
+import com.epaflix.fytorium.waitForState
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -45,7 +46,7 @@ fun runFeedScenarios(app: FytoriumApplication, compose: ComposeContentTestRule) 
         worker.setRequestProperty("Content-Type", "application/json")
         try { assertEquals(200, worker.responseCode) } finally { worker.disconnect() }
         app.care.refresh()
-        compose.waitUntil(45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.any { it.title == nickname && it.kind == "weather_alerts" } }
+        compose.waitForState("Cold weather alert loaded", 45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.any { it.title == nickname && it.kind == "weather_alerts" } }
         val cold = app.feed.state.value.cards.first { it.title == nickname && it.kind == "weather_alerts" }
         compose.waitForNode(hasTestTag("feed-${cold.id}")).performScrollTo()
         compose.onNode(hasText("Low temperature 0", substring = true) and hasAnyAncestor(hasTestTag("feed-${cold.id}"))).assertIsDisplayed()
@@ -53,12 +54,12 @@ fun runFeedScenarios(app: FytoriumApplication, compose: ComposeContentTestRule) 
         compose.waitForNode(hasTestTag("feed-${rainCard.id}")).performScrollTo()
         val count = app.feed.state.value.weather!!.rain!!.plantCount
         compose.waitForNode(hasText("Mark $count outdoor plants watered") and isEnabled()).performScrollTo().performClick()
-        compose.waitUntil(45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.weather?.lastBatchId != null }
+        compose.waitForState("Rain watering batch loaded", 45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.weather?.lastBatchId != null }
         compose.waitForNode(hasText("Undo rain watering") and isEnabled()).performScrollTo().assertIsDisplayed()
         val watered = JSONArray(json("/api/plants/$plantId/history"))
         assertTrue("Rain batch absent from plant history", (0 until watered.length()).any { watered.getJSONObject(it).optString("task_type") == "water" && !watered.getJSONObject(it).isNull("batch_id") && watered.getJSONObject(it).isNull("undone_at") })
         compose.onNodeWithText("Undo rain watering").performClick()
-        compose.waitUntil(45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.weather?.lastBatchId == null }
+        compose.waitForState("Rain watering undo loaded", 45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.weather?.lastBatchId == null }
         compose.waitForNode(hasText("Mark $count outdoor plants watered") and isEnabled()).performScrollTo().assertIsDisplayed()
         val undone = JSONArray(json("/api/plants/$plantId/history"))
         assertTrue("Server did not undo rain watering", (0 until undone.length()).any { !undone.getJSONObject(it).isNull("batch_id") && !undone.getJSONObject(it).isNull("undone_at") })
@@ -69,6 +70,6 @@ fun runFeedScenarios(app: FytoriumApplication, compose: ComposeContentTestRule) 
         json("/api/feed/settings", "PUT", settings)
         json("/api/household/location", "PUT", location)
         app.care.refresh()
-        compose.waitUntil(30_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.none { it.title == nickname } }
+        compose.waitForState("Feed fixture removed", 30_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.none { it.title == nickname } }
     }
 }

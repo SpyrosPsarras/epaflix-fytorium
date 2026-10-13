@@ -18,16 +18,16 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
     }
     fun click(text: String) {
         // Lazy rows do not exist until scrolled into view.
-        compose.waitUntil(30_000) { runCatching { scroll(hasText(text)).assertIsEnabled(); true }.getOrDefault(false) }
+        compose.waitForState("Plant action $text enabled", 30_000) { runCatching { scroll(hasText(text)).assertIsEnabled(); true }.getOrDefault(false) }
         compose.onNodeWithText(text).performClick()
     }
     fun input(label: String, value: String) {
         // Opening a form can finish its options read after the preceding click.
-        compose.waitUntil(30_000) { runCatching { scroll(hasText(label)).assertIsDisplayed().assertIsEnabled(); true }.getOrDefault(false) }
+        compose.waitForState("Plant input $label enabled", 30_000) { runCatching { scroll(hasText(label)).assertIsDisplayed().assertIsEnabled(); true }.getOrDefault(false) }
         compose.onNodeWithText(label).performTextReplacement(value)
     }
     fun settings() {
-        compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Plant settings")).assertIsEnabled(); true }.getOrDefault(false) }
+        compose.waitForState("Plant settings enabled", 30_000) { runCatching { scroll(hasContentDescription("Plant settings")).assertIsEnabled(); true }.getOrDefault(false) }
         compose.onNodeWithContentDescription("Plant settings").performClick()
     }
     fun json(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
@@ -38,7 +38,7 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
     var siteId: String? = null
     var failure: Throwable? = null
     try {
-        compose.waitUntil(30_000) { app.repository.state.value.member != null && !app.repository.state.value.busy }
+        compose.waitForState("Plant scenario initial refresh", 30_000) { app.repository.state.value.member != null && !app.repository.state.value.busy }
         // Recover only this scenario's fixtures, including a plant interrupted in the graveyard.
         for (status in listOf("active", "graveyard")) JSONArray(json("/api/plants", query = mapOf("status" to status))).let { rows ->
             (0 until rows.length()).map { rows.getJSONObject(it) }.filter { it.optString("nickname") in listOf("Synthetic A05 sprout", "Synthetic A05 edited sprout") }.forEach {
@@ -60,7 +60,7 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         click("Site")
         compose.onNodeWithText("Synthetic A05 site").performClick()
         click("Save plant")
-        compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 sprout" && !app.repository.state.value.busy }
+        compose.waitForState("Added plant detail", 30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 sprout" && !app.repository.state.value.busy }
         val plantId = app.repository.state.value.detail!!.plant.id
         click("Edit plant")
         input("Nickname", "Synthetic A05 edited sprout")
@@ -70,25 +70,25 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         input("Window distance in cm", "90")
         click("Near AC")
         click("Save plant")
-        compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 edited sprout" && !app.repository.state.value.busy }
+        compose.waitForState("Edited plant detail", 30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 edited sprout" && !app.repository.state.value.busy }
         val edited = JSONObject(json("/api/plants/$plantId"))
         assertEquals("ceramic", edited.getString("pot_type")); assertEquals(23, edited.getInt("pot_size_cm"))
         assertEquals(90, edited.getInt("window_distance_cm")); assertTrue(edited.getBoolean("near_ac")); assertEquals(siteId, edited.getString("site_id"))
         settings()
         click("Move to graveyard")
-        compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.status == "graveyard" && !app.repository.state.value.busy }
+        compose.waitForState("Plant moved to graveyard", 30_000) { app.repository.state.value.detail?.plant?.status == "graveyard" && !app.repository.state.value.busy }
         compose.onNodeWithText("Handle all tasks").assertDoesNotExist()
         settings()
         click("Restore plant")
         click("Restore to active plants")
-        compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.status == "active" && !app.repository.state.value.busy }
+        compose.waitForState("Plant restored to active", 30_000) { app.repository.state.value.detail?.plant?.status == "active" && !app.repository.state.value.busy }
         assertEquals("active", JSONObject(json("/api/plants/$plantId")).getString("status"))
         settings()
         click("Delete plant")
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
         compose.onNodeWithText("Type the plant name to confirm").performTextInput("Synthetic A05 edited sprout")
         compose.onNodeWithText("Permanently delete plant").performClick()
-        compose.waitUntil(30_000) { app.repository.state.value.plants.none { it.id == plantId } && app.repository.state.value.detail == null && !app.repository.state.value.busy }
+        compose.waitForState("Plant deleted and detail cleared", 30_000) { app.repository.state.value.plants.none { it.id == plantId } && app.repository.state.value.detail == null && !app.repository.state.value.busy }
         println("A05 E2E PASS: typo search, explicit confirmation, native add/edit with pot and placement, graveyard/restore, confirmed permanent deletion")
     } catch (error: Throwable) { failure = error; throw error } finally {
         val cleanup = runCatching {
