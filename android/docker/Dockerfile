@@ -1,5 +1,5 @@
 FROM eclipse-temurin:17.0.14_7-jdk-jammy@sha256:23f74f7840a6948f9da3870876f475c4febeb365757891a6a9ebda38a42cf53f AS sdk
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip libglu1-mesa libpulse0 libnss3 libx11-6 libxcb1 libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 dnsmasq-base iproute2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip libglu1-mesa libpulse0 libnss3 libx11-6 libxcb1 libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 dnsmasq-base dnsutils iproute2 && rm -rf /var/lib/apt/lists/*
 ENV ANDROID_HOME=/opt/android ANDROID_SDK_ROOT=/opt/android GRADLE_USER_HOME=/work/android/.gradle-cache
 ENV PATH=/opt/gradle/bin:/opt/android/cmdline-tools/12.0/bin:/opt/android/platform-tools:/opt/android/emulator:$PATH
 COPY fetch-sdk /usr/local/bin/fetch-sdk

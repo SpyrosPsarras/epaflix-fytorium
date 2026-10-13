@@ -1,6 +1,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { Identity } from './auth';
 import { db } from './db';
+import { requireUndo } from './undo-policy';
 import { isUuid } from './plants';
 import { taskTypes } from '$lib/schedule/engine';
 import type { TaskList } from '$lib/tasks';
@@ -34,15 +35,7 @@ export async function requireSharedPlant(identity: Identity, plantId: string) {
   if (!result.rowCount) error(404, 'Plant not found');
 }
 export async function requireOwnUndo(identity: Identity, id: string, batch = false) {
-  if (identity.member.role !== 'sitter') return;
-  if (!isUuid(id)) error(404, 'Care action not found');
-  const result = await db().query(batch
-    ? 'SELECT by_member, plant_id, action FROM care_actions WHERE request_id = $1 AND household_id = $2'
-    : 'SELECT by_member, plant_id, previous_pot FROM care_events WHERE id = $1 AND household_id = $2', [id, identity.household.id]);
-  const action = result.rows[0];
-  if (!action || !action.plant_id) error(404, 'Care action not found');
-  await requireSharedPlant(identity, action.plant_id);
-  if (action.by_member !== identity.member.id || action.previous_pot || (batch && action.action !== 'complete-all')) error(403, 'Sitters can undo only their own task actions');
+  if (identity.member.role === 'sitter') await requireUndo(identity, id, batch);
 }
 
 // Public handlers retain their own origin, login-transaction, token and test-mode checks.
@@ -133,8 +126,9 @@ function record(resource: unknown): Record<string, unknown> {
   return resource && typeof resource === 'object' && !Array.isArray(resource) ? resource as Record<string, unknown> : {};
 }
 function sitterEvent(resource: unknown) {
-  return fields(record(resource), ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind',
-    'occurred_at', 'occurred_on', 'batch_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id']);
+  const event = record(resource);
+  return fields(event, ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind',
+    'occurred_at', 'occurred_on', 'batch_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo']);
 }
 function sitterTask(resource: unknown) {
   const task = record(resource);

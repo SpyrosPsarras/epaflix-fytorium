@@ -16,12 +16,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        session = (application as FytoriumApplication).session
+        val app = application as FytoriumApplication
+        session = app.session
+        val care = app.care
         setContent {
             val state by session.state.collectAsState()
+            val careState by app.repository.state.collectAsState()
             FytoriumTheme {
-                AppShell(state.loggedIn, state.updateRequired, state.busy, state.message,
+                AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
                     onLogin = { login() }, onLogout = session::logout,
+                    careState = careState, controller = care, thumbnails = app.thumbnails,
                     onCopyDiagnostics = {
                         getSystemService(ClipboardManager::class.java).setPrimaryClip(
                             ClipData.newPlainText("Fytorium diagnostics", session.copyDiagnostics()))
@@ -30,6 +34,11 @@ class MainActivity : ComponentActivity() {
         }
         if (savedInstanceState == null && intent.data != null) forwardRedirect(intent)
         session.start()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        (application as FytoriumApplication).care.refresh()
     }
 
     private fun login() {

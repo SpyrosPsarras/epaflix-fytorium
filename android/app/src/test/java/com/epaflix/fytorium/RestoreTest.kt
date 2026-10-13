@@ -70,6 +70,25 @@ class RestoreTest {
         } finally { controller.destroy() }
     }
 
+    @Test fun unsuccessfulMetaChecksCannotClearAnUpdateRequirement() {
+        val session = app.session
+        server.enqueue(MockResponse().setResponseCode(426))
+        session.start()
+        assertEquals("/api/meta", nextRequest().path)
+        awaitCondition { !session.state.value.busy && session.state.value.updateRequired }
+        for (status in listOf(503, 404, 200)) {
+            app.api.loginUrl()
+            val state = app.store.pending!!.state
+            server.enqueue(MockResponse().setResponseCode(400))
+            server.enqueue(MockResponse().setResponseCode(status).setBody("""{"minAppVersion":"0.0.0"}"""))
+            session.handleRedirect("$REDIRECT_URI?code=synthetic-code&state=$state")
+            assertEquals("/api/app/token", nextRequest().path)
+            assertEquals("/api/meta", nextRequest().path)
+            awaitCondition { !session.state.value.busy }
+            assertEquals(status != 200, session.state.value.updateRequired)
+        }
+    }
+
     @Test fun restoredActivityQueuesNewRedirectDuringVersionCheck() {
         val releaseVersion = CountDownLatch(1)
         server.dispatcher = object : Dispatcher() {

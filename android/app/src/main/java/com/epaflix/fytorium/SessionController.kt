@@ -63,9 +63,13 @@ class SessionController(private val store: CredentialStore, private val api: Api
 
     private suspend fun checkVersionNow() {
         val required = withContext(Dispatchers.IO) {
-            api.request("/api/meta").use { requiresUpdate(it.code, it.body?.string().orEmpty(), BuildConfig.VERSION_NAME) }
+            api.request("/api/meta").use {
+                if (it.code == 426) true
+                else if (it.isSuccessful) requiresUpdate(it.code, it.body?.string().orEmpty(), BuildConfig.VERSION_NAME)
+                else null
+            }
         }
-        uiState.update { it.copy(updateRequired = required) }
+        if (required != null) uiState.update { it.copy(updateRequired = required) }
     }
 
     private fun work(action: suspend () -> Unit) {

@@ -238,7 +238,7 @@ test('graveyard hides tasks, active lists and counts, retains history and photos
   expect(await read(path + '/tasks')).toEqual({});
   expect((await owner.request(path + '/tasks/water/complete', 'POST', { request_id: randomUUID() })).status).toBe(409);
   expect((await owner.request('/api/care-events/' + done.event.id + '/undo', 'POST')).status).toBe(409);
-  expect(await read(path + '/history')).toEqual(before);
+  expect(await read(path + '/history')).toEqual(before.map((event: Record<string, unknown>) => ({ ...event, can_undo: false })));
   expect(await read(path + '/photos')).toContainEqual(expect.objectContaining({ id: photo.id }));
   expect((await owner.request('/api/photos/' + photo.id + '/original')).status).toBe(200);
   expect(await (await owner.request('/plants/' + plant.id)).text()).toContain('In the graveyard since 2026-06-01');
