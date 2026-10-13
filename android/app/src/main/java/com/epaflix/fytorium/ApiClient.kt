@@ -19,6 +19,8 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
     }
     // A transport retry could replay a refresh token already consumed by the server.
     private val http = OkHttpClient.Builder().retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
+        // Retire idle sockets before Node's five-second timeout without replaying a failed write.
+        .connectionPool(ConnectionPool(5, 1, TimeUnit.SECONDS))
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).build()
     // Single-use grants cannot retry if a pooled socket expires during browser login.
     private val tokenHttp = http.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()

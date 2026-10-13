@@ -19,9 +19,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}) {
-    var page by rememberSaveable { mutableStateOf("list") }
-    var id by rememberSaveable { mutableStateOf<String?>(null) }
+@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, initialPlant: String? = null) {
+    var page by rememberSaveable { mutableStateOf(if (initialPlant == null) "list" else "detail") }
+    var id by rememberSaveable { mutableStateOf(initialPlant) }
     var graveyard by remember { mutableStateOf<List<Plant>>(emptyList()) }
     var options by remember { mutableStateOf<PlantOptions?>(null) }
     var sites by remember { mutableStateOf<List<PlantSite>>(emptyList()) }
