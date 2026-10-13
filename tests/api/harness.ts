@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createPushService } from '../push-service.mjs';
 import { createPhotoStorage } from './photo-storage';
 import { identificationResponse } from '../identification-fixture';
@@ -186,7 +186,37 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     return { callback, callbackUrl, transactionCookie, cookie, request };
   }
 
+  async function appLogin(subject = 'synthetic-owner', invite?: string) {
+    provider.setSubject(subject, { name: 'Test member' });
+    const verifier = randomBytes(32).toString('base64url');
+    const state = randomBytes(24).toString('base64url');
+    const params = new URLSearchParams({ app: 'android', redirect_uri: 'com.epaflix.fytorium:/oauth2redirect',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state });
+    const pending = invite ? await fetch(base + '/invite/' + invite, { redirect: 'manual' }) : null;
+    const pendingCookie = pending?.headers.getSetCookie()[0]?.split(';')[0] ?? '';
+    const start = await fetch(base + '/auth/login?' + params, { redirect: 'manual' });
+    expect(start.status).toBe(303);
+    const transactionCookie = start.headers.getSetCookie().find(value => value.startsWith('fytorium_login='))!.split(';')[0];
+    const authorization = await fetch(start.headers.get('location')!, { redirect: 'manual' });
+    const callbackUrl = authorization.headers.get('location')!;
+    const callback = await fetch(callbackUrl, { redirect: 'manual', headers: { cookie: [transactionCookie, pendingCookie].filter(Boolean).join('; ') } });
+    const location = new URL(callback.headers.get('location')!, base);
+    return { callback, callbackUrl, transactionCookie, location, verifier, state, code: location.searchParams.get('code') };
+  }
+
+  function token(body: unknown) {
+    return fetch(base + '/api/app/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  }
+
+  async function appDevice(subject = 'synthetic-owner') {
+    const login = await appLogin(subject);
+    const response = await token({ grant_type: 'authorization_code', code: login.code, code_verifier: login.verifier, device_name: 'Synthetic phone' });
+    expect(response.status).toBe(200);
+    return await response.json() as { access_token: string; refresh_token: string; device_id: string; expires_in: number; token_type: string };
+  }
+
   return {
+    appLogin, appDevice, token,
     push,
     vapidPublicKey: vapid.publicKey,
     get base() { return base; },

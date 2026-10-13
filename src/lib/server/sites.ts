@@ -1,8 +1,10 @@
 import { error, isHttpError, json } from '@sveltejs/kit';
 import { readJsonObject } from './json';
+import { bearerDevice } from './app-auth';
 import { locations, lightLevels, humidityLevels, type SiteInput } from '$lib/sites';
 
 export function checkOrigin(request: Request) {
+  if (bearerDevice(request)) return;
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin) error(403, 'Cross-origin request refused');
 }

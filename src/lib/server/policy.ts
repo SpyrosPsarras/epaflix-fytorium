@@ -49,7 +49,7 @@ export async function requireOwnUndo(identity: Identity, id: string, batch = fal
 export function publicRoute(route: string) {
   if (route === '/__test/care-quota/[source]') return false;
   return route.startsWith('/auth/') || route === '/invite/[token]' || route === '/healthz'
-    || route === '/metrics' || route.startsWith('/__test/');
+    || route === '/metrics' || route === '/api/app/token' || route.startsWith('/__test/');
 }
 const policies: Record<string, RoutePolicy> = {
   '/': { action: 'tasks', projection: 'home' },
@@ -64,6 +64,7 @@ const policies: Record<string, RoutePolicy> = {
   '/api/import/planta': 'owner', '/api/import/planta/[id]': 'owner', '/api/import/planta/commit': 'owner',
   '/api/household/settings': { read: 'edit', write: 'owner' },
   '/api/household/location': { read: 'edit', write: 'owner' },
+  '/api/app/logout': { action: 'self', projection: 'self' },
   '/api/me': { action: 'self', projection: 'self' }, '/settings/notifications': { action: 'self', projection: 'self' },
   '/api/notifications/key': { action: 'self', projection: 'self' }, '/api/notifications/settings': { action: 'self', projection: 'self' },
   '/api/notifications/subscriptions': { action: 'self', projection: 'self' },

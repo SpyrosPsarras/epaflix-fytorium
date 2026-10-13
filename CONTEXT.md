@@ -280,3 +280,12 @@ A pure, computed-on-read result with kind, reason and the inputs and sources use
 
 **Effective light**:
 warning.effective_light@1 uses the ordered scale full_shade, part_shade, part_sun, full_sun. A site or plant grow light adds one step, counted once when both are on. Window distance above 200 cm subtracts one step. Unknown distance is neutral. Both adjustments apply together, then clamp to the scale's endpoints. A gap of at least one step from the effective care profile's light need warns too dark or too bright. Missing site or species light cannot produce a light mismatch. These estimates prompt a setup check, not a measurement of actual light.
+
+## App access
+
+**Device**:
+One member's registered Fytorium app installation. Browser sessions are not devices. Its access can be withdrawn without removing the member or their other devices.
+
+**Device token**:
+A credential belonging to one app device that grants only its member's current household role and shares. Revoking the device or removing the member ends that access; a fresh invite does not restore old device tokens.
+_Avoid_: App password, API key
