@@ -136,6 +136,7 @@ test.each([
   ['/__test/clock', 'GET'], ['/__test/clock', 'POST'],
   ['/%5F_test/clock', 'GET'], ['/%5F_test/care-quota/perenual', 'DELETE'],
   ['/__test/care-worker', 'POST'], ['/__test/weather-worker', 'POST'],
+  ['/__test/app-maintenance', 'POST'], ['/%5F_test/app-maintenance', 'POST'],
   ['/__test/push-worker', 'POST'], ['/__test/care-quota/perenual', 'DELETE'],
 ])('production hides %s %s before authorization', async (path, method) => {
   const owner = await login();
