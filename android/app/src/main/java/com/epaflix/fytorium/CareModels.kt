@@ -37,8 +37,10 @@ data class TaskSection(val key: String, val label: String, val tasks: List<CareT
 data class TaskList(val today: String, val view: String, val settings: TaskSettings,
                     val groups: Map<String, List<CareTask>>, val sections: List<TaskSection>)
 data class Plant(val id: String, val displayName: String, val scientificName: String, val status: String,
-                 val siteName: String?, val coverPhotoId: String?, val potType: String?, val potSizeCm: Int?, val soilType: String?)
-data class PlantDetail(val plant: Plant, val history: List<CareEvent>, val tasks: Map<String, CareTask>)
+                 val siteName: String?, val coverPhotoId: String?, val potType: String?, val potSizeCm: Int?, val soilType: String?,
+                 val attributesJson: String = "{}")
+data class PlantDetail(val plant: Plant, val history: List<CareEvent>, val tasks: Map<String, CareTask>,
+                       val careSettingsJson: String? = null, val speciesChangesJson: String = "[]")
 data class PotDetails(val potType: String, val potSizeCm: Int?, val soilType: String) {
     fun json() = JSONObject().put("pot_type", potType).put("pot_size_cm", potSizeCm ?: JSONObject.NULL).put("soil_type", soilType)
 }
@@ -70,7 +72,7 @@ internal fun parseTaskList(json: String): TaskList {
 }
 internal fun parsePlant(j: JSONObject) = Plant(j.getString("id"), j.getString("display_name"), j.getString("scientific_name"),
     j.getString("status"), j.nullable("site_name"), j.nullable("cover_photo_id"), j.nullable("pot_type"),
-    if (j.isNull("pot_size_cm")) null else j.getInt("pot_size_cm"), j.nullable("soil_type"))
+    if (j.isNull("pot_size_cm")) null else j.getInt("pot_size_cm"), j.nullable("soil_type"), j.toString())
 internal fun parseSchedule(j: JSONObject): Map<String, CareTask> = buildMap {
     j.keys().asSequence().filter { it != "customTasks" }.forEach { key -> put(key, parseTask(j.getJSONObject(key))) }
     j.optJSONObject("customTasks")?.let { custom -> custom.keys().forEach { key -> put(key, parseTask(custom.getJSONObject(key))) } }

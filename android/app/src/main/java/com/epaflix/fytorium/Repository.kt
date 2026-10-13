@@ -5,10 +5,12 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import com.epaflix.fytorium.plants.*
 
 data class CareState(val member: Member? = null, val today: TaskList? = null, val upcoming: TaskList? = null,
                      val plants: List<Plant> = emptyList(), val detail: PlantDetail? = null,
@@ -22,7 +24,7 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
     fun offlineBanner(): String = updatedTime()?.let { "Offline, last updated $it" } ?: "Offline, not updated yet"
     fun serverBanner(): String = "Fytorium isn't responding. " + (updatedTime()?.let { "Showing data from $it" } ?: "Not updated yet")
 }
-private class ApiFailure(val status: Int, message: String) : Exception(message)
+private class ApiFailure(val status: Int, message: String, val errors: Map<String, String> = emptyMap()) : Exception(message)
 private class OfflineFailure : IOException("Offline")
 
 // Blocking IO entry points run on Dispatchers.IO, shared by foreground and WorkManager.
@@ -30,11 +32,26 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                  private val clock: () -> Long = System::currentTimeMillis, private val wipeThumbnails: () -> Unit = {}) {
     private val monitor = Any()
     private val workLock = Any()
+    private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var generation = 0
     private val requestIds = mutableMapOf<String, String>()
     private fun requestId(key: String) = synchronized(monitor) { requestIds.getOrPut(key) { UUID.randomUUID().toString() } }
     private val mutable = MutableStateFlow(CareState())
     val state = mutable.asStateFlow()
+    private val plantMutable = MutableStateFlow(PlantsRequestState(online = connected()))
+    val plantState = plantMutable.asStateFlow()
+    fun clearPlantErrors() = synchronized(monitor) { plantMutable.value = plantMutable.value.copy(errors = emptyMap()) }
+    private fun plantFailed(error: Exception, epoch: Int, writing: Boolean = false) = synchronized(monitor) {
+        if (epoch != generation) return@synchronized
+        val failure = classifyNetworkFailure(connected(), (error as? ApiFailure)?.status)
+        plantMutable.value = plantMutable.value.copy(online = !failure.offline,
+            blocked = error is ApiFailure && (error.status in listOf(401, 426) || (writing && error.status == 403)),
+            errors = (error as? ApiFailure)?.errors?.takeIf { it.isNotEmpty() }
+                ?: mapOf("_form" to if (writing && error is ApiFailure && error.status == 403)
+                    "Your permissions no longer allow this change. Refresh your account before editing."
+                    else (error.message ?: "Could not reach Fytorium. Try again.")))
+        if (error is ApiFailure && error.status == 426) mutable.value = mutable.value.copy(updateRequired = true)
+    }
     private fun read(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
         api.request(path, method = method, body = body, query = query).use {
             val text = it.body?.string().orEmpty()
@@ -42,7 +59,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 val error = runCatching { JSONObject(text) }.getOrNull()
                 throw ApiFailure(it.code, error?.optString("message")?.takeIf(String::isNotBlank)
                     ?: error?.optJSONObject("errors")?.let { fields -> fields.keys().asSequence().joinToString("\n") { key -> "$key: ${fields.getString(key)}" } }
-                    ?: "Could not update Fytorium. Try again.")
+                    ?: "Could not update Fytorium. Try again.",
+                    error?.optJSONObject("errors")?.let { fields -> fields.keys().asSequence().associateWith { key -> fields.optString(key) } } ?: emptyMap())
             }
             text
         }
@@ -59,8 +77,10 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         generation++
         cache.wipe(); wipeThumbnails(); requestIds.clear()
         mutable.value = CareState()
+        plantMutable.value = PlantsRequestState(online = connected())
     }
     fun connectivityChanged(online: Boolean) = synchronized(monitor) {
+        plantMutable.value = plantMutable.value.copy(online = online)
         // A connected transport does not prove the server is reachable. Only refresh clears offline.
         if (!online) mutable.value = mutable.value.copy(offline = true, serverUnavailable = false, message = "Actions are unavailable offline. Reconnect and refresh to make changes.")
     }
@@ -77,8 +97,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             }
             val today = read("/api/tasks", query = mapOf("view" to "today"))
             val upcoming = read("/api/tasks", query = mapOf("view" to "upcoming"))
-            // The server denies plant lists/history to sitters. Shared headers come from task rows.
-            val plants = if (member.role != Role.sitter) read("/api/plants") else JSONArray().toString()
+            // Sitters receive the server's shared active header projection, including plants without due tasks.
+            val plants = read("/api/plants")
             parseTaskList(today); parseTaskList(upcoming); JSONArray(plants).mapObjects(::parsePlant)
             synchronized(monitor) {
                 if (epoch == generation) {
@@ -99,26 +119,56 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             updateRequired = mutable.value.updateRequired || (error is ApiFailure && error.status == 426),
             message = if (error is ApiFailure && error.status < 500) error.message else null)
     }
-    fun openPlant(id: String): PlantDetail? = synchronized(workLock) {
+    // Today owns the loading/error state for this read, not Plants or the shared care gate.
+    fun loadPot(id: String): Plant = synchronized(workLock) {
+        requireSafeId(id)
+        if (!connected()) throw OfflineFailure()
+        parsePlant(JSONObject(read("/api/plants/$id")))
+    }
+    private fun refreshSchedules(epoch: Int) = synchronized(workLock) {
+        val member = synchronized(monitor) { state.value.member?.takeIf { epoch == generation } } ?: return@synchronized
+        try {
+            if (!connected()) throw OfflineFailure()
+            val today = read("/api/tasks", query = mapOf("view" to "today"))
+            val upcoming = read("/api/tasks", query = mapOf("view" to "upcoming"))
+            parseTaskList(today); parseTaskList(upcoming)
+            synchronized(monitor) { if (epoch == generation) {
+                cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming), clock())
+                mutable.value = mutable.value.copy(today = parseTaskList(today), upcoming = parseTaskList(upcoming))
+            } }
+        } catch (error: Exception) {
+            synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(message = error.message ?: "Could not refresh care tasks. Try again.") }
+        }
+    }
+    fun openPlant(id: String, full: Boolean = false): PlantDetail? = synchronized(workLock) {
         requireSafeId(id)
         val member = state.value.member ?: return null
         val epoch = synchronized(monitor) { generation }
         val resource = "plant/$id"
         try {
-            if (!connected() || state.value.offline) throw OfflineFailure()
-            synchronized(monitor) { if (epoch != generation) return null; mutable.value = mutable.value.copy(busy = true, message = null) }
+            if (!connected()) throw OfflineFailure()
+            synchronized(monitor) { if (epoch != generation) return null; plantMutable.value = plantMutable.value.copy(refreshing = true) }
             val plant = read("/api/plants/$id")
             val history = if (member.role == Role.sitter) "[]" else read("/api/plants/$id/history")
             val tasks = read("/api/plants/$id/tasks")
-            val json = JSONObject().put("plant", JSONObject(plant)).put("history", JSONArray(history)).put("tasks", JSONObject(tasks)).toString()
-            synchronized(monitor) { if (epoch == generation) cache.save(member.id, mapOf(resource to json), clock()) }
-        } catch (error: Exception) { failed(error, epoch) }
-        finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(busy = false) } }
+            val snapshot = JSONObject().put("plant", JSONObject(plant)).put("history", JSONArray(history)).put("tasks", JSONObject(tasks))
+            if (full && member.role != Role.sitter) {
+                snapshot.put("careSettings", JSONObject(read("/api/plants/$id/care-settings")))
+                snapshot.put("speciesChanges", JSONArray(read("/api/plants/$id/species-changes")))
+            }
+            val json = snapshot.toString()
+            synchronized(monitor) { if (epoch == generation) {
+                cache.save(member.id, mapOf(resource to json), clock())
+                plantMutable.value = plantMutable.value.copy(blocked = false, errors = emptyMap())
+            } }
+        } catch (error: Exception) { plantFailed(error, epoch) }
+        finally { synchronized(monitor) { if (epoch == generation) plantMutable.value = plantMutable.value.copy(refreshing = false) } }
         synchronized(monitor) {
             if (epoch != generation) return null
             val detail = cache.get(member.id, resource)?.let { row ->
                 val j = JSONObject(row.json)
-                PlantDetail(parsePlant(j.getJSONObject("plant")), j.getJSONArray("history").mapObjects(::parseEvent), parseSchedule(j.getJSONObject("tasks")))
+                PlantDetail(parsePlant(j.getJSONObject("plant")), j.getJSONArray("history").mapObjects(::parseEvent), parseSchedule(j.getJSONObject("tasks")),
+                    j.optJSONObject("careSettings")?.toString(), j.optJSONArray("speciesChanges")?.toString() ?: "[]")
             }
             mutable.value = mutable.value.copy(detail = detail)
             detail
@@ -135,7 +185,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             else -> "/api/plants/${task.plantId}/tasks/${task.key}/$action"
         }
         if (action == "repot" && pot == null) return false
-        return write(path, body = if (action == "undo") null else (pot?.json() ?: JSONObject()).put("request_id", requestId(task.plantId + ":" + task.key + ":" + action)), refreshAfter = action == "undo") { result ->
+        return write(path, body = if (action == "undo") null else (pot?.json() ?: JSONObject()).put("request_id", requestId(task.plantId + ":" + task.key + ":" + action)), refreshAfter = action == "undo", refreshSchedulesAfter = action == "repot") { result ->
             val key = task.plantId + ":" + task.key
             val handled = if (action == "undo") state.value.handled.filterValues { it.id != event?.id && (event?.batchId == null || it.batchId != event.batchId) }
                 else state.value.handled + (key to parseEvent(JSONObject(result).getJSONObject("event")))
@@ -152,8 +202,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             mutable.value = mutable.value.copy(handled = handled)
         }
     }
-    fun handleAll(plantId: String): Boolean = write("/api/plants/${requireSafeId(plantId)}/tasks/complete-all",
-        body = JSONObject().put("request_id", requestId("all:$plantId"))) { result ->
+    fun handleAll(plantId: String, plantsScreen: Boolean = false): Boolean = write("/api/plants/${requireSafeId(plantId)}/tasks/complete-all",
+        body = JSONObject().put("request_id", requestId("all:$plantId")), plantsScreen = plantsScreen) { result ->
         val json = JSONObject(result)
         val events = json.getJSONArray("events").mapObjects(::parseEvent)
         val schedule = json.getJSONObject("tasks")
@@ -196,22 +246,111 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         cache.save(member.id, snapshots, state.value.lastUpdated ?: 0)
         loadCached()
     }
-    private fun write(path: String, method: String = "POST", body: JSONObject?, refreshAfter: Boolean = false, applied: (String) -> Unit): Boolean = synchronized(workLock) {
+    private fun write(path: String, method: String = "POST", body: JSONObject?, refreshAfter: Boolean = false, plantsScreen: Boolean = false, refreshSchedulesAfter: Boolean = false, applied: (String) -> Unit): Boolean = synchronized(workLock) {
         val epoch = synchronized(monitor) {
-            if (!state.value.writable || !connected()) {
+            val allowed = if (plantsScreen) plantMutable.value.enabled(state.value.member, state.value.updateRequired) else state.value.writable
+            if (!allowed || !connected()) {
                 if (!connected()) connectivityChanged(false)
                 return false
             }
-            mutable.value = mutable.value.copy(busy = true, message = null)
+            if (plantsScreen) plantMutable.value = plantMutable.value.copy(saving = true, errors = emptyMap())
+            else mutable.value = mutable.value.copy(busy = true, message = null)
             generation
         }
         try {
             val result = read(path, method, body)
             synchronized(monitor) { if (epoch != generation) return false; applied(result) }
-        } catch (error: Exception) { failed(error, epoch); return false }
-        finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(busy = false) } }
-        if (refreshAfter) refresh()
+        } catch (error: Exception) { if (plantsScreen) plantFailed(error, epoch, writing = true) else failed(error, epoch); return false }
+        finally { synchronized(monitor) { if (epoch == generation) {
+            if (plantsScreen) plantMutable.value = plantMutable.value.copy(saving = false)
+            else mutable.value = mutable.value.copy(busy = false)
+        } } }
+        if (refreshSchedulesAfter || (refreshAfter && plantsScreen)) background.launch { refreshSchedules(epoch) }
+        if (refreshAfter) {
+            if (plantsScreen) {
+                refreshPlants()
+            } else refresh()
+        }
         true
+    }
+    private fun <T> plantRead(path: String, query: Map<String, String> = emptyMap(), parse: (String) -> T): T? = synchronized(workLock) {
+        val epoch = synchronized(monitor) { generation }
+        if (state.value.member == null || state.value.member?.role == Role.sitter) return null
+        try {
+            if (!connected()) throw OfflineFailure()
+            val result = parse(read(path, query = query))
+            synchronized(monitor) {
+                if (epoch != generation) null else { plantMutable.value = plantMutable.value.copy(blocked = false, errors = emptyMap()); result }
+            }
+        } catch (error: Exception) { plantFailed(error, epoch); null }
+    }
+    fun refreshPlants() = synchronized(workLock) {
+        val member = state.value.member ?: return@synchronized
+        val epoch = synchronized(monitor) { plantMutable.value = plantMutable.value.copy(refreshing = true); generation }
+        try {
+            if (!connected()) throw OfflineFailure()
+            val json = read("/api/plants")
+            val plants = JSONArray(json).mapObjects(::parsePlant)
+            synchronized(monitor) { if (epoch == generation) {
+                cache.save(member.id, mapOf("plants" to json), clock())
+                mutable.value = mutable.value.copy(plants = plants)
+                plantMutable.value = plantMutable.value.copy(blocked = false, errors = emptyMap())
+            } }
+        } catch (error: Exception) { plantFailed(error, epoch) }
+        finally { synchronized(monitor) { if (epoch == generation) plantMutable.value = plantMutable.value.copy(refreshing = false) } }
+    }
+    fun plantOptions(): PlantOptions? = synchronized(workLock) {
+        val member = state.value.member ?: return@synchronized null
+        val epoch = synchronized(monitor) { generation }
+        val json = plantRead("/api/choices") { text -> parsePlantOptions(text); text }
+        synchronized(monitor) {
+            if (epoch != generation) return@synchronized null
+            if (json != null) cache.save(member.id, mapOf("plant-choices" to json), clock())
+            cache.get(member.id, "plant-choices")?.let { parsePlantOptions(it.json) }
+        }
+    }
+    fun plantSites(): List<PlantSite>? = plantRead("/api/sites") { JSONArray(it).mapObjects { site -> PlantSite(site.getString("id"), site.getString("name")) } }
+    fun searchSpecies(query: String): SpeciesSearch? = plantRead("/api/species/search", mapOf("q" to query), ::parseSpeciesSearch)
+    fun species(key: Long): Species? { require(key > 0); return plantRead("/api/species/$key", parse = ::parseSpecies) }
+    fun graveyard(): List<Plant> = synchronized(workLock) {
+        val member = state.value.member ?: return emptyList()
+        if (member.role == Role.sitter) return emptyList()
+        val epoch = synchronized(monitor) { generation }
+        val json = plantRead("/api/plants", mapOf("status" to "graveyard")) { text -> JSONArray(text).mapObjects(::parsePlant); text }
+        synchronized(monitor) {
+            if (epoch != generation) return emptyList()
+            if (json != null) cache.save(member.id, mapOf("graveyard" to json), clock())
+            cache.get(member.id, "graveyard")?.let { JSONArray(it.json).mapObjects(::parsePlant) } ?: emptyList()
+        }
+    }
+    fun savePlant(id: String?, body: JSONObject): Plant? {
+        if (state.value.member?.role == Role.sitter) return null
+        var saved: Plant? = null
+        write(if (id == null) "/api/plants" else "/api/plants/${requireSafeId(id)}", if (id == null) "POST" else "PUT", body, refreshAfter = true, plantsScreen = true) {
+            saved = parsePlant(JSONObject(it))
+        }
+        return saved
+    }
+    fun plantCommand(id: String, action: String, body: JSONObject = JSONObject()): Boolean {
+        if (state.value.member?.role == Role.sitter) return false
+        require(action in listOf("graveyard", "restore", "delete", "species", "care-settings", "repot"))
+        val path = "/api/plants/${requireSafeId(id)}" + if (action == "delete") "" else "/$action"
+        val payload = if (action == "repot") body.put("request_id", requestId("plant-repot:$id")) else body
+        return write(path, if (action == "delete") "DELETE" else if (action == "care-settings") "PUT" else "POST", payload, refreshAfter = true, plantsScreen = true) {
+            if (action == "delete") mutable.value = mutable.value.copy(detail = null)
+            if (action == "repot") requestIds.remove("plant-repot:$id")
+        }
+    }
+    fun undoHistory(event: CareEvent): Boolean {
+        if (!event.canUndo) return false
+        val path = event.batchId?.let { "/api/task-batches/${requireSafeId(it)}/undo" } ?: "/api/care-events/${requireSafeId(event.id)}/undo"
+        return write(path, body = null, refreshAfter = true, plantsScreen = true) {}
+    }
+    fun speciesNameCommand(key: Long, action: String, body: JSONObject = JSONObject()): Boolean {
+        if (state.value.member?.role == Role.sitter) return false
+        require(key > 0)
+        val suffix = when (action) { "add" -> ""; "refresh" -> "/refresh"; else -> "/${requireSafeId(action)}" }
+        return write("/api/species/$key/names$suffix", if (action in listOf("add", "refresh")) "POST" else "DELETE", body, plantsScreen = true) {}
     }
     private fun requireSafeId(id: String): String {
         require(id.matches(Regex("[A-Za-z0-9_-]+")))

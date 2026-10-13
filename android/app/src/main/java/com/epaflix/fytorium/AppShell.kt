@@ -14,6 +14,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
@@ -42,11 +44,11 @@ import androidx.activity.compose.BackHandler
         }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding)) {
-                Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                if (tab == "Today") Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
                     onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
-                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, onLoadPot = { controller?.plant(it) })
-                else CachedPlants(careState, onPlant = { controller?.plant(it) }, thumbnails = thumbnails)
+                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } })
+                else key(careState.member) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails, onBack = { tab = "Today" }) }
             }
             return@Scaffold
         }

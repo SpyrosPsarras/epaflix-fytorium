@@ -24,12 +24,12 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 @Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String, PotDetails?) -> Unit = { _, _, _ -> },
                            onHandleAll: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
-                           onLoadPot: (String) -> Unit = {}) {
+                           onLoadPot: (suspend (String) -> Plant)? = null) {
     val list = if (view == "upcoming") state.upcoming else state.today
     var repot by remember { mutableStateOf<CareTask?>(null) }
     repot?.let { task ->
         BackHandler { repot = null }
-        RepotForm(task, state, onDismiss = { repot = null }, onSave = { pot -> onAction(task, "repot", pot) })
+        RepotForm(task, state, onLoadPot, onDismiss = { repot = null }, onSave = { pot -> onAction(task, "repot", pot) })
         return
     }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -74,7 +74,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 state.member?.let { member -> task.actions(list.today, member, event).forEach { action ->
                                     OutlinedButton(onClick = {
-                                        if (action == "repot") { repot = task; onLoadPot(task.plantId) } else onAction(task, action, null)
+                                        if (action == "repot") { repot = task } else onAction(task, action, null)
                                     }, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) {
                                         Text(when (action) { "complete" -> "Done"; "snooze" -> "Snooze 2 days"; "skip" -> "Skip"; "undo" -> "Undo"; else -> "Repot with new pot and soil" })
                                     }
@@ -144,23 +144,43 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
         basis.reason?.let { Text(it) }
     }
 }
-@Composable private fun RepotForm(task: CareTask, state: CareState, onDismiss: () -> Unit, onSave: (PotDetails) -> Unit) {
-    val plant = state.detail?.plant?.takeIf { it.id == task.plantId }
-    var pot by remember(plant) { mutableStateOf(plant?.potType ?: "plastic") }
-    var soil by remember(plant) { mutableStateOf(plant?.soilType ?: "all_purpose") }
-    var size by remember(plant) { mutableStateOf(plant?.potSizeCm?.toString() ?: "") }
+@Composable internal fun RepotForm(task: CareTask, state: CareState, onLoadPot: (suspend (String) -> Plant)? = null, onDismiss: () -> Unit, onSave: (PotDetails) -> Unit) {
+    val cached = state.detail?.plant?.takeIf { it.id == task.plantId }
+    var pot by remember(task.plantId) { mutableStateOf(cached?.potType ?: "plastic") }
+    var soil by remember(task.plantId) { mutableStateOf(cached?.soilType ?: "all_purpose") }
+    var size by remember(task.plantId) { mutableStateOf(cached?.potSizeCm?.toString() ?: "") }
+    var potEdited by remember(task.plantId) { mutableStateOf(false) }
+    var soilEdited by remember(task.plantId) { mutableStateOf(false) }
+    var sizeEdited by remember(task.plantId) { mutableStateOf(false) }
+    var loading by remember(task.plantId) { mutableStateOf(onLoadPot != null) }
+    var error by remember(task.plantId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(task.plantId) {
+        if (onLoadPot != null) {
+            try {
+                val plant = onLoadPot(task.plantId)
+                if (!potEdited) pot = plant.potType ?: "plastic"
+                if (!soilEdited) soil = plant.soilType ?: "all_purpose"
+                if (!sizeEdited) size = plant.potSizeCm?.toString().orEmpty()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = failure.message ?: "Could not load the current pot. Try again." }
+            finally { loading = false }
+        }
+    }
+    val enabled = state.writable && !loading
     val valid = size.isBlank() || (size.toIntOrNull()?.let { it > 0 } == true)
     val event = state.handled[task.plantId + ":" + task.key]
     LaunchedEffect(event) { if (event?.previousPot == true) onDismiss() }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Repot ${task.plantName}", style = MaterialTheme.typography.headlineMedium)
             Text("Save the new pot and soil and record repotting today. Undo restores the previous pot and schedule.")
-            Choice("Pot type", pot, listOf("plastic", "terracotta", "ceramic", "glass", "metal", "wood", "fabric", "in_ground", "other").map { it to it.replace('_', ' ') }, state.writable) { pot = it }
-            Choice("Soil type", soil, listOf("all_purpose", "cactus", "orchid", "aroid", "other").map { it to it.replace('_', ' ') }, state.writable) { soil = it }
-            OutlinedTextField(size, { size = it }, label = { Text("Pot size in cm") }, isError = !valid, enabled = state.writable)
+            Choice("Pot type", pot, listOf("plastic", "terracotta", "ceramic", "glass", "metal", "wood", "fabric", "in_ground", "other").map { it to it.replace('_', ' ') }, enabled) { potEdited = true; pot = it }
+            Choice("Soil type", soil, listOf("all_purpose", "cactus", "orchid", "aroid", "other").map { it to it.replace('_', ' ') }, enabled) { soilEdited = true; soil = it }
+            OutlinedTextField(size, { sizeEdited = true; size = it }, label = { Text("Pot size in cm") }, isError = !valid, enabled = enabled)
             if (!valid) Text("Use a positive whole number, or leave blank for unknown.")
+            if (loading) Text("Loading current pot…")
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             OfflineNotice(state)
-            Button(onClick = { onSave(PotDetails(pot, size.toIntOrNull(), soil)) }, enabled = valid && state.writable && plant != null,
+            Button(onClick = { onSave(PotDetails(pot, size.toIntOrNull(), soil)) }, enabled = valid && enabled,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("Save repot") }
             TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
     }

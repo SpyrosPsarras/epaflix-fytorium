@@ -44,7 +44,6 @@ class CareController(context: Context, private val store: CredentialStore, val r
     fun act(task: CareTask, action: String, pot: PotDetails?) { scope.launch { repository.act(task, action, pot) } }
     fun handleAll(plant: String) { scope.launch { repository.handleAll(plant) } }
     fun settings(settings: TaskSettings) { scope.launch { repository.saveSettings(settings) } }
-    fun plant(id: String) { scope.launch { repository.openPlant(id) } }
     fun cancelRefresh() { work.cancelUniqueWork(WORK_NAME) }
     fun close() { network.unregisterNetworkCallback(callback); scope.cancel() }
     companion object {

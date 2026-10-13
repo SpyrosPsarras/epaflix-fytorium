@@ -68,7 +68,8 @@ class RepositoryTest {
             val restored = Repository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, cache, { false })
             restored.restore()
             val offline = restored.openPlant("plant-one")!!
-            assertTrue(restored.state.value.offline)
+            assertFalse(restored.plantState.value.online)
+            assertFalse(restored.state.value.offline)
             assertEquals(detail, offline)
             assertEquals(7, server.requestCount)
         }
@@ -183,12 +184,12 @@ class RepositoryTest {
             assertEquals(8, server.requestCount)
         }
     }
-    @Test fun sitterRefreshOnlyReadsAllowedTaskProjections() {
+    @Test fun sitterRefreshReadsAllowedTaskAndSharedPlantProjections() {
         withRepository { repository, server, _ ->
             enqueueRefresh(server, sitter = true); repository.refresh()
             assertEquals(Role.sitter, repository.state.value.member!!.role)
             assertTrue(repository.state.value.plants.isEmpty())
-            assertEquals(listOf("/api/me", "/api/tasks?view=today", "/api/tasks?view=upcoming"), (1..3).map { server.takeRequest().path })
+            assertEquals(listOf("/api/me", "/api/tasks?view=today", "/api/tasks?view=upcoming", "/api/plants"), (1..4).map { server.takeRequest().path })
         }
     }
     @Test fun offlineBeforeFirstRefreshDoesNotInventATimestamp() {
@@ -304,7 +305,7 @@ class RepositoryTest {
         server.enqueue(MockResponse().setBody("""{"member":{"id":"member-one","role":"${if (sitter) "sitter" else "owner"}"}}"""))
         server.enqueue(MockResponse().setBody(taskListFixture("today")))
         server.enqueue(MockResponse().setBody(taskListFixture("upcoming")))
-        if (!sitter) server.enqueue(MockResponse().setBody("[]"))
+        server.enqueue(MockResponse().setBody("[]"))
     }
     @Test fun successfulRefreshSurvivesOfflineAndNeverQueuesWrites() {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
