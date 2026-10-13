@@ -161,6 +161,12 @@ A certificate mismatch means the APK was not signed with the documented producti
 
 The web's personal settings at `/settings/notifications` link to GitHub Releases and this section. Owner, family and sitter roles can all reach that page.
 
+## Sites
+
+Owner and family can open More → Sites to list the server's plant counts, create and edit all site conditions, and delete with confirmation. Sitters never see the entry. Site data stays in memory while the screen is open; it is not stored in Room. Saves and deletes require a connection, and failed writes are never queued. Refresh sites recovers from a failed read without submitting a write.
+
+The form uses the web's location, light and humidity choices and defaults, grow-light and draft switches, and four nullable temperature bounds. Validation and delete refusal messages come unchanged from the API. Light/dark screenshots cover the list, create/edit form, temperature conditions, form actions, delete refusal and offline form. HTTP tests check every request field, counts, validation, refusal and write blocking. The real-login emulator scenario creates a site, edits its conditions, seeds a plant through the API, checks its count and delete refusal, removes the plant, then deletes the site through the screen. Interrupted-run cleanup removes only its exact synthetic A07 fixture names.
+
 ## Bump the minimum app version
 
 The server reads `MIN_APP_VERSION`. Unset or empty disables the minimum; invalid semver fails startup. No second app-version setting exists.

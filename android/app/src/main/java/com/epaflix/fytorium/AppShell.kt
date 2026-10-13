@@ -17,20 +17,29 @@ import androidx.activity.compose.BackHandler
 
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
-                         careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null) {
+                         careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
+                         sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }) {
     var tab by rememberSaveable { mutableStateOf("Today") }
     var about by rememberSaveable { mutableStateOf(false) }
+    var sites by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) sites = false }
     var taskView by rememberSaveable { mutableStateOf("today") }
     BackHandler(enabled = about) { about = false }
     Scaffold(bottomBar = {
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        if (loggedIn && !updateRequired && tab == "More" && sites && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false })
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
@@ -61,6 +70,9 @@ import androidx.activity.compose.BackHandler
                 }
                 tab == "More" -> {
                     Text("More", style = MaterialTheme.typography.headlineMedium)
+                    if (careState?.member != null && careState.member.role != Role.sitter) {
+                        Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
+                    }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
                     Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }
                 }
