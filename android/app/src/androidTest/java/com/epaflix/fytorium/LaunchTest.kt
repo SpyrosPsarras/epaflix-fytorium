@@ -133,6 +133,7 @@ class LaunchTest {
             try { compose.waitUntil(30_000) { app.repository.state.value.member != null && !app.repository.state.value.busy } }
             catch (error: Throwable) { throw AssertionError("Initial care refresh: member=${app.repository.state.value.member}, busy=${app.repository.state.value.busy}, offline=${app.repository.state.value.offline}, message=${app.repository.state.value.message}, signedIn=${app.store.tokens != null}", error) }
             compose.onNodeWithText("Plants").assertIsDisplayed()
+            com.epaflix.fytorium.sites.runSiteScenario(compose, app)
             careScenarios(app, device)
         } finally { if (app.store.tokens != null) app.api.logout() }
     }
