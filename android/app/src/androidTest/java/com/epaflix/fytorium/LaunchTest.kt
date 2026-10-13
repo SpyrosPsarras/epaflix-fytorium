@@ -8,6 +8,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -60,17 +61,53 @@ class LaunchTest {
         store.clear()
         assertNull(store.tokens); assertNull(store.pending)
     }
+    private fun <T : Any> T.waitForAction(control: String): T {
+        var lastCheck = "not found"
+        try {
+            compose.waitUntil(30_000) {
+                runCatching {
+                    lastCheck = "not found"
+                    when (this) {
+                        is SemanticsNodeInteraction -> {
+                            assertExists()
+                            lastCheck = "not displayed"
+                            assertIsDisplayed()
+                            val app = compose.activity.application as FytoriumApplication
+                            val busy = app.repository.state.value.busy
+                            val connected = app.care.connected()
+                            lastCheck = "not enabled (busy=$busy, connected=$connected)"
+                            assertIsEnabled()
+                            // The rendered enabled state can lag an in-flight refresh under load.
+                            check(!busy)
+                            check(!app.session.state.value.loggedIn || connected)
+                        }
+                        is UiObject2 -> {
+                            lastCheck = "not displayed"
+                            check(!visibleBounds.isEmpty)
+                            lastCheck = "not enabled"
+                            check(isEnabled)
+                        }
+                        else -> error("Unsupported action node: $this")
+                    }
+                    true
+                }.getOrDefault(false)
+            }
+        } catch (error: ComposeTimeoutException) {
+            throw AssertionError("Action '$control' timed out after 30s: $lastCheck", error)
+        }
+        return this
+    }
+
     // Enable the real stack login with E2E_LOGIN=1 ./scripts/android e2e.
     @Test fun chosenOidcSubjectCompletesUndoesAndReadsCachedTodayOffline() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("login") == "true")
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        compose.waitUntil(30_000) { compose.onNodeWithText("Log in").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled).not() }
-        compose.onNodeWithText("Log in").performClick()
+        compose.onNodeWithText("Log in").waitForAction("Log in").performClick()
         assertTrue("Local OIDC page did not load in Chrome", device.wait(Until.hasObject(By.pkg("com.android.chrome").text("Mock OAuth2 Server Sign-in")), 30_000))
         device.waitForIdle()
         val subject = device.wait(Until.findObject(By.pkg("com.android.chrome").clazz("android.widget.EditText")), 30_000)
         assertNotNull("OIDC subject input did not appear in the Custom Tab", subject)
-        subject.text = "synthetic-a03-owner"
+        subject.waitForAction("OIDC subject input").text = "synthetic-a03-owner"
         assertTrue("OIDC subject was not entered", device.wait(Until.hasObject(By.text("synthetic-a03-owner")), 10_000))
         val keyboard = By.pkg("com.google.android.inputmethod.latin")
         if (device.wait(Until.hasObject(keyboard), 2_000)) {
@@ -87,8 +124,8 @@ class LaunchTest {
         }
         assertNotNull("OIDC Sign-in button missing", signIn)
         device.waitForIdle()
-        signIn.click()
-        device.wait(Until.findObject(By.textContains("Open")), 2_000)?.click()
+        signIn.waitForAction("OIDC Sign-in").click()
+        device.wait(Until.findObject(By.textContains("Open")), 2_000)?.waitForAction("Open redirect")?.click()
         val returned = device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 30_000)
         assertTrue("OIDC redirect did not return to Fytorium", returned)
         val app = compose.activity.application as FytoriumApplication
@@ -135,25 +172,36 @@ class LaunchTest {
             val waterTag = "task:$plantId:water"
             fun button(tag: String, label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag(tag)))
             compose.onNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
-            button(waterTag, "Done").performScrollTo().performClick()
-            compose.waitUntil(30_000) { app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
-            button(waterTag, "Undo").performScrollTo().performClick()
-            compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent == null && it.lateDays == 1 } == true }
+            button(waterTag, "Done").performScrollTo().waitForAction("$waterTag Done").performClick()
+            compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
+            button(waterTag, "Undo").performScrollTo().waitForAction("$waterTag Undo").performClick()
+            try {
+                compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent == null && it.lateDays == 1 } == true }
+            } catch (error: Throwable) {
+                val state = app.repository.state.value
+                val water = state.today?.sections?.flatMap { it.tasks }?.firstOrNull { it.plantId == plantId && it.taskType == "water" }
+                throw AssertionError("Undo result: busy=${state.busy}, offline=${state.offline}, connected=${app.care.connected()}, message=${state.message}, completed=${water?.completedEvent != null}, lateDays=${water?.lateDays}", error)
+            }
             val history = JSONArray(json("/api/plants/$plantId/history"))
             assertTrue("Server did not undo the care event", (0 until history.length()).any { val e = history.getJSONObject(it); e.optString("task_type") == "water" && !e.isNull("undone_at") })
-            compose.onNodeWithTag("view-upcoming").performClick()
+            compose.onNodeWithTag("view-upcoming").waitForAction("view-upcoming").performClick()
             val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.first { it.plantId == plantId && it.dueOn!! > "2030-06-02" }
             val futureTag = "task:$plantId:${future.key}"
             compose.onNodeWithTag(futureTag).performScrollTo()
             button(futureTag, "Snooze 2 days").assertDoesNotExist()
-            compose.onNodeWithTag("view-today").performClick()
+            compose.onNodeWithTag("view-today").waitForAction("view-today").performClick()
             device.executeShellCommand("cmd connectivity airplane-mode enable")
             app.care.refresh()
-            compose.waitUntil(30_000) { app.repository.state.value.offline }
-            compose.waitUntil(30_000) { !app.repository.state.value.busy }
-            compose.onNode(hasText("Offline, last updated", substring = true)).performScrollTo().assertIsDisplayed()
-            button(waterTag, "Done").performScrollTo().assertIsNotEnabled().performClick()
+            compose.waitUntil(30_000) {
+                runCatching {
+                    compose.onNode(hasText("Offline, last updated", substring = true)).performScrollTo().assertIsDisplayed()
+                    true
+                }.getOrDefault(false)
+            }
+            button(waterTag, "Done").assertIsNotEnabled()
             button(waterTag, "Snooze 2 days").assertIsNotEnabled()
+            // This negative-control click must stay disabled to prove it cannot queue a write.
+            button(waterTag, "Done").performScrollTo().performClick()
             assertEquals("Cached Today was lost in airplane mode", "Synthetic A04 fern", app.repository.state.value.today!!.sections.flatMap { it.tasks }.first { it.plantId == plantId }.plantName)
             device.executeShellCommand("cmd connectivity airplane-mode disable")
             waitForGuestNetwork(app)
@@ -180,9 +228,11 @@ class LaunchTest {
     }
     private fun waitForGuestNetwork(app: FytoriumApplication) {
         val connectivity = app.getSystemService(android.net.ConnectivityManager::class.java)
+        val timeoutSeconds = InstrumentationRegistry.getArguments().getString("guestNetworkTimeoutSeconds")?.toLong() ?: 180L
+        require(timeoutSeconds in 1..3600) { "Guest network timeout must be from 1 to 3600 seconds" }
         var lastFailure: Throwable? = null
         try {
-            compose.waitUntil(45_000) {
+            compose.waitUntil(timeoutSeconds * 1_000) {
                 val network = connectivity.activeNetwork
                 if (network == null || !app.care.connected()) false else runCatching {
                     // Probe readiness only, never retry a repository refresh or scenario API call.
@@ -196,7 +246,7 @@ class LaunchTest {
                 }.getOrElse { lastFailure = it; false }
             }
         } catch (error: Throwable) {
-            throw AssertionError("Guest did not regain a validated network, app DNS and HTTP within 45s; last probe: $lastFailure", error)
+            throw AssertionError("Guest did not regain a validated network, app DNS and HTTP within ${timeoutSeconds}s; last probe: $lastFailure", error)
         }
     }
     private fun clock(action: String, at: String? = null) {
