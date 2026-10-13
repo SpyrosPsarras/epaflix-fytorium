@@ -1,5 +1,6 @@
 package com.epaflix.fytorium
 
+import okhttp3.ConnectionPool
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -19,6 +20,8 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
     // A transport retry could replay a refresh token already consumed by the server.
     private val http = OkHttpClient.Builder().retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).build()
+    // Single-use grants cannot retry if a pooled socket expires during browser login.
+    private val tokenHttp = http.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()
     fun loginUrl(): String {
         val attempt = Pkce.create()
         store.pending = attempt
@@ -39,7 +42,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
     private fun exchange(body: JSONObject, refreshing: Boolean = false): Tokens? {
         val request = Request.Builder().url(baseUrl + "/api/app/token")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-        return http.newCall(request).execute().use { response ->
+        return tokenHttp.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 if (!refreshing) return null
                 val error = runCatching { JSONObject(response.body?.string().orEmpty()).optString("error") }.getOrNull()

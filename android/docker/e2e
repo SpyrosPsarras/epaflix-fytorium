@@ -52,8 +52,14 @@ if [ "${E2E_RELEASE:-}" = release-launch ]; then
   echo 'Release launch PASS: minified APK installed, MainActivity shows Log in, process alive, no crash'
   exit 0
 fi
+# Fresh Chrome otherwise opens its welcome screen instead of the login Custom Tab.
+adb shell pm path com.android.chrome | grep -q '^package:' || { echo 'The pinned image must supply Chrome for Custom Tabs'; exit 1; }
+# Chrome reads test command-line flags for the selected debug app on this image.
+adb shell am set-debug-app --persistent com.android.chrome
+adb shell 'echo "chrome --disable-fre --no-default-browser-check --no-first-run" > /data/local/tmp/chrome-command-line'
+adb shell am force-stop com.android.chrome
 # A fresh AVD each run prevents cookies and tokens from changing the scenario on the second run.
 login=false
 [ "$E2E_LOGIN" != 1 ] || login=true
 ./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" connectedDebugAndroidTest
-echo 'E2E launch scenario PASS; pending A01 login scenario unless E2E_LOGIN=1'
+echo "E2E launch scenario PASS; real OIDC login enabled: $login"

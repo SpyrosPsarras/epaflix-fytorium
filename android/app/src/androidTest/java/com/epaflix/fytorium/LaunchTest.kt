@@ -60,19 +60,37 @@ class LaunchTest {
         store.clear()
         assertNull(store.tokens); assertNull(store.pending)
     }
-    // Pending A01. Enable with E2E_LOGIN=1 ./scripts/android e2e once the endpoints are merged.
+    // Enable the real stack login with E2E_LOGIN=1 ./scripts/android e2e.
     @Test fun chosenOidcSubjectSeesEmptyHome() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("login") == "true")
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         compose.waitUntil(30_000) { compose.onNodeWithText("Log in").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled).not() }
         compose.onNodeWithText("Log in").performClick()
-        val subject = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 30_000)
+        assertTrue("Local OIDC page did not load in Chrome", device.wait(Until.hasObject(By.pkg("com.android.chrome").text("Mock OAuth2 Server Sign-in")), 30_000))
+        device.waitForIdle()
+        val subject = device.wait(Until.findObject(By.pkg("com.android.chrome").clazz("android.widget.EditText")), 30_000)
         assertNotNull("OIDC subject input did not appear in the Custom Tab", subject)
         subject.text = "synthetic-a03-owner"
-        val signIn = device.wait(Until.findObject(By.text("Sign-in")), 10_000)
+        assertTrue("OIDC subject was not entered", device.wait(Until.hasObject(By.text("synthetic-a03-owner")), 10_000))
+        val keyboard = By.pkg("com.google.android.inputmethod.latin")
+        if (device.wait(Until.hasObject(keyboard), 2_000)) {
+            device.pressBack()
+            assertTrue("Keyboard did not close", device.wait(Until.gone(keyboard), 5_000))
+        }
+        // Swipe the page gutter, not the claims textarea, without pulling to refresh.
+        var signIn = device.findObject(By.text("Sign-in"))
+        for (attempt in 1..8) {
+            if (signIn != null) break
+            device.swipe(device.displayWidth * 95 / 100, device.displayHeight * 3 / 4,
+                device.displayWidth * 95 / 100, device.displayHeight / 2, 80)
+            signIn = device.wait(Until.findObject(By.text("Sign-in")), 2_000)
+        }
         assertNotNull("OIDC Sign-in button missing", signIn)
+        device.waitForIdle()
         signIn.click()
         device.wait(Until.findObject(By.textContains("Open")), 2_000)?.click()
+        val returned = device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 30_000)
+        assertTrue("OIDC redirect did not return to Fytorium", returned)
         compose.waitUntil(30_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("No tasks yet.")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("No tasks yet.").assertIsDisplayed()
         compose.onNodeWithText("Plants").assertIsDisplayed()

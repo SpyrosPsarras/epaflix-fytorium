@@ -75,6 +75,33 @@ class AuthTest {
             assertEquals("synthetic-new", store.tokens!!.access)
         }
     }
+    @Test fun tokenExchangesNeverReuseIdleConnections() {
+        MockWebServer().use { server ->
+            server.start()
+            val store = MemoryCredentials()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), store) { fail("Session lost") }
+            server.enqueue(MockResponse().setBody("{}"))
+            api.request("/api/meta").use { it.body!!.string() }
+            assertEquals(0, server.takeRequest().sequenceNumber)
+            api.loginUrl()
+            val state = store.pending!!.state
+            server.enqueue(MockResponse().setBody(pair))
+            assertTrue(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
+            val login = server.takeRequest()
+            assertEquals("/api/app/token", login.path)
+            assertEquals("Login must not reuse the startup API socket", 0, login.sequenceNumber)
+            server.enqueue(MockResponse().setResponseCode(401))
+            server.enqueue(MockResponse().setBody(pair))
+            server.enqueue(MockResponse().setBody("{}"))
+            api.request("/api/meta").use { assertEquals(200, it.code) }
+            server.takeRequest()
+            val refresh = server.takeRequest()
+            assertEquals("/api/app/token", refresh.path)
+            assertEquals("Refresh must not reuse an API or prior token socket", 0, refresh.sequenceNumber)
+            server.takeRequest()
+            assertEquals(5, server.requestCount)
+        }
+    }
     @Test fun rejectedStateNeverReachesServer() {
         MockWebServer().use { server ->
             server.start()
@@ -140,7 +167,9 @@ class AuthTest {
             server.start()
             val original = Tokens("synthetic-old", "synthetic-refresh")
             val store = MemoryCredentials().apply { tokens = original }
-            val api = ApiClient(server.url("").toString().trimEnd('/'), store) { fail("Retryable error ended session") }
+            // The fixture listens only on IPv4, not localhost's alternative IPv6 route.
+            val baseUrl = server.url("").newBuilder().host("127.0.0.1").build().toString().trimEnd('/')
+            val api = ApiClient(baseUrl, store) { fail("Retryable error ended session") }
             server.enqueue(MockResponse().setResponseCode(401))
             server.enqueue(failure)
             assertThrows(IOException::class.java) { api.request("/api/meta").close() }
