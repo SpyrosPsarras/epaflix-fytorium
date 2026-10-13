@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+command=${1:?A release command is required}
+export ANDROID_RELEASE_TAG="${2:?A release tag is required}"
+metadata=$(sh docker/release-version "$ANDROID_RELEASE_TAG")
+printf '%s\n' "$metadata"
+version=$(printf '%s\n' "$metadata" | grep '^versionName=' | cut -d= -f2)
+code=$(printf '%s\n' "$metadata" | grep '^versionCode=' | cut -d= -f2)
+output="app/build/outputs/fytorium-releases/$ANDROID_RELEASE_TAG"
+apk="$output/fytorium-$version.apk"
+tools="$ANDROID_HOME/build-tools/35.0.0"
+release_fingerprint=8A:A9:74:16:85:B7:03:12:75:7F:44:37:2E:B0:36:3B:16:F2:C6:A9:11:03:6C:EE:77:7A:9F:39:11:62:0C:F7
+
+build() {
+  : "${ANDROID_KEYSTORE_PATH:?Signing keystore path is required}"
+  : "${ANDROID_KEYSTORE_PASSWORD:?Signing password is required}"
+  : "${ANDROID_KEY_ALIAS:?Signing alias is required}"
+  ./gradlew --no-daemon --console=plain assembleRelease
+  mkdir -p "$output"
+  cp app/build/outputs/apk/release/app-release.apk "$apk"
+}
+verify() {
+  badging=$("$tools/aapt" dump badging "$apk")
+  printf '%s\n' "$badging" | grep -F "package: name='com.epaflix.fytorium' versionCode='$code' versionName='$version'" >/dev/null
+  certs=$("$tools/apksigner" verify --verbose --print-certs "$apk")
+  printf '%s\n' "$certs"
+  actual=$(printf '%s\n' "$certs" | grep '^Signer #1 certificate SHA-256 digest:' | cut -d: -f2- | tr -d ' :\r' | tr '[:lower:]' '[:upper:]')
+  expected=$(printf '%s' "$1" | tr -d ':' | tr '[:lower:]' '[:upper:]')
+  if [ "$actual" != "$expected" ] || ! printf '%s\n' "$certs" | grep -q '^Number of signers: 1$'; then
+    echo 'APK signing certificate does not match the expected SHA-256 fingerprint.' >&2
+    exit 1
+  fi
+  (cd "$output" && sha256sum "fytorium-$version.apk" >SHA256SUMS && sha256sum -c SHA256SUMS && grep . SHA256SUMS)
+}
+case "$command" in
+  build) build ;;
+  verify) verify "$release_fingerprint" ;;
+  dry-run)
+    temp=$(mktemp -d)
+    trap 'rm -rf "$temp"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    export ANDROID_KEYSTORE_PATH="$temp/throwaway.p12" ANDROID_KEYSTORE_PASSWORD="$(od -An -N32 -tx1 /dev/urandom | tr -d " \n")" ANDROID_KEY_ALIAS=fytorium
+    keytool -genkeypair -keystore "$ANDROID_KEYSTORE_PATH" -storetype PKCS12 \
+      -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEYSTORE_PASSWORD \
+      -alias "$ANDROID_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 1 -dname 'CN=Fytorium dry run' >/dev/null 2>&1
+    fingerprint=$(keytool -exportcert -keystore "$ANDROID_KEYSTORE_PATH" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" | sha256sum | cut -d' ' -f1)
+    build
+    verify "$fingerprint"
+    # The same verifier must reject the throwaway key as a production release.
+    if (verify "$release_fingerprint") >"$temp/rejected.log" 2>&1; then
+      echo 'Production fingerprint check accepted a throwaway key.' >&2; exit 1
+    fi
+    echo 'Production fingerprint mismatch rejected; dry run passed. Never publish this APK.'
+    ;;
+  *) echo 'Expected build, verify or dry-run.' >&2; exit 2 ;;
+esac

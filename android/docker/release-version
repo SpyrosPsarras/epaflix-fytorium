@@ -1,0 +1,37 @@
+#!/bin/sh
+set -efu
+parse() {
+  tag=$1
+  case "$tag" in
+    *[!a-z0-9.-]*) echo 'Release tags must contain only lowercase letters, digits, dots and hyphens.' >&2; exit 1;;
+  esac
+  if ! printf '%s\n' "$tag" | grep -Eq '^android-v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$'; then
+    echo 'Expected android-vX.Y.Z without leading zeroes; Y and Z must be 0..99.' >&2
+    exit 1
+  fi
+  version=${tag#android-v}
+  major=${version%%.*}
+  rest=${version#*.}
+  minor=${rest%%.*}
+  patch=${rest#*.}
+  code=$((major * 10000 + minor * 100 + patch))
+  if [ "$code" -lt 1 ] || [ "$code" -gt 2100000000 ]; then
+    echo 'versionCode must be between 1 and 2100000000.' >&2
+    exit 1
+  fi
+}
+parse "${1:?A release tag is required}"
+name=$version
+candidate=$code
+previous=
+highest=0
+# GitHub tag names are validated by parse before they can become build metadata.
+for published in ${PUBLISHED_TAGS:-}; do
+  parse "$published"
+  if [ "$code" -gt "$highest" ]; then highest=$code; previous=$published; fi
+done
+if [ "$candidate" -le "$highest" ]; then
+  echo "versionCode $candidate must be strictly higher than $highest ($previous)." >&2
+  exit 1
+fi
+printf 'versionName=%s\nversionCode=%s\npreviousTag=%s\n' "$name" "$candidate" "$previous"

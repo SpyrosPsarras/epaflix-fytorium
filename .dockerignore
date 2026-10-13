@@ -5,4 +5,6 @@ node_modules
 .svelte-kit
 build
 test-artifacts
+# Android SDK and Gradle outputs are not server build inputs.
+android
 .env*

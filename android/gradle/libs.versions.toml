@@ -1,0 +1,42 @@
+[versions]
+agp = "8.9.1"
+kotlin = "2.1.20"
+compose = "1.8.0"
+material = "1.3.2"
+icons = "1.7.8"
+activity = "1.10.1"
+browser = "1.8.0"
+coroutines = "1.10.1"
+okhttp = "4.12.0"
+junit = "4.13.2"
+robolectric = "4.15.1"
+roborazzi = "1.44.0"
+androidTest = "1.2.1"
+runner = "1.6.2"
+uiautomator = "2.3.0"
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
+
+[libraries]
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose" }
+compose-foundation = { module = "androidx.compose.foundation:foundation", version.ref = "compose" }
+compose-icons = { module = "androidx.compose.material:material-icons-extended", version.ref = "icons" }
+compose-material = { module = "androidx.compose.material3:material3", version.ref = "material" }
+compose-test = { module = "androidx.compose.ui:ui-test-junit4", version.ref = "compose" }
+compose-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "compose" }
+compose-accessibility = { module = "androidx.compose.ui:ui-test-junit4-accessibility", version.ref = "compose" }
+browser = { module = "androidx.browser:browser", version.ref = "browser" }
+coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
+junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+test-runner = { module = "androidx.test:runner", version.ref = "runner" }
+test-junit = { module = "androidx.test.ext:junit", version.ref = "androidTest" }
+uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }

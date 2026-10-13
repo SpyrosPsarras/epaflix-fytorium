@@ -74,6 +74,11 @@
 <a href="/">Today</a>
 <h1>Notifications</h1>
 <p>These choices are yours. Enable each device separately.</p>
+<section>
+  <h2>Android app</h2>
+  <p><a href="https://github.com/SpyrosPsarras/epaflix-fytorium/releases">Get the Android app</a></p>
+  <p><a href="https://github.com/SpyrosPsarras/epaflix-fytorium/blob/main/android/README.md#obtainium">Set up Obtainium</a> for automatic updates.</p>
+</section>
 {#if data.feedSettings}<FeedSettings settings={data.feedSettings} />{/if}
 {#if !data.configured}<p role="alert">The owner must configure VAPID before enabling notifications.</p>{/if}
 <section>
