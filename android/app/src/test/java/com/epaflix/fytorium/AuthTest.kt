@@ -102,6 +102,22 @@ class AuthTest {
             assertEquals(5, server.requestCount)
         }
     }
+    @Test fun apiSocketsExpireBeforeTheServersIdleTimeoutWithoutRetrying() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}
+            server.enqueue(MockResponse().setBody("{}"))
+            api.request("/api/meta").use { it.body!!.string() }
+            assertEquals(0, server.takeRequest().sequenceNumber)
+            Thread.sleep(2_000)
+            server.enqueue(MockResponse().setBody("{}"))
+            api.request("/api/meta").use { it.body!!.string() }
+            assertEquals("Do not retain sockets until the server closes them", 0, server.takeRequest().sequenceNumber)
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            assertThrows(IOException::class.java) { api.request("/api/app/logout", post = true).close() }
+            assertEquals("Idle expiry must not enable transport retries", 3, server.requestCount)
+        }
+    }
     @Test fun networkLossDiscardsPooledSocketsWithoutRetryingRequests() {
         MockWebServer().use { server ->
             server.start()

@@ -73,6 +73,7 @@ dependencies {
     kapt(libs.room.compiler)
     implementation(libs.work.runtime)
     testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.mockwebserver)
     testImplementation(libs.compose.test)

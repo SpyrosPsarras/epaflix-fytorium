@@ -15,6 +15,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.Alignment
@@ -24,7 +27,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 @Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String, PotDetails?) -> Unit = { _, _, _ -> },
                            onHandleAll: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
-                           onLoadPot: (suspend (String) -> Plant)? = null) {
+                           onLoadPot: (suspend (String) -> Plant)? = null, feedContent: @Composable (() -> Unit) -> Unit = {}) {
+    val taskAnchor = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     val list = if (view == "upcoming") state.upcoming else state.today
     var repot by remember { mutableStateOf<CareTask?>(null) }
     repot?.let { task ->
@@ -59,10 +64,12 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
             list?.let { Text(it.today) }
             if (view == "upcoming") Text("Next 14 calendar days, including today")
             OfflineNotice(state)
-            if (list == null || list.sections.isEmpty()) Text(if (state.busy) "Loading tasks…" else "No tasks in this view.")
+            if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
+            if (list == null || list.sections.isEmpty()) Text(if (state.busy) "Loading tasks…" else "No tasks in this view.", modifier = Modifier.bringIntoViewRequester(taskAnchor))
             val shownPlants = mutableSetOf<String>()
             list?.sections?.forEach { section ->
-                Text(section.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                Text(section.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }
+                    .then(if (section == list.sections.first()) Modifier.bringIntoViewRequester(taskAnchor) else Modifier))
                 if (section.tasks.isEmpty()) Text("No tasks due today.")
                 section.tasks.forEach { task ->
                     val event = state.handled[task.plantId + ":" + task.key] ?: task.completedEvent

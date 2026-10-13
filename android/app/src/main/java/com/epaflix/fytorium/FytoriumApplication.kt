@@ -21,11 +21,13 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
         val database = Room.databaseBuilder(this, CareDatabase::class.java, "care-cache.db").fallbackToDestructiveMigration(dropAllTables = true).build()
         Repository(api, CareCache(database), ::connected, wipeThumbnails = thumbnails::wipe)
     }
-    private val careInstance = lazy { CareController(this, store, repository, api) }
+    val feed: com.epaflix.fytorium.feed.FeedRepository by lazy { com.epaflix.fytorium.feed.FeedRepository(api, ::connected) }
+    private val careInstance = lazy { CareController(this, store, repository, api, feed) }
     val care: CareController get() = careInstance.value
     val api: ApiClient by lazy {
         ApiClient(BuildConfig.SERVER_URL, store) {
             repository.wipe()
+            feed.wipe()
             care.cancelRefresh()
             Diagnostics(this).apply { clear(); record(ErrorEvent.SESSION_ENDED) }
         }

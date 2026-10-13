@@ -22,6 +22,14 @@ import androidx.compose.ui.graphics.luminance
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
 class ScreenTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun moreKeepsSitesAndFeedSettingsIndependentOfCareFailures() {
+        val feed = com.epaflix.fytorium.feed.FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}) { true }
+        val care = CareState(member = Member("member-one", Role.owner), busy = true, offline = true, serverUnavailable = true)
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care, feed = feed) } }
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Sites").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Feed and weather settings").assertIsDisplayed().assertIsEnabled()
+    }
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
     private fun screens(dark: Boolean) {
