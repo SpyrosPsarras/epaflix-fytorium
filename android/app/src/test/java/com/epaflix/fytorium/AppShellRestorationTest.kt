@@ -43,6 +43,44 @@ class AppShellRestorationTest {
     @Test fun differentMemberClearsRestoredPlantSpeciesCare() = navigation("member", "plant-species")
     @Test fun sameMemberChangingToFamilyKeepsFeedPlantNavigation() = navigation("family", "feed-plant")
 
+    @Test fun sitterKeepsPlantsAcrossRestore() = sitterNavigation("Plants")
+    @Test fun sitterKeepsMoreAcrossRestore() = sitterNavigation("More")
+    @Test fun sitterKeepsAboutAcrossRestore() = sitterNavigation("About")
+    @Test fun sitterKeepsOpenPlantAcrossRestore() = sitterNavigation("detail")
+    @Test fun sitterKeepsUpcomingAcrossRestore() = sitterNavigation("upcoming")
+    @Test fun becomingSitterKeepsPlants() = sitterNavigation("Plants", roleChange = true)
+    @Test fun becomingSitterKeepsMore() = sitterNavigation("More", roleChange = true)
+    @Test fun becomingSitterKeepsAbout() = sitterNavigation("About", roleChange = true)
+    @Test fun becomingSitterKeepsUpcoming() = sitterNavigation("upcoming", roleChange = true)
+    @Test fun becomingSitterClosesJournal() = sitterNavigation("Journal", roleChange = true)
+
+    private fun sitterNavigation(route: String, roleChange: Boolean = false) {
+        val plant = parsePlant(JSONObject(plantFixture))
+        val care = mutableStateOf(CareState(member = Member("member", if (roleChange) Role.family else Role.sitter), plants = listOf(plant),
+            detail = PlantDetail(plant, emptyList(), emptyMap())))
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
+        val tab = when (route) { "detail" -> "Plants"; "About" -> "More"; "upcoming" -> "Today"; else -> route }
+        fun navigationTab(title: String) = compose.onNode(hasText(title) and hasClickAction() and !hasTestTag("view-today"))
+        navigationTab(tab).performClick()
+        when (route) {
+            "About" -> compose.onNodeWithText("About").performClick()
+            "detail" -> compose.onNodeWithTag("plant:${plant.id}").performClick()
+            "upcoming" -> compose.onNodeWithTag("view-upcoming").performClick()
+        }
+        restoration.emulateSavedInstanceStateRestore()
+        if (roleChange) compose.runOnIdle { care.value = care.value.copy(member = Member("member", Role.sitter)) }
+        navigationTab(if (route == "Journal") "Today" else tab).assertIsSelected()
+        when (route) {
+            "Journal" -> compose.onNodeWithText("Journal").assertDoesNotExist()
+            "Plants" -> compose.onNodeWithTag("plant:${plant.id}").assertIsDisplayed()
+            "More" -> compose.onNodeWithText("Log out").assertIsDisplayed()
+            "About" -> compose.onNodeWithText("Copy diagnostics").assertIsDisplayed()
+            "detail" -> compose.onNodeWithText("Care tasks are on Today and Upcoming.").assertIsDisplayed()
+            "upcoming" -> compose.onNodeWithTag("view-upcoming").assertIsSelected()
+        }
+    }
+
     private fun navigation(reset: String?, route: String = "sites-unmatched") {
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
@@ -61,7 +99,7 @@ class AppShellRestorationTest {
                 tokens = Tokens("synthetic-access", "synthetic-refresh")
             }) {}
             val plant = parsePlant(JSONObject(plantFixture))
-            val initialCare = CareState(member = Member("owner", Role.owner), plants = listOf(plant),
+            val initialCare = CareState(member = Member("owner", if (reset == "sitter") Role.family else Role.owner), plants = listOf(plant),
                 detail = PlantDetail(plant, emptyList(), emptyMap()), busy = true, offline = true, serverUnavailable = true)
             val care = mutableStateOf(initialCare)
             val feed = FeedRepository(client, { true }).apply { refresh(initialCare.member) }
@@ -123,11 +161,14 @@ class AppShellRestorationTest {
                     "feed-plant" -> compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
                 }
             } else {
-                compose.onNodeWithText("Home feed").assertIsDisplayed()
+                if (reset == "sitter") {
+                    val tab = if (route in listOf("feed-plant", "plant-species")) "Plants" else "More"
+                    compose.onNode(hasText(tab) and hasClickAction()).assertIsSelected()
+                } else compose.onNodeWithText("Home feed").assertIsDisplayed()
                 compose.onNodeWithText("Save my feed").assertDoesNotExist()
                 compose.onNodeWithText("Edit plant").assertDoesNotExist()
                 compose.onNodeWithText("Species care").assertDoesNotExist()
-                compose.onNodeWithText("More").performClick()
+                compose.onNode(hasText("More") and hasClickAction()).performClick()
                 compose.onNodeWithText("Log out").assertIsDisplayed()
                 compose.onNodeWithText("Open Plantbook unmatched species").assertDoesNotExist()
                 compose.onNodeWithText("A site groups plants that share the same conditions.").assertDoesNotExist()

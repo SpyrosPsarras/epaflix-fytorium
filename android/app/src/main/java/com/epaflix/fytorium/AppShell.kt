@@ -42,15 +42,19 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var taskView by rememberSaveable { mutableStateOf("today") }
     var about by rememberSaveable { mutableStateOf(false) }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
+    var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }
     LaunchedEffect(loggedIn, careState?.member) {
         val member = careState?.member
-        if (!loggedIn || member?.role == Role.sitter ||
-            (previousMemberId != null && member != null && previousMemberId != member.id)) {
-            tab = "Today"; taskView = "today"; about = false
+        val memberChanged = previousMemberId != null && member != null && previousMemberId != member.id
+        val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
+        if (!loggedIn || memberChanged || becameSitter) {
+            if (!loggedIn || memberChanged || tab == "Journal") {
+                tab = "Today"; taskView = "today"; about = false
+            }
             sites = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null
         }
-        if (!loggedIn) previousMemberId = null
-        else if (member != null) previousMemberId = member.id
+        if (!loggedIn) { previousMemberId = null; previousRole = null }
+        else if (member != null) { previousMemberId = member.id; previousRole = member.role }
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(feed, lifecycle, loggedIn, updateRequired, tab, taskView, feedSettings, careState?.member) {

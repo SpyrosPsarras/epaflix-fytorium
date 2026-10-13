@@ -26,7 +26,10 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         compose.waitUntil(30_000) { runCatching { scroll(hasText(label)).assertIsDisplayed().assertIsEnabled(); true }.getOrDefault(false) }
         compose.onNodeWithText(label).performTextReplacement(value)
     }
-    fun settings() { scroll(hasContentDescription("Plant settings")).performClick() }
+    fun settings() {
+        compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Plant settings")).assertIsEnabled(); true }.getOrDefault(false) }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+    }
     fun json(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
         app.api.request(path, method = method, body = body, query = query).use {
             val text = it.body?.string().orEmpty()

@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.waitForNode
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -26,8 +27,8 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         compose.waitUntil(30_000) { compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
     }
     fun type(label: String, value: String) {
-        compose.onNodeWithText(label).performScrollTo()
         enabled(label)
+        compose.onNodeWithText(label).performScrollTo()
         compose.onNodeWithText(label).performTextReplacement(value)
     }
     try {
@@ -55,7 +56,7 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         assertEquals(5, created.getInt("cold_min_c")); assertEquals(20, created.getInt("cold_max_c"))
         assertTrue(created.getBoolean("grow_light")); assertTrue(created.getBoolean("draft"))
         val tag = "site:$siteId"
-        fun button(text: String) = compose.onNode(hasText(text) and hasAnyAncestor(hasTestTag(tag)))
+        fun button(text: String) = compose.waitForNode(hasText(text) and hasAnyAncestor(hasTestTag(tag)) and isEnabled())
         button("Edit").performScrollTo().performClick()
         compose.onNodeWithText("Name").assertTextContains(names[0])
         type("Name", names[1])

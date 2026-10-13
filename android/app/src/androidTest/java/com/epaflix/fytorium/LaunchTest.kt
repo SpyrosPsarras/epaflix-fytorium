@@ -174,10 +174,10 @@ class LaunchTest {
             compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.today == "2030-06-02" }
             val waterTag = "task:$plantId:water"
             fun button(tag: String, label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag(tag)))
-            compose.onNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
-            button(waterTag, "Done").performScrollTo().waitForAction("$waterTag Done").performClick()
+            compose.waitForNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
+            compose.waitForNode(hasText("Done") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().waitForAction("$waterTag Done").performClick()
             compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
-            button(waterTag, "Undo").performScrollTo().waitForAction("$waterTag Undo").performClick()
+            compose.waitForNode(hasText("Undo") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().waitForAction("$waterTag Undo").performClick()
             try {
                 compose.waitUntil(30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent == null && it.lateDays == 1 } == true }
             } catch (error: Throwable) {
@@ -190,7 +190,7 @@ class LaunchTest {
             compose.onNodeWithTag("view-upcoming").waitForAction("view-upcoming").performClick()
             val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.first { it.plantId == plantId && it.dueOn!! > "2030-06-02" }
             val futureTag = "task:$plantId:${future.key}"
-            compose.onNodeWithTag(futureTag).performScrollTo()
+            compose.waitForNode(hasTestTag(futureTag)).performScrollTo()
             button(futureTag, "Snooze 2 days").assertDoesNotExist()
             compose.onNodeWithTag("view-today").waitForAction("view-today").performClick()
             device.executeShellCommand("cmd connectivity airplane-mode enable")

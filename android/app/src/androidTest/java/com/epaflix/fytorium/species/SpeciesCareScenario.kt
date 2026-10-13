@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.waitForNode
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -40,7 +41,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
     fun showBasis() {
         compose.onNodeWithText("Today").performClick()
         val task = hasAnyAncestor(hasTestTag("task:$plantId:water"))
-        compose.onNode(task and hasText("Based on")).performScrollTo().performClick()
+        compose.waitForNode(task and hasText("Based on")).performScrollTo().performClick()
     }
     try {
         // Recover only this scenario's synthetic fixtures after an interrupted run.
@@ -66,7 +67,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         assertEquals("rule", original.source)
         assertEquals(7, (original.value as Number).toInt())
         openCare()
-        compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
+        compose.waitForNode(hasText("Override watering interval in days") and isEnabled()).performScrollTo().performClick()
         compose.onNodeWithText("Value").performTextReplacement("9")
         compose.onNodeWithText("Save override").performClick()
         compose.waitUntil(30_000) { waterBasis()?.source == "override" && (waterBasis()?.value as? Number)?.toInt() == 9 }
@@ -74,18 +75,18 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         val task = hasAnyAncestor(hasTestTag("task:$plantId:water"))
         compose.onNode(task and hasText("wateringIntervalDays")).performScrollTo().assertIsDisplayed()
         compose.onNode(task and hasText("9")).performScrollTo().assertIsDisplayed()
-        compose.onNode(task and hasText("Source: override", substring = true)).performScrollTo().assertIsDisplayed()
+        compose.waitForNode(task and hasText("Source: override", substring = true)).performScrollTo().assertIsDisplayed()
         // Assert against the real schedule HTTP seam as well as the rendered Based on.
         val overridden = JSONObject(json("/api/plants/$plantId/tasks")).getJSONObject("water").getJSONArray("basedOn")
         val basis = (0 until overridden.length()).map { overridden.getJSONObject(it) }.single { it.getString("input") == "wateringIntervalDays" }
         assertEquals("override", basis.getString("source")); assertEquals(9, basis.getInt("value"))
         openCare()
-        compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
+        compose.waitForNode(hasText("Remove override for watering interval in days") and isEnabled()).performScrollTo().performClick()
         compose.onNodeWithText("Confirm reset").performClick()
         compose.waitUntil(30_000) { waterBasis()?.source == original.source && waterBasis()?.value == original.value }
         showBasis()
         compose.onNode(task and hasText("Source: override", substring = true)).assertDoesNotExist()
-        compose.onNode(task and hasText("Source: rule · water.default@1")).performScrollTo().assertIsDisplayed()
+        compose.waitForNode(task and hasText("Source: rule · water.default@1")).performScrollTo().assertIsDisplayed()
         val restored = JSONObject(json("/api/species/$speciesKey/care")).getJSONObject("profile").getJSONObject("wateringIntervalDays")
         assertEquals(original.source, restored.getString("source")); assertEquals((original.value as Number).toDouble(), restored.getDouble("value"), 0.0)
         println("A10 E2E PASS: override 9 days, task Based on changes to override/9, reset restores original value/source")
