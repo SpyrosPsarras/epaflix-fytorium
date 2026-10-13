@@ -10,7 +10,7 @@ type SitterFeed = { cards: Extract<FeedCard, { kind: 'late_tasks' }>[] };
 type SitterHome = { identity: Identity; plantCount: number; tasks: TaskList; feed: SitterFeed };
 
 type Action = 'owner' | 'edit' | 'self' | 'tasks' | 'plant' | 'undo';
-export type SitterProjection = 'count' | 'meta' | 'home' | 'feed' | 'self' | 'taskList' | 'plantHeader' | 'schedule' | 'task' | 'batch' | 'batchUndo';
+export type SitterProjection = 'count' | 'meta' | 'home' | 'feed' | 'self' | 'taskList' | 'plantList' | 'plantHeader' | 'schedule' | 'task' | 'batch' | 'batchUndo';
 // Every permission that admits sitters must name its response projection.
 type Permission = 'owner' | 'edit' | { action: Exclude<Action, 'owner' | 'edit'>; projection: SitterProjection };
 type RoutePolicy = Permission | { read: Permission; write: Permission };
@@ -76,7 +76,8 @@ const policies: Record<string, RoutePolicy> = {
   '/plants/[id]/repot': 'edit', '/plants/[id]/species': 'edit',
   '/sites': 'edit', '/sites/new': 'edit', '/sites/[id]': 'edit', '/sites/[id]/edit': 'edit',
   '/species/[gbifKey]': 'edit', '/species/unmatched': 'edit', '/journal': 'edit',
-  '/api/plants': 'edit', '/api/plants/[id]/care-settings': 'edit', '/api/plants/[id]/graveyard': 'edit',
+  '/api/choices': 'edit',
+  '/api/plants': { read: { action: 'tasks', projection: 'plantList' }, write: 'edit' }, '/api/plants/[id]/care-settings': 'edit', '/api/plants/[id]/graveyard': 'edit',
   '/api/plants/[id]/history': 'edit', '/api/plants/[id]/photos': 'edit', '/api/plants/[id]/repot': 'edit',
   '/api/plants/[id]/restore': 'edit', '/api/plants/[id]/species': 'edit', '/api/plants/[id]/species-changes': 'edit',
   '/api/sites': 'edit', '/api/sites/[id]': 'edit', '/api/custom-tasks': 'edit', '/api/custom-tasks/[id]': 'edit',
@@ -171,6 +172,7 @@ export function sitterView(resource: unknown, projection: SitterProjection): unk
         ...fields(record(section), ['key', 'label']), tasks: tasks(record(section).tasks),
       })) };
   }
+  case 'plantList': return (Array.isArray(resource) ? resource : []).map(plant => sitterView(plant, 'plantHeader'));
   case 'plantHeader': return fields(value, ['id', 'display_name', 'nickname', 'scientific_name', 'canonical_name', 'cultivar', 'birthday', 'status']);
   case 'task': return { event: sitterEvent(value.event), task: sitterTask(value.task) };
   case 'batch': return { events: (Array.isArray(value.events) ? value.events : []).map(sitterEvent), tasks: sitterSchedule(value.tasks) };

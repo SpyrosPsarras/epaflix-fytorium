@@ -18,6 +18,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.epaflix.fytorium.feed.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolean) =
     tab == "Today" && taskView == "today" && !feedSettings
@@ -25,7 +26,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
                          careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
-                         feed: FeedRepository? = null) {
+                         feed: FeedRepository? = null,
+                         sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }) {
     val loadedFeed = feed?.state?.collectAsState()?.value
     val feedState = loadedFeed?.let { if (it.member == careState?.member) it else FeedState(member = careState?.member) }
     val scope = rememberCoroutineScope()
@@ -35,6 +37,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     BackHandler(enabled = feedSettings) { feedSettings = false }
     var feedPlant by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableStateOf("Today") }
+    var sites by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) sites = false }
     var taskView by rememberSaveable { mutableStateOf("today") }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(feed, lifecycle, loggedIn, updateRequired, tab, taskView, feedSettings, careState?.member) {
@@ -46,7 +50,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; feedSettings = false; feedPlant = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; feedSettings = false; feedPlant = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
@@ -62,20 +66,28 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
             return@Scaffold
         }
+        if (loggedIn && !updateRequired && tab == "More" && sites && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false })
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding)) {
-                Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                if (tab == "Today") Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
                     onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
-                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, onLoadPot = { controller?.plant(it) },
+                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) },
+                    onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } },
                     feedContent = { seeTasks -> if (feedState != null) HomeFeed(feedState, onSettings = { openFeedSettings() },
                         onOpen = { href -> when {
                             href == "/#today" -> seeTasks()
-                            href.startsWith("/plants/") -> { feedPlant = href.removePrefix("/plants/"); controller?.plant(feedPlant!!); tab = "Plants" }
+                            href.startsWith("/plants/") -> { feedPlant = href.removePrefix("/plants/"); tab = "Plants" }
                             else -> openFeedSettings()
                         } }, onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
                         onUndo = { scope.launch(Dispatchers.IO) { if (feed?.undoRain() == true) controller?.refresh() } }) })
-                else CachedPlants(careState, onPlant = { controller?.plant(it) }, thumbnails = thumbnails, initialPlant = feedPlant)
+                else key(careState.member) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
+                    onBack = { tab = "Today" }, initialPlant = feedPlant) }
             }
             return@Scaffold
         }
@@ -100,6 +112,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 tab == "More" -> {
                     Text("More", style = MaterialTheme.typography.headlineMedium)
                     if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
+                    if (careState?.member != null && careState.member.role != Role.sitter) {
+                        Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
+                    }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
                     Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }
                 }

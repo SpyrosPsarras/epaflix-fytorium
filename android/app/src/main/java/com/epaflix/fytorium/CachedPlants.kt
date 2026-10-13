@@ -50,7 +50,7 @@ import kotlinx.coroutines.withContext
         }
     }
 }
-@Composable private fun Thumbnail(plant: Plant, thumbnails: Thumbnails?) {
+@Composable internal fun Thumbnail(plant: Plant, thumbnails: Thumbnails?) {
     val bitmap by produceState<android.graphics.Bitmap?>(null, plant.coverPhotoId, thumbnails) {
         value = withContext(Dispatchers.IO) { plant.coverPhotoId?.let { thumbnails?.load(it) }?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } }
     }

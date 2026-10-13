@@ -87,6 +87,34 @@ class TaskScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         }
     }
+    @Test fun todayRepotOwnsLoadingAndErrorsAndRetainsEditedFields() {
+        val result = kotlinx.coroutines.CompletableDeferred<Plant>()
+        val current = mutableStateOf(state())
+        val task = state().today!!.sections.first().tasks.first().copy(taskType = "repot")
+        compose.setContent { TaskTestTheme { RepotForm(task, current.value, { result.await() }, {}, {}) } }
+        compose.onNodeWithText("Loading current pot…").assertExists()
+        compose.onNodeWithText("Pot size in cm").assertIsNotEnabled()
+        compose.onNodeWithText("Pot type: plastic").assertIsNotEnabled()
+        compose.onNodeWithText("Save repot").assertIsNotEnabled()
+        compose.runOnIdle { result.complete(parsePlant(org.json.JSONObject(plantFixture))) }
+        compose.waitUntil { runCatching { compose.onNodeWithText("Pot size in cm").assertIsEnabled(); true }.getOrDefault(false) }
+        compose.onNodeWithText("Pot size in cm").performTextReplacement("23")
+        compose.onNodeWithText("Pot type: plastic").performClick()
+        compose.onNodeWithText("terracotta").performClick()
+        compose.runOnIdle { current.value = current.value.copy(detail = PlantDetail(parsePlant(org.json.JSONObject(plantFixture)), emptyList(), emptyMap())) }
+        compose.onNodeWithText("23").assertExists()
+        compose.onNodeWithText("Pot type: terracotta").assertExists()
+        compose.onNodeWithText("Save repot").assertIsEnabled()
+    }
+    @Test fun todayRepotFailedReadShowsErrorWithoutBlockingEditsOrPlants() {
+        val result = kotlinx.coroutines.CompletableDeferred<Plant>()
+        val task = state().today!!.sections.first().tasks.first().copy(taskType = "repot")
+        compose.setContent { TaskTestTheme { RepotForm(task, state(), { result.await() }, {}, {}) } }
+        compose.runOnIdle { result.completeExceptionally(java.io.IOException("Could not load the current pot")) }
+        compose.waitUntil { runCatching { compose.onNodeWithText("Could not load the current pot").assertExists(); true }.getOrDefault(false) }
+        compose.onNodeWithText("Pot size in cm").assertIsEnabled().performTextReplacement("20")
+        compose.onNodeWithText("Save repot").assertIsEnabled()
+    }
     @Test fun repotFormUsesExistingDetailsAndRejectsInvalidPotSize() {
         val list = parseTaskList(taskListFixture("today"))
         val repot = list.copy(sections = list.sections.map { it.copy(tasks = it.tasks.map { row -> row.copy(taskType = "repot") }) })
