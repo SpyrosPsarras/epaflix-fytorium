@@ -19,9 +19,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}) {
-    var page by rememberSaveable { mutableStateOf("list") }
-    var id by rememberSaveable { mutableStateOf<String?>(null) }
+@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {},
+    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }, initialPlantId: String? = null) {
+    var page by rememberSaveable { mutableStateOf(if (initialPlantId == null) "list" else "detail") }
+    var id by rememberSaveable { mutableStateOf(initialPlantId) }
+    var identifyReturn by rememberSaveable { mutableStateOf("search") }
     var graveyard by remember { mutableStateOf<List<Plant>>(emptyList()) }
     var options by remember { mutableStateOf<PlantOptions?>(null) }
     var sites by remember { mutableStateOf<List<PlantSite>>(emptyList()) }
@@ -73,6 +75,7 @@ import org.json.JSONObject
         val key = id ?: return
         repository?.clearPlantErrors()
         when (action) {
+            "photos" -> page = "photos"
             "care-form" -> page = "care"
             "repot-form", "restore", "change-species" -> run {
                 loadOptions()
@@ -89,6 +92,18 @@ import org.json.JSONObject
                 }
             }
         }
+    }
+    if (page in listOf("photos", "identify") && photosApi != null) {
+        com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
+            plantId = if (page == "photos") id else null, plantName = if (page == "photos") detail?.plant?.displayName else null,
+            identifying = page == "identify", onBack = { page = if (page == "photos") "detail" else identifyReturn },
+            onChanged = { scope.launch { withContext(Dispatchers.IO) { repository?.refreshPlants() }; id?.let { refreshDetail(it) } } },
+            onSelect = { candidate, searchId, confirmed ->
+                selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
+                species = Species(candidate.key, candidate.scientificName, emptyList(), false, false)
+                page = if (identifyReturn == "change-species") "change-species" else "form"
+            })
+        return
     }
     val title = when (page) {
         "list" -> "Plants"; "graveyard" -> "Graveyard"; "detail" -> detail?.plant?.displayName ?: "Plant"
@@ -121,6 +136,8 @@ import org.json.JSONObject
                     if (success) scope.launch { refreshDetail(event.plantId) }
                 } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back)
             "search", "change-species" -> Column(Modifier.weight(1f)) {
+                if (photosApi != null && state.member?.role != Role.sitter) OutlinedButton(onClick = { identifyReturn = page; page = "identify" },
+                    enabled = photosConnected() && !state.updateRequired && !saving, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Identify from photos") }
                 if (page == "change-species") Text("${detail?.plant?.displayName} is currently ${detail?.plant?.scientificName}. Care history, photos and custom intervals will stay. The schedule will use the new species.", Modifier.padding(16.dp))
                 if (page == "change-species" && selection != null) {
                     Text("Chosen species: ${species?.scientificName.orEmpty()}", Modifier.padding(16.dp))

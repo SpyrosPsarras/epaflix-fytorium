@@ -5,12 +5,20 @@ import android.os.Process
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.room.Room
+import com.epaflix.fytorium.photos.clearCameraCaptures
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.system.exitProcess
 
 class FytoriumApplication : Application(), androidx.work.Configuration.Provider {
     override val workManagerConfiguration: androidx.work.Configuration
         get() = androidx.work.Configuration.Builder().setMinimumLoggingLevel(android.util.Log.ERROR).build()
+    lateinit var capturesCleared: Job
+        private set
+    internal var captureDeleter: (File) -> Boolean = { it.delete() }
     val store: CredentialStore by lazy { KeystoreCredentialStore(this) }
     val session: SessionController by lazy { SessionController(store, api, Diagnostics(this)) }
     private fun connected() = getSystemService(ConnectivityManager::class.java).let {
@@ -25,7 +33,8 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
     val care: CareController get() = careInstance.value
     val api: ApiClient by lazy {
         ApiClient(BuildConfig.SERVER_URL, store) {
-            repository.wipe()
+            try { clearCameraCaptures(cacheDir, delete = captureDeleter) }
+            finally { repository.wipe() }
             care.cancelRefresh()
             Diagnostics(this).apply { clear(); record(ErrorEvent.SESSION_ENDED) }
         }
@@ -33,6 +42,7 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
     override fun onTerminate() { if (careInstance.isInitialized()) care.close(); super.onTerminate() }
     override fun onCreate() {
         super.onCreate()
+        capturesCleared = CoroutineScope(Dispatchers.IO).launch { clearCameraCaptures(cacheDir, startup = true, delete = captureDeleter) }
         Thread.setDefaultUncaughtExceptionHandler { _, _ ->
             runCatching { Diagnostics(this).record(ErrorEvent.APP_CRASH) }
             // Throwable text can contain credentials. Do not send it to logcat or a remote collector.

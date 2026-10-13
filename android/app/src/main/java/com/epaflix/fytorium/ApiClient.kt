@@ -62,7 +62,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
         }
     }
     fun request(path: String, post: Boolean = false, method: String = if (post) "POST" else "GET",
-                body: JSONObject? = null, query: Map<String, String> = emptyMap()): Response {
+                body: JSONObject? = null, query: Map<String, String> = emptyMap(), requestBody: okhttp3.RequestBody? = null): Response {
         require(path.startsWith("/api/") && !path.contains("..") && !path.contains('?') && !path.contains('#'))
         require(method in listOf("GET", "POST", "PUT", "DELETE"))
         val original = store.tokens
@@ -72,7 +72,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
             }.build()
             val builder = Request.Builder().url(url).header("X-App-Version", BuildConfig.VERSION_NAME).header("Accept", "application/json")
             tokens?.let { builder.header("Authorization", "Bearer " + it.access) }
-            if (method != "GET") builder.method(method, body?.toString()?.toRequestBody("application/json".toMediaType())
+            if (method != "GET") builder.method(method, requestBody ?: body?.toString()?.toRequestBody("application/json".toMediaType())
                 ?: ByteArray(0).toRequestBody(null))
             return http.newCall(builder.build()).execute()
         }

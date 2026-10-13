@@ -24,14 +24,20 @@ import kotlinx.coroutines.withContext
     var tab by rememberSaveable { mutableStateOf("Today") }
     var about by rememberSaveable { mutableStateOf(false) }
     var sites by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) sites = false }
+    var journalPlantId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(loggedIn, careState?.member) {
+        if (!loggedIn || careState?.member?.role == Role.sitter) {
+            sites = false; journalPlantId = null
+            if (tab == "Journal") tab = "Today"
+        }
+    }
     var taskView by rememberSaveable { mutableStateOf("today") }
     BackHandler(enabled = about) { about = false }
     Scaffold(bottomBar = {
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; journalPlantId = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
@@ -42,13 +48,22 @@ import kotlinx.coroutines.withContext
             }
             return@Scaffold
         }
+        if (loggedIn && !updateRequired && careState?.member != null && careState.member.role != Role.sitter && tab == "Journal" && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careState.member) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
+                    onBack = { tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
+                    onChanged = { controller?.refresh() }) }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 if (tab == "Today") Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
                     onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
                     onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } })
-                else key(careState.member) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails, onBack = { tab = "Today" }) }
+                else key(careState.member, journalPlantId) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails, onBack = { tab = "Today" },
+                    photosApi = sitesApi, photosConnected = sitesConnected, initialPlantId = journalPlantId) }
             }
             return@Scaffold
         }

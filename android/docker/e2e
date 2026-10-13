@@ -79,6 +79,14 @@ wait_ready "$E2E_BOOT_TIMEOUT" 'Emulator boot: sys.boot_completed=1' boot_ready
 wait_ready "$E2E_PM_TIMEOUT" 'Package manager: pm path android succeeds' package_manager_ready
 adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0
+# Android skips connectivity probes and treats every connected network as VALIDATED.
+# Airplane mode still tests offline; connected-but-unvalidated relies on unit tests.
+adb shell settings put global captive_portal_mode 0
+# Recreate the network monitors so they read the setting before any tests run.
+adb shell svc wifi disable
+adb shell svc data disable
+adb shell svc wifi enable
+adb shell svc data enable
 adb shell settings put global animator_duration_scale 0
 adb shell input keyevent 82
 guest_http() {
@@ -123,3 +131,4 @@ fi
 ./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" -Pandroid.testInstrumentationRunnerArguments.guestNetworkTimeoutSeconds="$E2E_GUEST_NETWORK_TIMEOUT" connectedDebugAndroidTest
 echo "E2E launch scenario PASS; real OIDC login enabled: $login"
 [ "$login" != true ] || echo 'A04 E2E PASS: late complete/undo, future snooze absent, airplane-mode cached Today, disabled writes, seed cleanup and logout wipe'
+[ "$login" != true ] || echo 'A06 E2E PASS: injected picker and camera, photo update and cover, journal, fake Pl@ntNet, confirmed species and add from result'
