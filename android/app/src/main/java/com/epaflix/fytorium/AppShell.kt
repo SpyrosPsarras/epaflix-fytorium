@@ -23,6 +23,8 @@ import kotlinx.coroutines.withContext
                          sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }) {
     var tab by rememberSaveable { mutableStateOf("Today") }
     var about by rememberSaveable { mutableStateOf(false) }
+    var household by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(loggedIn, careState?.member) { household = null }
     var sites by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(loggedIn, careState?.member) { if (!loggedIn || careState?.member?.role == Role.sitter) sites = false }
     var taskView by rememberSaveable { mutableStateOf("today") }
@@ -31,11 +33,18 @@ import kotlinx.coroutines.withContext
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; household = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        val householdArea = com.epaflix.fytorium.household.HouseholdArea.entries.firstOrNull { it.name == household }
+        if (loggedIn && !updateRequired && tab == "More" && householdArea != null && careState?.member != null && sitesApi != null && careState.member.role != Role.sitter && (householdArea != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner)) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careState.member, householdArea) { com.epaflix.fytorium.household.HouseholdRoute(sitesApi, householdArea, careState, sitesConnected) { household = null } }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && tab == "More" && sites && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false })
@@ -74,6 +83,9 @@ import kotlinx.coroutines.withContext
                     Text("More", style = MaterialTheme.typography.headlineMedium)
                     if (careState?.member != null && careState.member.role != Role.sitter) {
                         Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
+                        for (area in com.epaflix.fytorium.household.HouseholdArea.entries.filter { it != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner }) {
+                            Button(onClick = { household = area.name }, modifier = Modifier.heightIn(min = 48.dp)) { Text(area.title) }
+                        }
                     }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
                     Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }

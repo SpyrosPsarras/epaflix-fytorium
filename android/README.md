@@ -90,6 +90,20 @@ Opening the app, returning to it, login and pull-to-refresh refresh both task vi
 
 Thumbnails use a custom disk cache rather than another image dependency. Only `/api/photos/:id/thumb` is fetched, with a 1 MiB per-thumbnail read bound and a 50 MiB total cap. SHA-256 filenames avoid storing URLs. Reads update LRU timestamps; writes evict oldest entries until under the cap. Full-size photos, tokens and login codes never enter either domain cache. Bitmap decoding uses Android's built-in API. Cache, repository, logout failure, member-switch failure, in-flight logout, offline writes and eviction tests exercise their public interfaces against Room, disk and MockWebServer. WorkManager tests inspect its public WorkInfo constraints, period and cancellation.
 
+## Household management
+
+More opens native Household settings, Members and Custom tasks screens. Sitters see none of them. Family members can edit their feed and custom tasks, and read household location and misting. Only owners can change household values, invite or remove members, change roles and edit sitter shares. Personal notification controls belong to A12.
+
+Each route owns an in-memory repository, discarded on exit or member/role change. Controls depend on validated connectivity, the current member/role and update gate, and that route's loading, saving and last error. Today refreshes and failures do not disable these controls. A failed request keeps unsaved input; an explicit successful Refresh clears the route's write block. Nothing is queued or stored in Room.
+
+Household settings mirror the web's four feed switches, nullable latitude/longitude with optional label, and household misting switch. Custom tasks select a plant or site. Graveyard plant definitions remain editable as on the web, although they produce no reminders. Names, whole-day intervals and immutable targets use server validation. Deletes, member removal and invite revocation use Material 3 AlertDialogs. Role choices and removal buttons use the members API's `role_options` and `can_remove`, not locally inferred protection rules. Owner roles are protected; owners can change other members between family and sitter. Changing to family clears plant shares. The web uses the same API capabilities.
+
+An invite chooses family or sitter and, for a sitter, shared active plants. The link lives only in transient Compose state until Back, Hide link or leaving the route. Sharing uses `ACTION_SEND`, `text/plain` and Android's chooser. Invite links, tokens and API response bodies never enter diagnostics, Room or saved state. Acceptance remains in the browser.
+
+`E2E_LOGIN=1 ./scripts/android e2e` includes A09. The owner holds a separate bearer API session and creates an invite through the household repository for one of two synthetic plants. A new synthetic OIDC subject accepts in a real Chrome Custom Tab, then logs into the real app through another Custom Tab. The app shows only the shared plant and hides household controls. The owner's API session removes the subject; the app's next refresh returns to login and clears its member cache. The scenario closes Chrome between the separate browser flows, retaining cookies but avoiding a stale provider form. It closes the idle API actor's connections before removal, without retrying a mutation. Fixtures and devices are cleaned up, and the owner session is restored for the existing care scenario's logout. No identity is injected into server tables and no token endpoint is mocked.
+
+Repository tests exercise server capabilities, invite secrecy, household permissions, location removal, plant/site task payloads and server validation. Compose tests cover role gates, care-state independence, confirmation before removal, offline writes, accessible controls and light/dark screenshots of lists, forms, links and destructive dialogs.
+
 ## Dependency choices
 
 All entries below are pinned in the version catalog. Android's built-in Keystore, clipboard and JSON API avoid extra storage and serialization dependencies.

@@ -123,3 +123,4 @@ fi
 ./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" -Pandroid.testInstrumentationRunnerArguments.guestNetworkTimeoutSeconds="$E2E_GUEST_NETWORK_TIMEOUT" connectedDebugAndroidTest
 echo "E2E launch scenario PASS; real OIDC login enabled: $login"
 [ "$login" != true ] || echo 'A04 E2E PASS: late complete/undo, future snooze absent, airplane-mode cached Today, disabled writes, seed cleanup and logout wipe'
+[ "$login" != true ] || echo 'A09 E2E PASS: owner API invite, second subject accepts in Custom Tab and logs into app, one shared plant, removal returns app to login'
