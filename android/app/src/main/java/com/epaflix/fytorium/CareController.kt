@@ -10,17 +10,19 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-class CareController(context: Context, private val store: CredentialStore, val repository: Repository, private val api: ApiClient) {
+class CareController(context: Context, private val store: CredentialStore, val repository: Repository, private val api: ApiClient,
+                     private val feed: com.epaflix.fytorium.feed.FeedRepository? = null) {
     private val network = context.getSystemService(ConnectivityManager::class.java)
     private val work = WorkManager.getInstance(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
     private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onLost(network: Network) { api.networkLost(); repository.connectivityChanged(false) }
+        override fun onLost(network: Network) { api.networkLost(); repository.connectivityChanged(false); feed?.connectivityChanged(false) }
         override fun onAvailable(network: Network) { refresh() }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             val online = connected()
             repository.connectivityChanged(online)
+            feed?.connectivityChanged(online)
             if (online) refresh()
         }
     }
@@ -32,7 +34,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
                     repository.restore()
                     work.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, periodicRequest())
                     refresh()
-                } else { work.cancelUniqueWork(WORK_NAME); repository.wipe() }
+                } else { work.cancelUniqueWork(WORK_NAME); repository.wipe(); feed?.wipe() }
             }
         }
     }
@@ -40,9 +42,13 @@ class CareController(context: Context, private val store: CredentialStore, val r
     @Synchronized fun refresh() {
         if (store.tokens == null || refreshJob?.isActive == true) return
         refreshJob = scope.launch { repository.refresh() }
+        // Feed reads must not extend the task refresh's single-flight window.
+        refreshJob?.invokeOnCompletion { error ->
+            if (error == null && store.tokens != null) scope.launch { feed?.refresh(repository.state.value.member) }
+        }
     }
-    fun act(task: CareTask, action: String, pot: PotDetails?) { scope.launch { repository.act(task, action, pot) } }
-    fun handleAll(plant: String) { scope.launch { repository.handleAll(plant) } }
+    fun act(task: CareTask, action: String, pot: PotDetails?) { scope.launch { if (repository.act(task, action, pot)) feed?.refresh(repository.state.value.member) } }
+    fun handleAll(plant: String) { scope.launch { if (repository.handleAll(plant)) feed?.refresh(repository.state.value.member) } }
     fun settings(settings: TaskSettings) { scope.launch { repository.saveSettings(settings) } }
     fun plant(id: String) { scope.launch { repository.openPlant(id) } }
     fun cancelRefresh() { work.cancelUniqueWork(WORK_NAME) }
@@ -59,6 +65,7 @@ class CareRefreshWorker(context: Context, parameters: WorkerParameters) : Corout
         val app = applicationContext as FytoriumApplication
         if (app.store.tokens == null) return@withContext Result.success()
         app.repository.refresh()
+        app.feed.refresh(app.repository.state.value.member)
         // Periodic reads wait for the next six-hour interval. No care write is ever queued.
         Result.success()
     }

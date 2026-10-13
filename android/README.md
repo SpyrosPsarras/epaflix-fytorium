@@ -161,6 +161,16 @@ A certificate mismatch means the APK was not signed with the documented producti
 
 The web's personal settings at `/settings/notifications` link to GitHub Releases and this section. Owner, family and sitter roles can all reach that page.
 
+## Home feed and weather
+
+Home feed sits above the Today tasks, with horizontal native Material 3 cards. This keeps the existing bottom navigation and Upcoming tab unchanged. Feed cards use the server results, grouped in the same order as `HomeFeed.svelte`: late care and current weather, weather alerts, then plant warnings. The app displays warning inputs and hardiness sources without computing weather or plant rules. Only the newest visible rain card carries mark-watered and undo controls. Rain writes retain their request UUID for an explicit retry; only HTTP 409 with `rain_report_not_ready` says "Try again in a moment". Successful rain writes also refresh Today and Upcoming.
+
+Customize my feed and More → Feed and weather settings open the same screen. Both owner and family can save their own feed preferences and read the household location. Only the owner can change or remove that location, matching the web and the existing API policy. Sitters see only server-supplied late-task cards, without feed or weather settings. A member or role change hides the previous feed immediately.
+
+Feed data stays in memory, never Room. A failed read keeps the loaded cards. No validated network means offline; timeouts, server errors and malformed responses on a validated network show "Fytorium isn't responding". Reads never disable forms or rain actions; only role, offline state and a pending write do. Location and settings writes are never queued. Foreground, pull-to-refresh and background care reads also refresh the feed. Home polling runs in the repository only while the Today view is selected on the Today tab and the activity is at least STARTED. It stops in Upcoming, feed settings, other tabs and offline. A configured location polls every 3 seconds before its first forecast for at most 20 attempts per session, then every 30 seconds. Server failures also back off to 30 seconds without stopping polling. Slow feed reads do not block the next task refresh.
+
+Repository and Compose tests cover rain retries and undo, offline writes, saved preferences, owner-only location writes, sitter visibility, logout during a read, role changes, labels and 48 dp controls. Twenty-two additional light/dark reference PNGs cover the feed and settings. With `E2E_LOGIN=1`, the emulator also seeds one synthetic outdoor plant, runs the fake-weather worker, checks its cold alert, marks watered after rain and undoes the batch. It verifies both commands through plant history, removes its fixtures and restores the saved preferences and location before the existing care scenario.
+
 ## Bump the minimum app version
 
 The server reads `MIN_APP_VERSION`. Unset or empty disables the minimum; invalid semver fails startup. No second app-version setting exists.
