@@ -54,9 +54,13 @@ class AppShellRestorationTest {
     @Test fun becomingSitterKeepsUpcoming() = sitterNavigation("upcoming", roleChange = true)
     @Test fun becomingSitterClosesJournal() = sitterNavigation("Journal", roleChange = true)
 
-    private fun sitterNavigation(route: String, roleChange: Boolean = false) {
+    @Test fun unknownRoleLoadingAsSitterClosesJournal() = sitterNavigation("Journal", roleChange = true, initialRole = null)
+    @Test fun unknownRoleLoadingAsSitterKeepsPlants() = sitterNavigation("Plants", roleChange = true, initialRole = null)
+
+    private fun sitterNavigation(route: String, roleChange: Boolean = false,
+                                 initialRole: Role? = if (roleChange) Role.family else Role.sitter) {
         val plant = parsePlant(JSONObject(plantFixture))
-        val care = mutableStateOf(CareState(member = Member("member", if (roleChange) Role.family else Role.sitter), plants = listOf(plant),
+        val care = mutableStateOf(CareState(member = initialRole?.let { Member("member", it) }, plants = listOf(plant),
             detail = PlantDetail(plant, emptyList(), emptyMap())))
         val restoration = StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }

@@ -47,11 +47,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val member = careState?.member
         val memberChanged = previousMemberId != null && member != null && previousMemberId != member.id
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
-        if (!loggedIn || memberChanged || becameSitter) {
+        if (!loggedIn || memberChanged || member?.role == Role.sitter) {
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
             }
-            sites = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null
+            sites = false; unmatched = false; careSpecies = null; feedSettings = false
+            if (!loggedIn || memberChanged || becameSitter) feedPlant = null
         }
         if (!loggedIn) { previousMemberId = null; previousRole = null }
         else if (member != null) { previousMemberId = member.id; previousRole = member.role }
