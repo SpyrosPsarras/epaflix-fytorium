@@ -7,7 +7,7 @@ test('enable a device, decrypt a test push, show it through the service worker a
   const siteName = 'Notification room ' + randomUUID();
   const plantName = 'Notification fern ' + randomUUID();
   await context.grantPermissions(['notifications'], { origin: 'http://app:3000' });
-  const synthetic = await (await request.post('http://fake-push:8080/subscriptions')).json();
+  const synthetic = { ...await (await request.post('http://fake-push:8080/subscriptions')).json(), label: 'Notification device ' + randomUUID() };
   // Chromium's native subscribe contacts FCM. Replace only that external provider at the browser seam.
   await context.addInitScript(subscription => {
     PushManager.prototype.subscribe = async function(options) {
@@ -38,18 +38,36 @@ test('enable a device, decrypt a test push, show it through the service worker a
   const registrationId = registrations.find(registration => registration.scopeURL === 'http://app:3000/')!.registrationId;
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await cdp.send('ServiceWorker.startWorker', { scopeURL: 'http://app:3000/' });
-  await cdp.send('ServiceWorker.deliverPushMessage', { origin: 'http://app:3000', registrationId, data: JSON.stringify(delivery.payload) });
+  const displayed: string[] = [];
+  const closed: string[] = [];
+  cdp.on('BackgroundService.backgroundServiceEventReceived', ({ backgroundServiceEvent: event }) => {
+    if (event.origin !== 'http://app:3000/' || event.serviceWorkerRegistrationId !== registrationId) return;
+    if (event.eventName === 'Notification displayed') displayed.push(event.instanceId);
+    if (event.eventName === 'Notification closed') closed.push(event.instanceId);
+  });
+  await cdp.send('BackgroundService.startObserving', { service: 'notifications' });
+  await cdp.send('BackgroundService.setRecording', { service: 'notifications', shouldRecord: true });
+  async function deliverPush(data: string, tag: string) {
+    const before = displayed.filter(value => value === tag).length;
+    await cdp.send('ServiceWorker.deliverPushMessage', { origin: 'http://app:3000', registrationId, data });
+    // An early getNotifications() can prune Chrome's database before the new notification is displayed.
+    await expect.poll(() => displayed.filter(value => value === tag).length).toBe(before + 1);
+  }
+  await deliverPush(JSON.stringify(delivery.payload), 'fytorium-test');
   await expect.poll(() => page.evaluate(async () => {
     const worker = await navigator.serviceWorker.ready;
     return (await worker.getNotifications()).map(notification => ({ title: notification.title, body: notification.body, tag: notification.tag, url: notification.data.url, icon: notification.icon }));
   })).toEqual([{ title: 'Fytorium', body: 'Notifications work on this device.', tag: 'fytorium-test', url: '/', icon: 'http://app:3000/icon-192.png' }]);
 
-  await cdp.send('ServiceWorker.deliverPushMessage', { origin: 'http://app:3000', registrationId, data: JSON.stringify({ ...delivery.payload, tag: 'fytorium-daily' }) });
+  await deliverPush(JSON.stringify({ ...delivery.payload, tag: 'fytorium-daily' }), 'fytorium-daily');
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(row => row.tag))).toContain('fytorium-daily');
-  await cdp.send('ServiceWorker.deliverPushMessage', { origin: 'http://app:3000', registrationId, data: 'not JSON' });
+  await deliverPush('not JSON', 'fytorium-fallback');
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(row => row.tag).sort())).toEqual(['fytorium-daily', 'fytorium-fallback', 'fytorium-test']);
   await page.evaluate(async () => { for (const row of await (await navigator.serviceWorker.ready).getNotifications({ tag: 'fytorium-fallback' })) row.close(); });
-  await cdp.send('ServiceWorker.deliverPushMessage', { origin: 'http://app:3000', registrationId, data: JSON.stringify({ tag: 'fytorium-daily' }) });
+  // close() is asynchronous. Finish removing the old fallback before reusing its tag.
+  await expect.poll(() => closed).toContain('fytorium-fallback');
+  await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(row => row.tag).sort())).toEqual(['fytorium-daily', 'fytorium-test']);
+  await deliverPush(JSON.stringify({ tag: 'fytorium-daily' }), 'fytorium-fallback');
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(row => row.tag).sort())).toEqual(['fytorium-daily', 'fytorium-fallback', 'fytorium-test']);
   expect(await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).find(row => row.tag === 'fytorium-daily')?.body)).toBe('Notifications work on this device.');
 
@@ -67,4 +85,5 @@ test('enable a device, decrypt a test push, show it through the service worker a
   await page.getByRole('button', { name: 'Remove ' + device.label, exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('Device removed.');
   await browserCdp.detach();
+  await cdp.detach();
 });
