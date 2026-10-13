@@ -4,6 +4,12 @@ export HOME=/tmp/android-home ANDROID_USER_HOME=/tmp/android-home/.android
 # Always use this container's loopback server, never an inherited host adb endpoint.
 unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_ADDRESS
 export ANDROID_ADB_SERVER_PORT=5037 ANDROID_SERIAL=emulator-5554
+# Seconds. Reject invalid or unbounded overrides before starting any processes.
+: "${E2E_BOOT_TIMEOUT:=360}" "${E2E_PM_TIMEOUT:=180}" "${E2E_DNS_TIMEOUT:=180}" "${E2E_GUEST_NETWORK_TIMEOUT:=180}"
+for value in "$E2E_BOOT_TIMEOUT" "$E2E_PM_TIMEOUT" "$E2E_DNS_TIMEOUT" "$E2E_GUEST_NETWORK_TIMEOUT"; do
+  case "$value" in ''|*[!0-9]*) echo 'E2E readiness timeouts must be whole seconds from 1 to 3600' >&2; exit 2;; esac
+  [ "$value" -ge 1 ] && [ "$value" -le 3600 ] || { echo 'E2E readiness timeouts must be whole seconds from 1 to 3600' >&2; exit 2; }
+done
 mkdir -p "$ANDROID_USER_HOME"
 cleanup() {
   if [ "${E2E_LOGIN:-0}" = 1 ]; then curl --silent --fail -H 'Content-Type: application/json' -d '{"action":"reset"}' http://app:3000/__test/clock >/dev/null || true; fi
@@ -20,22 +26,32 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # The guest uses Docker's DNS through a container-local forwarder. Both app and oidc retain their canonical URLs.
 ip=$(ip -4 -o addr show eth0 | awk '{split($4,a,"/"); print a[1]}')
-dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --listen-address="$ip" --bind-interfaces --no-hosts --no-negcache >/tmp/dns.log 2>&1 &
+dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --listen-address="$ip" --bind-interfaces --no-hosts --no-negcache --log-queries --log-facility=- >/tmp/dns.log 2>&1 &
 dns_pid=$!
 wait_ready() {
-  description=$1
-  shift
-  deadline=$(($(date +%s) + 90))
+  limit=$1
+  description=$2
+  shift 2
+  deadline=$(($(date +%s) + limit))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if "$@" >/tmp/network-check.log 2>&1; then
-      echo "Network ready: $description"
+    if "$@" >/tmp/readiness-check.log 2>&1; then
+      echo "Ready: $description"
       return 0
+    fi
+    if [ -n "${emulator_pid:-}" ] && ! kill -0 "$emulator_pid" 2>/dev/null; then
+      echo 'Emulator exited before readiness' >&2
+      break
     fi
     sleep 1
   done
-  echo "Network readiness timed out after 90s: $description" >&2
-  tail -20 /tmp/network-check.log /tmp/dns.log >&2
-  adb shell -n dumpsys connectivity >&2 || true
+  echo "Readiness timed out after ${limit}s: $description" >&2
+  for log in /tmp/readiness-check.log /tmp/dns.log /tmp/emulator.log; do
+    [ ! -f "$log" ] || tail -n 20 "$log" >&2
+  done
+  timeout 10 adb shell -n getprop sys.boot_completed >&2 || true
+  timeout 10 adb shell -n pm path android >&2 || true
+  grep -E '(query|reply|cached).* (app|oidc)( |$)' /tmp/dns.log | tail -n 20 >&2 || true
+  timeout 10 adb shell -n dumpsys connectivity >&2 || true
   return 1
 }
 dns_ready() {
@@ -47,18 +63,20 @@ dns_ready() {
   curl --silent --show-error --fail --max-time 5 http://app:3000/healthz || return 1
   curl --silent --show-error --fail --max-time 5 http://oidc:8080/default/.well-known/openid-configuration >/dev/null
 }
-wait_ready 'dnsmasq resolves app/oidc and stack HTTP responds' dns_ready
+wait_ready "$E2E_DNS_TIMEOUT" 'DNS/network: dnsmasq resolves app/oidc and stack HTTP responds' dns_ready
 printf 'no\n' | avdmanager create avd -n fytorium -k 'system-images;android-35;google_apis;x86_64' -d pixel_2 --force
-emulator -avd fytorium -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -dns-server "$ip" -memory 2048 >/tmp/emulator.log 2>&1 &
+# Netsim Wi-Fi can strand DNS under load; use the per-container QEMU DNS backend.
+emulator -avd fytorium -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -feature -WiFiPacketStream -dns-server "$ip" -memory 2048 >/tmp/emulator.log 2>&1 &
 emulator_pid=$!
 adb start-server
-booted=0
-for attempt in $(seq 1 180); do
-  if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then booted=1; break; fi
-  kill -0 "$emulator_pid" || { tail -50 /tmp/emulator.log; exit 1; }
-  sleep 2
-done
-[ "$booted" = 1 ] || { tail -50 /tmp/emulator.log; echo 'Emulator boot timed out'; exit 1; }
+boot_ready() {
+  [ "$(timeout 10 adb shell -n getprop sys.boot_completed | tr -d '\r')" = 1 ]
+}
+package_manager_ready() {
+  timeout 10 adb shell -n pm path android | grep -q '^package:'
+}
+wait_ready "$E2E_BOOT_TIMEOUT" 'Emulator boot: sys.boot_completed=1' boot_ready
+wait_ready "$E2E_PM_TIMEOUT" 'Package manager: pm path android succeeds' package_manager_ready
 adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0
 adb shell settings put global animator_duration_scale 0
@@ -66,13 +84,13 @@ adb shell input keyevent 82
 guest_http() {
   # Keep stdin open until the response; toybox nc otherwise exits at pipe EOF.
   timeout 10 adb shell -n "{ printf 'GET $3 HTTP/1.1\r\nHost: $1\r\nConnection: close\r\n\r\n'; sleep 5; } | toybox nc -w 3 -W 3 $1 $2" > /tmp/guest-http || return 1
-  grep -Eq '^HTTP/1\.[01] 200 ' /tmp/guest-http || { tail -10 /tmp/guest-http; return 1; }
+  grep -Eq '^HTTP/1\.[01] 200 ' /tmp/guest-http || { tail -n 10 /tmp/guest-http; return 1; }
 }
 guest_ready() {
   guest_http app 3000 /healthz || return 1
   guest_http oidc 8080 /default/.well-known/openid-configuration
 }
-wait_ready 'guest resolves app/oidc and both HTTP endpoints return 200' guest_ready
+wait_ready "$E2E_GUEST_NETWORK_TIMEOUT" 'Guest network: app/oidc DNS and both HTTP endpoints return 200' guest_ready
 if [ "${E2E_RELEASE:-}" = release-launch ]; then
   ./gradlew --no-daemon --console=plain assembleRelease
   keytool -genkeypair -keystore /tmp/release-check.jks -storepass android -keypass android -alias check -dname 'CN=Release check' -keyalg RSA -validity 1
@@ -102,6 +120,6 @@ if [ "$E2E_LOGIN" = 1 ]; then
   login=true
   curl --fail -H 'Content-Type: application/json' -d '{"action":"set","at":"2030-06-01T10:00:00Z"}' http://app:3000/__test/clock
 fi
-./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" connectedDebugAndroidTest
+./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" -Pandroid.testInstrumentationRunnerArguments.guestNetworkTimeoutSeconds="$E2E_GUEST_NETWORK_TIMEOUT" connectedDebugAndroidTest
 echo "E2E launch scenario PASS; real OIDC login enabled: $login"
 [ "$login" != true ] || echo 'A04 E2E PASS: late complete/undo, future snooze absent, airplane-mode cached Today, disabled writes, seed cleanup and logout wipe'
