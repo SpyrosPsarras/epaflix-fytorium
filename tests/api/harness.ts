@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect } from 'vitest';
+import { assertApiResponse } from './openapi';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -10,6 +11,7 @@ import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-pro
 
 type FakeResponse = { status: number; body: unknown; headers?: Record<string, string>; delay?: number };
 export function createApiHarness(options: { appEnv?: Record<string, string>; testClock?: boolean; queryStatistics?: boolean; photos?: boolean; careEnv?: Record<string, string>; weather?: (url: URL) => FakeResponse; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
+  const originalFetch = globalThis.fetch;
   let postgres: StartedPostgreSqlContainer;
   const photos = createPhotoStorage();
   const push = createPushService();
@@ -128,6 +130,12 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     const port = await listen(portServer);
     await close(portServer);
     base = `http://127.0.0.1:${port}`;
+    globalThis.fetch = async (input, init) => {
+      const response = await originalFetch(input, init);
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(base + '/api/')) await assertApiResponse(init?.method ?? (input instanceof Request ? input.method : 'GET'), url, response);
+      return response;
+    };
     // start.mjs runs migrations before starting the HTTP listener.
     appEnv = { ...process.env, FYTORIUM_TEST_PUSH_URL: `http://127.0.0.1:${pushPort}/`, VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: 'mailto:push@example.test', PUSH_WORKER_ENABLED: 'false', OPEN_METEO_BASE_URL: `http://127.0.0.1:${weatherPort}/`, OPEN_METEO_CLIMATE_BASE_URL: `http://127.0.0.1:${weatherPort}/`, WEATHER_WORKER_ENABLED: 'false', OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual-key', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, ...options.appEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, PLANTNET_BASE_URL: `http://127.0.0.1:${plantnetPort}/`, PLANTNET_API_KEY: plantnetKey, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '41M' };
     app = spawn('node', ['scripts/start.mjs'], { env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -147,6 +155,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
   }
 
   afterAll(async () => {
+    globalThis.fetch = originalFetch;
     if (app && app.exitCode === null) {
       const exited = new Promise<void>(resolve => app.once('exit', () => resolve()));
       app.kill('SIGTERM');

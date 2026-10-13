@@ -9,7 +9,7 @@ type SitterFeed = { cards: Extract<FeedCard, { kind: 'late_tasks' }>[] };
 type SitterHome = { identity: Identity; plantCount: number; tasks: TaskList; feed: SitterFeed };
 
 type Action = 'owner' | 'edit' | 'self' | 'tasks' | 'plant' | 'undo';
-export type SitterProjection = 'home' | 'feed' | 'self' | 'taskList' | 'plantHeader' | 'schedule' | 'task' | 'batch' | 'batchUndo';
+export type SitterProjection = 'count' | 'meta' | 'home' | 'feed' | 'self' | 'taskList' | 'plantHeader' | 'schedule' | 'task' | 'batch' | 'batchUndo';
 // Every permission that admits sitters must name its response projection.
 type Permission = 'owner' | 'edit' | { action: Exclude<Action, 'owner' | 'edit'>; projection: SitterProjection };
 type RoutePolicy = Permission | { read: Permission; write: Permission };
@@ -53,6 +53,8 @@ export function publicRoute(route: string) {
 }
 const policies: Record<string, RoutePolicy> = {
   '/': { action: 'tasks', projection: 'home' },
+  '/api/plants/count': { action: 'tasks', projection: 'count' },
+  '/api/meta': { action: 'self', projection: 'meta' },
   '/api/feed': { action: 'tasks', projection: 'feed' },
   '/api/feed/settings': 'edit',
   '/__test/care-quota/[source]': 'owner',
@@ -92,6 +94,7 @@ const policies: Record<string, RoutePolicy> = {
   '/api/species/[gbifKey]/care/retry-match': 'edit', '/api/species/[gbifKey]/names': 'edit',
   '/api/species/[gbifKey]/names/[id]': 'edit', '/api/species/[gbifKey]/names/refresh': 'edit',
   '/api/species/[gbifKey]/outdoor-months': 'edit', '/api/tasks/settings': 'edit',
+  '/api/plants/[id]/weather': 'edit',
   '/api/weather': 'edit', '/api/weather/rain/water': 'edit',
 };
 
@@ -156,6 +159,8 @@ export function sitterView(resource: unknown, projection: SitterProjection): unk
   switch (projection) {
   // These endpoints contain only the member's own identity and notification settings.
   case 'self': return resource;
+  case 'count': return fields(value, ['count']);
+  case 'meta': return fields(value, ['minAppVersion', 'serverVersion', 'today', 'timezone', 'role']);
   case 'home': return { ...fields(value, ['identity', 'plantCount']),
     tasks: sitterView(value.tasks, 'taskList'), feed: sitterView(value.feed, 'feed') };
   case 'feed': return { cards: (Array.isArray(value.cards) ? value.cards : [])

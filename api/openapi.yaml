@@ -1,0 +1,5131 @@
+openapi: 3.1.0
+info:
+  title: Fytorium native and web API
+  version: 1.0.0
+  description: "One household per server. Login uses cookies or A01 device bearer tokens. Authorization is
+    deny-by-default; sitters receive named projections. Dates are household calendar dates unless marked
+    timestamps. Send Accept: application/json. Cookie writes require same-origin Origin checks; verified
+    bearer writes do not. API errors use message or errors, and app authentication uses error. MIN_APP_VERSION
+    never blocks requests without X-App-Version, /api/meta or /api/app/*."
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+paths:
+  /api/meta:
+    get:
+      operationId: get_api_meta
+      summary: Household date, timezone, role and application versions. All members, including sitters.
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meta"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/me:
+    get:
+      operationId: get_api_me
+      summary: GET /api/me
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/app/token:
+    post:
+      operationId: post_api_app_token
+      summary: POST /api/app/token
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tokens"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    grant_type:
+                      const: authorization_code
+                    code:
+                      type: string
+                    code_verifier:
+                      type: string
+                    device_name:
+                      type: string
+                  required:
+                    - grant_type
+                    - code
+                    - code_verifier
+                    - device_name
+                  additionalProperties: false
+                - type: object
+                  properties:
+                    grant_type:
+                      const: refresh_token
+                    refresh_token:
+                      type: string
+                  required:
+                    - grant_type
+                    - refresh_token
+                  additionalProperties: false
+      security: []
+  /api/app/logout:
+    post:
+      operationId: post_api_app_logout
+      summary: POST /api/app/logout
+      responses:
+        "204":
+          description: No content
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/plants/count:
+    get:
+      operationId: get_api_plants_count
+      summary: Active visible plant count. Sitters count only shared active plants, independent of task filters.
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Count"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants:
+    get:
+      operationId: get_api_plants
+      summary: GET /api/plants
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/Plant"
+                  - $ref: "#/components/schemas/Count"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            enum:
+              - active
+              - graveyard
+        - name: count
+          in: query
+          required: false
+          schema:
+            enum:
+              - "true"
+              - "false"
+        - name: site_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+    post:
+      operationId: post_api_plants
+      summary: POST /api/plants
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plant"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantInput"
+  /api/plants/{id}:
+    get:
+      operationId: get_api_plants__id_
+      summary: Plant details. Sitters receive only the shared plant header.
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/Plant"
+                  - $ref: "#/components/schemas/PlantHeader"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_plants__id_
+      summary: PUT /api/plants/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plant"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlantInput"
+    delete:
+      operationId: delete_api_plants__id_
+      summary: DELETE /api/plants/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm_name:
+                  type: string
+              required:
+                - confirm_name
+              additionalProperties: false
+  /api/plants/{id}/weather:
+    get:
+      operationId: get_api_plants__id__weather
+      summary: Cached weather filtered to this household plant. Owner and family only, as on the web. No external
+        request.
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Weather"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants/{id}/tasks:
+    get:
+      operationId: get_api_plants__id__tasks
+      summary: GET /api/plants/{id}/tasks
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants/{id}/tasks/{taskType}/{action}:
+    post:
+      operationId: post_api_plants__id__tasks__taskType___action_
+      summary: POST /api/plants/{id}/tasks/{taskType}/{action}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAction"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: taskType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                request_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required:
+                - request_id
+              additionalProperties: false
+  /api/plants/{id}/tasks/complete-all:
+    post:
+      operationId: post_api_plants__id__tasks_complete_all
+      summary: POST /api/plants/{id}/tasks/complete-all
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchAction"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                request_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required:
+                - request_id
+              additionalProperties: false
+  /api/care-events/{id}/undo:
+    post:
+      operationId: post_api_care_events__id__undo
+      summary: POST /api/care-events/{id}/undo
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAction"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/task-batches/{id}/undo:
+    post:
+      operationId: post_api_task_batches__id__undo
+      summary: POST /api/task-batches/{id}/undo
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchUndo"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants/{id}/repot:
+    post:
+      operationId: post_api_plants__id__repot
+      summary: POST /api/plants/{id}/repot
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAction"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                request_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                pot_type:
+                  enum:
+                    - plastic
+                    - terracotta
+                    - ceramic
+                    - glass
+                    - metal
+                    - wood
+                    - fabric
+                    - in_ground
+                    - other
+                pot_size_cm:
+                  anyOf:
+                    - type: integer
+                    - type: "null"
+                soil_type:
+                  enum:
+                    - all_purpose
+                    - cactus
+                    - orchid
+                    - aroid
+                    - other
+              required:
+                - request_id
+                - pot_type
+                - pot_size_cm
+                - soil_type
+              additionalProperties: false
+  /api/plants/{id}/graveyard:
+    post:
+      operationId: post_api_plants__id__graveyard
+      summary: POST /api/plants/{id}/graveyard
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plant"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants/{id}/restore:
+    post:
+      operationId: post_api_plants__id__restore
+      summary: POST /api/plants/{id}/restore
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plant"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required: []
+              additionalProperties: false
+  /api/plants/{id}/species:
+    post:
+      operationId: post_api_plants__id__species
+      summary: POST /api/plants/{id}/species
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plant"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                search_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                gbif_key:
+                  type: integer
+                confirmed:
+                  type: boolean
+              required:
+                - search_id
+                - gbif_key
+              additionalProperties: false
+  /api/plants/{id}/species-changes:
+    get:
+      operationId: get_api_plants__id__species_changes
+      summary: GET /api/plants/{id}/species-changes
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SpeciesChange"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants/{id}/history:
+    get:
+      operationId: get_api_plants__id__history
+      summary: GET /api/plants/{id}/history
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CareEvent"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/plants/{id}/care-settings:
+    get:
+      operationId: get_api_plants__id__care_settings
+      summary: GET /api/plants/{id}/care-settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CareSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_plants__id__care_settings
+      summary: PUT /api/plants/{id}/care-settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CareSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CareSettings"
+  /api/plants/{id}/photos:
+    get:
+      operationId: get_api_plants__id__photos
+      summary: GET /api/plants/{id}/photos
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Photo"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: post_api_plants__id__photos
+      summary: POST /api/plants/{id}/photos
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Photo"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: One still image, at most 15 MiB. Server strips metadata and re-encodes JPEG.
+                note:
+                  type: string
+                  maxLength: 5000
+                health:
+                  enum:
+                    - poor
+                    - fair
+                    - good
+                    - very_good
+                    - ""
+                taken_on:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+              required:
+                - photo
+              additionalProperties: false
+  /api/photos/{id}:
+    delete:
+      operationId: delete_api_photos__id_
+      summary: DELETE /api/photos/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/photos/{id}/cover:
+    put:
+      operationId: put_api_photos__id__cover
+      summary: PUT /api/photos/{id}/cover
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Photo"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/photos/{id}/{variant}:
+    get:
+      operationId: get_api_photos__id___variant_
+      summary: GET /api/photos/{id}/{variant}
+      responses:
+        "200":
+          description: Sanitised original or thumbnail JPEG. variant is original or thumb.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/journal:
+    get:
+      operationId: get_api_journal
+      summary: GET /api/journal
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Photo"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/identification:
+    get:
+      operationId: get_api_identification
+      summary: GET /api/identification
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quota"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: post_api_identification
+      summary: POST /api/identification
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Search"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                images:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  items:
+                    type: string
+                    format: binary
+                  description: Repeated images fields, at most 15 MiB each and 40 MiB total.
+              required:
+                - images
+              additionalProperties: false
+  /api/tasks:
+    get:
+      operationId: get_api_tasks
+      summary: GET /api/tasks
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskList"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: view
+          in: query
+          required: false
+          schema:
+            enum:
+              - today
+              - upcoming
+  /api/tasks/settings:
+    get:
+      operationId: get_api_tasks_settings
+      summary: GET /api/tasks/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_tasks_settings
+      summary: PUT /api/tasks/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskSettings"
+  /api/sites:
+    get:
+      operationId: get_api_sites
+      summary: GET /api/sites
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Site"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: post_api_sites
+      summary: POST /api/sites
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteInput"
+  /api/sites/{id}:
+    get:
+      operationId: get_api_sites__id_
+      summary: GET /api/sites/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_sites__id_
+      summary: PUT /api/sites/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteInput"
+    delete:
+      operationId: delete_api_sites__id_
+      summary: DELETE /api/sites/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/custom-tasks:
+    get:
+      operationId: get_api_custom_tasks
+      summary: GET /api/custom-tasks
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomTask"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: plant_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        - name: site_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+    post:
+      operationId: post_api_custom_tasks
+      summary: POST /api/custom-tasks
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomTask"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomTaskInput"
+  /api/custom-tasks/{id}:
+    get:
+      operationId: get_api_custom_tasks__id_
+      summary: GET /api/custom-tasks/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomTask"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_custom_tasks__id_
+      summary: PUT /api/custom-tasks/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomTask"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomTaskInput"
+    delete:
+      operationId: delete_api_custom_tasks__id_
+      summary: DELETE /api/custom-tasks/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species:
+    get:
+      operationId: get_api_species
+      summary: GET /api/species
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SpeciesRow"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/search:
+    get:
+      operationId: get_api_species_search
+      summary: GET /api/species/search
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Search"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+  /api/species/unmatched:
+    get:
+      operationId: get_api_species_unmatched
+      summary: GET /api/species/unmatched
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Unmatched"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}:
+    get:
+      operationId: get_api_species__gbifKey_
+      summary: GET /api/species/{gbifKey}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Species"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/care:
+    get:
+      operationId: get_api_species__gbifKey__care
+      summary: GET /api/species/{gbifKey}/care
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpeciesCare"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/care/overrides/{field}:
+    put:
+      operationId: put_api_species__gbifKey__care_overrides__field_
+      summary: PUT /api/species/{gbifKey}/care/overrides/{field}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpeciesCare"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: field
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value:
+                  description: Server-owned JSON value. Its type depends on the named care field or schedule input.
+              required:
+                - value
+              additionalProperties: false
+    delete:
+      operationId: delete_api_species__gbifKey__care_overrides__field_
+      summary: DELETE /api/species/{gbifKey}/care/overrides/{field}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: field
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/care/refresh:
+    post:
+      operationId: post_api_species__gbifKey__care_refresh
+      summary: POST /api/species/{gbifKey}/care/refresh
+      responses:
+        "202":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queued:
+                    const: true
+                required:
+                  - queued
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/care/retry-match:
+    post:
+      operationId: post_api_species__gbifKey__care_retry_match
+      summary: POST /api/species/{gbifKey}/care/retry-match
+      responses:
+        "202":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queued:
+                    const: true
+                required:
+                  - queued
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/names:
+    post:
+      operationId: post_api_species__gbifKey__names
+      summary: POST /api/species/{gbifKey}/names
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Name"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                language:
+                  enum:
+                    - en
+                    - nb
+                    - el
+                    - la
+              required:
+                - name
+                - language
+              additionalProperties: false
+  /api/species/{gbifKey}/names/{id}:
+    delete:
+      operationId: delete_api_species__gbifKey__names__id_
+      summary: DELETE /api/species/{gbifKey}/names/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/names/refresh:
+    post:
+      operationId: post_api_species__gbifKey__names_refresh
+      summary: POST /api/species/{gbifKey}/names/refresh
+      responses:
+        "202":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/species/{gbifKey}/outdoor-months:
+    get:
+      operationId: get_api_species__gbifKey__outdoor_months
+      summary: GET /api/species/{gbifKey}/outdoor-months
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutdoorMonths"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/household/members:
+    get:
+      operationId: get_api_household_members
+      summary: GET /api/household/members
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Member"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/household/members/{id}:
+    put:
+      operationId: put_api_household_members__id_
+      summary: PUT /api/household/members/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  saved:
+                    const: true
+                required:
+                  - saved
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                plant_ids:
+                  type: array
+                  items:
+                    type: string
+                    pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required:
+                - plant_ids
+              additionalProperties: false
+    delete:
+      operationId: delete_api_household_members__id_
+      summary: DELETE /api/household/members/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/household/invites:
+    get:
+      operationId: get_api_household_invites
+      summary: GET /api/household/invites
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invite"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: post_api_household_invites
+      summary: POST /api/household/invites
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewInvite"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  enum:
+                    - family
+                    - sitter
+                plant_ids:
+                  type: array
+                  items:
+                    type: string
+                    pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required:
+                - role
+              additionalProperties: false
+  /api/household/invites/{id}:
+    delete:
+      operationId: delete_api_household_invites__id_
+      summary: DELETE /api/household/invites/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/household/settings:
+    get:
+      operationId: get_api_household_settings
+      summary: GET /api/household/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_household_settings
+      summary: PUT /api/household/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HouseholdSettings"
+  /api/household/location:
+    get:
+      operationId: get_api_household_location
+      summary: GET /api/household/location
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Location"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_household_location
+      summary: PUT /api/household/location
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Location"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Location"
+  /api/feed/settings:
+    get:
+      operationId: get_api_feed_settings
+      summary: GET /api/feed/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_feed_settings
+      summary: PUT /api/feed/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedSettings"
+  /api/notifications/settings:
+    get:
+      operationId: get_api_notifications_settings
+      summary: GET /api/notifications/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    put:
+      operationId: put_api_notifications_settings
+      summary: PUT /api/notifications/settings
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationSettings"
+  /api/feed:
+    get:
+      operationId: get_api_feed
+      summary: GET /api/feed
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/weather:
+    get:
+      operationId: get_api_weather
+      summary: GET /api/weather
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Weather"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/weather/rain/water:
+    post:
+      operationId: post_api_weather_rain_water
+      summary: POST /api/weather/rain/water
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RainAction"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                request_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required:
+                - request_id
+              additionalProperties: false
+  /api/notifications/key:
+    get:
+      operationId: get_api_notifications_key
+      summary: GET /api/notifications/key
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicKey:
+                    type: string
+                required:
+                  - publicKey
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/notifications/subscriptions:
+    get:
+      operationId: get_api_notifications_subscriptions
+      summary: GET /api/notifications/subscriptions
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Subscription"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: post_api_notifications_subscriptions
+      summary: POST /api/notifications/subscriptions
+      responses:
+        "201":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionInput"
+  /api/notifications/subscriptions/{id}:
+    delete:
+      operationId: delete_api_notifications_subscriptions__id_
+      summary: DELETE /api/notifications/subscriptions/{id}
+      responses:
+        "204":
+          description: No content
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/notifications/test:
+    post:
+      operationId: post_api_notifications_test
+      summary: POST /api/notifications/test
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: integer
+                required:
+                  - sent
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+  /api/import/planta:
+    get:
+      operationId: get_api_import_planta
+      summary: GET /api/import/planta
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImportRow"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: post_api_import_planta
+      summary: POST /api/import/planta
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImportRow"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+              required:
+                - code
+              additionalProperties: false
+  /api/import/planta/{id}:
+    put:
+      operationId: put_api_import_planta__id_
+      summary: PUT /api/import/planta/{id}
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportRow"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                search_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                gbif_key:
+                  type: integer
+                confirmed:
+                  type: boolean
+                skip:
+                  type: boolean
+              required: []
+              additionalProperties: false
+  /api/import/planta/commit:
+    post:
+      operationId: post_api_import_planta_commit
+      summary: POST /api/import/planta/commit
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImportRow"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+components:
+  responses:
+    ApiError:
+      description: API error, including an unsafe method refused by the origin guard before routing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UpdateRequired:
+      description: Native client version below the configured minimum.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpdateRequired"
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: fytorium_session
+  schemas:
+    Error:
+      anyOf:
+        - type: object
+          properties:
+            message:
+              type: string
+            reason:
+              type: string
+          required:
+            - message
+          additionalProperties: true
+        - type: object
+          properties:
+            errors:
+              type: object
+              additionalProperties:
+                type: string
+          required:
+            - errors
+          additionalProperties: false
+        - type: object
+          properties:
+            error:
+              enum:
+                - invalid_grant
+                - invalid_token
+                - rate_limited
+          required:
+            - error
+          additionalProperties: false
+    UpdateRequired:
+      type: object
+      properties:
+        error:
+          const: update_required
+        minAppVersion:
+          type: string
+      required:
+        - error
+        - minAppVersion
+      additionalProperties: false
+    Meta:
+      type: object
+      properties:
+        minAppVersion:
+          anyOf:
+            - type: string
+            - type: "null"
+        serverVersion:
+          type: string
+        today:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        timezone:
+          type: string
+        role:
+          enum:
+            - owner
+            - family
+            - sitter
+      required:
+        - minAppVersion
+        - serverVersion
+        - today
+        - timezone
+        - role
+      additionalProperties: false
+    Count:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 0
+      required:
+        - count
+      additionalProperties: false
+    Identity:
+      type: object
+      properties:
+        member:
+          type: object
+          properties:
+            id:
+              type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            role:
+              enum:
+                - owner
+                - family
+                - sitter
+          required:
+            - id
+            - role
+          additionalProperties: false
+        household:
+          type: object
+          properties:
+            id:
+              type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            name:
+              type: string
+          required:
+            - id
+            - name
+          additionalProperties: false
+      required:
+        - member
+        - household
+      additionalProperties: false
+    Tokens:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          const: Bearer
+        expires_in:
+          type: integer
+        device_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+        - device_id
+      additionalProperties: false
+    SiteInput:
+      type: object
+      properties:
+        name:
+          type: string
+        location:
+          enum:
+            - indoor
+            - outdoor
+        light:
+          enum:
+            - full_shade
+            - part_shade
+            - part_sun
+            - full_sun
+        grow_light:
+          type: boolean
+        warm_min_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        warm_max_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        cold_min_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        cold_max_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        humidity:
+          enum:
+            - dry
+            - normal
+            - humid
+        draft:
+          type: boolean
+      required:
+        - name
+        - location
+        - light
+        - grow_light
+        - humidity
+        - draft
+      additionalProperties: false
+    Site:
+      type: object
+      properties:
+        name:
+          type: string
+        location:
+          enum:
+            - indoor
+            - outdoor
+        light:
+          enum:
+            - full_shade
+            - part_shade
+            - part_sun
+            - full_sun
+        grow_light:
+          type: boolean
+        warm_min_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        warm_max_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        cold_min_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        cold_max_c:
+          anyOf:
+            - type: integer
+            - type: "null"
+        humidity:
+          enum:
+            - dry
+            - normal
+            - humid
+        draft:
+          type: boolean
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        household_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        imported_conditions_incomplete:
+          type: boolean
+        plant_count:
+          type: integer
+      required:
+        - name
+        - location
+        - light
+        - grow_light
+        - warm_min_c
+        - warm_max_c
+        - cold_min_c
+        - cold_max_c
+        - humidity
+        - draft
+        - id
+        - household_id
+        - created_at
+      additionalProperties: false
+    PlantInput:
+      type: object
+      properties:
+        site_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        nickname:
+          anyOf:
+            - type: string
+            - type: "null"
+        cultivar:
+          anyOf:
+            - type: string
+            - type: "null"
+        birthday:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
+        pot_type:
+          enum:
+            - plastic
+            - terracotta
+            - ceramic
+            - glass
+            - metal
+            - wood
+            - fabric
+            - in_ground
+            - other
+        pot_size_cm:
+          anyOf:
+            - type: integer
+            - type: "null"
+        drainage:
+          type: boolean
+        soil_type:
+          enum:
+            - all_purpose
+            - cactus
+            - orchid
+            - aroid
+            - other
+        plant_size:
+          enum:
+            - small
+            - medium
+            - large
+            - very_large
+        growth_stage:
+          enum:
+            - seedling
+            - young
+            - mature
+        window_distance_cm:
+          anyOf:
+            - type: integer
+            - type: "null"
+        grow_light:
+          type: boolean
+        near_ac:
+          type: boolean
+        near_heater:
+          type: boolean
+        fertilizer_type:
+          enum:
+            - liquid
+            - sticks
+            - slow_release
+        health:
+          anyOf:
+            - enum:
+                - poor
+                - fair
+                - good
+                - very_good
+            - type: "null"
+        search_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        gbif_key:
+          type: integer
+        confirmed:
+          type: boolean
+      required:
+        - site_id
+        - pot_type
+        - drainage
+        - soil_type
+        - plant_size
+        - growth_stage
+        - grow_light
+        - near_ac
+        - near_heater
+        - fertilizer_type
+      additionalProperties: false
+    PlantHeader:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        display_name:
+          type: string
+        nickname:
+          anyOf:
+            - type: string
+            - type: "null"
+        scientific_name:
+          type: string
+        canonical_name:
+          type: string
+        cultivar:
+          anyOf:
+            - type: string
+            - type: "null"
+        birthday:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
+        status:
+          enum:
+            - active
+            - graveyard
+      required:
+        - id
+        - display_name
+        - nickname
+        - scientific_name
+        - canonical_name
+        - cultivar
+        - birthday
+        - status
+      additionalProperties: false
+    Plant:
+      type: object
+      properties:
+        site_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        nickname:
+          anyOf:
+            - type: string
+            - type: "null"
+        cultivar:
+          anyOf:
+            - type: string
+            - type: "null"
+        birthday:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
+        pot_type:
+          enum:
+            - plastic
+            - terracotta
+            - ceramic
+            - glass
+            - metal
+            - wood
+            - fabric
+            - in_ground
+            - other
+        pot_size_cm:
+          anyOf:
+            - type: integer
+            - type: "null"
+        drainage:
+          type: boolean
+        soil_type:
+          enum:
+            - all_purpose
+            - cactus
+            - orchid
+            - aroid
+            - other
+        plant_size:
+          enum:
+            - small
+            - medium
+            - large
+            - very_large
+        growth_stage:
+          enum:
+            - seedling
+            - young
+            - mature
+        window_distance_cm:
+          anyOf:
+            - type: integer
+            - type: "null"
+        grow_light:
+          type: boolean
+        near_ac:
+          type: boolean
+        near_heater:
+          type: boolean
+        fertilizer_type:
+          enum:
+            - liquid
+            - sticks
+            - slow_release
+        health:
+          anyOf:
+            - enum:
+                - poor
+                - fair
+                - good
+                - very_good
+            - type: "null"
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        display_name:
+          type: string
+        scientific_name:
+          type: string
+        canonical_name:
+          type: string
+        status:
+          enum:
+            - active
+            - graveyard
+        household_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        gbif_key:
+          type: integer
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        attributes_as_of:
+          type: string
+        graveyard_on:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
+        misting_enabled:
+          type: boolean
+        cover_photo_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        rank:
+          type: string
+        site_name:
+          anyOf:
+            - type: string
+            - type: "null"
+      required:
+        - site_id
+        - nickname
+        - cultivar
+        - birthday
+        - pot_type
+        - pot_size_cm
+        - drainage
+        - soil_type
+        - plant_size
+        - growth_stage
+        - window_distance_cm
+        - grow_light
+        - near_ac
+        - near_heater
+        - fertilizer_type
+        - health
+        - id
+        - display_name
+        - scientific_name
+        - canonical_name
+        - status
+        - household_id
+        - gbif_key
+        - created_at
+        - attributes_as_of
+        - graveyard_on
+        - misting_enabled
+        - cover_photo_id
+        - rank
+        - site_name
+      additionalProperties: false
+    SpeciesRow:
+      type: object
+      properties:
+        gbif_key:
+          type: integer
+        scientific_name:
+          type: string
+        canonical_name:
+          type: string
+        rank:
+          type: string
+        fetched_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+      required:
+        - gbif_key
+        - scientific_name
+        - canonical_name
+        - rank
+        - fetched_at
+      additionalProperties: false
+    Name:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        name:
+          type: string
+        language:
+          enum:
+            - en
+            - nb
+            - el
+            - la
+        source:
+          enum:
+            - gbif
+            - wikidata
+            - nortaxa
+            - owner
+      required:
+        - id
+        - name
+        - language
+        - source
+      additionalProperties: false
+    Species:
+      type: object
+      properties:
+        gbif_key:
+          type: integer
+        scientific_name:
+          type: string
+        canonical_name:
+          type: string
+        rank:
+          type: string
+        name_fetch_needed:
+          type: boolean
+        name_fetch_failed:
+          type: boolean
+        names:
+          type: array
+          items:
+            $ref: "#/components/schemas/Name"
+      required:
+        - gbif_key
+        - scientific_name
+        - canonical_name
+        - rank
+        - name_fetch_needed
+        - name_fetch_failed
+        - names
+      additionalProperties: false
+    Candidate:
+      type: object
+      properties:
+        gbif_key:
+          type: integer
+        scientific_name:
+          type: string
+        canonical_name:
+          type: string
+        rank:
+          type: string
+        match_type:
+          anyOf:
+            - type: string
+            - type: "null"
+        confidence:
+          anyOf:
+            - type: number
+            - type: "null"
+        requires_confirmation:
+          type: boolean
+        common_names:
+          type: array
+          items:
+            type: string
+        identification_name:
+          type: string
+        matched_name:
+          type: string
+        matched_language:
+          type: string
+        source:
+          const: identification
+        score:
+          type: number
+      required:
+        - gbif_key
+        - scientific_name
+        - canonical_name
+        - rank
+        - match_type
+        - confidence
+        - requires_confirmation
+      additionalProperties: false
+    Search:
+      type: object
+      properties:
+        search_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candidate"
+        remaining:
+          type: integer
+      required:
+        - search_id
+        - candidates
+      additionalProperties: false
+    Quota:
+      type: object
+      properties:
+        remaining:
+          type: integer
+      required: []
+      additionalProperties: false
+    CareField:
+      type: object
+      properties:
+        value:
+          description: Server-owned JSON value. Its type depends on the named care field or schedule input.
+        source:
+          enum:
+            - override
+            - perenual
+            - open_plantbook
+            - rule
+            - unknown
+        ruleId:
+          type: string
+        fetchedAt:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        reason:
+          type: string
+      required:
+        - value
+        - source
+      additionalProperties: false
+    BasedOn:
+      type: object
+      properties:
+        value:
+          description: Server-owned JSON value. Its type depends on the named care field or schedule input.
+        source:
+          enum:
+            - override
+            - perenual
+            - open_plantbook
+            - rule
+            - unknown
+            - history
+            - setting
+            - weather
+        ruleId:
+          type: string
+        fetchedAt:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        input:
+          type: string
+        adjustment:
+          type: string
+        factor:
+          type: number
+        reason:
+          type: string
+      required:
+        - value
+        - source
+        - input
+        - adjustment
+      additionalProperties: false
+    Task:
+      type: object
+      properties:
+        status:
+          enum:
+            - due
+            - not_applicable
+        dueOn:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        intervalDays:
+          type: integer
+        lateDays:
+          type: integer
+        basedOn:
+          type: array
+          items:
+            $ref: "#/components/schemas/BasedOn"
+        name:
+          type: string
+        custom_task_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        custom_task_name:
+          anyOf:
+            - type: string
+            - type: "null"
+        task_type:
+          anyOf:
+            - enum:
+                - water
+                - fertilize
+                - mist
+                - clean_leaves
+                - remove_dead
+                - cut_back
+                - repot
+            - type: "null"
+        plant_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        plant_name:
+          type: string
+        site_name:
+          type: string
+        completed_event:
+          $ref: "#/components/schemas/CareEvent"
+      required:
+        - status
+        - basedOn
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              status:
+                const: due
+          then:
+            required:
+              - dueOn
+              - intervalDays
+              - lateDays
+    Schedule:
+      type: object
+      properties:
+        water:
+          $ref: "#/components/schemas/Task"
+        fertilize:
+          $ref: "#/components/schemas/Task"
+        mist:
+          $ref: "#/components/schemas/Task"
+        clean_leaves:
+          $ref: "#/components/schemas/Task"
+        remove_dead:
+          $ref: "#/components/schemas/Task"
+        cut_back:
+          $ref: "#/components/schemas/Task"
+        repot:
+          $ref: "#/components/schemas/Task"
+        customTasks:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Task"
+      anyOf:
+        - required: [water, fertilize, mist, clean_leaves, remove_dead, cut_back, repot, customTasks]
+        - maxProperties: 0
+      additionalProperties: false
+    TaskSettings:
+      type: object
+      properties:
+        sort:
+          enum:
+            - task
+            - plant
+            - site
+        filter:
+          enum:
+            - all
+            - indoor
+            - outdoor
+        show_completed:
+          type: boolean
+      required:
+        - sort
+        - filter
+        - show_completed
+      additionalProperties: false
+    TaskList:
+      type: object
+      properties:
+        today:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        view:
+          enum:
+            - today
+            - upcoming
+        settings:
+          $ref: "#/components/schemas/TaskSettings"
+        groups:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/Task"
+        sections:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              tasks:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+            required:
+              - key
+              - label
+              - tasks
+            additionalProperties: false
+      required:
+        - today
+        - view
+        - settings
+        - groups
+        - sections
+      additionalProperties: false
+    CareEvent:
+      type: object
+      properties:
+        source:
+          enum:
+            - fytorium
+            - planta
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        plant_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        task_type:
+          anyOf:
+            - enum:
+                - water
+                - fertilize
+                - mist
+                - clean_leaves
+                - remove_dead
+                - cut_back
+                - repot
+            - type: "null"
+        custom_task_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        custom_task_name:
+          anyOf:
+            - type: string
+            - type: "null"
+        kind:
+          enum:
+            - completed
+            - snoozed
+            - skipped
+        occurred_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        occurred_on:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        batch_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        by_member:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        by_name:
+          type: string
+        undone_at:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        undone_by:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        request_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        household_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        event_order:
+          type: string
+        previous_pot:
+          anyOf:
+            - type: object
+              properties:
+                pot_type:
+                  enum:
+                    - plastic
+                    - terracotta
+                    - ceramic
+                    - glass
+                    - metal
+                    - wood
+                    - fabric
+                    - in_ground
+                    - other
+                pot_size_cm:
+                  anyOf:
+                    - type: integer
+                    - type: "null"
+                soil_type:
+                  enum:
+                    - all_purpose
+                    - cactus
+                    - orchid
+                    - aroid
+                    - other
+              required:
+                - pot_type
+                - pot_size_cm
+                - soil_type
+              additionalProperties: false
+            - type: "null"
+      required:
+        - id
+        - plant_id
+        - task_type
+        - kind
+        - occurred_at
+        - occurred_on
+        - batch_id
+        - by_member
+        - by_name
+        - undone_at
+        - undone_by
+        - request_id
+      additionalProperties: false
+    TaskAction:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/CareEvent"
+        task:
+          $ref: "#/components/schemas/Task"
+      required:
+        - event
+        - task
+      additionalProperties: false
+    BatchAction:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/CareEvent"
+        tasks:
+          $ref: "#/components/schemas/Schedule"
+      required:
+        - events
+        - tasks
+      additionalProperties: false
+    BatchUndo:
+      type: object
+      properties:
+        batchId:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        undoneAt:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+      required:
+        - batchId
+        - undoneAt
+      additionalProperties: false
+    RainAction:
+      type: object
+      properties:
+        batchId:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        plantCount:
+          type: integer
+        undoneAt:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+      required:
+        - batchId
+        - plantCount
+        - undoneAt
+      additionalProperties: false
+    CustomTask:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        household_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        name:
+          type: string
+        interval_days:
+          type: integer
+        plant_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        site_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        deleted_at:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+      required:
+        - id
+        - household_id
+        - name
+        - interval_days
+        - plant_id
+        - site_id
+        - created_at
+        - deleted_at
+      additionalProperties: false
+    CustomTaskInput:
+      type: object
+      properties:
+        name:
+          type: string
+        interval_days:
+          type: integer
+        plant_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        site_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+      required:
+        - name
+        - interval_days
+      additionalProperties: false
+    CareSettings:
+      type: object
+      properties:
+        misting_enabled:
+          type: boolean
+        customIntervals:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - misting_enabled
+        - customIntervals
+      additionalProperties: false
+    HouseholdSettings:
+      type: object
+      properties:
+        misting_enabled:
+          type: boolean
+      required:
+        - misting_enabled
+      additionalProperties: false
+    Location:
+      type: object
+      properties:
+        location:
+          anyOf:
+            - type: object
+              properties:
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+                label:
+                  anyOf:
+                    - type: string
+                    - type: "null"
+              required:
+                - latitude
+                - longitude
+              additionalProperties: false
+            - type: "null"
+      required:
+        - location
+      additionalProperties: false
+    Member:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        display_name:
+          type: string
+        role:
+          enum:
+            - owner
+            - family
+            - sitter
+        plant_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+      required:
+        - id
+        - display_name
+        - role
+        - plant_ids
+      additionalProperties: false
+    Invite:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        role:
+          enum:
+            - family
+            - sitter
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        expires_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        plant_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+      required:
+        - id
+        - role
+        - created_at
+        - expires_at
+        - plant_ids
+      additionalProperties: false
+    NewInvite:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        role:
+          enum:
+            - family
+            - sitter
+        expires_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        link:
+          type: string
+      required:
+        - id
+        - role
+        - expires_at
+        - link
+      additionalProperties: false
+    Photo:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        plant_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        plant_name:
+          type: string
+        original_key:
+          type: string
+        thumb_key:
+          type: string
+        note:
+          type: string
+        health:
+          anyOf:
+            - enum:
+                - poor
+                - fair
+                - good
+                - very_good
+            - type: "null"
+        taken_on:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        created_by:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        is_cover:
+          type: boolean
+      required:
+        - id
+        - plant_id
+        - plant_name
+        - original_key
+        - thumb_key
+        - note
+        - health
+        - taken_on
+        - created_at
+        - created_by
+        - is_cover
+      additionalProperties: false
+    SpeciesChange:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        previous_gbif_key:
+          type: integer
+        previous_name:
+          type: string
+        next_gbif_key:
+          type: integer
+        next_name:
+          type: string
+        changed_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        changed_on:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        by_name:
+          type: string
+      required:
+        - id
+        - previous_gbif_key
+        - previous_name
+        - next_gbif_key
+        - next_name
+        - changed_at
+        - changed_on
+        - by_name
+      additionalProperties: false
+    NotificationSettings:
+      type: object
+      properties:
+        reminder_time:
+          type: string
+          pattern: ^\d{2}:\d{2}$
+        reminders_enabled:
+          type: boolean
+        weather_alerts_enabled:
+          type: boolean
+        completion_notices_enabled:
+          type: boolean
+      required:
+        - reminder_time
+        - reminders_enabled
+        - weather_alerts_enabled
+        - completion_notices_enabled
+      additionalProperties: false
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        label:
+          type: string
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        last_success_at:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+      required:
+        - id
+        - label
+        - created_at
+        - last_success_at
+      additionalProperties: false
+    SubscriptionInput:
+      type: object
+      properties:
+        endpoint:
+          type: string
+        keys:
+          type: object
+          properties:
+            p256dh:
+              type: string
+            auth:
+              type: string
+          required:
+            - p256dh
+            - auth
+          additionalProperties: false
+        label:
+          type: string
+      required:
+        - endpoint
+        - keys
+      additionalProperties: false
+    WeatherCurrent:
+      type: object
+      properties:
+        date:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        minC:
+          type: number
+        maxC:
+          type: number
+        fetchedAt:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+      required:
+        - date
+        - minC
+        - maxC
+        - fetchedAt
+      additionalProperties: false
+    WeatherEvent:
+      type: object
+      properties:
+        id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - const: rain_batch
+        kind:
+          enum:
+            - low_temperature
+            - rain
+        plant_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+        plant_name:
+          anyOf:
+            - type: string
+            - type: "null"
+        starts_on:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        ends_on:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+        payload:
+          type: object
+          properties:
+            minC:
+              type: number
+            thresholdC:
+              type: number
+            hardiness:
+              $ref: "#/components/schemas/CareField"
+            potRuleId:
+              type: string
+            ruleId:
+              type: string
+            precipitationMm:
+              type: number
+          required: []
+          additionalProperties: false
+        household_id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        created_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        resolved_at:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        batch_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+      required:
+        - id
+        - kind
+        - plant_id
+        - plant_name
+        - starts_on
+        - ends_on
+        - payload
+      additionalProperties: false
+    Weather:
+      type: object
+      properties:
+        locationSet:
+          type: boolean
+        forecastFetchedAt:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        unavailableSince:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        snapshot:
+          anyOf:
+            - type: object
+              properties:
+                today:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                fetchedAt:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}T
+                meanMaxTemperatureC:
+                  type: number
+                daylightHours:
+                  type: number
+              required:
+                - today
+                - fetchedAt
+              additionalProperties: false
+            - type: "null"
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeatherEvent"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeatherEvent"
+        current:
+          anyOf:
+            - $ref: "#/components/schemas/WeatherCurrent"
+            - type: "null"
+        lastRainBatch:
+          anyOf:
+            - type: object
+              properties:
+                id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                plantCount:
+                  type: integer
+              required:
+                - id
+                - plantCount
+              additionalProperties: false
+            - type: "null"
+        rain:
+          anyOf:
+            - type: object
+              properties:
+                plantCount:
+                  type: integer
+                precipitationMm:
+                  type: number
+                ruleId:
+                  type: string
+                batchId:
+                  anyOf:
+                    - type: string
+                      pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                    - type: "null"
+              required:
+                - plantCount
+                - precipitationMm
+                - ruleId
+                - batchId
+              additionalProperties: false
+            - type: "null"
+      required:
+        - locationSet
+        - forecastFetchedAt
+        - unavailableSince
+        - snapshot
+        - alerts
+        - events
+        - current
+        - lastRainBatch
+        - rain
+      additionalProperties: false
+    OutdoorMonths:
+      type: object
+      properties:
+        locationSet:
+          type: boolean
+        pot:
+          anyOf:
+            - type: array
+              items:
+                type: integer
+            - type: "null"
+        ground:
+          anyOf:
+            - type: array
+              items:
+                type: integer
+            - type: "null"
+        hardiness:
+          $ref: "#/components/schemas/CareField"
+        potThresholdC:
+          type: number
+        groundThresholdC:
+          type: number
+        marginC:
+          type: number
+        ruleId:
+          type: string
+        potRuleId:
+          type: string
+        fetchedAt:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        unavailableSince:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+      required:
+        - locationSet
+        - pot
+        - ground
+        - hardiness
+        - potThresholdC
+        - groundThresholdC
+        - marginC
+        - ruleId
+        - potRuleId
+        - fetchedAt
+        - unavailableSince
+      additionalProperties: false
+    FeedSettings:
+      type: object
+      properties:
+        late_tasks:
+          type: boolean
+        current_weather:
+          type: boolean
+        weather_alerts:
+          type: boolean
+        plant_warnings:
+          type: boolean
+      required:
+        - late_tasks
+        - current_weather
+        - weather_alerts
+        - plant_warnings
+      additionalProperties: false
+    WarningInput:
+      type: object
+      properties:
+        value:
+          description: Server-owned JSON value. Its type depends on the named care field or schedule input.
+        source:
+          enum:
+            - override
+            - perenual
+            - open_plantbook
+            - rule
+            - unknown
+            - setting
+        ruleId:
+          type: string
+        fetchedAt:
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}T
+            - type: "null"
+        input:
+          type: string
+        reason:
+          type: string
+      required:
+        - value
+        - source
+        - input
+      additionalProperties: false
+    Warning:
+      type: object
+      properties:
+        kind:
+          enum:
+            - too_dark
+            - too_bright
+            - no_drainage
+            - missing_info
+        reason:
+          type: string
+        inputs:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarningInput"
+      required:
+        - kind
+        - reason
+        - inputs
+      additionalProperties: false
+    FeedCard:
+      oneOf:
+        - type: object
+          properties:
+            id:
+              type: string
+            href:
+              type: string
+            kind:
+              const: late_tasks
+            count:
+              type: integer
+            plants:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+                additionalProperties: false
+          required:
+            - id
+            - href
+            - kind
+            - count
+            - plants
+          additionalProperties: false
+        - type: object
+          properties:
+            id:
+              type: string
+            href:
+              type: string
+            kind:
+              const: current_weather
+            current:
+              anyOf:
+                - $ref: "#/components/schemas/WeatherCurrent"
+                - type: "null"
+            unavailableSince:
+              anyOf:
+                - type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}T
+                - type: "null"
+          required:
+            - id
+            - href
+            - kind
+            - current
+            - unavailableSince
+          additionalProperties: false
+        - type: object
+          properties:
+            id:
+              type: string
+            href:
+              type: string
+            kind:
+              const: weather_alerts
+            event:
+              $ref: "#/components/schemas/WeatherEvent"
+          required:
+            - id
+            - href
+            - kind
+            - event
+          additionalProperties: false
+        - type: object
+          properties:
+            id:
+              type: string
+            href:
+              type: string
+            kind:
+              const: plant_warnings
+            plantId:
+              type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            plantName:
+              type: string
+            warnings:
+              type: array
+              items:
+                $ref: "#/components/schemas/Warning"
+          required:
+            - id
+            - href
+            - kind
+            - plantId
+            - plantName
+            - warnings
+          additionalProperties: false
+    Feed:
+      type: object
+      properties:
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeedCard"
+        settings:
+          $ref: "#/components/schemas/FeedSettings"
+      required:
+        - cards
+      additionalProperties: false
+    CareFetch:
+      type: object
+      properties:
+        source:
+          type: string
+        status:
+          type: string
+        attempts:
+          type: integer
+        next_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+        matchStatus:
+          type: string
+        pid:
+          anyOf:
+            - type: string
+            - type: "null"
+      required:
+        - source
+        - status
+      additionalProperties: false
+    PlantbookMatch:
+      type: object
+      properties:
+        status:
+          type: string
+        pid:
+          anyOf:
+            - type: string
+            - type: "null"
+        checked_at:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}T
+      required:
+        - status
+        - pid
+        - checked_at
+      additionalProperties: false
+    SpeciesCare:
+      type: object
+      properties:
+        species:
+          $ref: "#/components/schemas/SpeciesRow"
+        profile:
+          type: object
+          properties:
+            wateringIntervalDays:
+              $ref: "#/components/schemas/CareField"
+            fertilizingIntervalDays:
+              $ref: "#/components/schemas/CareField"
+            light:
+              $ref: "#/components/schemas/CareField"
+            humidityNeed:
+              $ref: "#/components/schemas/CareField"
+            temperatureRangeC:
+              $ref: "#/components/schemas/CareField"
+            hardiness:
+              $ref: "#/components/schemas/CareField"
+            hardinessC:
+              $ref: "#/components/schemas/CareField"
+            soilMoistureRangePercent:
+              $ref: "#/components/schemas/CareField"
+            careText:
+              $ref: "#/components/schemas/CareField"
+            poisonousToPets:
+              $ref: "#/components/schemas/CareField"
+            poisonousToHumans:
+              $ref: "#/components/schemas/CareField"
+            cycle:
+              $ref: "#/components/schemas/CareField"
+            dimensions:
+              $ref: "#/components/schemas/CareField"
+            pruningMonths:
+              $ref: "#/components/schemas/CareField"
+            pests:
+              $ref: "#/components/schemas/CareField"
+            indoor:
+              $ref: "#/components/schemas/CareField"
+          required:
+            - wateringIntervalDays
+            - fertilizingIntervalDays
+            - light
+            - humidityNeed
+            - temperatureRangeC
+            - hardiness
+            - hardinessC
+            - soilMoistureRangePercent
+            - careText
+            - poisonousToPets
+            - poisonousToHumans
+            - cycle
+            - dimensions
+            - pruningMonths
+            - pests
+            - indoor
+          additionalProperties: false
+        fetches:
+          type: array
+          items:
+            $ref: "#/components/schemas/CareFetch"
+        fetch:
+          anyOf:
+            - $ref: "#/components/schemas/CareFetch"
+            - type: "null"
+        openPlantbookMatch:
+          anyOf:
+            - $ref: "#/components/schemas/PlantbookMatch"
+            - type: "null"
+      required:
+        - species
+        - profile
+        - fetches
+        - fetch
+        - openPlantbookMatch
+      additionalProperties: false
+    Unmatched:
+      type: object
+      properties:
+        gbif_key:
+          type: integer
+        canonical_name:
+          type: string
+        status:
+          enum:
+            - no_match
+            - ambiguous
+      required:
+        - gbif_key
+        - canonical_name
+        - status
+      additionalProperties: false
+    ImportRow:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        planta_plant_id:
+          type: string
+        mapped:
+          type: object
+          properties:
+            nickname:
+              anyOf:
+                - type: string
+                - type: "null"
+            cultivar:
+              anyOf:
+                - type: string
+                - type: "null"
+            scientific_name:
+              type: string
+            site_name:
+              type: string
+            pot_type:
+              enum:
+                - plastic
+                - terracotta
+                - ceramic
+                - glass
+                - metal
+                - wood
+                - fabric
+                - in_ground
+                - other
+            pot_size_cm:
+              anyOf:
+                - type: integer
+                - type: "null"
+            soil_type:
+              enum:
+                - all_purpose
+                - cactus
+                - orchid
+                - aroid
+                - other
+            care:
+              type: object
+              additionalProperties:
+                anyOf:
+                  - type: string
+                    pattern: ^\d{4}-\d{2}-\d{2}$
+                  - type: string
+                    pattern: ^\d{4}-\d{2}-\d{2}T
+            has_cover:
+              type: boolean
+          required:
+            - nickname
+            - cultivar
+            - scientific_name
+            - site_name
+            - pot_type
+            - pot_size_cm
+            - soil_type
+            - care
+            - has_cover
+          additionalProperties: false
+        cover_error:
+          anyOf:
+            - type: string
+            - type: "null"
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candidate"
+        selected:
+          anyOf:
+            - $ref: "#/components/schemas/Candidate"
+            - type: "null"
+        status:
+          enum:
+            - review
+            - confirmed
+            - skipped
+            - committed
+        plant_id:
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
+      required:
+        - id
+        - planta_plant_id
+        - mapped
+        - cover_error
+        - candidates
+        - selected
+        - status
+        - plant_id
+      additionalProperties: false

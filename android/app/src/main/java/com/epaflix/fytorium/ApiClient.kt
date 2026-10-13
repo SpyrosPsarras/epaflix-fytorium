@@ -100,7 +100,8 @@ fun requiresUpdate(status: Int, body: String, current: String): Boolean {
     if (status == 426) return true
     if (status == 404 || status !in 200..299) return false
     val minimum = JSONObject(body).optString("minAppVersion", "0.0.0")
-    fun version(value: String) = value.split('.').map { it.toIntOrNull() ?: 0 }
+    // Android release tags are stable versions. Compare their core against semver minima.
+    fun version(value: String) = value.substringBefore('+').substringBefore('-').split('.').map { it.toLongOrNull() ?: 0L }
     val required = version(minimum)
     val own = version(current)
     for (i in 0 until maxOf(required.size, own.size)) {

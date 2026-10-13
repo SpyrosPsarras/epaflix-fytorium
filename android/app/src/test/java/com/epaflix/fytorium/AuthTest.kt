@@ -227,6 +227,12 @@ class AuthTest {
             assertNull(store.tokens); assertNull(store.pending)
         }
     }
+    @Test fun versionCheckReadsTheRealMetaShape() {
+        val meta = """{"minAppVersion":null,"serverVersion":"synthetic-sha","today":"2030-06-02","timezone":"Europe/Oslo","role":"sitter"}"""
+        assertFalse(requiresUpdate(200, meta, "1.0.0"))
+        assertTrue(requiresUpdate(200, meta.replace("null", "\"1.0.1-rc.1\""), "1.0.0"))
+        assertFalse(requiresUpdate(200, meta.replace("null", "\"1.0.0+build.1\""), "1.0.0"))
+    }
     @Test fun versionCheckHandlesMissingEndpointAndSemanticVersions() {
         assertFalse(requiresUpdate(404, "", "1.0.0"))
         assertTrue(requiresUpdate(426, "", "1.0.0"))
