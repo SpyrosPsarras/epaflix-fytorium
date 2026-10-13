@@ -51,7 +51,7 @@ Both tokens and the pending verifier/state are AES-256-GCM encrypted with an And
 
 At startup, and again after login, `/api/meta` gates on 426 or a newer semantic `minAppVersion`. A missing endpoint, 404, is compatible until A02. The request sends `X-App-Version`. Network failures show a retry message instead of an update requirement.
 
-More → About shows version 1.0.0 and copies at most 64 predefined error events, bounded to 8 KiB. Exceptions, intent URLs, response bodies and user input cannot enter that log. The crash handler records only APP_CRASH and terminates without logging throwable text. No tokens, authorization codes or verifiers enter diagnostics.
+More → About shows the build's version and copies at most 64 predefined error events, bounded to 8 KiB. Exceptions, intent URLs, response bodies and user input cannot enter that log. The crash handler records only APP_CRASH and terminates without logging throwable text. No tokens, authorization codes or verifiers enter diagnostics.
 
 ## Theme and tests
 
@@ -86,3 +86,62 @@ All entries below are pinned in the version catalog. Android's built-in Keystore
 | Roborazzi plugin and roborazzi | Native-graphics screenshots and reference verification |
 | androidx.test runner and ext junit | Device instrumentation runner and AndroidJUnit4 |
 | uiautomator | Drive the real browser/OIDC provider outside the app process |
+
+## Android releases
+
+Only tag pushes matching `android-vX.Y.Z` on `SpyrosPsarras/epaflix-fytorium` can run the release job. Pull requests and forks cannot sign or publish. Actions are SHA-pinned. Only that job has `contents: write`; checkout does not persist the token.
+
+The tag supplies `versionName = X.Y.Z` and `versionCode = X*10000 + Y*100 + Z`. Components have no leading zeroes, Y and Z are at most 99, and versionCode must be 1 through 2100000000. CI queries all published Android releases, including prereleases, and refuses a code equal to or lower than any published code. Drafts do not count. Missing permissions or a failed query stop the job.
+
+Before signing, CI runs `build`, `test`, `lint`, `screenshots` and `release-check` through `./scripts/android`. It then builds the R8-minified APK with the production key, verifies the APK's version and signing certificate with SDK tools, and writes `SHA256SUMS`. The GitHub Release contains `fytorium-X.Y.Z.apk`, `SHA256SUMS`, the version, the certificate fingerprint and an `android/`-only git changelog since the previous published Android tag. The first release includes all Android history.
+
+Gradle reads `ANDROID_RELEASE_TAG` for the version. Release signing uses `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS`. The PKCS12 store and key passwords are the same. Without a keystore path, `release-check` still builds an unsigned APK. Debug builds never use the release signing configuration.
+
+Keep the permanent key backed up in Vaultwarden at `/Fytorium/fytorium - android signing`. GitHub Actions uses `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS`. Never regenerate this key for an update, commit it, or put it in a build artifact. CI decodes it with mode 0600 into `$RUNNER_TEMP`, mounts that file read-only for signing, and deletes it even when building or verification fails. No Firebase secret is required by this release pipeline yet; A12 supplies optional Firebase configuration later.
+
+The production signing certificate SHA-256 is:
+
+```text
+8A:A9:74:16:85:B7:03:12:75:7F:44:37:2E:B0:36:3B:16:F2:C6:A9:11:03:6C:EE:77:7A:9F:39:11:62:0C:F7
+```
+
+### Local dry run
+
+```sh
+./scripts/android release-dry-run android-v0.1.0
+# Exercise the same monotonic-version gate without GitHub or credentials:
+PUBLISHED_TAGS='android-v0.1.0' ./scripts/android release-dry-run android-v0.1.1
+```
+
+The Docker-only dry run validates the tag, generates a one-day throwaway PKCS12 key inside its container, builds the signed release APK, checks its version and certificate with `apksigner verify --print-certs`, and prints the checksum. It also confirms that the production fingerprint check rejects the throwaway key. The key is deleted on exit. Its APK and `SHA256SUMS` stay in the ignored `android/app/build/outputs/fytorium-releases/<tag>/` directory. Never publish or install it over a production build. Without `PUBLISHED_TAGS`, local validation has no published-release history; CI always queries GitHub. `./scripts/android test` also exercises tag bounds and non-increasing versions.
+
+## Obtainium
+
+1. Install Obtainium from its [GitHub releases](https://github.com/ImranR98/Obtainium/releases), then add an app with the GitHub repository as its source: `https://github.com/SpyrosPsarras/epaflix-fytorium`.
+2. Leave **Include prereleases** off.
+3. Set the APK filter regex to `fytorium-.*\.apk` so Obtainium selects only the Android release asset.
+4. Obtainium does not show the signing certificate. Install [AppVerifier](https://github.com/soupslurpr/AppVerifier), then share or select the app in AppVerifier. Compare its signing certificate SHA-256 with the production fingerprint above. If checking an installed Fytorium app, do not open it or log in until the fingerprint matches. Allow Obtainium to check GitHub for updates only after verification.
+
+For a PC check before installation, download `fytorium-X.Y.Z.apk` and `SHA256SUMS` from the same GitHub release into the repository root. Run these commands from that root, replacing `X.Y.Z` with the release version. `./scripts/android` builds the SDK image used here:
+
+```sh
+./scripts/android release-version android-vX.Y.Z
+image="fytorium-android-$(printf '%s' "$PWD" | sha256sum | cut -c1-12)-sdk"
+docker run --rm -v "$PWD":/work:ro -w /work "$image" \
+  sh -ec '"$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs fytorium-X.Y.Z.apk; sha256sum -c SHA256SUMS'
+```
+
+Compare `Signer #1 certificate SHA-256 digest` with the production fingerprint above, ignoring letter case and colon separators. Every pair of hexadecimal digits must match. `SHA256SUMS` checks the downloaded file's integrity; it does not replace the signing certificate check.
+
+A certificate mismatch means the APK was not signed with the documented production key. A checksum mismatch means the download differs from the release checksum. In either case, do not install it, and tell the owner. If already installed, do not use it and uninstall it.
+
+The web's personal settings at `/settings/notifications` link to GitHub Releases and this section. Owner, family and sitter roles can all reach that page.
+
+## Bump the minimum app version
+
+A02 supplies the server configuration `MIN_APP_VERSION`. Do not add a second setting here. Once A02 is deployed:
+
+1. Publish the signed Android release and let Obtainium distribute it before requiring it.
+2. In the homelab repository, set the Fytorium Deployment's `MIN_APP_VERSION` environment variable to the supported semantic version, for example `1.2.3`. Obtain owner approval for the Deployment change and apply it through the homelab's normal deployment process.
+3. Check `/api/meta` while logged in. Its `minAppVersion` must report the new value. Confirm that an older app receives HTTP 426 and displays "Update Fytorium", while the new app and web still work.
+4. If the release has a compatibility problem, lower `MIN_APP_VERSION` to the previous supported version and roll out the Deployment again. APK versionCode must still increase for any replacement release; never reuse an old tag or replace the production signing key.

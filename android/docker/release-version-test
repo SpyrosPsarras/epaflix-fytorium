@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+unset PUBLISHED_TAGS
+check() {
+  result=$(sh docker/release-version "$1")
+  printf '%s\n' "$result" | grep -Fx "versionName=$2" >/dev/null
+  printf '%s\n' "$result" | grep -Fx "versionCode=$3" >/dev/null
+}
+check android-v0.1.0 0.1.0 100
+check android-v1.2.3 1.2.3 10203
+check android-v1.99.99 1.99.99 19999
+check android-v2.0.0 2.0.0 20000
+check android-v210000.0.0 210000.0.0 2100000000
+for tag in android-v0.0.0 android-v01.2.3 android-v1.02.3 android-v1.2.03 android-v1.100.0 android-v1.0.100 android-v1.2 android-v1.2.3-rc1 android-v1.2.3.4 v1.2.3 android-v210000.0.1 android-v9999999999.0.0 'android-v1.2.3;false'; do
+  if sh docker/release-version "$tag" >/dev/null 2>&1; then
+    echo "Accepted invalid tag: $tag" >&2; exit 1
+  fi
+done
+export PUBLISHED_TAGS='android-v1.2.3 android-v1.99.99 android-v0.1.0'
+check android-v2.0.0 2.0.0 20000
+sh docker/release-version android-v2.0.0 | grep -Fx 'previousTag=android-v1.99.99' >/dev/null
+for tag in android-v1.99.99 android-v1.2.4 android-v0.1.0; do
+  if sh docker/release-version "$tag" >/dev/null 2>&1; then
+    echo "Accepted non-increasing version: $tag" >&2; exit 1
+  fi
+done
+if sh docker/release-version "$(printf 'android-v1.2.3\nother')" >/dev/null 2>&1; then
+  echo 'Accepted a multiline tag.' >&2; exit 1
+fi
+PUBLISHED_TAGS=android-vbad
+export PUBLISHED_TAGS
+if sh docker/release-version android-v2.0.0 >/dev/null 2>&1; then
+  echo 'Accepted malformed published tag.' >&2; exit 1
+fi
+echo 'Release version checks passed: tag syntax, bounds, strict increase and previous release.'
