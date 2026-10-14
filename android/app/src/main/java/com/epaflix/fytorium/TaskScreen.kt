@@ -21,6 +21,9 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Add
@@ -50,9 +53,19 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     val photoIds = remember(state.today, state.upcoming) {
         listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
     }
-    val photos by produceState<Map<String, Bitmap>>(emptyMap(), thumbnails, state.lastUpdated, photoIds) {
-        value = withContext(Dispatchers.IO) {
-            photoIds.mapNotNull { id -> thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }?.let { id to it } }.toMap()
+    val photos by produceState<Map<String, Bitmap?>>(emptyMap(), thumbnails, state.lastUpdated, photoIds) {
+        value = emptyMap()
+        val loaded = mutableMapOf<String, Bitmap?>()
+        val permits = Semaphore(4)
+        coroutineScope {
+            photoIds.forEach { id -> launch {
+                val bitmap = permits.withPermit { withContext(Dispatchers.IO) {
+                    thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                } }
+                // A null entry is a finished, failed load; duplicate rows share this decode.
+                loaded[id] = bitmap
+                value = loaded.toMap()
+            } }
         }
     }
     val pullState = rememberPullToRefreshState()
@@ -144,7 +157,8 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                             key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
                                 task.plantId in handlePlants && shownPlants.add(task.plantId),
                                 onAction = { action -> if (action == "repot") repot = task else onAction(task, action, null) },
-                                onHandleAll = { onHandleAll(task.plantId) }, showType = view == "upcoming") }
+                                onHandleAll = { onHandleAll(task.plantId) }, showType = view == "upcoming",
+                                photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
                     }
                 }

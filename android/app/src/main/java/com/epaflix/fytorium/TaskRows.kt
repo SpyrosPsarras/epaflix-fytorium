@@ -20,14 +20,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 
+internal val ThumbnailLoading = SemanticsPropertyKey<Boolean>("ThumbnailLoading")
+private var SemanticsPropertyReceiver.thumbnailLoading by ThumbnailLoading
+
 @Composable internal fun TaskRow(task: CareTask, state: CareState, today: String, photo: Bitmap?, handleAll: Boolean,
-    onAction: (String) -> Unit, onHandleAll: () -> Unit, showType: Boolean = false) {
+    onAction: (String) -> Unit, onHandleAll: () -> Unit, showType: Boolean = false, photoLoading: Boolean = false) {
     val event = state.handled[task.plantId + ":" + task.key] ?: task.completedEvent
     val actions = state.member?.let { task.actions(today, it, event) }.orEmpty()
     var details by remember(task.plantId, task.key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            TaskPhoto(task, photo, event == null)
+            TaskPhoto(task, photo, event == null, photoLoading)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClickLabel = "Task details for ${task.plantName}") { details = !details }
                 .semantics { contentDescription = "Task details for ${task.plantName}" }, verticalArrangement = Arrangement.Center) {
@@ -62,8 +65,9 @@ import androidx.compose.ui.unit.dp
     }
 }
 
-@Composable private fun TaskPhoto(task: CareTask, bitmap: Bitmap?, pending: Boolean) {
-    Box(Modifier.width(56.dp).height(68.dp), contentAlignment = Alignment.TopCenter) {
+@Composable private fun TaskPhoto(task: CareTask, bitmap: Bitmap?, pending: Boolean, loading: Boolean) {
+    Box(Modifier.width(56.dp).height(68.dp).testTag("thumbnail:${task.coverPhotoId ?: task.plantId}")
+        .semantics { thumbnailLoading = loading }, contentAlignment = Alignment.TopCenter) {
         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(56.dp)) {
             if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Photo of ${task.plantName}", contentScale = ContentScale.Crop, modifier = Modifier.clip(CircleShape))
             else Box(contentAlignment = Alignment.Center) { Text(task.plantName.take(1).uppercase(), style = MaterialTheme.typography.titleLarge,
