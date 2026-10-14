@@ -205,7 +205,7 @@ except Exception:
 ' "$1"
 }
 STORED=false
-SOPS_DONE=false
+HANDOFF_CONFIRMED=false
 
 banner "Firebase for Fytorium Android push"
 
@@ -271,23 +271,22 @@ if confirm "Store them now?"; then
 fi
 
 stage "Store the server key in homelab SOPS"
-say "Do this before deleting the downloaded service account key. No deployment runs here."
-ask HOMELAB_REPO "Absolute path to the homelab checkout:"
-ask SOPS_FILE "Path to its existing encrypted Fytorium Kubernetes Secret, relative to that checkout (under 2-k3s/25.fytorium):"
-[[ -d "$HOMELAB_REPO" && -f "$HOMELAB_REPO/$SOPS_FILE" ]] || { warn "Choose an existing homelab checkout and encrypted Secret."; exit 1; }
-say "In a separate terminal, run:"
-printf '    cd %q && sops-kpx %q\n' "$HOMELAB_REPO" "$SOPS_FILE"
-step "In that editor add stringData.FCM_SERVICE_ACCOUNT_JSON as a YAML literal block containing the service account download, including its JSON braces."
-step "Add stringData.FCM_PROJECT_ID with the project ID selected in stage 1. Save and close. Only the encrypted Secret may be committed."
-step "In the Fytorium Deployment, set FCM_SERVICE_ACCOUNT_JSON and FCM_PROJECT_ID using valueFrom.secretKeyRef to those keys in that Secret."
+say "The orchestrator handles homelab deployment secrets in A14. This wizard does not run against that repo."
+step "A14 follows 2-k3s/25.fytorium/README.md in the homelab checkout."
+step "Rebuild fytorium-secrets.enc.yaml from the README's Vaultwarden items, preserving both Kubernetes Secrets."
+step "Read fcm-service-account.json from /Fytorium/fytorium - firebase into stringData.FCM_SERVICE_ACCOUNT_JSON."
+step "Read that item's project ID into stringData.FCM_PROJECT_ID."
+note "Generate the complete Secret YAML in memory and pipe it into SOPS; never write plaintext to disk or put secrets in arguments or logs."
+say "Encryption command, run by the orchestrator from the homelab repo root in A14:"
+say "sops --encrypt --filename-override 2-k3s/25.fytorium/fytorium-secrets.enc.yaml /dev/stdin > 2-k3s/25.fytorium/fytorium-secrets.enc.yaml"
+step "The Deployment reads FCM_SERVICE_ACCOUNT_JSON and FCM_PROJECT_ID with valueFrom.secretKeyRef. Only encrypted YAML may be committed."
 step "Leave FCM_BASE_URL and FCM_OAUTH_TOKEN_URL unset in production. Their defaults are Google HTTP v1 and OAuth."
-note "Alternatively mount the decrypted JSON as a Secret file and set FCM_SERVICE_ACCOUNT_FILE to its absolute container path."
-if confirm "Have you saved both values in SOPS?"; then SOPS_DONE=true
-else SKIPPED+=("Homelab SOPS: follow the exact instructions above before deleting the service account download."); fi
+if confirm "Is the A14 deployment handoff understood, with both files saved in Vaultwarden?"; then HANDOFF_CONFIRMED=true
+else SKIPPED+=("A14: regenerate the encrypted Fytorium Secrets from Vaultwarden following the homelab README."); fi
 
 stage "Delete the downloaded files"
-say "Delete downloads only after confirming Vaultwarden and SOPS are saved."
-if [[ "$STORED" == true && "$SOPS_DONE" == true ]] && confirm "Delete ${GS_PATH} and ${SA_PATH}?"; then
+say "Delete downloads only after confirming Vaultwarden has both files and the A14 handoff is understood."
+if [[ "$STORED" == true && "$HANDOFF_CONFIRMED" == true ]] && confirm "Delete ${GS_PATH} and ${SA_PATH}?"; then
   shred -u "$SA_PATH" 2>/dev/null || rm -f "$SA_PATH"; rm -f "$GS_PATH"
   printf '  %s✓ deleted%s\n' "$GREEN" "$RESET"
 fi
