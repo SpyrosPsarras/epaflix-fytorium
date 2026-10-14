@@ -42,6 +42,15 @@ private fun ComposeContentTestRule.stateDump(): String {
         "feed[refreshing=${feed.refreshing},saving=${feed.saving},cards=${feed.cards.take(12).map { it.kind }},rainBatch=${feed.weather?.lastBatchId != null}]"
 }
 
+internal fun ComposeContentTestRule.scrollTaskClearOfFabs(tag: String) {
+    val row = onNodeWithTag(tag).performScrollTo()
+    val fabTop = onNodeWithContentDescription("Add plant").fetchSemanticsNode().boundsInRoot.top
+    val overlap = row.fetchSemanticsNode().boundsInRoot.bottom - fabTop + 16f
+    if (overlap > 0f) onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, overlap) }
+    row.assertIsDisplayed()
+    check(row.fetchSemanticsNode().boundsInRoot.bottom < fabTop) { "Task $tag is still behind the FAB" }
+}
+
 internal fun ComposeContentTestRule.waitForNode(matcher: SemanticsMatcher): SemanticsNodeInteraction {
     waitForState("Node ${matcher.description}") { onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
     return onNode(matcher)

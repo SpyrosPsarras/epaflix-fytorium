@@ -98,13 +98,17 @@ class TodayRedesignScreenTest {
         capture("empty-day")
         compose.runOnIdle { state.value = state.value.copy(plants = emptyList(), upcoming = null) }
         compose.onNodeWithText("Add your first plant").assertIsDisplayed()
+        compose.onNodeWithTag("view-today").assertDoesNotExist()
+        compose.onNodeWithTag("view-upcoming").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
         capture("no-plants")
         compose.onNodeWithText("Add plant").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithText("Import from Planta").performClick()
         assertEquals(1, adds); assertEquals(1, imports)
         compose.runOnIdle { state.value = full.copy(today = mixed, offline = true) }
         compose.onNodeWithText(state.value.offlineBanner()).assertExists()
-        compose.onAllNodesWithContentDescription("Done").assertAll(isNotEnabled())
+        compose.onAllNodes(hasContentDescription("Mark Water for Fern done") or hasContentDescription("Mark Fertilize for Fern done"))
+            .assertCountEquals(2).assertAll(isNotEnabled())
         compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
         capture("offline")
         compose.runOnIdle { state.value = full.copy(member = Member("sitter", Role.sitter), today = mixed.copy(sections = mixed.sections.map { group -> group.copy(tasks = group.tasks.map { it.copy(siteName = "", basedOn = emptyList(), coverPhotoId = null) }) })) }

@@ -11,12 +11,9 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.Role
 
-@Composable fun HomeFeed(state: FeedState, onSettings: () -> Unit = {}, onOpen: (String) -> Unit = {},
-                         onWater: () -> Unit = {}, onUndo: () -> Unit = {}, compact: Boolean = false) {
-    if (!compact) Text("Home feed", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-    if (!compact && state.member?.role in listOf(Role.owner, Role.family)) TextButton(onClick = onSettings, modifier = Modifier.heightIn(min = 48.dp)) { Text("Customize my feed") }
+@Composable fun HomeFeed(state: FeedState, onOpen: (String) -> Unit = {},
+                         onWater: () -> Unit = {}, onUndo: () -> Unit = {}) {
     FeedNotice(state)
-    if (!compact && !state.loaded) Text(if (state.offline) "Feed unavailable offline" else if (state.refreshing) "Loading feed…" else "Feed unavailable. Refresh to try again.")
     val cards = state.cards.filter { state.member?.role != Role.sitter || it.kind == "late_tasks" }
     val latestRain = cards.lastOrNull { it.rain }?.id
     // Match HomeFeed.svelte's three groups; retain server order within each group.
@@ -24,14 +21,13 @@ import com.epaflix.fytorium.Role
         cards.filter { it.kind == "weather_alerts" } + cards.filter { it.kind == "plant_warnings" }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ordered.forEach { card ->
-            Card(Modifier.width(if (compact) 280.dp else 300.dp).testTag("feed-${card.id}"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+            Card(Modifier.width(280.dp).testTag("feed-${card.id}"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onOpen(card.href) }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(card.title, style = MaterialTheme.typography.titleMedium)
                     }
-                    card.lines.take(if (compact) 2 else card.lines.size).forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                    card.plants.take(if (compact) 1 else card.plants.size).forEach { plant -> TextButton(onClick = { onOpen("/plants/${plant.id}") }, modifier = Modifier.heightIn(min = 48.dp)) { Text(plant.name) } }
-                    if (!compact && card.href == "/#today") TextButton(onClick = { onOpen(card.href) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("See all in Today") }
+                    card.lines.take(2).forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                    card.plants.take(1).forEach { plant -> TextButton(onClick = { onOpen("/plants/${plant.id}") }, modifier = Modifier.heightIn(min = 48.dp)) { Text(plant.name) } }
                     if (card.id == latestRain && state.weather != null) {
                         state.weather.rain?.let { rain ->
                             Text("It rained: ${rainAmount(rain.precipitationMm)} mm today or yesterday.")
@@ -41,7 +37,7 @@ import com.epaflix.fytorium.Role
                         if (state.weather.lastBatchId != null) OutlinedButton(onClick = onUndo, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Undo rain watering") }
                         if (state.weather.rain == null && state.weather.lastBatchId == null) Text("Rain watering is no longer available for this report.")
                     }
-                    card.warnings.take(if (compact) 1 else card.warnings.size).forEach { warning ->
+                    card.warnings.take(1).forEach { warning ->
                         Text(warning.title, style = MaterialTheme.typography.titleSmall)
                         Text(warning.reason)
                         var expanded by remember(card.id, warning.title) { mutableStateOf(false) }

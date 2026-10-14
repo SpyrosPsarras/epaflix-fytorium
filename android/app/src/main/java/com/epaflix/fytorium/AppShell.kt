@@ -28,7 +28,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
                          careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
                          feed: FeedRepository? = null,
-                         sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }, homeRequest: Int = 0) {
+                         sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }, homeRequest: Int = 0, deviceOnline: Boolean = sitesConnected()) {
     val loadedFeed = feed?.state?.collectAsState()?.value
     val feedState = loadedFeed?.let { if (it.member == careState?.member) it else FeedState(member = careState?.member) }
     val scope = rememberCoroutineScope()
@@ -156,9 +156,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
                     onNotifications = { tab = "More"; notifications = true },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
-                    onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = sitesConnected(),
+                    onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
                     onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } },
-                    feedContent = { seeTasks -> if (feedState != null && feedState.cards.isNotEmpty()) HomeFeed(feedState, compact = true, onSettings = { openFeedSettings() },
+                    feedContent = { seeTasks -> if (feedState != null && feedState.cards.isNotEmpty()) HomeFeed(feedState,
                         onOpen = { href -> when {
                             href == "/#today" -> seeTasks()
                             href.startsWith("/plants/") -> { feedPlant = href.removePrefix("/plants/"); tab = "Plants" }

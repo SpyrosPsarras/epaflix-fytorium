@@ -9,10 +9,14 @@ import java.util.Locale
 fun taskDate(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.getDefault()))
 
 data class TodayPresentation(val greeting: String, val summary: String, val sections: List<TaskSection>,
-    val emptyTitle: String, val nextTask: String?)
+    val emptyTitle: String, val nextTask: String?, val tip: String)
 
 fun CareState.todayPresentation(now: Instant = Instant.now()): TodayPresentation {
-    val hour = timezone?.let { now.atZone(ZoneId.of(it)).hour }
+    val localTime = now.atZone(ZoneId.of(timezone ?: "UTC"))
+    val hour = timezone?.let { localTime.hour }
+    val tips = listOf("Check the soil before watering.", "Empty standing water from saucers.",
+        "Turn pots for more even light.", "Check leaf undersides for pests.", "Use clean tools when pruning.")
+    val tip = tips[Math.floorMod(localTime.toLocalDate().toEpochDay(), tips.size.toLong()).toInt()]
     val sections = today?.let { list ->
         if (list.settings.sort == "task" || list.groups.isEmpty()) list.sections.filter { it.tasks.isNotEmpty() }
         else list.groups.filterValues { it.isNotEmpty() }.map { (key, rows) -> TaskSection(key, rows.first().label, rows) }
@@ -36,5 +40,5 @@ fun CareState.todayPresentation(now: Instant = Instant.now()): TodayPresentation
         in 5..11 -> "Good morning"
         in 12..17 -> "Good afternoon"
         else -> "Good evening"
-    }, summary, sections, emptyTitle, next?.let { "Next: ${it.label} ${it.plantName} · ${taskDate(it.dueOn!!)}" })
+    }, summary, sections, emptyTitle, next?.let { "Next: ${it.label} ${it.plantName} · ${taskDate(it.dueOn!!)}" }, tip)
 }

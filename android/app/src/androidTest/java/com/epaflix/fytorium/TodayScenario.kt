@@ -8,7 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.ui.test.*
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -69,7 +69,20 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val bars = androidx.core.view.WindowCompat.getInsetsController(compose.activity.window, compose.activity.window.decorView)
         assertEquals(!dark, bars.isAppearanceLightStatusBars)
         assertEquals(!dark, bars.isAppearanceLightNavigationBars)
-        if (name == "empty-day") compose.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo(0f, 0f..1f))).assertDoesNotExist()
+        if (name == "today-scrolled") {
+            val last = app.repository.state.value.today!!.sections.last { it.tasks.isNotEmpty() }.tasks.last()
+            compose.onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, 100_000f) }
+            val row = compose.onNodeWithTag("task:${last.plantId}:${last.key}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val fab = compose.onNodeWithContentDescription("Add plant").fetchSemanticsNode().boundsInRoot
+            val viewport = compose.onNodeWithTag("task-list").fetchSemanticsNode().boundsInRoot
+            assertTrue("Last row must clear the FAB", row.bottom < fab.top)
+            assertTrue("Viewport must extend behind the FAB", viewport.bottom > fab.bottom)
+            compose.waitForIdle(); device.waitForIdle(); Thread.sleep(500)
+        } else {
+            compose.onNodeWithText(app.repository.state.value.todayPresentation().greeting).performScrollTo()
+            compose.waitForIdle(); device.waitForIdle(); Thread.sleep(500)
+        }
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertCountEquals(0)
         val captured = File(output, "$name-${if (dark) "dark" else "light"}.png")
         assertTrue(device.takeScreenshot(captured))
         // Shared MediaStore pictures survive Gradle uninstall and are readable by adb.
@@ -124,7 +137,8 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         assertEquals(25, first.lateDays); assertNotNull(first.coverPhotoId)
         compose.waitForNode(hasContentDescription("Photo of ${first.plantName}") and hasAnyAncestor(hasTestTag("task:${first.plantId}:water"))).assertIsDisplayed()
         capture("today", false); capture("today", true)
-        compose.onNodeWithTag("view-upcoming").performClick()
+        capture("today-scrolled", false); capture("today-scrolled", true)
+        compose.onNodeWithTag("view-upcoming").performScrollTo().performClick()
         compose.waitForNode(hasText("Next 14 calendar days, including today")).assertIsDisplayed()
         capture("upcoming", false); capture("upcoming", true)
         for (id in ids) json("/api/plants/$id/tasks/complete-all", "POST", JSONObject().put("request_id", UUID.randomUUID().toString()))
@@ -134,7 +148,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.waitForNode(hasText("Nothing to do today")).assertIsDisplayed()
         compose.onNode(hasText("Next:", substring = true)).assertIsDisplayed()
         capture("empty-day", false); capture("empty-day", true)
-        println("A15 E2E PASS: eight synthetic covers, 25-day late tasks, Today/Upcoming and empty-day light/dark device captures")
+        println("A15 E2E PASS: eight synthetic covers, 25-day late tasks, Today/Upcoming/empty-day and last-row FAB clearance light/dark device captures")
     } finally {
         device.executeShellCommand("cmd uimode night no")
         cleanup()

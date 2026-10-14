@@ -55,6 +55,18 @@ class TodayPresentationTest {
         assertEquals("Connect to load your tasks", CareState(offline = true).todayPresentation().emptyTitle)
         assertNull(state.copy(upcoming = empty).todayPresentation().nextTask)
     }
+    @Test fun tipIsStableForTheHouseholdDayAndRotatesAtItsMidnight() {
+        val oslo = CareState(timezone = "Europe/Oslo")
+        val early = Instant.parse("2030-06-01T22:00:00Z")
+        val late = Instant.parse("2030-06-02T21:59:59Z")
+        val midnight = Instant.parse("2030-06-02T22:00:00Z")
+        assertEquals(oslo.todayPresentation(early).tip, oslo.todayPresentation(late).tip)
+        assertNotEquals(oslo.todayPresentation(late).tip, oslo.todayPresentation(midnight).tip)
+        val la = oslo.copy(timezone = "America/Los_Angeles")
+        assertNotEquals(oslo.todayPresentation(early).tip, la.todayPresentation(early).tip)
+        assertEquals(oslo.todayPresentation(early).tip, oslo.todayPresentation(early.plusSeconds(5 * 86_400)).tip)
+        assertEquals(CareState(timezone = "UTC").todayPresentation(early).tip, CareState().todayPresentation(early).tip)
+    }
     @Test fun greetingUsesHouseholdTimeRatherThanPhoneTime() {
         val state = CareState(timezone = "Europe/Oslo")
         assertEquals("Good morning", state.todayPresentation(Instant.parse("2030-06-02T03:00:00Z")).greeting)

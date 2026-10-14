@@ -1,6 +1,6 @@
 package com.epaflix.fytorium
 
-import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,25 +19,21 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
-@Composable internal fun TaskRow(task: CareTask, state: CareState, today: String, thumbnails: Thumbnails?, handleAll: Boolean,
+@Composable internal fun TaskRow(task: CareTask, state: CareState, today: String, photo: Bitmap?, handleAll: Boolean,
     onAction: (String) -> Unit, onHandleAll: () -> Unit, showType: Boolean = false) {
     val event = state.handled[task.plantId + ":" + task.key] ?: task.completedEvent
     val actions = state.member?.let { task.actions(today, it, event) }.orEmpty()
     var details by remember(task.plantId, task.key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            TaskPhoto(task, thumbnails, state.lastUpdated, event == null)
+            TaskPhoto(task, photo, event == null)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClickLabel = "Task details for ${task.plantName}") { details = !details }
                 .semantics { contentDescription = "Task details for ${task.plantName}" }, verticalArrangement = Arrangement.Center) {
                 Text(task.plantName, style = MaterialTheme.typography.titleMedium)
-                if (task.siteName.isNotBlank()) Text(task.siteName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val due = event?.label ?: if (task.dueOn == today) "Due today" else if (task.lateDays > 0) "Needs care" else task.dueOn?.let(::taskDate).orEmpty()
-                Text(if (showType) "${task.label} · $due" else due,
-                    style = MaterialTheme.typography.labelMedium, color = if (event == null && task.lateDays > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                val subtitle = if (showType) listOf(task.label, task.siteName).filter { it.isNotBlank() }.joinToString(" · ") else task.siteName
+                if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if ("snooze" in actions) IconButton(onClick = { onAction("snooze") }, enabled = state.writable, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Default.Snooze, contentDescription = "Snooze 2 days")
@@ -49,7 +45,7 @@ import kotlinx.coroutines.withContext
             } else if ("complete" in actions) {
                 IconButton(onClick = { onAction("complete") }, enabled = state.writable,
                     modifier = Modifier.size(48.dp).border(2.dp, if (state.writable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
-                        .semantics { contentDescription = "Done"; stateDescription = "Complete ${task.label} for ${task.plantName}" }) {
+                        .semantics { contentDescription = "Mark ${task.label} for ${task.plantName} done" }) {
                     // An unfilled circle is the completion affordance, not a second checkbox.
                 }
             }
@@ -66,17 +62,12 @@ import kotlinx.coroutines.withContext
     }
 }
 
-@Composable private fun TaskPhoto(task: CareTask, thumbnails: Thumbnails?, refreshed: Long?, pending: Boolean) {
-    val bitmap by key(task.coverPhotoId, thumbnails, refreshed) {
-        produceState<android.graphics.Bitmap?>(null) {
-            value = withContext(Dispatchers.IO) { task.coverPhotoId?.let { thumbnails?.load(it) }?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } }
-        }
-    }
+@Composable private fun TaskPhoto(task: CareTask, bitmap: Bitmap?, pending: Boolean) {
     Box(Modifier.width(56.dp).height(68.dp), contentAlignment = Alignment.TopCenter) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.size(56.dp)) {
-            if (bitmap != null) Image(bitmap!!.asImageBitmap(), contentDescription = "Photo of ${task.plantName}", contentScale = ContentScale.Crop, modifier = Modifier.clip(CircleShape))
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(56.dp)) {
+            if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Photo of ${task.plantName}", contentScale = ContentScale.Crop, modifier = Modifier.clip(CircleShape))
             else Box(contentAlignment = Alignment.Center) { Text(task.plantName.take(1).uppercase(), style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.semantics { contentDescription = "No cover photo for ${task.plantName}" }) }
+                color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.semantics { contentDescription = "No cover photo for ${task.plantName}" }) }
         }
         if (pending && task.lateDays > 0) Surface(shape = CircleShape, color = MaterialTheme.colorScheme.error,
             modifier = Modifier.align(Alignment.BottomCenter)) {

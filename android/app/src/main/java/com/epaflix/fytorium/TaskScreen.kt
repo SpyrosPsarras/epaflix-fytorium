@@ -27,6 +27,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Eco
+import androidx.compose.material.icons.outlined.WarningAmber
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role as SemanticsRole
@@ -37,7 +43,18 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                            onHandleAll: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
                            onLoadPot: (suspend (String) -> Plant)? = null, thumbnails: Thumbnails? = null,
                            onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
-                           deviceOnline: Boolean = true, now: java.time.Instant = java.time.Instant.now(), feedContent: @Composable (() -> Unit) -> Unit = {}) {
+                           deviceOnline: Boolean = true, now: java.time.Instant? = null, feedContent: @Composable (() -> Unit) -> Unit = {}) {
+    val clock by produceState(now ?: java.time.Instant.now(), now) {
+        if (now == null) while (true) { value = java.time.Instant.now(); delay(60_000) }
+    }
+    val photoIds = remember(state.today, state.upcoming) {
+        listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
+    }
+    val photos by produceState<Map<String, Bitmap>>(emptyMap(), thumbnails, state.lastUpdated, photoIds) {
+        value = withContext(Dispatchers.IO) {
+            photoIds.mapNotNull { id -> thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }?.let { id to it } }.toMap()
+        }
+    }
     val pullState = rememberPullToRefreshState()
     // Zero-duration device animations can leave the refresh indicator at its shown offset.
     LaunchedEffect(state.busy) { if (!state.busy) pullState.snapTo(0f) }
@@ -59,19 +76,21 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
             task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today &&
                 (state.handled[task.plantId + ":" + task.key] ?: task.completedEvent) == null
         }.map { it.plantId }.toSet() else emptySet()
-    val presentation = state.todayPresentation(now)
+    val presentation = state.todayPresentation(clock)
+    val noPlants = state.today != null && state.plants.isEmpty()
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
     val showFab = state.member?.role in listOf(Role.owner, Role.family)
     val canAdd = state.member?.role in listOf(Role.owner, Role.family) && deviceOnline && !state.updateRequired
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Fytorium", style = MaterialTheme.typography.titleMedium) }, navigationIcon = {
+        TopAppBar(title = {}, navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
         }, actions = {
             IconButton(onClick = onNotifications) { Icon(Icons.Outlined.Notifications, contentDescription = "My notifications") }
         })
     }, floatingActionButton = {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showFab && list != null) SmallFloatingActionButton(onClick = { settingsOpen = true }, modifier = Modifier.size(48.dp)) {
+            if (showFab && list != null && !noPlants) SmallFloatingActionButton(onClick = { settingsOpen = true },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Default.Tune, contentDescription = "Task view settings")
             }
             if (state.member?.role in listOf(Role.owner, Role.family)) FloatingActionButton(onClick = { if (canAdd) onAddPlant() },
@@ -81,26 +100,27 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
         }
     }) { padding ->
         PullToRefreshBox(isRefreshing = state.busy, state = pullState, onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize().padding(padding).padding(bottom = if (showFab) 88.dp else 0.dp), indicator = {
+            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()), indicator = {
                 if (state.busy || pullState.distanceFraction > 0f) PullToRefreshDefaults.Indicator(
                     modifier = Modifier.align(Alignment.TopCenter), state = pullState, isRefreshing = state.busy,
                     containerColor = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.fillMaxSize().testTag("task-list").verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, bottom = (if (showFab) 88.dp else 16.dp) + padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(presentation.greeting, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(top = 8.dp))
-                Text("A little care goes a long way.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (state.today != null && presentation.sections.isNotEmpty()) Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                    Text(presentation.summary, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer,
+                Text(presentation.tip, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.today != null && presentation.sections.isNotEmpty()) Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                    Text(presentation.summary, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
                 }
                 if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                if (!noPlants) SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     listOf("today" to "Today", "upcoming" to "Upcoming").forEachIndexed { index, (key, label) ->
                         SegmentedButton(selected = view == key, onClick = { onView(key) }, shape = SegmentedButtonDefaults.itemShape(index, 2),
                             modifier = Modifier.testTag("view-$key")) { Text(label) }
                     }
                 }
-                if (view == "upcoming") Text("Next 14 calendar days, including today", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (view == "upcoming" && !noPlants) Text("Next 14 calendar days, including today", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OfflineNotice(state)
                 if (sections.isEmpty()) Column(Modifier.fillMaxWidth().bringIntoViewRequester(taskAnchor).padding(vertical = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -121,14 +141,13 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp).semantics { heading() })
                         section.tasks.forEachIndexed { rowIndex, task ->
                             if (rowIndex > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                            key(task.plantId, task.key) { TaskRow(task, state, list!!.today, thumbnails,
+                            key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
                                 task.plantId in handlePlants && shownPlants.add(task.plantId),
                                 onAction = { action -> if (action == "repot") repot = task else onAction(task, action, null) },
                                 onHandleAll = { onHandleAll(task.plantId) }, showType = view == "upcoming") }
                         }
                     }
                 }
-                Spacer(Modifier.height(16.dp))
             }
         }
     }
@@ -136,11 +155,15 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 
 @Composable fun OfflineNotice(state: CareState) {
     if (state.offline || state.serverUnavailable) {
-        Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (state.offline) state.offlineBanner() else state.serverBanner())
-                Text(if (state.offline) "Actions are unavailable offline. Reconnect and refresh to make changes."
-                    else "Actions are unavailable until Fytorium responds. Refresh to try again.")
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
+            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Outlined.WarningAmber, contentDescription = "Warning", tint = MaterialTheme.colorScheme.tertiary)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (state.offline) state.offlineBanner() else state.serverBanner(), style = MaterialTheme.typography.titleSmall)
+                    Text(if (state.offline) "Actions are unavailable offline. Reconnect and refresh to make changes."
+                        else "Actions are unavailable until Fytorium responds. Refresh to try again.")
+                }
             }
         }
     } else state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }

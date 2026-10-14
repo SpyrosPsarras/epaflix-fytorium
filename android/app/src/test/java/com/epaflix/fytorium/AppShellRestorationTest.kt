@@ -294,7 +294,7 @@ class AppShellRestorationTest {
                     val tab = when (route) { "journal" -> "Today"; "feed-plant", "plant-species", "photo-form", "journal-plant", "identify" -> "Plants"; else -> "More" }
                     compose.onNode(hasText(tab) and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
                 } else if (reset == "family" && route == "planta") compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
-                else compose.onNodeWithText("A little care goes a long way.").assertIsDisplayed()
+                else compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
                 compose.onNodeWithText("One-time app code").assertDoesNotExist()
                 compose.onNodeWithText("Synthetic imported fern").assertDoesNotExist()
                 compose.onNodeWithText("Plant journal").assertDoesNotExist()
