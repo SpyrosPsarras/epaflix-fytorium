@@ -38,6 +38,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var tab by rememberSaveable { mutableStateOf("Today") }
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
+    var journalPlantId by rememberSaveable { mutableStateOf<String?>(null) }
     var unmatched by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
     var taskView by rememberSaveable { mutableStateOf("today") }
@@ -52,7 +53,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
             }
-            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null
+            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null
             if (!loggedIn || memberChanged || becameSitter) feedPlant = null
         }
         if (!loggedIn) { previousMemberId = null; previousRole = null }
@@ -67,7 +68,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
@@ -106,6 +107,14 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
             return@Scaffold
         }
+        if (loggedIn && !updateRequired && careState?.member != null && careState.member.role != Role.sitter && tab == "Journal" && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careState.member) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
+                    onBack = { tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
+                    onChanged = { controller?.refresh() }) }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 if (tab == "Today") Text("Fytorium", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
@@ -120,8 +129,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             else -> openFeedSettings()
                         } }, onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
                         onUndo = { scope.launch(Dispatchers.IO) { if (feed?.undoRain() == true) controller?.refresh() } }) })
-                else key(careState.member?.id, careState.member?.role == Role.sitter) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
-                    onBack = { tab = "Today"; feedPlant = null }, initialPlant = feedPlant,
+                else key(careState.member?.id, careState.member?.role == Role.sitter, journalPlantId) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
+                    onBack = { tab = "Today"; feedPlant = null; journalPlantId = null }, initialPlant = journalPlantId ?: feedPlant,
+                    photosApi = sitesApi, photosConnected = sitesConnected,
                     speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() }) }
             }
             return@Scaffold

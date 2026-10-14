@@ -49,6 +49,28 @@ class AppShellRestorationTest {
     @Test fun differentMemberClearsRestoredPlantSpeciesCare() = navigation("member", "plant-species")
     @Test fun sameMemberChangingToFamilyKeepsFeedPlantNavigation() = navigation("family", "feed-plant")
 
+    @Test fun restoredIdentificationSurvivesFirstComposition() = navigation(null, "identify")
+    @Test fun logoutClearsRestoredIdentification() = navigation("logout", "identify")
+    @Test fun sitterClearsRestoredIdentification() = navigation("sitter", "identify")
+    @Test fun differentMemberClearsRestoredIdentification() = navigation("member", "identify")
+    @Test fun familyCanIdentifyAcrossRestore() = navigation(null, "identify", Role.family)
+
+    @Test fun restoredJournalSurvivesFirstComposition() = navigation(null, "journal")
+    @Test fun logoutClearsRestoredJournal() = navigation("logout", "journal")
+    @Test fun sitterClearsRestoredJournal() = navigation("sitter", "journal")
+    @Test fun differentMemberClearsRestoredJournal() = navigation("member", "journal")
+    @Test fun familyKeepsJournalAcrossRestore() = navigation(null, "journal", Role.family)
+    @Test fun restoredPhotoFormKeepsDraft() = navigation(null, "photo-form")
+    @Test fun logoutClearsRestoredPhotoForm() = navigation("logout", "photo-form")
+    @Test fun sitterClearsRestoredPhotoForm() = navigation("sitter", "photo-form")
+    @Test fun differentMemberClearsRestoredPhotoForm() = navigation("member", "photo-form")
+    @Test fun familyCanAddPhotosAcrossRestore() = navigation(null, "photo-form", Role.family)
+    @Test fun sameMemberChangingToFamilyKeepsPhotoForm() = navigation("family", "photo-form")
+    @Test fun restoredJournalPlantLinkSurvivesFirstComposition() = navigation(null, "journal-plant")
+    @Test fun logoutClearsRestoredJournalPlantLink() = navigation("logout", "journal-plant")
+    @Test fun sitterClearsRestoredJournalPlantLink() = navigation("sitter", "journal-plant")
+    @Test fun differentMemberClearsRestoredJournalPlantLink() = navigation("member", "journal-plant")
+
     @Test fun sitterKeepsPlantsAcrossRestore() = sitterNavigation("Plants")
     @Test fun sitterKeepsMoreAcrossRestore() = sitterNavigation("More")
     @Test fun sitterKeepsAboutAcrossRestore() = sitterNavigation("About")
@@ -95,6 +117,15 @@ class AppShellRestorationTest {
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.path) {
+                    "/api/journal" -> "[" + JSONObject(com.epaflix.fytorium.photos.photoFixture).put("plant_name", "Synthetic fern") + "]"
+                    "/api/plants/plant-one/photos" -> "[]"
+                    "/api/choices" -> """{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":["good"]},"nameLanguages":{}}"""
+                    "/api/identification" -> """{"remaining":20}"""
+                    "/api/me" -> """{"member":{"id":"owner","role":"${initialRole.name}"}}"""
+                    "/api/tasks?view=today" -> taskListFixture("today")
+                    "/api/tasks?view=upcoming" -> taskListFixture("upcoming")
+                    "/api/plants" -> "[$plantFixture]"
+                    "/api/meta" -> """{"today":"2030-06-01"}"""
                     "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"late","kind":"late_tasks","href":"/#today","count":1,"plants":[{"id":"plant-one","name":"Synthetic fern"}]}]}"""
                     "/api/weather" -> """{"locationSet":false,"forecastFetchedAt":null,"rain":null,"lastRainBatch":null}"""
                     "/api/household/location" -> """{"location":null}"""
@@ -117,11 +148,44 @@ class AppShellRestorationTest {
             val feed = FeedRepository(client, { true }).apply { refresh(initialCare.member) }
             val loggedIn = mutableStateOf(true)
             val api = mutableStateOf<ApiClient?>(if (route == "sites-unmatched") null else client)
+            val database = if (route == "identify") androidx.room.Room.inMemoryDatabaseBuilder(
+                org.robolectric.RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build() else null
+            val controller = database?.let {
+                val cache = CareCache(it)
+                cache.bind("""{"member":{"id":"owner","role":"${initialCare.member!!.role.name}"}}""")
+                val repository = Repository(client, cache, { true }).apply { restore() }
+                CareController(org.robolectric.RuntimeEnvironment.getApplication(), MemoryCredentials().apply {
+                    tokens = Tokens("synthetic-access", "synthetic-refresh")
+                }, repository, client)
+            }
+            try {
             val restoration = StateRestorationTester(compose)
             restoration.setContent { FytoriumTheme {
-                AppShell(loggedIn.value, false, careState = care.value, feed = feed, sitesApi = api.value, sitesConnected = { true })
+                AppShell(loggedIn.value, false, careState = care.value, controller = controller, feed = feed, sitesApi = api.value, sitesConnected = { true })
             } }
             when (route) {
+                "identify" -> {
+                    compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+                    compose.onNodeWithText("Add plant").performScrollTo().performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodesWithText("Identify from photos").fetchSemanticsNodes().isNotEmpty() }
+                    compose.onNodeWithText("Identify from photos").performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications remaining today.").fetchSemanticsNodes().isNotEmpty() }
+                }
+                "journal", "journal-plant" -> {
+                    compose.onNodeWithText("Journal").performClick()
+                    if (route == "journal-plant") {
+                        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Synthetic fern") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+                        compose.onNodeWithText("Synthetic fern").performScrollTo().performClick()
+                    }
+                }
+                "photo-form" -> {
+                    compose.onNodeWithText("Synthetic fern").performScrollTo().performClick()
+                    compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("View all updates"))
+                    compose.onNodeWithText("View all updates").performClick()
+                    compose.onNodeWithText("Add a photo update").performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Note") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                    compose.onNodeWithText("Note").performTextInput("Unsaved photo note")
+                }
                 "sites-unmatched" -> {
                     compose.onNodeWithText("More").performClick()
                     // With no API attached, both saved routes can be set through their actual buttons.
@@ -190,15 +254,32 @@ class AppShellRestorationTest {
                         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create invite") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                         compose.onNodeWithText("Create invite").assertIsDisplayed().assertIsEnabled()
                     }
+                    "identify" -> {
+                        compose.onNodeWithText("Identify from photos").assertIsDisplayed()
+                        compose.onNodeWithText("Take photo").assertIsEnabled()
+                        compose.onNodeWithText("Choose photos").assertIsEnabled()
+                    }
+                    "journal" -> compose.onNodeWithText("Plant journal").assertIsDisplayed()
+                    "photo-form" -> {
+                        compose.onNodeWithText("Add a photo update").assertIsDisplayed()
+                        compose.onNodeWithText("Unsaved photo note").assertExists()
+                        compose.onNodeWithText("Take photo").assertIsEnabled()
+                        compose.onNodeWithText("Choose photos").assertIsEnabled()
+                    }
+                    "journal-plant" -> compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
                     "species", "plant-species" -> compose.onNodeWithText("Species care").assertIsDisplayed()
                     "feed-settings" -> compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
                     "feed-plant" -> compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
                 }
             } else {
                 if (reset == "sitter") {
-                    val tab = if (route in listOf("feed-plant", "plant-species")) "Plants" else "More"
-                    compose.onNode(hasText(tab) and hasClickAction()).assertIsSelected()
+                    val tab = when (route) { "journal" -> "Today"; "feed-plant", "plant-species", "photo-form", "journal-plant", "identify" -> "Plants"; else -> "More" }
+                    compose.onNode(hasText(tab) and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
                 } else compose.onNodeWithText("Home feed").assertIsDisplayed()
+                compose.onNodeWithText("Plant journal").assertDoesNotExist()
+                compose.onNodeWithText("Add a photo update").assertDoesNotExist()
+                compose.onNodeWithText("Unsaved photo note").assertDoesNotExist()
+                compose.onNodeWithText("Identify plant").assertDoesNotExist()
                 compose.onNodeWithText("Create invite").assertDoesNotExist()
                 compose.onNodeWithText("Save my feed").assertDoesNotExist()
                 compose.onNodeWithText("Edit plant").assertDoesNotExist()
@@ -208,6 +289,7 @@ class AppShellRestorationTest {
                 compose.onNodeWithText("Open Plantbook unmatched species").assertDoesNotExist()
                 compose.onNodeWithText("A site groups plants that share the same conditions.").assertDoesNotExist()
             }
+            } finally { controller?.close(); database?.close() }
         }
     }
 }

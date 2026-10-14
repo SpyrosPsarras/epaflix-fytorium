@@ -91,6 +91,10 @@ import org.json.JSONObject
                 }
             }
             item {
+                Heading("Photo updates")
+                OutlinedButton(onClick = { onCommand("photos", JSONObject()) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("View all updates") }
+            }
+            item {
                 Heading("Species and site")
                 Text("${attributes.nullable("canonical_name") ?: plant.scientificName} · ${attributes.nullable("rank")?.lowercase() ?: "Unknown rank"} · GBIF key: ${attributes.nullable("gbif_key") ?: "Not set"}")
                 Text("Species data from GBIF, CC BY 4.0")

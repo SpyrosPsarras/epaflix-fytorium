@@ -5,6 +5,14 @@
         <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="merge">
             <meta-data android:name="androidx.work.WorkManagerInitializer" tools:node="remove" />
         </provider>
+        <!-- Ask Play services for the Photo Picker backport on Android 10 through 12. -->
+        <service android:name="com.google.android.gms.metadata.ModuleDependencies" android:enabled="false" android:exported="false" tools:ignore="MissingClass">
+            <intent-filter><action android:name="com.google.android.gms.metadata.MODULE_DEPENDENCIES" /></intent-filter>
+            <meta-data android:name="photopicker_activity:0:required" android:value="" />
+        </service>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.photos" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/photo_paths" />
+        </provider>
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
