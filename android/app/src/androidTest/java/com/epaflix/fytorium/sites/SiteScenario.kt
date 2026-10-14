@@ -5,6 +5,8 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.waitForNode
+import com.epaflix.fytorium.waitForState
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -21,13 +23,13 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
             text
         }
     fun rows(text: String): List<JSONObject> = JSONArray(text).let { list -> (0 until list.length()).map { list.getJSONObject(it) } }
-    fun waitText(text: String) { compose.waitUntil(30_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() } }
+    fun waitText(text: String) { compose.waitForState("Site text $text visible", 30_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() } }
     fun enabled(text: String) {
-        compose.waitUntil(30_000) { compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForState("Site action $text enabled", 30_000) { compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
     }
     fun type(label: String, value: String) {
-        compose.onNodeWithText(label).performScrollTo()
         enabled(label)
+        compose.onNodeWithText(label).performScrollTo()
         compose.onNodeWithText(label).performTextReplacement(value)
     }
     try {
@@ -55,15 +57,15 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         assertEquals(5, created.getInt("cold_min_c")); assertEquals(20, created.getInt("cold_max_c"))
         assertTrue(created.getBoolean("grow_light")); assertTrue(created.getBoolean("draft"))
         val tag = "site:$siteId"
-        fun button(text: String) = compose.onNode(hasText(text) and hasAnyAncestor(hasTestTag(tag)))
+        fun button(text: String) = compose.waitForNode(hasText(text) and hasAnyAncestor(hasTestTag(tag)) and isEnabled())
         button("Edit").performScrollTo().performClick()
         compose.onNodeWithText("Name").assertTextContains(names[0])
         type("Name", names[1])
         val device = androidx.test.uiautomator.UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
         val keyboard = androidx.test.uiautomator.By.pkg("com.google.android.inputmethod.latin")
-        if (device.wait(androidx.test.uiautomator.Until.hasObject(keyboard), 2_000)) {
+        if (compose.waitForState("Site form keyboard appeared", 2_000, required = false) { device.hasObject(keyboard) }) {
             device.pressBack()
-            assertTrue(device.wait(androidx.test.uiautomator.Until.gone(keyboard), 5_000))
+            compose.waitForState("Site form keyboard closed", 5_000) { !device.hasObject(keyboard) }
         }
         for ((label, old, value) in listOf(Triple("Location", "indoor", "outdoor"), Triple("Light level", "part sun", "full sun"), Triple("Humidity", "normal", "humid"))) {
             compose.onNodeWithText("$label: $old").performScrollTo().performClick()
@@ -94,7 +96,7 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         json("/api/plants/$plantId", "DELETE", JSONObject().put("confirm_name", plantName)); plantId = null
         enabled("Confirm delete")
         compose.onNodeWithText("Confirm delete").performClick()
-        compose.waitUntil(30_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isEmpty() }
+        compose.waitForState("Deleted site row absent", 30_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isEmpty() }
         assertFalse(rows(json("/api/sites")).any { it.getString("id") == siteId })
         siteId = null
         compose.onNodeWithContentDescription("Back").performClick()

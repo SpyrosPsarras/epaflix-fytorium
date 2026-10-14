@@ -38,6 +38,7 @@ compose-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", versi
 compose-accessibility = { module = "androidx.compose.ui:ui-test-junit4-accessibility", version.ref = "compose" }
 browser = { module = "androidx.browser:browser", version.ref = "browser" }
 coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 junit = { module = "junit:junit", version.ref = "junit" }

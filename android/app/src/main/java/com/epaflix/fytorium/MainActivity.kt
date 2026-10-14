@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
             FytoriumTheme {
                 AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
                     onLogin = { login() }, onLogout = session::logout,
-                    careState = careState, controller = care, thumbnails = app.thumbnails,
+                    careState = careState, controller = care, thumbnails = app.thumbnails, feed = app.feed,
                     sitesApi = app.api, sitesConnected = { app.store.tokens != null && care.connected() },
                     onCopyDiagnostics = {
                         getSystemService(ClipboardManager::class.java).setPrimaryClip(

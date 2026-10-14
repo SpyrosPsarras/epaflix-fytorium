@@ -2328,8 +2328,12 @@ paths:
                   items:
                     type: string
                     pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
-              required:
-                - plant_ids
+                role:
+                  enum: [family, sitter]
+                  description: Owner-only role change. Owner roles are protected. Changing to family clears shares.
+              anyOf:
+                - required: [plant_ids]
+                - required: [role]
               additionalProperties: false
     delete:
       operationId: delete_api_household_members__id_
@@ -4338,6 +4342,14 @@ components:
     Member:
       type: object
       properties:
+        role_options:
+          type: array
+          items:
+            enum: [family, sitter]
+          description: Allowed new roles. Empty for protected owner roles. This endpoint denies sitters.
+        can_remove:
+          type: boolean
+          description: False for the current member or the last owner.
         id:
           type: string
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
@@ -4358,6 +4370,8 @@ components:
         - display_name
         - role
         - plant_ids
+        - role_options
+        - can_remove
       additionalProperties: false
     Invite:
       type: object

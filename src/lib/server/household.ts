@@ -32,8 +32,10 @@ export async function createInvite(identity: Identity, input: Record<string, unk
 export async function members(identity: Identity) {
   requirePermission(identity, 'owner');
   return (await db().query(`SELECT m.id, m.display_name, m.role,
+    CASE WHEN m.role = 'owner' THEN '[]'::json ELSE '["family","sitter"]'::json END AS role_options,
+    m.id <> $2 AND (m.role <> 'owner' OR (SELECT count(*) FROM members o WHERE o.household_id = m.household_id AND o.role = 'owner' AND o.removed_at IS NULL) > 1) AS can_remove,
     COALESCE((SELECT json_agg(plant_id ORDER BY plant_id) FROM plant_shares WHERE member_id = m.id), '[]') AS plant_ids
-    FROM members m WHERE household_id = $1 AND removed_at IS NULL ORDER BY role, display_name, id`, [identity.household.id])).rows;
+    FROM members m WHERE household_id = $1 AND removed_at IS NULL ORDER BY role, display_name, id`, [identity.household.id, identity.member.id])).rows;
 }
 export async function invites(identity: Identity) {
   requirePermission(identity, 'owner');
@@ -54,6 +56,22 @@ export async function changeShares(identity: Identity, memberId: string, input: 
     const member = await client.query("SELECT id FROM members WHERE id = $1 AND household_id = $2 AND role = 'sitter' AND removed_at IS NULL FOR UPDATE", [memberId, identity.household.id]);
     if (!member.rowCount) error(404, 'Sitter not found');
     const ids = await chosenPlants(client, identity.household.id, input.plant_ids);
+    await client.query('DELETE FROM plant_shares WHERE member_id = $1', [memberId]);
+    for (const id of ids) await client.query('INSERT INTO plant_shares (member_id, household_id, plant_id) VALUES ($1,$2,$3)', [memberId, identity.household.id, id]);
+  });
+}
+export async function changeRole(identity: Identity, memberId: string, input: Record<string, unknown>) {
+  requirePermission(identity, 'owner');
+  if (!isUuid(memberId)) error(404, 'Member not found');
+  if (!['family', 'sitter'].includes(String(input.role))) error(422, 'Choose family or sitter');
+  await withTransaction(async (client) => {
+    await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [identity.household.id]);
+    const target = await client.query('SELECT role FROM members WHERE id = $1 AND household_id = $2 AND removed_at IS NULL FOR UPDATE', [memberId, identity.household.id]);
+    if (!target.rowCount) error(404, 'Member not found');
+    if (target.rows[0].role === 'owner') error(409, 'Owner roles cannot be changed');
+    const ids = await chosenPlants(client, identity.household.id, input.plant_ids ?? []);
+    if (input.role === 'family' && ids.length) error(422, 'Family members do not need plant shares');
+    await client.query('UPDATE members SET role = $2 WHERE id = $1', [memberId, input.role]);
     await client.query('DELETE FROM plant_shares WHERE member_id = $1', [memberId]);
     for (const id of ids) await client.query('INSERT INTO plant_shares (member_id, household_id, plant_id) VALUES ($1,$2,$3)', [memberId, identity.household.id, id]);
   });

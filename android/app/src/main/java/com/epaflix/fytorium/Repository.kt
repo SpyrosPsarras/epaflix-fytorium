@@ -112,8 +112,9 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     }
     private fun failed(error: Exception, epoch: Int) = synchronized(monitor) {
         if (epoch != generation) return@synchronized
-        val offline = !connected() || error is OfflineFailure || error is java.net.UnknownHostException
-        val unavailable = !offline && (error !is ApiFailure || error.status >= 500)
+        val failure = classifyNetworkFailure(connected(), (error as? ApiFailure)?.status)
+        val offline = failure.offline
+        val unavailable = failure.serverUnavailable
         mutable.value = mutable.value.copy(offline = if (offline || unavailable) offline else mutable.value.offline,
             serverUnavailable = if (offline || unavailable) unavailable else mutable.value.serverUnavailable,
             updateRequired = mutable.value.updateRequired || (error is ApiFailure && error.status == 426),

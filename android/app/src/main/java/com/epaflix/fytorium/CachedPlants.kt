@@ -14,8 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 // Read-only cached views; plant editing belongs to A05.
-@Composable fun CachedPlants(state: CareState, onPlant: (String) -> Unit, thumbnails: Thumbnails?) {
-    var selected by remember { mutableStateOf<String?>(null) }
+@Composable fun CachedPlants(state: CareState, onPlant: (String) -> Unit, thumbnails: Thumbnails?, initialPlant: String? = null) {
+    var selected by remember(initialPlant) { mutableStateOf(initialPlant) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Plants", style = MaterialTheme.typography.headlineMedium)
         OfflineNotice(state)

@@ -41,6 +41,13 @@ class PlantsScreenTest {
         }
         return compose.onNodeWithText(text)
     }
+    @Test fun feedPlantLinkOpensNativeDetailDespiteUnrelatedCareFailure() {
+        val care = owner.copy(busy = true, offline = true, serverUnavailable = true,
+            detail = PlantDetail(plant, emptyList(), emptyMap()))
+        compose.setContent { FytoriumTheme { PlantsScreen(care, null, initialPlant = plant.id) } }
+        compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Search plants").assertDoesNotExist()
+    }
     @Test fun listSearchUsesDisplayAndScientificNamesWithoutASiteFilter() {
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme { PlantsList(owner, owner.plants, false, {}, {}, {}, {}) } }

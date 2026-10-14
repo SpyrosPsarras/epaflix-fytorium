@@ -19,10 +19,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {},
-    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }, initialPlantId: String? = null) {
-    var page by rememberSaveable { mutableStateOf(if (initialPlantId == null) "list" else "detail") }
-    var id by rememberSaveable { mutableStateOf(initialPlantId) }
+@Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, initialPlant: String? = null,
+    speciesApi: ApiClient? = null, speciesConnected: () -> Boolean = { false }, onCareChanged: () -> Unit = {},
+    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }) {
+    var page by rememberSaveable { mutableStateOf(if (initialPlant == null) "list" else "detail") }
+    var id by rememberSaveable { mutableStateOf(initialPlant) }
     var identifyReturn by rememberSaveable { mutableStateOf("search") }
     var graveyard by remember { mutableStateOf<List<Plant>>(emptyList()) }
     var options by remember { mutableStateOf<PlantOptions?>(null) }
@@ -56,7 +57,10 @@ import org.json.JSONObject
         else page = "detail"
     }
     BackHandler { back() }
-    LaunchedEffect(state.member) { loadOptions() }
+    LaunchedEffect(state.member, page) {
+        if (page in listOf("species-care", "photos", "identify") && state.member?.role == Role.sitter) page = if (id == null) "list" else "detail"
+        loadOptions()
+    }
     // Reads never change the form's saving gate or discard its remembered input.
     LaunchedEffect(id) { id?.let { refreshDetail(it) } }
     var wasOnline by remember { mutableStateOf(request.online) }
@@ -93,7 +97,7 @@ import org.json.JSONObject
             }
         }
     }
-    if (page in listOf("photos", "identify") && photosApi != null) {
+    if (page in listOf("photos", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
         com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
             plantId = if (page == "photos") id else null, plantName = if (page == "photos") detail?.plant?.displayName else null,
             identifying = page == "identify", onBack = { page = if (page == "photos") "detail" else identifyReturn },
@@ -105,11 +109,16 @@ import org.json.JSONObject
             })
         return
     }
+    if (page == "species-care" && detail != null && speciesApi != null && state.member != null && state.member.role != Role.sitter) {
+        com.epaflix.fytorium.species.SpeciesCareRoute(speciesApi, JSONObject(detail.plant.attributesJson).getLong("gbif_key"), state, speciesConnected,
+            onBack = { page = "detail"; run { refreshDetail(detail.plant.id) } }, onChanged = onCareChanged)
+        return
+    }
     val title = when (page) {
         "list" -> "Plants"; "graveyard" -> "Graveyard"; "detail" -> detail?.plant?.displayName ?: "Plant"
         "search" -> "Add plant"; "form" -> if (id == null) "Add plant" else "Edit plant"
         "change-species" -> "Change species"; "care" -> "Care settings"; "repot" -> "Repot plant"
-        "restore" -> "Restore plant"; else -> "Species names"
+        "restore" -> "Restore plant"; "species-care" -> "Species care"; else -> "Species names"
     }
     Column(Modifier.fillMaxSize()) {
         if (page != "detail" || detail == null) TopAppBar(title = { Heading(title) }, navigationIcon = {
@@ -134,7 +143,12 @@ import org.json.JSONObject
                 onUndo = { event -> run(save = true) {
                     val success = withContext(Dispatchers.IO) { repository!!.undoHistory(event) }
                     if (success) scope.launch { refreshDetail(event.plantId) }
-                } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back)
+                } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
+                onSpeciesCare = speciesApi?.let { { page = "species-care" } })
+            "species-care" -> PlantColumn {
+                Text("Connect to load species care for this plant.")
+                OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
+            }
             "search", "change-species" -> Column(Modifier.weight(1f)) {
                 if (photosApi != null && state.member?.role != Role.sitter) OutlinedButton(onClick = { identifyReturn = page; page = "identify" },
                     enabled = photosConnected() && !state.updateRequired && !saving, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Identify from photos") }
