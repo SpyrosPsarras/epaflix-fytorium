@@ -40,6 +40,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var sites by rememberSaveable { mutableStateOf(false) }
     var journalPlantId by rememberSaveable { mutableStateOf<String?>(null) }
     var unmatched by rememberSaveable { mutableStateOf(false) }
+    var plantaImport by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
     var taskView by rememberSaveable { mutableStateOf("today") }
     var about by rememberSaveable { mutableStateOf(false) }
@@ -56,6 +57,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null
             if (!loggedIn || memberChanged || becameSitter) feedPlant = null
         }
+        if (!loggedIn || memberChanged || (member != null && member.role != Role.owner)) plantaImport = false
         if (!loggedIn) { previousMemberId = null; previousRole = null }
         else if (member != null) { previousMemberId = member.id; previousRole = member.role }
     }
@@ -68,11 +70,21 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        if (loggedIn && !updateRequired && tab == "More" && plantaImport && careState?.member?.role == Role.owner && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careState.member) {
+                    com.epaflix.fytorium.planta.PlantaRoute(sitesApi, careState, sitesConnected, onBack = { plantaImport = false },
+                        onPlants = { plantaImport = false; journalPlantId = null; tab = "Plants"; controller?.refresh() },
+                        onPlant = { plantaImport = false; journalPlantId = it; tab = "Plants"; controller?.refresh() })
+                }
+            }
+            return@Scaffold
+        }
         val householdArea = com.epaflix.fytorium.household.HouseholdArea.entries.firstOrNull { it.name == household }
         if (loggedIn && !updateRequired && tab == "More" && householdArea != null && careState?.member != null && sitesApi != null && careState.member.role != Role.sitter && (householdArea != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner)) {
             Column(Modifier.fillMaxSize().padding(padding)) {
@@ -164,6 +176,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                         }
                         Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }
                     }
+                    if (careState?.member?.role == Role.owner) Button(onClick = { plantaImport = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Import from Planta") }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
                     Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }
                 }
