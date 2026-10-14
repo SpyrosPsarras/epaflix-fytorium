@@ -183,6 +183,38 @@ test('imports without a failed cover, retains the reason across restart and retr
   expect((await (await owner.request('/api/plants')).json()).filter((plant: { nickname: string }) => plant.nickname.startsWith('Test photo'))).toHaveLength(2);
 });
 
+test('a committed row never promises a cover download after its imported plant is deleted', async () => {
+  const imported = syntheticPlant('synthetic-deleted-cover', 'Test deleted imported cover');
+  imported.image.url = imageHost.url;
+  fake.setPlants([imported]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  const committed = await owner.request(endpoint + '/commit', 'POST', {});
+  expect(committed.status).toBe(200);
+  const row = (await committed.json())[0];
+  expect(row).toMatchObject({ status: 'committed', cover_status: 'imported' });
+  expect((await owner.request('/api/plants/' + row.plant_id, 'DELETE', { confirm_name: imported.names.custom })).status).toBe(204);
+  const afterDelete = await (await owner.request(endpoint)).json();
+  expect(afterDelete).toEqual([expect.objectContaining({ id: row.id, status: 'committed', plant_id: null,
+    cover_status: 'skipped', can_commit: false, can_review: false })]);
+  const calls = await imageHost.calls();
+  expect((await (await owner.request(endpoint + '/commit', 'POST', {})).json())[0].cover_status).toBe('skipped');
+  expect(await imageHost.calls()).toBe(calls);
+});
+
+test('a skipped row with a Planta cover reports that its cover is skipped', async () => {
+  const imported = syntheticPlant('synthetic-skipped-cover');
+  imported.image.url = imageHost.url;
+  fake.setPlants([imported]);
+  const staged = await owner.request(endpoint, 'POST', { code: fake.code });
+  expect(staged.status).toBe(200);
+  const row = (await staged.json())[0];
+  expect(row.cover_status).toBe('pending');
+  const skipped = await owner.request(endpoint + '/' + row.id, 'PUT', { skip: true });
+  expect(skipped.status).toBe(200);
+  expect(await skipped.json()).toMatchObject({ status: 'skipped', cover_status: 'skipped', can_review: true, can_commit: false });
+  expect((await (await owner.request(endpoint)).json())[0].cover_status).toBe('skipped');
+});
+
 test('a cover decode failure imports the plant and explains why there is no cover', async () => {
   const plant = syntheticPlant('synthetic-decode-cover');
   plant.image.url = imageHost.url.replace('cover.jpg', 'invalid.jpg');

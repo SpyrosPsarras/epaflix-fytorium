@@ -61,7 +61,7 @@ export async function staging(household: string): Promise<ImportStaging[]> {
   return rows.map(row => {
     const { cover_url, ...mapped } = row.mapped;
     const coverStatus: ImportStaging['cover_status'] = importedCovers.has(row.planta_plant_id) ? 'imported'
-      : row.cover_error ? 'failed' : !cover_url ? 'none' : row.status === 'skipped' ? 'skipped' : 'pending';
+      : row.cover_error ? 'failed' : !cover_url ? 'none' : ['skipped', 'committed'].includes(row.status) ? 'skipped' : 'pending';
     return { ...row, mapped: { ...mapped, has_cover: Boolean(cover_url) },
       can_commit: canCommit, can_review: row.status !== 'committed', cover_status: coverStatus };
   });
