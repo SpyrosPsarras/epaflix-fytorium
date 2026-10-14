@@ -25,6 +25,9 @@ test('first OIDC login creates the household and its owner', async () => {
   for (const name of ['fytorium_login', 'fytorium_invite']) {
     const cleared = callback.headers.getSetCookie().find(value => value.startsWith(name + '='));
     expect(cleared).toContain('Max-Age=0');
+    expect(cleared).toContain('HttpOnly');
+    expect(cleared).toContain('SameSite=Lax');
+    expect(cleared).toContain('Path=/');
     // Chrome ignores Secure cookie deletion on our non-localhost HTTP origins.
     expect(cleared).not.toMatch(/;\s*Secure(?:;|$)/);
   }
@@ -90,6 +93,9 @@ test('logout revokes the server-side session and rejects cross-origin form posts
   expect(logout.status).toBe(303);
   const cleared = logout.headers.getSetCookie().find(value => value.startsWith('fytorium_session='));
   expect(cleared).toContain('Max-Age=0');
+  expect(cleared).toContain('HttpOnly');
+  expect(cleared).toContain('SameSite=Lax');
+  expect(cleared).toContain('Path=/');
   expect(cleared).not.toMatch(/;\s*Secure(?:;|$)/);
   expect((await fetch(harness.base + '/api/me', { headers: { cookie } })).status).toBe(401);
 });
@@ -99,6 +105,9 @@ test('an invalid session clears its cookie on the configured HTTP transport', as
   expect(response.status).toBe(303);
   const cleared = response.headers.getSetCookie().find(value => value.startsWith('fytorium_session='));
   expect(cleared).toContain('Max-Age=0');
+  expect(cleared).toContain('HttpOnly');
+  expect(cleared).toContain('SameSite=Lax');
+  expect(cleared).toContain('Path=/');
   expect(cleared).not.toMatch(/;\s*Secure(?:;|$)/);
 });
 

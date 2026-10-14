@@ -34,7 +34,7 @@ function hash(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function cookieOptions(maxAge: number) {
+export function cookieOptions(maxAge: number) {
   return { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: config().oidcRedirectUrl.protocol === 'https:', maxAge };
 }
 
