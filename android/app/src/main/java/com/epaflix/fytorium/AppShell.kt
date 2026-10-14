@@ -73,7 +73,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
     }) { padding ->
         val householdArea = com.epaflix.fytorium.household.HouseholdArea.entries.firstOrNull { it.name == household }
-        if (loggedIn && !updateRequired && tab == "More" && householdArea != null && careState?.member?.role == Role.owner && sitesApi != null) {
+        if (loggedIn && !updateRequired && tab == "More" && householdArea != null && careState?.member != null && sitesApi != null && careState.member.role != Role.sitter && (householdArea != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner)) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 key(careState.member, householdArea) { com.epaflix.fytorium.household.HouseholdRoute(sitesApi, householdArea, careState, sitesConnected) { household = null } }
             }
@@ -149,7 +149,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
                     if (careState?.member != null && careState.member.role != Role.sitter) {
                         Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
-                        if (careState.member.role == Role.owner) for (area in com.epaflix.fytorium.household.HouseholdArea.entries) {
+                        for (area in com.epaflix.fytorium.household.HouseholdArea.entries.filter { it != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner }) {
                             Button(onClick = { household = area.name }, modifier = Modifier.heightIn(min = 48.dp)) { Text(area.title) }
                         }
                         Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }

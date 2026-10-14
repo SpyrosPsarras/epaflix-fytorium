@@ -26,6 +26,7 @@ class AppShellRestorationTest {
     @Test fun differentMemberClearsRestoredSitesAndUnmatched() = navigation("member")
 
     @Test fun restoredHouseholdSurvivesFirstCompositionForOwner() = navigation(null, "household")
+    @Test fun familyKeepsHouseholdSettingsAcrossRestore() = navigation(null, "household-settings", Role.family)
     @Test fun logoutClearsRestoredHousehold() = navigation("logout", "household")
     @Test fun sitterClearsRestoredHousehold() = navigation("sitter", "household")
     @Test fun differentMemberClearsRestoredHousehold() = navigation("member", "household")
@@ -90,13 +91,15 @@ class AppShellRestorationTest {
         }
     }
 
-    private fun navigation(reset: String?, route: String = "sites-unmatched") {
+    private fun navigation(reset: String?, route: String = "sites-unmatched", initialRole: Role = Role.owner) {
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.path) {
                     "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"late","kind":"late_tasks","href":"/#today","count":1,"plants":[{"id":"plant-one","name":"Synthetic fern"}]}]}"""
                     "/api/weather" -> """{"locationSet":false,"forecastFetchedAt":null,"rain":null,"lastRainBatch":null}"""
                     "/api/household/location" -> """{"location":null}"""
+                    "/api/household/settings" -> """{"misting_enabled":true}"""
+                    "/api/feed/settings" -> """{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true}"""
                     "/api/species/unmatched" -> """[{"gbif_key":910002,"canonical_name":"Testoria nebulosa","status":"no_match"}]"""
                     "/api/species/910002/care", "/api/species/910001/care" -> JSONObject(careFixture).put("fetches", org.json.JSONArray()).toString()
                     "/api/species/910002/outdoor-months", "/api/species/910001/outdoor-months" -> outdoorFixture
@@ -108,7 +111,7 @@ class AppShellRestorationTest {
                 tokens = Tokens("synthetic-access", "synthetic-refresh")
             }) {}
             val plant = parsePlant(JSONObject(plantFixture))
-            val initialCare = CareState(member = Member("owner", if (reset == "sitter" && route != "household") Role.family else Role.owner), plants = listOf(plant),
+            val initialCare = CareState(member = Member("owner", if (reset == "sitter" && route != "household") Role.family else initialRole), plants = listOf(plant),
                 detail = PlantDetail(plant, emptyList(), emptyMap()), busy = true, offline = true, serverUnavailable = true)
             val care = mutableStateOf(initialCare)
             val feed = FeedRepository(client, { true }).apply { refresh(initialCare.member) }
@@ -124,6 +127,12 @@ class AppShellRestorationTest {
                     // With no API attached, both saved routes can be set through their actual buttons.
                     compose.onNodeWithText("Sites").performClick()
                     compose.onNodeWithText("Unmatched species").performClick()
+                }
+                "household-settings" -> {
+                    compose.onNodeWithText("More").performClick()
+                    compose.onNodeWithText("Members").assertDoesNotExist()
+                    compose.onNodeWithText("Household settings").performScrollTo().performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 }
                 "household" -> {
                     compose.onNodeWithText("More").performClick()
@@ -169,6 +178,13 @@ class AppShellRestorationTest {
                         compose.onNodeWithText("Open Plantbook unmatched species").assertIsDisplayed()
                         compose.onNodeWithContentDescription("Back").performClick()
                         compose.onNodeWithText("A site groups plants that share the same conditions.").assertIsDisplayed()
+                    }
+                    "household-settings" -> {
+                        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                        compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
+                        compose.onNodeWithText("Misting reminders for the household").performScrollTo().assertIsNotEnabled()
+                        compose.onNodeWithText("Save household settings").assertDoesNotExist()
+                        compose.onNodeWithText("Create invite").assertDoesNotExist()
                     }
                     "household" -> {
                         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create invite") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
