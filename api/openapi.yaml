@@ -5109,6 +5109,14 @@ components:
     ImportRow:
       type: object
       properties:
+        can_commit:
+          type: boolean
+          description: The entire staged review can be committed. Repeated on every row.
+        can_review:
+          type: boolean
+          description: This row accepts a species selection or skip.
+        cover_status:
+          enum: [none, pending, imported, failed, skipped]
         id:
           type: string
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
@@ -5198,6 +5206,9 @@ components:
       required:
         - id
         - planta_plant_id
+        - can_commit
+        - can_review
+        - cover_status
         - mapped
         - cover_error
         - candidates

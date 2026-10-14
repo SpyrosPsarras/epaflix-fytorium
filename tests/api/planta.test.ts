@@ -39,14 +39,16 @@ test('requires explicit fuzzy confirmation, accepts an alternative and persists 
   fake.setPlants(plants);
   const rows = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
   expect(rows.map((row: { status: string }) => row.status)).toEqual(['review', 'review']);
+  expect(rows).toEqual(expect.arrayContaining([expect.objectContaining({ can_commit: false, can_review: true, cover_status: 'none' })]));
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(422);
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { gbif_key: 910021 })).status).toBe(422);
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { gbif_key: 42, confirmed: true })).status).toBe(422);
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { gbif_key: 910021, confirmed: true })).status).toBe(200);
   expect((await owner.request(endpoint + '/' + rows[1].id, 'PUT', { skip: true })).status).toBe(200);
+  expect(await (await owner.request(endpoint)).json()).toEqual(expect.arrayContaining([expect.objectContaining({ can_commit: true, can_review: true })]));
   const committed = await owner.request(endpoint + '/commit', 'POST', {});
   expect(committed.status).toBe(200);
-  expect(await committed.json()).toEqual([expect.objectContaining({ planta_plant_id: 'synthetic-fuzzy-a', status: 'committed', selected: expect.objectContaining({ gbif_key: 910021 }) }), expect.objectContaining({ status: 'skipped' })]);
+  expect(await committed.json()).toEqual([expect.objectContaining({ planta_plant_id: 'synthetic-fuzzy-a', status: 'committed', can_commit: false, can_review: false, selected: expect.objectContaining({ gbif_key: 910021 }) }), expect.objectContaining({ status: 'skipped', can_commit: false, can_review: true })]);
   const imported = await (await owner.request('/api/plants')).json();
   expect(imported).toHaveLength(1);
   expect(imported[0]).toMatchObject({ gbif_key: 910021, nickname: 'Test import lantern', cultivar: 'Invented stripe', site_name: 'Test import alcove', pot_type: 'terracotta', pot_size_cm: 18, soil_type: 'cactus' });
@@ -139,10 +141,12 @@ test('imports without a failed cover, retains the reason across restart and retr
   expect(stagedOutput).not.toContain('cover_url');
   const rows = JSON.parse(stagedOutput);
   expect(rows[1].mapped.has_cover).toBe(true);
+  expect(rows[1].cover_status).toBe('pending');
   await imageHost.setStatus(503);
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   const failed = await (await owner.request(endpoint)).json();
   expect(failed).toEqual([expect.objectContaining({ id: rows[0].id, status: 'committed' }), expect.objectContaining({ id: rows[1].id, status: 'committed', cover_error: expect.stringContaining('download failed') })]);
+  expect(failed[1].cover_status).toBe('failed');
   const withoutCover = await (await owner.request('/api/plants/' + failed[1].plant_id)).json();
   expect(withoutCover.cover_photo_id).toBeNull();
   expect(await (await owner.request('/api/plants/' + failed[1].plant_id + '/photos')).json()).toEqual([]);
@@ -156,6 +160,7 @@ test('imports without a failed cover, retains the reason across restart and retr
   const plants = await (await owner.request('/api/plants')).json();
   const plant = plants.find((plant: { nickname: string }) => plant.nickname === 'Test photo glow');
   expect(plant.cover_photo_id).toEqual(expect.any(String));
+  expect((await (await owner.request(endpoint)).json())[1].cover_status).toBe('imported');
   const photos = await (await owner.request('/api/plants/' + plant.id + '/photos')).json();
   expect(photos).toHaveLength(1);
   expect(photos[0]).toMatchObject({ is_cover: true, taken_on: '2026-06-10' });
