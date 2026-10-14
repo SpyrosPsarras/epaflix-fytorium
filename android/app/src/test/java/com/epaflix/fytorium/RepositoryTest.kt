@@ -13,6 +13,18 @@ import okhttp3.mockwebserver.MockResponse
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class RepositoryTest {
+    @Test fun householdTimezoneIsLoadedFromMetaAndSurvivesOfflineRestore() {
+        withRepository { repository, server, cache ->
+            enqueueRefresh(server)
+            repository.refresh()
+            assertEquals("Europe/Oslo", repository.state.value.timezone)
+            val restored = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
+            restored.restore()
+            assertEquals("Europe/Oslo", restored.state.value.timezone)
+            restored.wipe()
+            assertNull(restored.state.value.timezone)
+        }
+    }
     @Test fun logoutAndMemberChangeEraseEveryCachedResource() {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
         val cache = CareCache(db)
@@ -71,7 +83,7 @@ class RepositoryTest {
             assertFalse(restored.plantState.value.online)
             assertFalse(restored.state.value.offline)
             assertEquals(detail, offline)
-            assertEquals(7, server.requestCount)
+            assertEquals(8, server.requestCount)
         }
     }
     @Test fun updateRequiredBlocksWritesWithoutCallingTheServerAgain() {
@@ -82,7 +94,7 @@ class RepositoryTest {
             repository.refresh()
             assertTrue(repository.state.value.updateRequired)
             assertFalse(repository.act(task, "complete"))
-            assertEquals(5, server.requestCount)
+            assertEquals(6, server.requestCount)
             for (status in listOf(503, 422)) {
                 server.enqueue(MockResponse().setResponseCode(status)); repository.refresh()
                 assertTrue(repository.state.value.updateRequired)
@@ -111,7 +123,7 @@ class RepositoryTest {
             assertFalse(thread.isAlive)
             assertNull(repository.state.value.today)
             assertNull(cache.member())
-            assertEquals(5, server.requestCount)
+            assertEquals(6, server.requestCount)
         }
     }
     @Test fun completeKeepsUndoAndUndoRestoresTheServerTask() {
@@ -131,11 +143,11 @@ class RepositoryTest {
             assertTrue(repository.act(done, "undo"))
             assertTrue(repository.state.value.serverUnavailable)
             assertNull(repository.state.value.today!!.sections.single().tasks.single().completedEvent)
-            val requests = (1..6).map { server.takeRequest() }
-            assertEquals("/api/plants/plant-one/tasks/water/complete", requests[4].path)
-            assertEquals("Bearer synthetic-access", requests[4].getHeader("Authorization"))
-            java.util.UUID.fromString(org.json.JSONObject(requests[4].body.readUtf8()).getString("request_id"))
-            assertEquals("/api/care-events/event-one/undo", requests[5].path)
+            val requests = (1..7).map { server.takeRequest() }
+            assertEquals("/api/plants/plant-one/tasks/water/complete", requests[5].path)
+            assertEquals("Bearer synthetic-access", requests[5].getHeader("Authorization"))
+            java.util.UUID.fromString(org.json.JSONObject(requests[5].body.readUtf8()).getString("request_id"))
+            assertEquals("/api/care-events/event-one/undo", requests[6].path)
         }
     }
     @Test fun logoutWipesDataEvenWhenTheRevokeRequestFails() {
@@ -181,7 +193,7 @@ class RepositoryTest {
             assertTrue(repository.state.value.offline)
             enqueueRefresh(server); repository.refresh()
             assertFalse(repository.state.value.offline)
-            assertEquals(8, server.requestCount)
+            assertEquals(10, server.requestCount)
         }
     }
     @Test fun sitterRefreshReadsAllowedTaskAndSharedPlantProjections() {
@@ -189,7 +201,7 @@ class RepositoryTest {
             enqueueRefresh(server, sitter = true); repository.refresh()
             assertEquals(Role.sitter, repository.state.value.member!!.role)
             assertTrue(repository.state.value.plants.isEmpty())
-            assertEquals(listOf("/api/me", "/api/tasks?view=today", "/api/tasks?view=upcoming", "/api/plants"), (1..4).map { server.takeRequest().path })
+            assertEquals(listOf("/api/me", "/api/tasks?view=today", "/api/tasks?view=upcoming", "/api/plants", "/api/meta"), (1..5).map { server.takeRequest().path })
         }
     }
     @Test fun offlineBeforeFirstRefreshDoesNotInventATimestamp() {
@@ -305,6 +317,7 @@ class RepositoryTest {
         server.enqueue(MockResponse().setBody(taskListFixture("today")))
         server.enqueue(MockResponse().setBody(taskListFixture("upcoming")))
         server.enqueue(MockResponse().setBody("[]"))
+        server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
     }
     @Test fun successfulRefreshSurvivesOfflineAndNeverQueuesWrites() {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
@@ -317,6 +330,7 @@ class RepositoryTest {
             server.enqueue(MockResponse().setBody(taskListFixture("today")))
             server.enqueue(MockResponse().setBody(taskListFixture("upcoming")))
             server.enqueue(MockResponse().setBody("[]"))
+            server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
             repository.refresh()
             assertEquals("Synthetic fern", repository.state.value.today!!.sections.single().tasks.single().plantName)
             assertFalse(repository.state.value.offline)

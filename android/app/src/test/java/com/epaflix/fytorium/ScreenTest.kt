@@ -22,6 +22,25 @@ import androidx.compose.ui.graphics.luminance
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
 class ScreenTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun lightAndDarkThemesSetReadableSystemBarIcons() {
+        val dark = mutableStateOf(false)
+        var bars: androidx.core.view.WindowInsetsControllerCompat? = null
+        compose.setContent { FytoriumTheme(dark.value) {
+            val view = androidx.compose.ui.platform.LocalView.current
+            bars = androidx.core.view.WindowCompat.getInsetsController((view.context as android.app.Activity).window, view)
+            androidx.compose.material3.Text("System bars")
+        } }
+        compose.runOnIdle { assertTrue(bars!!.isAppearanceLightStatusBars); assertTrue(bars!!.isAppearanceLightNavigationBars); dark.value = true }
+        compose.runOnIdle { assertFalse(bars!!.isAppearanceLightStatusBars); assertFalse(bars!!.isAppearanceLightNavigationBars) }
+    }
+    @Test fun homeSearchOpensTheExistingOfflinePlantSearch() {
+        val plant = parsePlant(org.json.JSONObject(plantFixture))
+        val care = CareState(member = Member("member-one", Role.owner), plants = listOf(plant), busy = true, offline = true, serverUnavailable = true)
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care) } }
+        compose.onNodeWithContentDescription("Search plants").assertIsEnabled().performClick()
+        compose.onNodeWithText("Search plants").assertIsDisplayed().assertIsEnabled().performTextInput("Synthetic")
+        compose.onNodeWithTag("plant:plant-one").assertExists()
+    }
     @Test fun moreKeepsSitesAndFeedSettingsIndependentOfCareFailures() {
         val feed = com.epaflix.fytorium.feed.FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}) { true }
         val care = CareState(member = Member("member-one", Role.owner), busy = true, offline = true, serverUnavailable = true)

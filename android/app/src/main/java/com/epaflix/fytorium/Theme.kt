@@ -5,6 +5,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import android.app.Activity
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
 
 val LightColors = lightColorScheme(
@@ -28,5 +32,13 @@ val DarkColors = darkColorScheme(
     surfaceContainer = Color(0xFF292524), outline = Color(0xFFA8A29E)
 )
 @Composable fun FytoriumTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    val view = LocalView.current
+    SideEffect {
+        (view.context as? Activity)?.window?.let { window ->
+            val bars = WindowCompat.getInsetsController(window, view)
+            bars.isAppearanceLightStatusBars = !dark
+            bars.isAppearanceLightNavigationBars = !dark
+        }
+    }
     MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, content = content)
 }

@@ -17,7 +17,7 @@ data class CareEvent(val id: String, val plantId: String, val taskType: String?,
 }
 data class CareTask(val status: String, val dueOn: String?, val intervalDays: Int?, val lateDays: Int,
                     val basedOn: List<Basis>, val taskType: String?, val customTaskId: String?, val customTaskName: String?,
-                    val plantId: String, val plantName: String, val siteName: String, val completedEvent: CareEvent?) {
+                    val plantId: String, val plantName: String, val siteName: String, val completedEvent: CareEvent?, val coverPhotoId: String? = null) {
     val key get() = customTaskId ?: taskType ?: error("Missing task identity")
     val label get() = taskLabel(taskType, customTaskName)
     val actionLabel get() = taskNames[taskType]?.second ?: customTaskName ?: "custom task"
@@ -45,7 +45,7 @@ data class PotDetails(val potType: String, val potSizeCm: Int?, val soilType: St
     fun json() = JSONObject().put("pot_type", potType).put("pot_size_cm", potSizeCm ?: JSONObject.NULL).put("soil_type", soilType)
 }
 
-private val taskNames = mapOf(
+internal val taskNames = mapOf(
     "water" to ("Water" to "watering"), "fertilize" to ("Fertilize" to "fertilizing"), "mist" to ("Mist" to "misting"),
     "clean_leaves" to ("Clean leaves" to "leaf cleaning"), "remove_dead" to ("Remove dead flowers and leaves" to "removing dead flowers and leaves"),
     "cut_back" to ("Seasonal cut-back" to "seasonal cut-back"), "repot" to ("Repot" to "repotting")
@@ -63,7 +63,7 @@ internal fun parseTask(j: JSONObject) = CareTask(j.getString("status"), j.nullab
         b.getString("source"), b.getString("adjustment"), b.nullable("ruleId"), b.nullable("fetchedAt"),
         if (b.isNull("factor")) null else b.getDouble("factor"), b.nullable("reason")) },
     j.nullable("task_type"), j.nullable("custom_task_id"), j.nullable("custom_task_name") ?: j.nullable("name"),
-    j.optString("plant_id"), j.optString("plant_name"), j.optString("site_name"), j.optJSONObject("completed_event")?.let(::parseEvent))
+    j.optString("plant_id"), j.optString("plant_name"), j.optString("site_name"), j.optJSONObject("completed_event")?.let(::parseEvent), j.nullable("cover_photo_id"))
 internal fun parseTaskList(json: String): TaskList {
     val j = JSONObject(json); val s = j.getJSONObject("settings"); val g = j.getJSONObject("groups")
     return TaskList(j.getString("today"), j.getString("view"), TaskSettings(s.getString("sort"), s.getString("filter"), s.getBoolean("show_completed")),

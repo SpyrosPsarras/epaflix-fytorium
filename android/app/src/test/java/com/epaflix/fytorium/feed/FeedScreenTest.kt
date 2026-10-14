@@ -71,7 +71,8 @@ class FeedScreenTest {
             compose.runOnIdle { care.value = CareState(member = member, serverUnavailable = true) }
             compose.onNodeWithText("Mark 1 outdoor plants watered").assertIsEnabled()
             server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("""{"location":{"latitude":0.5,"longitude":0.5}}"""))
-            compose.onNodeWithText("Customize my feed").performScrollTo().performClick()
+            compose.onNodeWithText("More").performClick()
+            compose.onNodeWithText("Feed and weather settings").performScrollTo().performClick()
             compose.onNodeWithText("Save my feed").assertIsEnabled()
             compose.onNodeWithText("Latitude").assertIsEnabled()
             compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()

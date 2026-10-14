@@ -31,6 +31,18 @@ class TaskScreenTest {
         return CareState(Member("member-one", if (sitter) Role.sitter else Role.owner), today = list.copy(view = "today"),
             upcoming = list.copy(view = "upcoming"), offline = offline, lastUpdated = java.time.Instant.parse("2030-06-02T10:42:00Z").toEpochMilli())
     }
+    @Test fun scrolledCompletionTargetCannotBeInterceptedByAddFab() {
+        val base = state()
+        val rows = base.today!!.sections.single().tasks.single().let { row -> (0..7).map { row.copy(plantId = "plant-$it", plantName = "Fern $it") } }
+        val list = base.today.copy(sections = listOf(TaskSection("water", "Water", rows)))
+        var added = 0
+        var completed: String? = null
+        compose.setContent { TaskTestTheme { TaskScreen(base.copy(today = list), "today", onAddPlant = { added++ },
+            onAction = { task, action, _ -> if (action == "complete") completed = task.plantId }) } }
+        compose.onNode(hasContentDescription("Done") and hasAnyAncestor(hasTestTag("task:plant-7:water")))
+            .performScrollTo().performTouchInput { click() }
+        compose.runOnIdle { assertEquals("plant-7", completed); assertEquals(0, added) }
+    }
     @Test fun todayAndUpcomingLight() = screens(false)
     @Test fun todayAndUpcomingDark() = screens(true)
     private fun screens(dark: Boolean) {
@@ -44,7 +56,7 @@ class TaskScreenTest {
             compose.onRoot().captureRoboImage("src/test/screenshots/$name-${if (dark) "dark" else "light"}.png")
         }
         compose.onNodeWithText("1d late").assertIsDisplayed()
-        compose.onNodeWithText("Snooze 2 days").assertHeightIsAtLeast(48.dp).assertHasClickAction()
+        compose.onNodeWithContentDescription("Snooze 2 days").assertHeightIsAtLeast(48.dp).assertHasClickAction()
         capture("tasks-today")
         compose.runOnIdle { current.value = state("upcoming"); view.value = "upcoming" }
         compose.onNodeWithText("Next 14 calendar days, including today").assertIsDisplayed()
@@ -52,7 +64,7 @@ class TaskScreenTest {
         compose.runOnIdle { current.value = state(offline = true); view.value = "today" }
         compose.onNodeWithText(current.value.offlineBanner()).assertIsDisplayed()
         compose.onNodeWithText("Actions are unavailable offline. Reconnect and refresh to make changes.").assertIsDisplayed()
-        compose.onNodeWithText("Done").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Done").assertIsNotEnabled()
         capture("offline")
     }
     @Test fun sitterLightVariants() = sitterVariants(false)
@@ -78,7 +90,7 @@ class TaskScreenTest {
             compose.onNodeWithText("Undo").assertDoesNotExist()
             event(own)
             compose.onNodeWithText("Undo").assertHasClickAction().assertHeightIsAtLeast(48.dp)
-            compose.onNodeWithText("Task view settings").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
             compose.onNode(hasText("Synthetic site", substring = true)).assertDoesNotExist()
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/sitter-$screen-${if (dark) "dark" else "light"}.png")
@@ -122,6 +134,7 @@ class TaskScreenTest {
         compose.enableAccessibilityChecks()
         val care = state().copy(today = repot, detail = detail)
         compose.setContent { TaskTestTheme { TaskScreen(care, "today") } }
+        compose.onNodeWithContentDescription("Task details for Synthetic fern").performScrollTo().performClick()
         compose.onNodeWithText("Repot with new pot and soil").performScrollTo().performClick()
         compose.onNodeWithText("Pot type: plastic").assertIsDisplayed()
         compose.onNodeWithText("Soil type: all purpose").assertIsDisplayed()
@@ -135,10 +148,10 @@ class TaskScreenTest {
         compose.enableAccessibilityChecks()
         val list = state(sitter = true)
         compose.setContent { TaskTestTheme { TaskScreen(list, "today") } }
-        compose.onNodeWithText("Task view settings").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
         compose.onNodeWithText("Based on").assertDoesNotExist()
         compose.onNodeWithText("Repot with new pot and soil").assertDoesNotExist()
-        compose.onNodeWithText("Done").assertHasClickAction()
+        compose.onNodeWithContentDescription("Done").assertHasClickAction()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
     @Test fun selectedTabsAndLabelledSettingsSheet() {
@@ -170,6 +183,7 @@ class TaskScreenTest {
         val current = mutableStateOf(state())
         val view = mutableStateOf("today")
         compose.setContent { TaskTestTheme { TaskScreen(current.value, view.value) } }
+        compose.onNodeWithContentDescription("Task details for Synthetic fern").performClick()
         val original = state().today!!
         val event = parseEvent(org.json.JSONObject(eventFixture))
         for (role in Role.entries) for (screen in listOf("today", "upcoming")) for (done in listOf(false, true)) {
@@ -191,13 +205,13 @@ class TaskScreenTest {
         val current = mutableStateOf(state(offline = true).copy(lastUpdated = null))
         compose.setContent { TaskTestTheme { TaskScreen(current.value, "today") } }
         compose.onNodeWithText("Offline, not updated yet").assertIsDisplayed()
-        compose.onNodeWithText("Done").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Done").assertIsNotEnabled()
         compose.runOnIdle { current.value = state(offline = true) }
         compose.onNodeWithText(current.value.offlineBanner()).assertIsDisplayed()
         for (time in listOf(null, state().lastUpdated)) {
             compose.runOnIdle { current.value = state().copy(serverUnavailable = true, lastUpdated = time) }
             compose.onNodeWithText(current.value.serverBanner()).assertIsDisplayed()
-            compose.onNodeWithText("Done").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Done").assertIsNotEnabled()
             compose.onNode(hasText("Offline", substring = true)).assertDoesNotExist()
         }
     }
@@ -220,7 +234,8 @@ class TaskScreenTest {
     @Test fun futureTaskHasNoSnoozeAndProvenanceIsReadable() {
         val upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04", basis = """[{"input":"wateringIntervalDays","value":7,"source":"perenual","adjustment":"Species interval","fetchedAt":"2030-06-01T10:00:00Z"}]"""))
         compose.setContent { TaskTestTheme { TaskScreen(state().copy(upcoming = upcoming), "upcoming") } }
-        compose.onNodeWithText("Snooze 2 days").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Snooze 2 days").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Task details for Synthetic fern").performScrollTo().performClick()
         compose.onNodeWithText("Based on").performScrollTo().performClick()
         compose.onNodeWithText("Source: perenual · Fetched 2030-06-01T10:00:00Z").performScrollTo().assertIsDisplayed()
     }

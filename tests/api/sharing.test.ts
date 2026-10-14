@@ -98,13 +98,14 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
   const repot = await (await owner.request(`/api/plants/${shared}/repot`, 'POST', { request_id: randomUUID(), pot_type: 'terracotta', pot_size_cm: 20, soil_type: 'all_purpose' })).json();
   expect(repot.event.previous_pot).not.toBeNull();
   const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo'];
-  const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'completed_event'];
+  const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'cover_photo_id', 'completed_event'];
   const only = (value: Record<string, unknown>, fields: string[]) => expect(Object.keys(value).filter(key => !fields.includes(key))).toEqual([]);
   const event = (value: Record<string, unknown>) => only(value, eventFields);
   const task = (value: any) => {
     only(value, taskFields);
     expect(value.basedOn).toEqual([]);
     if ('site_name' in value) expect(value.site_name).toBe('');
+    if ('cover_photo_id' in value) expect(value.cover_photo_id).toBeNull();
     if (value.completed_event) event(value.completed_event);
   };
   const list = (value: any) => {

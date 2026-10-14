@@ -132,6 +132,10 @@ if [ "$E2E_LOGIN" = 1 ]; then
   curl --fail -H 'Content-Type: application/json' -d '{"action":"set","at":"2030-06-01T10:00:00Z"}' http://app:3000/__test/clock
 fi
 ./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" -Pandroid.testInstrumentationRunnerArguments.guestNetworkTimeoutSeconds="$E2E_GUEST_NETWORK_TIMEOUT" connectedDebugAndroidTest
+if [ "$login" = true ]; then
+  mkdir -p /work/.scratch/a15-emulator
+  adb pull /sdcard/Pictures/a15-emulator/. /work/.scratch/a15-emulator/
+fi
 echo "E2E launch scenario PASS; real OIDC login enabled: $login"
 [ "$login" != true ] || echo 'A05 E2E PASS: native plant add/edit, graveyard/restore, confirmed deletion'
 [ "$login" != true ] || echo 'A07 E2E PASS: create/edit site, plant count and delete refusal, confirmed deletion'

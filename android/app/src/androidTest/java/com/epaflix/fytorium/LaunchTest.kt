@@ -152,6 +152,7 @@ class LaunchTest {
             com.epaflix.fytorium.species.runSpeciesCareScenario(compose, app)
             com.epaflix.fytorium.planta.runPlantaScenario(compose, app)
             com.epaflix.fytorium.notifications.runNotificationScenario(compose, app)
+            runTodayScenario(compose, app)
             // A09 switches identities and restores the owner on Today; A04 logs out last.
             com.epaflix.fytorium.household.runHouseholdScenario(compose, app)
             careScenarios(app, device)
@@ -196,9 +197,9 @@ class LaunchTest {
                 !state.busy && state.today?.today == "2030-06-02" && state.today.settings == TaskSettings(showCompleted = true)
             }
             val waterTag = "task:$plantId:water"
-            fun button(tag: String, label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag(tag)))
+            fun button(tag: String, label: String) = compose.onNode((hasText(label) or hasContentDescription(label)) and hasAnyAncestor(hasTestTag(tag)))
             compose.waitForNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
-            compose.waitForNode(hasText("Done") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().waitForAction("$waterTag Done").performClick()
+            compose.waitForNode(hasContentDescription("Done") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().waitForAction("$waterTag Done").performClick()
             compose.waitForState("Water completion applied to Today", 30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
             // A real refresh must not remove the row between completion and Undo.
             app.repository.refresh()

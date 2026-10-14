@@ -5,10 +5,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
@@ -19,7 +22,12 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Eco
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
@@ -27,7 +35,12 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 @Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String, PotDetails?) -> Unit = { _, _, _ -> },
                            onHandleAll: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
-                           onLoadPot: (suspend (String) -> Plant)? = null, feedContent: @Composable (() -> Unit) -> Unit = {}) {
+                           onLoadPot: (suspend (String) -> Plant)? = null, thumbnails: Thumbnails? = null,
+                           onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
+                           deviceOnline: Boolean = true, now: java.time.Instant = java.time.Instant.now(), feedContent: @Composable (() -> Unit) -> Unit = {}) {
+    val pullState = rememberPullToRefreshState()
+    // Zero-duration device animations can leave the refresh indicator at its shown offset.
+    LaunchedEffect(state.busy) { if (!state.busy) pullState.snapTo(0f) }
     val taskAnchor = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
     val list = if (view == "upcoming") state.upcoming else state.today
@@ -46,57 +59,78 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
             task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today &&
                 (state.handled[task.plantId + ":" + task.key] ?: task.completedEvent) == null
         }.map { it.plantId }.toSet() else emptySet()
+    val presentation = state.todayPresentation(now)
+    val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
+    val showFab = state.member?.role in listOf(Role.owner, Role.family)
+    val canAdd = state.member?.role in listOf(Role.owner, Role.family) && deviceOnline && !state.updateRequired
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Fytorium") }, actions = {
-            if (state.member?.role != com.epaflix.fytorium.Role.sitter && list != null) IconButton(onClick = { settingsOpen = true }) {
-                Icon(Icons.Default.Settings, contentDescription = "Task view settings")
-            }
+        TopAppBar(title = { Text("Fytorium", style = MaterialTheme.typography.titleMedium) }, navigationIcon = {
+            IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
+        }, actions = {
+            IconButton(onClick = onNotifications) { Icon(Icons.Outlined.Notifications, contentDescription = "My notifications") }
         })
-    }) { padding ->
-      Column(Modifier.fillMaxSize().padding(padding)) {
-        PrimaryTabRow(selectedTabIndex = if (view == "upcoming") 1 else 0) {
-            listOf("today" to "Today", "upcoming" to "Upcoming").forEach { (key, label) ->
-                Tab(selected = view == key, onClick = { onView(key) }, text = { Text(label) }, modifier = Modifier.testTag("view-$key"))
+    }, floatingActionButton = {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (showFab && list != null) SmallFloatingActionButton(onClick = { settingsOpen = true }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.Tune, contentDescription = "Task view settings")
+            }
+            if (state.member?.role in listOf(Role.owner, Role.family)) FloatingActionButton(onClick = { if (canAdd) onAddPlant() },
+                modifier = Modifier.size(64.dp).semantics { if (!canAdd) disabled() }) {
+                Icon(Icons.Default.Add, contentDescription = "Add plant")
             }
         }
-        PullToRefreshBox(isRefreshing = state.busy, onRefresh = onRefresh, modifier = Modifier.weight(1f)) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            list?.let { Text(it.today) }
-            if (view == "upcoming") Text("Next 14 calendar days, including today")
-            OfflineNotice(state)
-            if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
-            if (list == null || list.sections.isEmpty()) Text(if (state.busy) "Loading tasks…" else "No tasks in this view.", modifier = Modifier.bringIntoViewRequester(taskAnchor))
-            val shownPlants = mutableSetOf<String>()
-            list?.sections?.forEach { section ->
-                Text(section.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }
-                    .then(if (section == list.sections.first()) Modifier.bringIntoViewRequester(taskAnchor) else Modifier))
-                if (section.tasks.isEmpty()) Text("No tasks due today.")
-                section.tasks.forEach { task ->
-                    val event = state.handled[task.plantId + ":" + task.key] ?: task.completedEvent
-                    Card(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(task.plantName, style = MaterialTheme.typography.titleMedium)
-                            Text(task.label + if (task.siteName.isNotBlank()) " · ${task.siteName}" else "")
-                            Text(event?.label?.let { it + if (task.status == "due") " · Next ${task.actionLabel}: ${task.dueOn}" else "" } ?: if (task.lateDays > 0) "${task.lateDays}d late" else if (task.dueOn == list.today) "Due today" else "Due ${task.dueOn}")
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                state.member?.let { member -> task.actions(list.today, member, event).forEach { action ->
-                                    OutlinedButton(onClick = {
-                                        if (action == "repot") { repot = task } else onAction(task, action, null)
-                                    }, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) {
-                                        Text(when (action) { "complete" -> "Done"; "snooze" -> "Snooze 2 days"; "skip" -> "Skip"; "undo" -> "Undo"; else -> "Repot with new pot and soil" })
-                                    }
-                                } }
-                            }
-                            if (task.plantId in handlePlants && shownPlants.add(task.plantId)) OutlinedButton(onClick = { onHandleAll(task.plantId) }, enabled = state.writable,
-                                modifier = Modifier.heightIn(min = 48.dp)) { Text("Handle all tasks for ${task.plantName}") }
-                            if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
+    }) { padding ->
+        PullToRefreshBox(isRefreshing = state.busy, state = pullState, onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize().padding(padding).padding(bottom = if (showFab) 88.dp else 0.dp), indicator = {
+                if (state.busy || pullState.distanceFraction > 0f) PullToRefreshDefaults.Indicator(
+                    modifier = Modifier.align(Alignment.TopCenter), state = pullState, isRefreshing = state.busy,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(presentation.greeting, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(top = 8.dp))
+                Text("A little care goes a long way.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.today != null && presentation.sections.isNotEmpty()) Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Text(presentation.summary, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                }
+                if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf("today" to "Today", "upcoming" to "Upcoming").forEachIndexed { index, (key, label) ->
+                        SegmentedButton(selected = view == key, onClick = { onView(key) }, shape = SegmentedButtonDefaults.itemShape(index, 2),
+                            modifier = Modifier.testTag("view-$key")) { Text(label) }
+                    }
+                }
+                if (view == "upcoming") Text("Next 14 calendar days, including today", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OfflineNotice(state)
+                if (sections.isEmpty()) Column(Modifier.fillMaxWidth().bringIntoViewRequester(taskAnchor).padding(vertical = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Icon(Icons.Outlined.Eco, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
+                    val title = if (view == "upcoming" && state.plants.isNotEmpty() && list != null) "No upcoming tasks" else presentation.emptyTitle
+                    Text(title, style = MaterialTheme.typography.headlineSmall)
+                    if (view == "today" && state.plants.isNotEmpty()) presentation.nextTask?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+                    if (state.today != null && state.plants.isEmpty() && state.member?.role in listOf(Role.owner, Role.family)) {
+                        Button(onClick = onAddPlant, enabled = canAdd, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add plant") }
+                        if (state.member?.role == Role.owner) TextButton(onClick = onImport, enabled = canAdd, modifier = Modifier.heightIn(min = 48.dp)) { Text("Import from Planta") }
+                    }
+                }
+                val shownPlants = mutableSetOf<String>()
+                sections.forEachIndexed { index, section ->
+                    Card(Modifier.fillMaxWidth().then(if (index == 0) Modifier.bringIntoViewRequester(taskAnchor) else Modifier),
+                        shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) taskDate(section.key) else section.label, style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp).semantics { heading() })
+                        section.tasks.forEachIndexed { rowIndex, task ->
+                            if (rowIndex > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                            key(task.plantId, task.key) { TaskRow(task, state, list!!.today, thumbnails,
+                                task.plantId in handlePlants && shownPlants.add(task.plantId),
+                                onAction = { action -> if (action == "repot") repot = task else onAction(task, action, null) },
+                                onHandleAll = { onHandleAll(task.plantId) }, showType = view == "upcoming") }
                         }
                     }
                 }
+                Spacer(Modifier.height(16.dp))
             }
         }
-        }
-      }
     }
 }
 

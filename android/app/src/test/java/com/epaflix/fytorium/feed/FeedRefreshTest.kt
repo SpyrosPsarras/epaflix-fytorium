@@ -31,6 +31,7 @@ class FeedRefreshTest {
                         taskListFixture(if (request.path!!.contains("view=upcoming")) "upcoming" else "today").replace("2030-06-02", day.get())
                     }
                     request.path == "/api/plants" -> "[]"
+                    request.path == "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
                     request.path == "/api/feed" -> { feedStarted.countDown(); releaseFeed.await(5, TimeUnit.SECONDS); feedFixture }
                     request.path == "/api/weather" -> weatherFixture
                     else -> return MockResponse().setResponseCode(404)
