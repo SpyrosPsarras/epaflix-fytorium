@@ -71,7 +71,7 @@ open_url() {
     elif command -v xdg-open    >/dev/null 2>&1; then xdg-open "$url"
     elif command -v open        >/dev/null 2>&1; then open "$url"
     else warn "couldn't open a browser — visit it manually: $url"; fi
-  } >/dev/null 2>&1 || warn "couldn't open a browser — visit it manually: $url"
+  } >/dev/null 2>&1 </dev/null & disown || warn "couldn't open a browser — visit it manually: $url"
 }
 
 # pause "msg" — wait for the human to confirm they've done the manual part.
@@ -189,11 +189,16 @@ REPO=SpyrosPsarras/epaflix-fytorium
 PKG=com.epaflix.fytorium
 VAULT_PATH="/Fytorium/fytorium - firebase"
 
-hub() { # JSON enters on stdin, never argv. The hub credential comes from the desktop keyring.
+hub() { # JSON enters on stdin, never argv. The hub credential comes from the desktop keyring or the opencode key file.
   python3 -c '
-import json, subprocess, sys, urllib.request
+import json, os, subprocess, sys, urllib.request
 try:
-    token = subprocess.check_output(["secret-tool", "lookup", "service", "mcp-hub", "key", "api"], stderr=subprocess.DEVNULL).decode().strip()
+    try:
+        token = subprocess.check_output(["secret-tool", "lookup", "service", "mcp-hub", "key", "api"], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        token = ""
+    if not token:
+        token = open(os.path.expanduser("~/.config/opencode/mcp-hub.key")).read().strip()
     if not token: raise ValueError()
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": sys.argv[1], "arguments": json.load(sys.stdin)}}
     req = urllib.request.Request("https://mcp.epaflix.com/vaultwarden", data=json.dumps(body).encode(),
