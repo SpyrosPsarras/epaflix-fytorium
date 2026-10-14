@@ -77,7 +77,8 @@ package_manager_ready() {
 }
 wait_ready "$E2E_BOOT_TIMEOUT" 'Emulator boot: sys.boot_completed=1' boot_ready
 wait_ready "$E2E_PM_TIMEOUT" 'Package manager: pm path android succeeds' package_manager_ready
-# The isolated guest cannot reach public captive-portal probes.
+# Only this disposable guest uses captive_portal_mode=0: public probes are unreachable.
+# Keep the real app/oidc HTTP readiness checks below; this does not bypass API checks.
 adb shell settings put global captive_portal_mode 0
 adb shell settings put global window_animation_scale 0
 adb shell settings put global transition_animation_scale 0

@@ -22,6 +22,12 @@ test('first OIDC login creates the household and its owner', async () => {
   expect(await home.text()).toContain('No plants yet');
   expect(callback.headers.getSetCookie().join(';')).toContain('HttpOnly');
   expect(callback.headers.getSetCookie().join(';')).toContain('SameSite=Lax');
+  for (const name of ['fytorium_login', 'fytorium_invite']) {
+    const cleared = callback.headers.getSetCookie().find(value => value.startsWith(name + '='));
+    expect(cleared).toContain('Max-Age=0');
+    // Chrome ignores Secure cookie deletion on our non-localhost HTTP origins.
+    expect(cleared).not.toMatch(/;\s*Secure(?:;|$)/);
+  }
 });
 
 test('later login by the same OIDC subject reuses the member and household', async () => {
@@ -82,7 +88,18 @@ test('logout revokes the server-side session and rejects cross-origin form posts
   expect((await fetch(harness.base + '/api/me', { headers: { cookie } })).status).toBe(200);
   const logout = await fetch(harness.base + '/auth/logout', { method: 'POST', redirect: 'manual', headers: { cookie, origin: harness.base } });
   expect(logout.status).toBe(303);
+  const cleared = logout.headers.getSetCookie().find(value => value.startsWith('fytorium_session='));
+  expect(cleared).toContain('Max-Age=0');
+  expect(cleared).not.toMatch(/;\s*Secure(?:;|$)/);
   expect((await fetch(harness.base + '/api/me', { headers: { cookie } })).status).toBe(401);
+});
+
+test('an invalid session clears its cookie on the configured HTTP transport', async () => {
+  const response = await fetch(harness.base + '/auth/login', { redirect: 'manual', headers: { cookie: 'fytorium_session=synthetic-invalid-session' } });
+  expect(response.status).toBe(303);
+  const cleared = response.headers.getSetCookie().find(value => value.startsWith('fytorium_session='));
+  expect(cleared).toContain('Max-Age=0');
+  expect(cleared).not.toMatch(/;\s*Secure(?:;|$)/);
 });
 
 test('PWA manifest, generated icons and service worker are served', async () => {

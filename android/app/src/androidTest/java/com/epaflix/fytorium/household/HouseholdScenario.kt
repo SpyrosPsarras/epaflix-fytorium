@@ -81,13 +81,15 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         compose.waitUntil(30_000) { !app.session.state.value.loggedIn && app.repository.state.value.member == null }
         compose.activity.runOnUiThread { CustomTabsIntent.Builder().build().launchUrl(compose.activity, Uri.parse(BuildConfig.SERVER_URL + link)) }
         providerSignIn(subjectName)
-        // Verify the browser callback through the owner's API, not Chrome's text layout.
+        // Confirm invite acceptance through the owner's API.
         compose.waitUntil(60_000) {
             repo.refresh()
             repo.state.value.members.firstOrNull { it.id !in previousMembers }?.also { memberId = it.id } != null
         }
-        // Close the web-acceptance tab before opening the app-login tab. Keep its cookies.
-        device.executeShellCommand("am force-stop com.android.chrome")
+        // Membership commits before the callback deletes the invite cookie in Chrome.
+        assertTrue("A09 invite callback did not finish in Chrome", device.wait(Until.hasObject(By.pkg("com.android.chrome").textContains("· sitter")), 60_000))
+        // Only this disposable guest's Chrome profile: no remembered subject, cookies or scrolled form.
+        assertEquals("A09 Chrome test profile reset failed", "Success", device.executeShellCommand("pm clear com.android.chrome").trim())
         app.startActivity(android.content.Intent(app, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
         assertTrue("A09 app did not foreground after browser acceptance", device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 30_000))
         compose.waitUntil(30_000) { runCatching { compose.onAllNodesWithText("Log in").fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false) }
@@ -96,7 +98,7 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         device.wait(Until.findObject(By.textContains("Open")), 2_000)?.click()
         assertTrue("A09 app redirect did not return", device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 60_000))
         try { compose.waitUntil(60_000) { app.repository.state.value.member?.role == Role.sitter && !app.repository.state.value.busy } }
-        catch (error: Throwable) { throw AssertionError("A09 app login timed out: loggedIn=${app.session.state.value.loggedIn}, role=${app.repository.state.value.member?.role}, busy=${app.repository.state.value.busy}", error) }
+        catch (error: Throwable) { throw AssertionError("A09 app login timed out: loggedIn=${app.session.state.value.loggedIn}, role=${app.repository.state.value.member?.role}, busy=${app.repository.state.value.busy}, message=${app.session.state.value.message}", error) }
         memberId = app.repository.state.value.member!!.id
         assertEquals(setOf(plantIds.first()), app.repository.state.value.plants.map { it.id }.toSet())
         assertEquals(1, JSONObject(app.api.request("/api/plants/count").use { assertTrue(it.isSuccessful); it.body!!.string() }).getInt("count"))
