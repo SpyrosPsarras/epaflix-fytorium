@@ -83,7 +83,7 @@
       {/if}
     </article>
   {/each}
-  <button disabled={busy || data.rows.some(row => row.status === 'review') || !data.rows.some(row => row.status === 'confirmed')} onclick={commit}>Import confirmed plants</button>
+  <button disabled={busy || !data.rows.some(row => row.can_commit)} onclick={commit}>Import confirmed plants</button>
 {/if}
 <p>Species names from <a href="https://www.gbif.org">GBIF</a>, CC BY 4.0. New sites use default conditions. Complete them in <a href="/sites">Sites</a>.</p>
 <style>

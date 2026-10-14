@@ -25,6 +25,12 @@ class AppShellRestorationTest {
     @Test fun sitterClearsRestoredSitesAndUnmatched() = navigation("sitter")
     @Test fun differentMemberClearsRestoredSitesAndUnmatched() = navigation("member")
 
+    @Test fun restoredPlantaReviewSurvivesFirstCompositionForOwner() = navigation(null, "planta")
+    @Test fun logoutClearsRestoredPlanta() = navigation("logout", "planta")
+    @Test fun sitterClearsRestoredPlanta() = navigation("sitter", "planta")
+    @Test fun familyClearsRestoredPlanta() = navigation("family", "planta")
+    @Test fun differentMemberClearsRestoredPlanta() = navigation("member", "planta")
+
     @Test fun restoredHouseholdSurvivesFirstCompositionForOwner() = navigation(null, "household")
     @Test fun familyKeepsHouseholdSettingsAcrossRestore() = navigation(null, "household-settings", Role.family)
     @Test fun logoutClearsRestoredHousehold() = navigation("logout", "household")
@@ -117,6 +123,7 @@ class AppShellRestorationTest {
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.path) {
+                    "/api/import/planta" -> "[${com.epaflix.fytorium.planta.importFixture}]"
                     "/api/journal" -> "[" + JSONObject(com.epaflix.fytorium.photos.photoFixture).put("plant_name", "Synthetic fern") + "]"
                     "/api/plants/plant-one/photos" -> "[]"
                     "/api/choices" -> """{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":["good"]},"nameLanguages":{}}"""
@@ -142,7 +149,7 @@ class AppShellRestorationTest {
                 tokens = Tokens("synthetic-access", "synthetic-refresh")
             }) {}
             val plant = parsePlant(JSONObject(plantFixture))
-            val initialCare = CareState(member = Member("owner", if (reset == "sitter" && route != "household") Role.family else initialRole), plants = listOf(plant),
+            val initialCare = CareState(member = Member("owner", if (reset == "sitter" && route !in listOf("household", "planta")) Role.family else initialRole), plants = listOf(plant),
                 detail = PlantDetail(plant, emptyList(), emptyMap()), busy = true, offline = true, serverUnavailable = true)
             val care = mutableStateOf(initialCare)
             val feed = FeedRepository(client, { true }).apply { refresh(initialCare.member) }
@@ -192,6 +199,12 @@ class AppShellRestorationTest {
                     compose.onNodeWithText("Sites").performClick()
                     compose.onNodeWithText("Unmatched species").performClick()
                 }
+                "planta" -> {
+                    compose.onNodeWithText("More").performClick()
+                    compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic imported fern").fetchSemanticsNodes().isNotEmpty() }
+                    compose.onNodeWithText("One-time app code").performTextInput("synthetic-never-save")
+                }
                 "household-settings" -> {
                     compose.onNodeWithText("More").performClick()
                     compose.onNodeWithText("Members").assertDoesNotExist()
@@ -236,8 +249,13 @@ class AppShellRestorationTest {
                 if (reset == "sitter") care.value = initialCare
                 api.value = client
             }
-            if (reset == null || reset == "family") {
+            if (reset == null || (reset == "family" && route != "planta")) {
                 when (route) {
+                    "planta" -> {
+                        compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic imported fern").fetchSemanticsNodes().isNotEmpty() }
+                        compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
+                        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().assertIsEnabled()
+                    }
                     "sites-unmatched" -> {
                         compose.onNodeWithText("Open Plantbook unmatched species").assertIsDisplayed()
                         compose.onNodeWithContentDescription("Back").performClick()
@@ -275,7 +293,10 @@ class AppShellRestorationTest {
                 if (reset == "sitter") {
                     val tab = when (route) { "journal" -> "Today"; "feed-plant", "plant-species", "photo-form", "journal-plant", "identify" -> "Plants"; else -> "More" }
                     compose.onNode(hasText(tab) and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
-                } else compose.onNodeWithText("Home feed").assertIsDisplayed()
+                } else if (reset == "family" && route == "planta") compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
+                else compose.onNodeWithText("Home feed").assertIsDisplayed()
+                compose.onNodeWithText("One-time app code").assertDoesNotExist()
+                compose.onNodeWithText("Synthetic imported fern").assertDoesNotExist()
                 compose.onNodeWithText("Plant journal").assertDoesNotExist()
                 compose.onNodeWithText("Add a photo update").assertDoesNotExist()
                 compose.onNodeWithText("Unsaved photo note").assertDoesNotExist()

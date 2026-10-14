@@ -5109,6 +5109,19 @@ components:
     ImportRow:
       type: object
       properties:
+        can_commit:
+          type: boolean
+          description: The entire staged review can be committed. Repeated on every row.
+        can_review:
+          type: boolean
+          description: This row accepts a species selection or skip.
+        cover_status:
+          enum: [none, pending, imported, failed, skipped]
+          description: >-
+            none means Planta supplied no cover; pending means an uncommitted row will try to download it;
+            imported means the surviving plant records a successful cover import, even if its photo was deleted;
+            failed retains the cover error; skipped means this review will not download the cover, including
+            committed rows whose imported plant was later deleted. A committed row never reports pending.
         id:
           type: string
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
@@ -5198,6 +5211,9 @@ components:
       required:
         - id
         - planta_plant_id
+        - can_commit
+        - can_review
+        - cover_status
         - mapped
         - cover_error
         - candidates

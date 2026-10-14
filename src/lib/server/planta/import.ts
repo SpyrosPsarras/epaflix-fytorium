@@ -48,15 +48,22 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
     care, cover_url: typeof raw.image?.url === 'string' && raw.image.url.length <= 4096 ? raw.image.url : null,
   } };
 }
-export type StoredImportStaging = Omit<ImportStaging, 'mapped'> & { mapped: ImportedFields };
+export type StoredImportStaging = Omit<ImportStaging, 'mapped' | 'can_commit' | 'can_review' | 'cover_status'> & { mapped: ImportedFields };
 export async function storedStaging(household: string): Promise<StoredImportStaging[]> {
   const result = await db().query('SELECT id, planta_plant_id, mapped, candidates, selected, status, plant_id, cover_error FROM import_staging WHERE household_id = $1 ORDER BY planta_plant_id', [household]);
   return result.rows;
 }
 export async function staging(household: string): Promise<ImportStaging[]> {
-  return (await storedStaging(household)).map(row => {
+  const rows = await storedStaging(household);
+  const canCommit = !rows.some(row => row.status === 'review') && rows.some(row => row.status === 'confirmed');
+  const covers = await db().query('SELECT planta_plant_id FROM plants WHERE household_id = $1 AND planta_cover_imported', [household]);
+  const importedCovers = new Set(covers.rows.map(row => row.planta_plant_id));
+  return rows.map(row => {
     const { cover_url, ...mapped } = row.mapped;
-    return { ...row, mapped: { ...mapped, has_cover: Boolean(cover_url) } };
+    const coverStatus: ImportStaging['cover_status'] = importedCovers.has(row.planta_plant_id) ? 'imported'
+      : row.cover_error ? 'failed' : !cover_url ? 'none' : ['skipped', 'committed'].includes(row.status) ? 'skipped' : 'pending';
+    return { ...row, mapped: { ...mapped, has_cover: Boolean(cover_url) },
+      can_commit: canCommit, can_review: row.status !== 'committed', cover_status: coverStatus };
   });
 }
 export async function stageImport(code: string, household: string) {
