@@ -64,6 +64,21 @@ class PlantaRepositoryTest {
             assertEquals("skipped", repo.state.value.rows.single().status)
         }
     }
+    @Test fun fetchDisplaysKnownServerErrorsWithoutRelayingArbitraryProviderText() {
+        MockWebServer().use { server ->
+            server.start()
+            val repo = repository(server)
+            val messages = listOf("Planta supplied an invalid or future last care date.",
+                "Planta is rate-limiting this import. Try again later with a new app code.",
+                "Planta refused authorization. Start again with a new app code.")
+            for (message in messages) {
+                server.enqueue(MockResponse().setBody("[$importFixture]")); assertTrue(repo.refresh())
+                server.enqueue(MockResponse().setResponseCode(502).setBody(JSONObject().put("message", message).toString()))
+                assertFalse(repo.fetch("synthetic-code"))
+                assertEquals(message, repo.state.value.error)
+            }
+        }
+    }
     @Test fun failedFetchKeepsReviewAndNeverEchoesCodeOrUpstreamTokens() {
         MockWebServer().use { server ->
             server.start()

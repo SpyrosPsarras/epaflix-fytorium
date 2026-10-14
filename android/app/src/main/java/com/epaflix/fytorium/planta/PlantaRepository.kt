@@ -13,6 +13,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val endpoint = "/api/import/planta"
+// Only fixed server messages may cross the code-exchange boundary.
+private val fetchErrors = setOf(
+    "Enter the one-time app code.", "Planta returned an invalid plant ID.",
+    "Planta supplied an invalid last care date.", "Planta supplied an invalid or future last care date.",
+    "Planta did not respond. Start again with a new app code.",
+    "Planta refused authorization. Start again with a new app code.",
+    "Planta is rate-limiting this import. Try again later with a new app code.",
+    "Planta could not read the plants. Try again with a new app code.", "Planta returned an invalid response.",
+    "Planta returned invalid authorization.", "Planta authorization is missing.", "Planta returned invalid plants.",
+    "Planta import is too large.", "Planta returned invalid pagination.", "Planta import has too many pages.")
 data class ImportRow(val id: String, val name: String, val scientificName: String, val site: String,
     val cultivar: String?, val pot: String, val size: String, val soil: String, val care: Map<String, String>,
     val status: String, val coverStatus: String, val coverError: String?, val plantId: String?,
@@ -43,11 +53,12 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 // Never relay the body of a code exchange, including a provider's credential echo.
-                val message = if (sensitive) when (response.code) {
+                val serverMessage = runCatching { JSONObject(text).optString("message") }.getOrNull()?.takeIf { it.isNotBlank() }
+                val message = if (sensitive) serverMessage?.takeIf { it in fetchErrors } ?: when (response.code) {
                     422 -> "Planta supplied invalid plant data, or the app code is empty. Fetch again with a new code."
                     502 -> "Planta refused authorization or returned invalid data. Start again with a new app code."
                     else -> "Planta did not respond. Refresh, then try again with a new app code."
-                } else runCatching { JSONObject(text).optString("message") }.getOrNull()?.takeIf { it.isNotBlank() }
+                } else serverMessage
                 throw PlantaFailure(response.code, message ?: "Could not reach the server. Refresh to retry.")
             }
             text

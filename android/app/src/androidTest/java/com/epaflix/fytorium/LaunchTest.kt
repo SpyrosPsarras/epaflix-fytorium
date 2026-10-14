@@ -149,6 +149,7 @@ class LaunchTest {
             com.epaflix.fytorium.photos.runPhotoScenario(compose, app)
             com.epaflix.fytorium.feed.runFeedScenarios(app, compose)
             com.epaflix.fytorium.species.runSpeciesCareScenario(compose, app)
+            com.epaflix.fytorium.planta.runPlantaScenario(compose, app)
             // A09 switches identities and restores the owner on Today; A04 logs out last.
             com.epaflix.fytorium.household.runHouseholdScenario(compose, app)
             careScenarios(app, device)

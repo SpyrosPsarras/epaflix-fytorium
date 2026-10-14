@@ -138,4 +138,5 @@ echo "E2E launch scenario PASS; real OIDC login enabled: $login"
 [ "$login" != true ] || echo 'A06 E2E PASS: injected picker and camera, photo update and cover, journal, fake Pl@ntNet, confirmed species and add from result'
 [ "$login" != true ] || echo 'A08 E2E PASS: outdoor cold alert from fake weather, rain mark watered and undo verified through API history'
 [ "$login" != true ] || echo 'A10 E2E PASS: override 9 days, task Based on changes to override/9, reset restores original value/source'
+[ "$login" != true ] || echo 'A11 E2E PASS: fake Planta fetch, resumed review, fuzzy confirmation, cover, commit and imported plant in Plants'
 [ "$login" != true ] || echo 'A09 E2E PASS: owner API invite, second subject accepts in Custom Tab and logs into app, one shared plant, removal returns app to login'

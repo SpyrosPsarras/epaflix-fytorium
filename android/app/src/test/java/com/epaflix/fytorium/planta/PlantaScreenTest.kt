@@ -112,6 +112,16 @@ class PlantaScreenTest {
             assertEquals(2, server.requestCount)
         }
     }
+    @Test fun aBackgroundReadNeverDisablesReviewControls() {
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row)))
+        compose.setContent { FytoriumTheme { PlantaScreen(state.value) } }
+        compose.onNodeWithText("Search again").performScrollTo().performClick()
+        compose.onNodeWithText("Search species").performTextInput("Testoria")
+        compose.runOnIdle { state.value = state.value.copy(loading = true) }
+        compose.onNodeWithText("Find species").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("One-time app code").performScrollTo().assertIsEnabled()
+    }
     @Test fun onlyOwnerSeesImportEntry() {
         val care = mutableStateOf(CareState(member = Member("member", Role.owner)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }

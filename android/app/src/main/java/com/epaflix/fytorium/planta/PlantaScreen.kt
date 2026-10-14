@@ -110,7 +110,7 @@ import kotlinx.coroutines.withContext
                             if (searching == row.id) key(row.id) {
                                 var query by remember { mutableStateOf("") }
                                 OutlinedTextField(query, { query = it }, label = { Text("Search species") }, enabled = writable, modifier = Modifier.fillMaxWidth())
-                                Button(onClick = { onSearch(row.id, query) }, enabled = writable && query.isNotBlank() && !state.loading,
+                                Button(onClick = { onSearch(row.id, query) }, enabled = writable && query.isNotBlank(),
                                     modifier = Modifier.heightIn(min = 48.dp)) { Text("Find species") }
                                 if (state.searchRow == row.id) state.search?.let { result ->
                                     if (result.candidates.isEmpty()) Text("No species found. Try another name.")
