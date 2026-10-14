@@ -4563,6 +4563,8 @@ components:
     Subscription:
       type: object
       properties:
+        current_device:
+          type: boolean
         transport:
           enum: [web, fcm]
         enabled:
@@ -4585,6 +4587,8 @@ components:
         - label
         - created_at
         - last_success_at
+        - transport
+        - enabled
       additionalProperties: false
     SubscriptionInput:
       oneOf:

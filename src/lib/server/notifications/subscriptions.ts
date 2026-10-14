@@ -10,9 +10,9 @@ import { isUuid } from '../plants';
 export function syntheticPush(url: URL) {
   return !!config().testPushUrl && url.origin === 'https://push.invalid';
 }
-export async function subscriptions(identity: Identity) {
-  const rows = await db().query('SELECT s.id, s.label, s.transport, s.enabled, s.created_at, s.last_success_at FROM push_subscriptions s JOIN members m ON m.id = s.member_id WHERE m.id = $1 AND m.household_id = $2 ORDER BY s.created_at, s.id', [identity.member.id, identity.household.id]);
-  return rows.rows;
+export async function subscriptions(identity: Identity, deviceId?: string) {
+  const rows = await db().query('SELECT s.id, s.label, s.transport, s.enabled, s.created_at, s.last_success_at, s.app_device_id FROM push_subscriptions s JOIN members m ON m.id = s.member_id WHERE m.id = $1 AND m.household_id = $2 ORDER BY s.created_at, s.id', [identity.member.id, identity.household.id]);
+  return rows.rows.map(({ app_device_id, ...row }) => ({ ...row, ...(deviceId ? { current_device: app_device_id === deviceId } : {}) }));
 }
 function key(value: unknown, length: number) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) error(422, 'Invalid subscription keys');
@@ -62,7 +62,7 @@ export async function registerFcm(identity: Identity, deviceId: string | undefin
 export async function switchSubscription(identity: Identity, id: string, enabled: unknown) {
   if (!isUuid(id)) error(404, 'Device not found');
   if (typeof enabled !== 'boolean') error(422, 'Choose an on/off switch');
-  const result = await db().query('UPDATE push_subscriptions SET enabled = $3 WHERE id = $1 AND member_id = $2 RETURNING id', [id, identity.member.id, enabled]);
+  const result = await db().query('UPDATE push_subscriptions s SET enabled = $4 FROM members m WHERE s.member_id = m.id AND s.id = $1 AND m.id = $2 AND m.household_id = $3 RETURNING s.id', [id, identity.member.id, identity.household.id, enabled]);
   if (!result.rowCount) error(404, 'Device not found');
   return (await subscriptions(identity)).find(row => row.id === id);
 }

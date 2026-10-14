@@ -1,4 +1,5 @@
 import { beforeAll, expect, test } from 'vitest';
+import pg from 'pg';
 import { createApiHarness } from './harness';
 import { fixturePlant } from '../plant-fixture';
 
@@ -25,7 +26,10 @@ test('FCM registration requires a bearer-bound device, rotates in place and list
   expect(JSON.stringify(device)).not.toContain('synthetic-phone');
   expect((await (await register('synthetic-rotated')).json()).id).toBe(device.id);
   await browser.request('/api/notifications/subscriptions', 'POST', harness.push.subscribe());
-  expect((await (await use('/api/notifications/subscriptions')).json()).map((row: { transport: string }) => row.transport).sort()).toEqual(['fcm', 'web']);
+  const listed = await (await use('/api/notifications/subscriptions')).json();
+  expect(listed.map((row: { transport: string }) => row.transport).sort()).toEqual(['fcm', 'web']);
+  expect(listed.find((row: { id: string }) => row.id === device.id).current_device).toBe(true);
+  expect(listed.find((row: { transport: string }) => row.transport === 'web').current_device).toBe(false);
   expect(await (await use('/api/notifications/test', 'POST')).json()).toEqual({ sent: 2 });
   expect(harness.push.fcm.received).toEqual([{ message: { token: 'synthetic-rotated', data: { title: 'Fytorium', body: 'Notifications work on this device.', tag: 'fytorium-test', url: '/' } } }]);
   expect(harness.push.fcm.oauthCalls).toBe(1);
@@ -38,7 +42,7 @@ test('FCM registration requires a bearer-bound device, rotates in place and list
 });
 
 test('FCM invalid tokens are removed, transient responses retained, and OAuth is cached', async () => {
-  for (const [status, code, removed] of [[404, 'UNREGISTERED', true], [400, 'INVALID_ARGUMENT', true], [400, 'BAD_REQUEST', false], [429, 'QUOTA_EXCEEDED', false], [503, 'UNAVAILABLE', false]] as const) {
+  for (const [status, code, removed] of [[404, 'UNREGISTERED', true], [404, 'NOT_FOUND', false], [400, 'INVALID_ARGUMENT', true], [400, 'BAD_REQUEST', false], [429, 'QUOTA_EXCEEDED', false], [503, 'UNAVAILABLE', false]] as const) {
     const token = 'synthetic-status-' + status + code;
     harness.push.fcm.respond(token, status, code);
     const row = await (await register(token)).json();
@@ -48,6 +52,21 @@ test('FCM invalid tokens are removed, transient responses retained, and OAuth is
   }
   expect(harness.push.fcm.oauthCalls).toBe(1);
   expect(harness.appOutput).not.toContain('synthetic-status-');
+});
+
+test('OAuth 404 keeps the app registration', async () => {
+  const row = await (await register('synthetic-oauth-404')).json();
+  const address = harness.push.server.address();
+  if (!address || typeof address === 'string') throw new Error('No fake push address');
+  await harness.restartApp({ FCM_OAUTH_TOKEN_URL: `http://127.0.0.1:${address.port}/missing-oauth` });
+  await browser.request('/__test/clock', 'POST', { action: 'set', at: '2030-06-01T07:00:00Z' });
+  try {
+    await use('/api/notifications/test', 'POST');
+    expect((await (await use('/api/notifications/subscriptions')).json()).some((item: { id: string }) => item.id === row.id)).toBe(true);
+  } finally {
+    await harness.restartApp();
+    await browser.request('/__test/clock', 'POST', { action: 'set', at: '2030-06-01T07:00:00Z' });
+  }
 });
 
 test('FCM daily reminders retry 429 and 5xx only after the shared lease and success never repeats', async () => {
@@ -108,6 +127,43 @@ test('registrations cannot move between app devices or members, and member remov
   expect(fresh.status).toBe(201);
   await fetch(harness.base + '/api/app/logout', { method: 'POST', headers: { authorization: 'Bearer ' + otherDevice.access_token } });
 });
+
+test('workers do not claim or retry leases for unavailable transports or idle app devices', async () => {
+  const database = new pg.Client({ connectionString: harness.postgres.getConnectionUri() });
+  await database.connect();
+  const memberId = (await (await browser.request('/api/me')).json()).member.id;
+  const tick = () => browser.request('/__test/push-worker', 'POST');
+  const resetClock = () => browser.request('/__test/clock', 'POST', { action: 'set', at: '2030-06-02T07:00:00Z' });
+  const noLease = async (stage: string) => {
+    const rows = (await database.query("SELECT * FROM daily_reminder_sends WHERE member_id = $1 AND local_date = '2030-06-02'", [memberId])).rows;
+    expect(rows, stage).toEqual([]);
+  };
+  try {
+    for (const row of await (await use('/api/notifications/subscriptions')).json()) await use('/api/notifications/subscriptions/' + row.id, 'DELETE');
+    await register('synthetic-unavailable');
+    await harness.restartApp({ FCM_SERVICE_ACCOUNT_JSON: '', FCM_SERVICE_ACCOUNT_FILE: '' });
+    await resetClock();
+    await tick();
+    await noLease('FCM is unconfigured');
+    await harness.restartApp();
+    await resetClock();
+    await database.query("UPDATE app_devices SET last_used_at = '2029-01-01' WHERE member_id = $1", [memberId]);
+    // Browser authentication does not refresh the idle app device.
+    await tick();
+    await noLease('App device is idle');
+    await browser.request('/api/notifications/subscriptions', 'POST', harness.push.subscribe());
+    await harness.restartApp({ VAPID_PUBLIC_KEY: '', VAPID_PRIVATE_KEY: '', VAPID_SUBJECT: '', FYTORIUM_TEST_PUSH_URL: '' });
+    await resetClock();
+    await tick();
+    await noLease('VAPID is unconfigured and app device is idle');
+    expect(harness.appOutput).not.toContain('gave up');
+  } finally {
+    await database.query("UPDATE app_devices SET last_used_at = '2030-06-01T07:30:00Z' WHERE member_id = $1", [memberId]);
+    await database.end();
+    await harness.restartApp();
+    await browser.request('/__test/clock', 'POST', { action: 'set', at: '2030-06-01T07:30:00Z' });
+  }
+}, 120000);
 
 test('FCM is optional and logout removes its registration', async () => {
   await register('synthetic-optional');

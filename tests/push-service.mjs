@@ -66,7 +66,7 @@ export function createPushService() {
         const { status = 200, code } = fcmStatuses.get(message.message.token) ?? {};
         if (status === 200) fcm.received.push(message);
         return response.writeHead(status).end(JSON.stringify(status === 200 ? { name: 'synthetic-message' } : {
-          error: { details: [{ '@type': code === 'BAD_REQUEST' ? 'type.googleapis.com/google.rpc.BadRequest' : 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode: code }] },
+          error: { message: code === 'INVALID_ARGUMENT' ? 'The registration token is not valid.' : 'Synthetic error', details: [{ '@type': code === 'BAD_REQUEST' ? 'type.googleapis.com/google.rpc.BadRequest' : 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode: code }] },
         }));
       } catch { return response.writeHead(400).end('{}'); }
     }

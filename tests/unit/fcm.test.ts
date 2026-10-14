@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import { createPushService } from '../push-service.mjs';
 import { FcmTransport, FcmError } from '../../src/lib/server/notifications/fcm';
 
@@ -43,7 +43,33 @@ test('expired access tokens are renewed', async () => {
   at = 3500_000;
   await cached.send('synthetic-expiry', payload);
   expect(fake.fcm.oauthCalls).toBe(before + 1);
-  at = 3600_001;
+  at = 3540_000;
   await cached.send('synthetic-expiry', payload);
   expect(fake.fcm.oauthCalls).toBe(before + 2);
+});
+
+test('bare send 404 is reported once and never removes a registration', async () => {
+  const wrongProject = new FcmTransport({ baseUrl: base, tokenUrl: base + '/oauth/token', projectId: 'missing-project', account: fake.fcm.account });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    for (let i = 0; i < 2; i++) await expect(wrongProject.send('synthetic-kept', payload)).rejects.toMatchObject({ statusCode: 404, permanent: false, misconfigured: true });
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).not.toContain('synthetic-kept');
+  } finally { log.mockRestore(); }
+});
+
+test('INVALID_ARGUMENT requires an FCM detail and clear registration-token evidence', async () => {
+  const fcm = { '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode: 'INVALID_ARGUMENT' };
+  const bad = (field: string) => ({ '@type': 'type.googleapis.com/google.rpc.BadRequest', fieldViolations: [{ field }] });
+  for (const [details, message, permanent] of [
+    [[fcm], 'Invalid payload.', false],
+    [[fcm], 'The registration token is not valid.', true],
+    [[fcm, bad('message.data')], 'The registration token is not valid.', false],
+    [[bad('message.token')], 'The registration token is not valid.', false],
+    [[fcm, bad('message.token')], 'Invalid argument.', true],
+  ] as const) {
+    const mock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ error: { message, details } }), { status: 400 }));
+    try { await expect(transport.send('synthetic-detail', payload)).rejects.toMatchObject({ permanent }); }
+    finally { mock.mockRestore(); }
+  }
 });

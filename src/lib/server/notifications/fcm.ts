@@ -5,16 +5,17 @@ export type ServiceAccount = { client_email: string; private_key: string };
 type Settings = { baseUrl: string; tokenUrl: string; projectId: string; account: ServiceAccount };
 export class FcmError extends Error {
   readonly permanent: boolean;
-  constructor(readonly statusCode: number, code?: string) {
+  constructor(readonly statusCode: number, code?: string, registrationArgument = false, readonly misconfigured = false) {
     super('FCM delivery failed.');
     // A generic INVALID_ARGUMENT can mean a malformed payload, not a bad registration token.
-    this.permanent = statusCode === 404 || code === 'UNREGISTERED' || code === 'INVALID_ARGUMENT';
+    this.permanent = statusCode === 404 && code === 'UNREGISTERED' || statusCode === 400 && code === 'INVALID_ARGUMENT' && registrationArgument;
   }
 }
 
 export class FcmTransport {
   private cached?: { token: string; until: number };
   private pending?: Promise<string>;
+  private warnedNotFound = false;
   constructor(private readonly settings: Settings, private readonly clock = Date.now) {}
   private async accessToken() {
     if (this.cached && this.cached.until > this.clock()) return this.cached.token;
@@ -34,7 +35,7 @@ export class FcmTransport {
     if (!response.ok) { await response.body?.cancel(); throw new FcmError(response.status); }
     const result = await response.json();
     if (typeof result.access_token !== 'string' || !Number.isFinite(result.expires_in) || result.expires_in <= 0) throw new FcmError(502);
-    this.cached = { token: result.access_token, until: this.clock() + result.expires_in * 1000 };
+    this.cached = { token: result.access_token, until: this.clock() + result.expires_in * 1000 - 60_000 };
     return result.access_token;
   }
   async send(token: string, payload: PushPayload) {
@@ -50,6 +51,14 @@ export class FcmTransport {
     const result = await response.json().catch(() => ({}));
     const details: unknown = result.error?.details;
     const detail = Array.isArray(details) ? details.find(item => item?.['@type'] === 'type.googleapis.com/google.firebase.fcm.v1.FcmError') : undefined;
-    throw new FcmError(response.status, detail?.errorCode);
+    const violations: unknown = Array.isArray(details) ? details.find(item => item?.['@type'] === 'type.googleapis.com/google.rpc.BadRequest')?.fieldViolations : undefined;
+    const registrationArgument = Array.isArray(violations)
+      ? violations.length > 0 && violations.every(item => item?.field === 'message.token')
+      : typeof result.error?.message === 'string' && /registration token/i.test(result.error.message);
+    if (response.status === 404 && detail?.errorCode !== 'UNREGISTERED' && !this.warnedNotFound) {
+      console.error('FCM send endpoint not found. Check the base URL and project ID; registrations kept.');
+      this.warnedNotFound = true;
+    }
+    throw new FcmError(response.status, detail?.errorCode, registrationArgument, response.status === 404 && detail?.errorCode !== 'UNREGISTERED');
   }
 }

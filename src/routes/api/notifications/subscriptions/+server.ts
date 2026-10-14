@@ -4,9 +4,9 @@ import { bearerDevice } from '$lib/server/app-auth';
 import { readJsonObject } from '$lib/server/json';
 import { checkOrigin } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
-  return json(await subscriptions(locals.identity));
+  return json(await subscriptions(locals.identity, bearerDevice(request)));
 };
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');

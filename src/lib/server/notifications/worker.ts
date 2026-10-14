@@ -5,7 +5,7 @@ import { config } from '../config';
 import { db } from '../db';
 import { listedTasks } from '../tasks';
 import { sendCompletionNotices } from './completions';
-import { sendToMember } from './delivery';
+import { availableDeviceSql, sendToMember } from './delivery';
 import { notificationAttemptLimit, withNotificationLease } from './lease';
 
 async function sendWeatherAlerts() {
@@ -14,7 +14,7 @@ async function sendWeatherAlerts() {
     FROM weather_events e JOIN members m ON m.household_id = e.household_id
     LEFT JOIN plants p ON p.id = e.plant_id LEFT JOIN species s ON s.gbif_key = p.gbif_key
     WHERE e.resolved_at IS NULL AND m.weather_alerts_enabled AND m.removed_at IS NULL AND m.role <> 'sitter'
-    AND EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = m.id AND enabled)
+    AND ${availableDeviceSql('m.id', '$1')}
     AND NOT EXISTS (SELECT 1 FROM weather_alert_sends WHERE event_id = e.id AND member_id = m.id
       AND (sent_at IS NOT NULL OR claimed_until >= $1 OR attempts >= $2))
     ORDER BY e.created_at, e.id, m.id`, [now(), notificationAttemptLimit]);
@@ -33,7 +33,7 @@ export async function runPushWorkerOnce() {
   const localTime = new Intl.DateTimeFormat('en-GB', { timeZone: config().householdTimezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
   const { rows } = await db().query(`SELECT m.id, m.role, m.household_id, h.name FROM members m JOIN households h ON h.id = m.household_id
     WHERE m.removed_at IS NULL AND m.reminders_enabled AND m.reminder_time <= $1
-    AND EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = m.id AND enabled)
+    AND ${availableDeviceSql('m.id', '$3')}
     AND NOT EXISTS (SELECT 1 FROM daily_reminder_sends WHERE member_id = m.id AND local_date = $2::date
       AND (sent_at IS NOT NULL OR claimed_until >= $3 OR attempts >= $4)) ORDER BY m.id`, [localTime, date, at, notificationAttemptLimit]);
   for (const member of rows) {
