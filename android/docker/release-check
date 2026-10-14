@@ -12,7 +12,9 @@ export GOOGLE_SERVICES_JSON="$(tr -d '\n' < app/src/debug/google-services.json)"
 ./gradlew --no-daemon --console=plain assembleRelease
 apk=app/build/outputs/apk/release/app-release-unsigned.apk
 # The test bridge must not even enter release compilation, before R8 can rename it.
-if grep -q 'PushDebugBridge' app/build/outputs/mapping/release/mapping.txt; then
+mapping=app/build/outputs/mapping/release/mapping.txt
+[ -s "$mapping" ] || { echo 'Release R8 mapping.txt is missing or empty.' >&2; exit 1; }
+if grep -q 'PushDebugBridge' "$mapping"; then
   echo 'Debug notification bridge entered release compilation.' >&2; exit 1
 fi
 unzip -p "$apk" 'classes*.dex' >"$temp/classes"

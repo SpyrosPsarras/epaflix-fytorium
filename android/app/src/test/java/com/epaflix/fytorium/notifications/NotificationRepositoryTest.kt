@@ -18,6 +18,7 @@ class NotificationRepositoryTest {
             server.enqueue(MockResponse().setResponseCode(503))
             server.enqueue(MockResponse().setBody(settings))
             server.enqueue(MockResponse().setBody("[]"))
+            server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Athens"}"""))
             server.enqueue(MockResponse().setBody(settings.replace("09:30", "10:45")))
             val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
             var online = true
@@ -27,9 +28,10 @@ class NotificationRepositoryTest {
             assertTrue(repository.state.value.blocked)
             assertTrue(repository.refresh())
             assertEquals("09:30", repository.state.value.settings.time)
+            assertEquals("Europe/Athens", repository.state.value.timezone)
             assertTrue(repository.save(NotificationSettings("10:45", true, true, true)))
             assertEquals("10:45", repository.state.value.settings.time)
-            repeat(3) { server.takeRequest() }
+            repeat(4) { server.takeRequest() }
             val request = server.takeRequest()
             assertEquals("PUT", request.method)
             assertEquals("10:45", JSONObject(request.body.readUtf8()).getString("reminder_time"))
@@ -46,6 +48,7 @@ class NotificationRepositoryTest {
             val settings = """{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""
             server.enqueue(MockResponse().setBody(settings))
             server.enqueue(MockResponse().setBody("[]"))
+            server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Athens"}"""))
             server.enqueue(MockResponse().setResponseCode(422).setBody("""{"message":"Choose a reminder time HH:MM and on/off switches"}"""))
             server.enqueue(MockResponse().setBody(settings.replace("09:00", "10:45")))
             val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
@@ -56,6 +59,30 @@ class NotificationRepositoryTest {
             assertFalse(repository.state.value.blocked)
             assertTrue(repository.save(NotificationSettings("10:45")))
             assertEquals("10:45", repository.state.value.settings.time)
+        }
+    }
+    @Test fun currentDeviceParsingSwitchAndRemovalFeedback() {
+        MockWebServer().use { server ->
+            server.start()
+            val id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            val row = """{"id":"$id","label":"Phone","transport":"fcm","enabled":true,"current_device":true}"""
+            server.enqueue(MockResponse().setBody(NotificationSettings().json().toString()))
+            server.enqueue(MockResponse().setBody("[$row]"))
+            server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Athens"}"""))
+            server.enqueue(MockResponse().setBody(row))
+            server.enqueue(MockResponse().setBody("[" + row.replace("true", "false") + "]"))
+            server.enqueue(MockResponse().setResponseCode(204))
+            server.enqueue(MockResponse().setBody("[]"))
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
+            val repository = NotificationRepository(api, { true }, { true })
+            assertTrue(repository.refresh())
+            assertTrue(repository.state.value.devices.single().current)
+            assertTrue(repository.switch(repository.state.value.devices.single()))
+            assertFalse(repository.state.value.devices.single().enabled)
+            assertFalse(repository.state.value.devices.single().current)
+            assertTrue(repository.remove(repository.state.value.devices.single()))
+            assertTrue(repository.state.value.devices.isEmpty())
+            assertEquals("Device removed.", repository.state.value.message)
         }
     }
     @Test fun registrationUsesOnlyBearerIdentityAndDoesNotLogToken() {

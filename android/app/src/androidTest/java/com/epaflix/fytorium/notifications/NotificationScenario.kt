@@ -108,8 +108,9 @@ fun runNotificationScenario(compose: AndroidComposeTestRule<ActivityScenarioRule
         println("A12 E2E PASS: server data message recorded by fake FCM, replayed through real handler, daily channel and replacement, notification tap opens Home")
     } finally {
         manager.cancelAll()
-        json("/api/notifications/settings", "PUT", previous)
-        cleanFixtures()
-        clock("2030-06-01T10:00:00Z")
+        try {
+            json("/api/notifications/settings", "PUT", previous)
+            cleanFixtures()
+        } finally { testRequest("/__test/clock", JSONObject().put("action", "reset")) }
     }
 }

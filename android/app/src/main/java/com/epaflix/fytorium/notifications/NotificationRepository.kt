@@ -11,9 +11,9 @@ data class NotificationSettings(val time: String = "09:00", val reminders: Boole
     fun json() = JSONObject().put("reminder_time", time).put("reminders_enabled", reminders)
         .put("weather_alerts_enabled", weather).put("completion_notices_enabled", completions)
 }
-data class PushDevice(val id: String, val label: String, val transport: String, val enabled: Boolean)
+data class PushDevice(val id: String, val label: String, val transport: String, val enabled: Boolean, val current: Boolean = false)
 data class NotificationState(val settings: NotificationSettings = NotificationSettings(), val devices: List<PushDevice> = emptyList(),
-    val loaded: Boolean = false, val loading: Boolean = false, val saving: Boolean = false,
+    val timezone: String? = null, val loaded: Boolean = false, val loading: Boolean = false, val saving: Boolean = false,
     val blocked: Boolean = false, val updateRequired: Boolean = false, val error: String? = null, val message: String? = null)
 private class NotificationFailure(val status: Int, val display: String?) : Exception()
 private val validationMessages = setOf("Choose a reminder time HH:MM and on/off switches", "Choose an on/off completion notice switch", "Choose an on/off switch", "Device not found")
@@ -26,11 +26,18 @@ fun registerPushToken(api: ApiClient, token: String) {
     }
 }
 
+private fun devices(text: String): List<PushDevice> {
+    val array = JSONArray(text)
+    return (0 until array.length()).map { array.getJSONObject(it).let { row ->
+        PushDevice(row.getString("id"), row.getString("label"), row.getString("transport"), row.getBoolean("enabled"), row.optBoolean("current_device"))
+    } }
+}
+
 class NotificationRepository(private val api: ApiClient, private val allowed: () -> Boolean, private val connected: () -> Boolean) {
     private val mutable = MutableStateFlow(NotificationState())
     val state = mutable.asStateFlow()
     private fun request(path: String, method: String = "GET", body: JSONObject? = null): String =
-        api.request("/api/notifications/$path", method = method, body = body).use {
+        api.request(if (path.startsWith("/")) path else "/api/notifications/$path", method = method, body = body).use {
             val text = it.body?.string().orEmpty()
             if (!it.isSuccessful) throw NotificationFailure(it.code,
                 runCatching { JSONObject(text).optString("message") }.getOrNull()?.takeIf { message -> message in validationMessages })
@@ -38,11 +45,9 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
         }
     @Synchronized fun refresh() = run(false) {
         val preferences = settings(request("settings"))
-        val array = JSONArray(request("subscriptions"))
-        val devices = (0 until array.length()).map { array.getJSONObject(it).let { row ->
-            PushDevice(row.getString("id"), row.getString("label"), row.getString("transport"), row.getBoolean("enabled"))
-        } }
-        if (allowed()) mutable.value = state.value.copy(settings = preferences, devices = devices, loaded = true, blocked = false)
+        val rows = devices(request("subscriptions"))
+        val timezone = JSONObject(request("/api/meta")).getString("timezone")
+        if (allowed()) mutable.value = state.value.copy(settings = preferences, devices = rows, timezone = timezone, loaded = true, blocked = false)
     }
     @Synchronized fun save(value: NotificationSettings) = run(true) {
         val saved = settings(request("settings", "PUT", value.json()))
@@ -57,13 +62,11 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
         require(device.id.matches(Regex("[a-fA-F0-9-]{36}")))
         request("subscriptions/${device.id}", "DELETE")
         reloadDevices()
+        if (allowed()) mutable.value = state.value.copy(message = "Device removed.")
     }
     private fun reloadDevices() {
-        val array = JSONArray(request("subscriptions"))
-        val devices = (0 until array.length()).map { array.getJSONObject(it).let { row ->
-            PushDevice(row.getString("id"), row.getString("label"), row.getString("transport"), row.getBoolean("enabled"))
-        } }
-        if (allowed()) mutable.value = state.value.copy(devices = devices)
+        val rows = devices(request("subscriptions"))
+        if (allowed()) mutable.value = state.value.copy(devices = rows)
     }
     @Synchronized fun test() = run(true) {
         val sent = JSONObject(request("test", "POST")).getInt("sent")

@@ -11,6 +11,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.LightColors
+import androidx.compose.ui.graphics.toArgb
 import com.epaflix.fytorium.R
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -40,7 +42,7 @@ object PushMessages {
         val intent = Intent(context, MainActivity::class.java).setAction(OPEN_HOME)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_launcher)
+        val notification = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_notification).setColor(LightColors.primary.toArgb())
             .setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pending).setAutoCancel(true).build()
         // The stable daily tag replaces yesterday's reminder, without action buttons.

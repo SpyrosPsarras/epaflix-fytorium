@@ -1,6 +1,7 @@
 package com.epaflix.fytorium.notifications
 
 import android.app.NotificationManager
+import androidx.compose.ui.graphics.toArgb
 import androidx.test.core.app.ApplicationProvider
 import com.epaflix.fytorium.FytoriumApplication
 import org.junit.Assert.*
@@ -39,5 +40,8 @@ class PushMessagesTest {
         }
         val daily = manager.activeNotifications.single { it.tag == "fytorium-daily" }
         assertEquals("daily_reminder", daily.notification.channelId)
+        assertEquals(com.epaflix.fytorium.R.drawable.ic_notification, daily.notification.smallIcon.resId)
+        assertNotEquals(com.epaflix.fytorium.R.drawable.ic_launcher, daily.notification.smallIcon.resId)
+        assertEquals(com.epaflix.fytorium.LightColors.primary.toArgb(), daily.notification.color)
     }
 }
