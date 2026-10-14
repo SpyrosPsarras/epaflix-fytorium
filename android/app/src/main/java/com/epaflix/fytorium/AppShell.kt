@@ -36,6 +36,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     BackHandler(enabled = feedSettings) { feedSettings = false }
     var feedPlant by rememberSaveable { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableStateOf("Today") }
+    var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
     var unmatched by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -51,7 +52,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
             }
-            sites = false; unmatched = false; careSpecies = null; feedSettings = false
+            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null
             if (!loggedIn || memberChanged || becameSitter) feedPlant = null
         }
         if (!loggedIn) { previousMemberId = null; previousRole = null }
@@ -66,11 +67,18 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        val householdArea = com.epaflix.fytorium.household.HouseholdArea.entries.firstOrNull { it.name == household }
+        if (loggedIn && !updateRequired && tab == "More" && householdArea != null && careState?.member != null && sitesApi != null && careState.member.role != Role.sitter && (householdArea != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner)) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careState.member, householdArea) { com.epaflix.fytorium.household.HouseholdRoute(sitesApi, householdArea, careState, sitesConnected) { household = null } }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && tab == "More" && unmatched && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 key(careSpecies) {
@@ -141,6 +149,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
                     if (careState?.member != null && careState.member.role != Role.sitter) {
                         Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
+                        for (area in com.epaflix.fytorium.household.HouseholdArea.entries.filter { it != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner }) {
+                            Button(onClick = { household = area.name }, modifier = Modifier.heightIn(min = 48.dp)) { Text(area.title) }
+                        }
                         Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }
                     }
                     Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }

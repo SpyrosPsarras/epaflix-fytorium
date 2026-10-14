@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import type { Plant } from '$lib/plants';
-type Member = { id: string; display_name: string; role: 'owner' | 'family' | 'sitter'; plant_ids: string[] };
+type Member = { id: string; display_name: string; role: 'owner' | 'family' | 'sitter'; plant_ids: string[]; role_options: ('family' | 'sitter')[]; can_remove: boolean };
 type Invite = { id: string; role: string; expires_at: string; plant_ids: string[] };
 export const load: PageServerLoad = async ({ locals, fetch }) => {
   const responses = await Promise.all(['/api/household/members', '/api/household/invites', '/api/plants'].map(path => fetch(path)));

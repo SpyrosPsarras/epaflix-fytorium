@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { changeShares, removeMember } from '$lib/server/household';
+import { changeRole, changeShares, removeMember } from '$lib/server/household';
 import { requirePermission } from '$lib/server/policy';
 import { readJsonObject } from '$lib/server/json';
 import { checkOrigin } from '$lib/server/sites';
@@ -7,7 +7,9 @@ import type { RequestHandler } from './$types';
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
   const identity = requirePermission(locals.identity, 'owner');
   checkOrigin(request);
-  await changeShares(identity, params.id, await readJsonObject(request));
+  const input = await readJsonObject(request);
+  if ('role' in input) await changeRole(identity, params.id, input);
+  else await changeShares(identity, params.id, input);
   return json({ saved: true });
 };
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {

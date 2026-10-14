@@ -66,7 +66,14 @@
           <button disabled={busy}>Save shared plants</button>
         </form>
       {/if}
-      {#if member.id !== data.identity.member.id}
+      {#if member.role_options.length}
+        <label>Role for {member.display_name}
+          <select value={member.role} disabled={busy} onchange={event => call('members/' + member.id, 'PUT', { role: event.currentTarget.value, plant_ids: event.currentTarget.value === 'sitter' ? member.plant_ids : [] })}>
+            {#each member.role_options as option}<option value={option}>{option}</option>{/each}
+          </select>
+        </label>
+      {/if}
+      {#if member.can_remove}
         <button disabled={busy} onclick={() => { if (confirm('Remove this member and all their devices?')) void call('members/' + member.id, 'DELETE'); }}>Remove member</button>
       {/if}
     </article>

@@ -34,7 +34,7 @@ function hash(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function cookieOptions(maxAge: number) {
+export function cookieOptions(maxAge: number) {
   return { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: config().oidcRedirectUrl.protocol === 'https:', maxAge };
 }
 
@@ -63,8 +63,9 @@ export async function startLogin(cookies: Cookies, url: URL): Promise<URL> {
 export async function finishLogin(url: URL, cookies: Cookies): Promise<string> {
   const token = cookies.get(LOGIN_COOKIE);
   const pendingInvite = cookies.get(INVITE_COOKIE);
-  cookies.delete(INVITE_COOKIE, { path: '/' });
-  cookies.delete(LOGIN_COOKIE, { path: '/' });
+  // SvelteKit defaults deletion to Secure, which HTTP browsers refuse even for an HTTP cookie.
+  cookies.delete(INVITE_COOKIE, cookieOptions(0));
+  cookies.delete(LOGIN_COOKIE, cookieOptions(0));
   if (!token) throw new Error('Missing login transaction');
   const result = await db().query<{ state: string; nonce: string; verifier: string; expires_at: Date; app_challenge: string | null; app_state: string | null }>(
     'DELETE FROM login_transactions WHERE token_hash = $1 RETURNING state, nonce, verifier, expires_at, app_challenge, app_state', [hash(token)],
@@ -146,12 +147,12 @@ export async function identity(cookies: Cookies, request?: Request): Promise<Ide
      WHERE s.token_hash = $1 AND s.expires_at > $2 AND m.removed_at IS NULL`, [hash(token), now()],
   );
   const row = result.rows[0];
-  if (!row) { cookies.delete(SESSION_COOKIE, { path: '/' }); return null; }
+  if (!row) { cookies.delete(SESSION_COOKIE, cookieOptions(0)); return null; }
   return { member: { id: row.member_id, role: row.role }, household: { id: row.household_id, name: row.name } };
 }
 
 export async function logout(cookies: Cookies) {
   const token = cookies.get(SESSION_COOKIE);
   if (token) await db().query('DELETE FROM sessions WHERE token_hash = $1', [hash(token)]);
-  cookies.delete(SESSION_COOKIE, { path: '/' });
+  cookies.delete(SESSION_COOKIE, cookieOptions(0));
 }
