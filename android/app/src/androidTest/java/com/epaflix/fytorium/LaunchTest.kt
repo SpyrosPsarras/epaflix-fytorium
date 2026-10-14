@@ -47,6 +47,7 @@ class LaunchTest {
         assertFalse(policy.isCleartextTrafficPermitted)
         assertTrue(policy.isCleartextTrafficPermitted("app"))
         assertTrue(policy.isCleartextTrafficPermitted("oidc"))
+        assertTrue(policy.isCleartextTrafficPermitted("fake-push"))
         for (host in listOf("app.evil", "sub.app", "sub.oidc", "example.com", "fytorium.epaflix.com", "127.0.0.1")) {
             assertFalse(host, policy.isCleartextTrafficPermitted(host))
         }
@@ -150,6 +151,7 @@ class LaunchTest {
             com.epaflix.fytorium.feed.runFeedScenarios(app, compose)
             com.epaflix.fytorium.species.runSpeciesCareScenario(compose, app)
             com.epaflix.fytorium.planta.runPlantaScenario(compose, app)
+            com.epaflix.fytorium.notifications.runNotificationScenario(compose, app)
             // A09 switches identities and restores the owner on Today; A04 logs out last.
             com.epaflix.fytorium.household.runHouseholdScenario(compose, app)
             careScenarios(app, device)

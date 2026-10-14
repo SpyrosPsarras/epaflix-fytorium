@@ -61,6 +61,9 @@
       message = 'Device removed.';
     });
   }
+  function switchDevice(id: string, enabled: boolean) {
+    return act(async () => { await call('subscriptions/' + id, 'PATCH', { enabled }); await invalidateAll(); });
+  }
   function sendTest() {
     return act(async () => {
       const result = await call('test');
@@ -99,7 +102,7 @@
   {#if !data.devices.length}<p>No devices enabled.</p>{/if}
   <ul>
     {#each data.devices as device (device.id)}
-      <li><span>{device.label}</span><button disabled={busy} aria-label={'Remove ' + device.label} onclick={() => remove(device.id)}>Remove</button></li>
+      <li><span>{device.label} ({device.transport === 'fcm' ? 'Android app' : 'Browser'})</span><label><input type="checkbox" checked={device.enabled} disabled={busy} onchange={() => switchDevice(device.id, !device.enabled)} aria-label={'Enable ' + device.label} /> Enabled</label><button disabled={busy} aria-label={'Remove ' + device.label} onclick={() => remove(device.id)}>Remove</button></li>
     {/each}
   </ul>
 </section>

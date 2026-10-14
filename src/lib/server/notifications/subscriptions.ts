@@ -3,7 +3,7 @@ import { ECDH } from 'node:crypto';
 import type { Identity } from '../auth';
 import { now } from '../clock';
 import { config } from '../config';
-import { db } from '../db';
+import { db, withTransaction } from '../db';
 import { publicAddress } from '../net/public-url';
 import { isUuid } from '../plants';
 
@@ -11,7 +11,7 @@ export function syntheticPush(url: URL) {
   return !!config().testPushUrl && url.origin === 'https://push.invalid';
 }
 export async function subscriptions(identity: Identity) {
-  const rows = await db().query('SELECT s.id, s.label, s.created_at, s.last_success_at FROM push_subscriptions s JOIN members m ON m.id = s.member_id WHERE m.id = $1 AND m.household_id = $2 ORDER BY s.created_at, s.id', [identity.member.id, identity.household.id]);
+  const rows = await db().query('SELECT s.id, s.label, s.transport, s.enabled, s.created_at, s.last_success_at FROM push_subscriptions s JOIN members m ON m.id = s.member_id WHERE m.id = $1 AND m.household_id = $2 ORDER BY s.created_at, s.id', [identity.member.id, identity.household.id]);
   return rows.rows;
 }
 function key(value: unknown, length: number) {
@@ -38,6 +38,33 @@ export async function subscribe(identity: Identity, input: Record<string, unknow
   const result = await db().query('INSERT INTO push_subscriptions (member_id, endpoint, p256dh, auth, label, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, label = EXCLUDED.label WHERE push_subscriptions.member_id = EXCLUDED.member_id RETURNING id', [identity.member.id, url.href, keys!.p256dh, keys!.auth, label.trim(), now()]);
   if (!result.rowCount) error(409, 'Subscription is already registered');
   return (await subscriptions(identity)).find(row => row.id === result.rows[0].id);
+}
+export async function registerFcm(identity: Identity, deviceId: string | undefined, input: Record<string, unknown>) {
+  if (!deviceId) error(403, 'App bearer authentication required');
+  if (typeof input.token !== 'string' || !/^[A-Za-z0-9_:.\-]{1,4096}$/.test(input.token)) error(422, 'Invalid FCM token');
+  const token = input.token;
+  const id = await withTransaction(async client => {
+    const device = (await client.query('SELECT name FROM app_devices WHERE id = $1 AND member_id = $2 AND revoked_at IS NULL FOR UPDATE', [deviceId, identity.member.id])).rows[0];
+    if (!device) error(403, 'App bearer authentication required');
+    const existing = (await client.query('SELECT app_device_id FROM push_subscriptions WHERE fcm_token = $1', [token])).rows[0];
+    if (existing && existing.app_device_id !== deviceId) error(409, 'Token is already registered');
+    try {
+      return (await client.query(`INSERT INTO push_subscriptions (member_id, transport, fcm_token, app_device_id, label, created_at)
+        VALUES ($1, 'fcm', $2, $3, $4, $5) ON CONFLICT (app_device_id) DO UPDATE SET fcm_token = EXCLUDED.fcm_token RETURNING id`,
+      [identity.member.id, token, deviceId, device.name, now()])).rows[0].id;
+    } catch (cause) {
+      if (cause && typeof cause === 'object' && 'code' in cause && cause.code === '23505') error(409, 'Token is already registered');
+      throw cause;
+    }
+  });
+  return (await subscriptions(identity)).find(row => row.id === id);
+}
+export async function switchSubscription(identity: Identity, id: string, enabled: unknown) {
+  if (!isUuid(id)) error(404, 'Device not found');
+  if (typeof enabled !== 'boolean') error(422, 'Choose an on/off switch');
+  const result = await db().query('UPDATE push_subscriptions SET enabled = $3 WHERE id = $1 AND member_id = $2 RETURNING id', [id, identity.member.id, enabled]);
+  if (!result.rowCount) error(404, 'Device not found');
+  return (await subscriptions(identity)).find(row => row.id === id);
 }
 export async function unsubscribe(identity: Identity, id: string) {
   if (!isUuid(id)) error(404, 'Device not found');

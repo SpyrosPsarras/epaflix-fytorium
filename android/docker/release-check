@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+temp=$(mktemp -d)
+trap 'rm -rf "$temp"' EXIT
+# Even with a warm Gradle cache, missing CI config must fail.
+if (unset GOOGLE_SERVICES_JSON; ./gradlew --no-daemon --console=plain validateFirebaseRelease) >"$temp/missing.log" 2>&1; then
+  echo 'Release accepted missing GOOGLE_SERVICES_JSON.' >&2; exit 1
+fi
+grep -q 'GOOGLE_SERVICES_JSON CI secret is required' "$temp/missing.log"
+echo 'Release without GOOGLE_SERVICES_JSON rejected.'
+export GOOGLE_SERVICES_JSON="$(tr -d '\n' < app/src/debug/google-services.json)" ANDROID_FIREBASE_TEST_CONFIG=true
+./gradlew --no-daemon --console=plain assembleRelease
+apk=app/build/outputs/apk/release/app-release-unsigned.apk
+# The test bridge must not even enter release compilation, before R8 can rename it.
+if grep -q 'PushDebugBridge' app/build/outputs/mapping/release/mapping.txt; then
+  echo 'Debug notification bridge entered release compilation.' >&2; exit 1
+fi
+unzip -p "$apk" 'classes*.dex' >"$temp/classes"
+if grep -aEq 'PushDebugBridge|synthetic-fcm' "$temp/classes"; then
+  echo 'Debug notification bridge found in release dex.' >&2; exit 1
+fi
+"$ANDROID_HOME/build-tools/35.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml >"$temp/manifest"
+if grep -q 'PushDebugBridge' "$temp/manifest"; then exit 1; fi
+echo 'Release contains no debug notification bridge or receiver.'
+echo "Release APK size: $(stat -c %s "$apk") bytes"

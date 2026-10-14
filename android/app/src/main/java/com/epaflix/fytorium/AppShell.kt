@@ -27,7 +27,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
                          careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
                          feed: FeedRepository? = null,
-                         sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }) {
+                         sitesApi: ApiClient? = null, sitesConnected: () -> Boolean = { false }, homeRequest: Int = 0) {
     val loadedFeed = feed?.state?.collectAsState()?.value
     val feedState = loadedFeed?.let { if (it.member == careState?.member) it else FeedState(member = careState?.member) }
     val scope = rememberCoroutineScope()
@@ -43,6 +43,13 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var plantaImport by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
     var taskView by rememberSaveable { mutableStateOf("today") }
+    var notifications by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(homeRequest) {
+        if (homeRequest > 0) {
+            tab = "Today"; taskView = "today"; notifications = false; sites = false; household = null
+            plantaImport = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null
+        }
+    }
     var about by rememberSaveable { mutableStateOf(false) }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
     var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }
@@ -50,6 +57,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val member = careState?.member
         val memberChanged = previousMemberId != null && member != null && previousMemberId != member.id
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
+        if (!loggedIn || memberChanged) notifications = false
         if (!loggedIn || memberChanged || member?.role == Role.sitter) {
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
@@ -70,11 +78,17 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
     }) { padding ->
+        if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected) { notifications = false } }
+            }
+            return@Scaffold
+        }
         if (loggedIn && !updateRequired && tab == "More" && plantaImport && careState?.member?.role == Role.owner && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 key(careState.member) {
@@ -169,6 +183,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 }
                 tab == "More" -> {
                     Text("More", style = MaterialTheme.typography.headlineMedium)
+                    if (careState?.member != null && sitesApi != null) Button(onClick = { notifications = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("My notifications") }
                     if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
                     if (careState?.member != null && careState.member.role != Role.sitter) {
                         Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }

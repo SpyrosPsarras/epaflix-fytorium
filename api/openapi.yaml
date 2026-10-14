@@ -2925,6 +2925,45 @@ paths:
             schema:
               $ref: "#/components/schemas/SubscriptionInput"
   /api/notifications/subscriptions/{id}:
+    patch:
+      operationId: switch_notification_device
+      summary: Switch a browser or app notification device on or off
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required: [enabled]
+              additionalProperties: false
+      responses:
+        "200":
+          description: Device updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "426":
+          description: Native client version below the configured minimum
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       operationId: delete_api_notifications_subscriptions__id_
       summary: DELETE /api/notifications/subscriptions/{id}
@@ -4524,6 +4563,10 @@ components:
     Subscription:
       type: object
       properties:
+        transport:
+          enum: [web, fcm]
+        enabled:
+          type: boolean
         id:
           type: string
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
@@ -4544,6 +4587,17 @@ components:
         - last_success_at
       additionalProperties: false
     SubscriptionInput:
+      oneOf:
+        - $ref: "#/components/schemas/WebSubscriptionInput"
+        - type: object
+          properties:
+            transport:
+              const: fcm
+            token:
+              type: string
+          required: [transport, token]
+          additionalProperties: false
+    WebSubscriptionInput:
       type: object
       properties:
         endpoint:

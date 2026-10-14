@@ -66,7 +66,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
     fun request(path: String, post: Boolean = false, method: String = if (post) "POST" else "GET",
                 body: JSONObject? = null, query: Map<String, String> = emptyMap(), requestBody: okhttp3.RequestBody? = null): Response {
         require(path.startsWith("/api/") && !path.contains("..") && !path.contains('?') && !path.contains('#'))
-        require(method in listOf("GET", "POST", "PUT", "DELETE"))
+        require(method in listOf("GET", "POST", "PUT", "PATCH", "DELETE"))
         val original = store.tokens
         fun send(tokens: Tokens?): Response {
             val url = (baseUrl + path).toHttpUrl().newBuilder().apply {

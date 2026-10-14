@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
-import { subscribe, subscriptions } from '$lib/server/notifications/subscriptions';
+import { registerFcm, subscribe, subscriptions } from '$lib/server/notifications/subscriptions';
+import { bearerDevice } from '$lib/server/app-auth';
 import { readJsonObject } from '$lib/server/json';
 import { checkOrigin } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
@@ -10,5 +11,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  return json(await subscribe(locals.identity, await readJsonObject(request), request.headers.get('user-agent') ?? ''), { status: 201 });
+  const input = await readJsonObject(request);
+  return json(input.transport === 'fcm' ? await registerFcm(locals.identity, bearerDevice(request), input)
+    : await subscribe(locals.identity, input, request.headers.get('user-agent') ?? ''), { status: 201 });
 };

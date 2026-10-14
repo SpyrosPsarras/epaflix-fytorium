@@ -19,6 +19,7 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
     lateinit var capturesCleared: Job
         private set
     internal var captureDeleter: (File) -> Boolean = { it.delete() }
+    val push: com.epaflix.fytorium.notifications.PushRegistration by lazy { com.epaflix.fytorium.notifications.PushRegistration(api, store) }
     val store: CredentialStore by lazy { KeystoreCredentialStore(this) }
     val session: SessionController by lazy { SessionController(store, api, Diagnostics(this)) }
     private fun connected() = getSystemService(ConnectivityManager::class.java).let {
@@ -43,6 +44,7 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
     override fun onTerminate() { if (careInstance.isInitialized()) care.close(); super.onTerminate() }
     override fun onCreate() {
         super.onCreate()
+        com.epaflix.fytorium.notifications.PushMessages.channels(this)
         capturesCleared = CoroutineScope(Dispatchers.IO).launch { clearCameraCaptures(cacheDir, startup = true, delete = captureDeleter) }
         Thread.setDefaultUncaughtExceptionHandler { _, _ ->
             runCatching { Diagnostics(this).record(ErrorEvent.APP_CRASH) }

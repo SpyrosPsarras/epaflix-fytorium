@@ -1,6 +1,6 @@
 # Fytorium Android
 
-Kotlin and Compose phone app, API 29 through 35. Login, Today and Upcoming use the real server. Today, Upcoming and previously loaded plant data stay readable offline. Plants supports native editing and lifecycle actions. Photo updates, the journal and photo identification use the same server endpoints as the web. No analytics, external crash service or notification SDK is included.
+Kotlin and Compose phone app, API 29 through 35. Login, Today and Upcoming use the real server. Today, Upcoming and previously loaded plant data stay readable offline. Plants supports native editing and lifecycle actions. Photo updates, the journal and photo identification use the same server endpoints as the web. Firebase Messaging delivers app notifications. No analytics or external crash service is included.
 
 ## Run from the repository root
 
@@ -23,7 +23,7 @@ The SDK image uses JDK 17.0.14+7 with a digest-pinned base, command-line tools 1
 
 Gradle 8.11.1 uses a checked-in wrapper and distribution SHA-256. Every direct plugin and dependency version is in `gradle/libs.versions.toml`. Gradle caches live in `android/.gradle-cache/` and are gitignored. Docker writes no Android installation to the host. The emulator image is not needed by CI.
 
-The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Test, lint and emulator reports are under `android/app/build/reports/`. A debug-only network security config permits cleartext HTTP only for the exact local hosts `app` and `oidc`, without subdomains. Its base policy and the release manifest forbid cleartext. Production defaults to `https://fytorium.epaflix.com`; the Gradle property `serverUrl` overrides this build setting. Release builds reject non-HTTPS URLs before compilation. `release-check` assembles an unsigned R8-minified, resource-shrunk APK and reports its size. Compose, AndroidX, coroutines and OkHttp supply their consumer keep rules; app models use direct Kotlin access and built-in JSON, with no reflective serializer to keep. `release-launch` requires the running stack and installs the release APK using an ephemeral container-only signing key, checks the login UI and process, and rejects crashes. The e2e script builds with `http://app:3000`. Ordinary build/test/lint commands reset it to production.
+The debug APK is `android/app/build/outputs/apk/debug/app-debug.apk`. Test, lint and emulator reports are under `android/app/build/reports/`. A debug-only network security config permits cleartext HTTP only for the exact local hosts `app`, `oidc` and the instrumentation-only fake receiver `fake-push`, without subdomains. Its base policy and the release manifest forbid cleartext. Production defaults to `https://fytorium.epaflix.com`; the Gradle property `serverUrl` overrides this build setting. Release builds reject non-HTTPS URLs before compilation. `release-check` assembles an unsigned R8-minified, resource-shrunk APK and reports its size. Compose, AndroidX, coroutines and OkHttp supply their consumer keep rules; app models use direct Kotlin access and built-in JSON, with no reflective serializer to keep. `release-launch` requires the running stack and installs the release APK using an ephemeral container-only signing key, checks the login UI and process, and rejects crashes. The e2e script builds with `http://app:3000`. Ordinary build/test/lint commands reset it to production.
 
 ## Emulator networking and ownership
 
@@ -76,6 +76,42 @@ More → Import from Planta is owner-only. Enter a one-time Planta App Portal co
 The code stays only in an unsaved password field until submission, which clears it before the request, including on failure. It never enters Room, preferences, saved state or diagnostics. Code-exchange errors never relay upstream response text. Staging, selections and commit eligibility come from `/api/import/planta`; opening or restoring the route fetches that review without another code. Import controls use validated connectivity, the owner/session gates and the import's own request state, not Today background refreshes.
 
 `planta/PlantaScenario.kt` runs inside the single real-login test. It uses only the stack's fake Planta, restores the review across Activity recreation, confirms the fuzzy Testoria match, imports its cover and checks the plant in Plants. It deletes only the fake import's exact synthetic plant/site names before and after each run, so repeated runs on one stack start a fresh review. Repository/state tests, saved-state tests and 18 accessible light/dark snapshots cover the code, review, search, confirmation, offline/error states and cover results.
+
+## Push notifications
+
+More → My notifications uses the same reminder time and daily, weather and completion switches as the web. Time is the household's time zone. Sitters do not get weather controls. The device list includes browser and Android devices, with independent enable and remove controls. Its network and error state is independent of Today background reads.
+
+Firebase Messaging 24.1.1 is the only added runtime dependency. It supplies token rotation and `FirebaseMessagingService`; notification construction uses AndroidX already in the app. There is no Firebase Analytics dependency. `FirebaseInitProvider` reads four resources extracted from the matching client in `google-services.json`: `google_app_id`, `gcm_defaultSenderId`, `project_id` and `google_api_key`. Gradle extracts these directly instead of adding the Google Services build plugin. No real JSON file is written to the checkout.
+
+The app registers the FCM token with its bearer identity after login, on token rotation and on foreground entry. The server binds it to the authenticated app device, never a client-supplied member or device ID. Token rotation preserves the device's disabled state. Logout, refresh-token replay and member removal revoke the device and delete its FCM registration. Tokens never enter diagnostics or the device-list response.
+
+Data messages carry the same `title`, `body`, `tag` and `url` as Web Push. The app posts in `daily_reminder`, `weather_alert` or `completion_notice`. The stable `fytorium-daily` tag replaces the previous reminder. There are no action buttons. A tap always returns to Home, even from a nested More screen. Receiving a message refreshes current data and schedules a network-constrained cache refresh. Messages received without a session are discarded.
+
+On Android 13+, the Enable notifications button explains the categories before opening the system permission prompt. The app records that attempt before launching it. After denial it only links to Android notification settings, never asks again automatically. Older Android versions use the same button to open system settings.
+
+### Synthetic tests and release config
+
+`app/src/debug/google-services.json` is an obviously synthetic placeholder, not a Firebase project. Debug builds disable Messaging auto-init and use a debug-only token source that never requests a Google installation or token. Instrumentation can inject a synthetic token and replay a `RemoteMessage` through the exact handler used by `onMessageReceived`. There is no exported receiver or intent for either operation, and these classes are absent from the release source set.
+
+The release build requires the **raw JSON contents**, not base64, in the `GOOGLE_SERVICES_JSON` environment variable. Tagged CI passes the same-named GitHub Actions secret in memory. Missing or malformed config fails the build, including with warm Gradle outputs. A synthetic project is refused by normal releases. `./scripts/android release-check` first proves missing config is rejected, then supplies the placeholder only for its minified APK check. It checks R8's mapping, dex and manifest for the debug bridge. `release-dry-run` uses the same placeholder with a throwaway signing key. Neither command contacts Google. Never distribute these test APKs.
+
+The fake push service generates an ephemeral RSA service account on startup and verifies the server's signed OAuth JWT. No key is committed or baked into an image. API tests exercise data-only payloads, invalid-token removal, 429/5xx lease retries, OAuth concurrency/expiry caching, ownership and revocation. The A12 scenario runs inside the single real-login test. It registers a unique synthetic token, enables Android permission through the explained user action, runs the real server reminder worker, reads the recorded message from `http://fake-push:8080/fcm/received`, and calls the shared production handler. It asserts the real system notification's channel and replacement, taps it with UiAutomator, and checks Home opens. **The emulator did not receive a message through Google's network.** It received a replay of the fake's recorded server message. A test-clock-only endpoint clears only the signed-in member's current-day reminder lease so this scenario is rerunnable on one stack. Twelve accessible light/dark reference images cover settings, devices, permission-state wording, offline/error states and background reads.
+
+### Owner Firebase setup
+
+Run `./scripts/firebase-setup` on the owner's desktop. It walks through project creation with Analytics off, Android app registration for `com.epaflix.fytorium`, FCM HTTP v1 enablement and service-account key download. It stores both files as Vaultwarden attachments under `/Fytorium/fytorium - firebase` and the app config as GitHub secret `GOOGLE_SERVICES_JSON`. Vaultwarden hub access uses the desktop login-keyring item `service=mcp-hub`, `key=api`, never a dotfile or chat value. The wizard then asks for the homelab checkout and its existing encrypted Fytorium Secret under `2-k3s/25.fytorium`, prints the exact `sops-kpx` edit command and Secret/Deployment fields, and requires confirmation before offering to delete the downloads. It never deploys or prints key/config contents. Owner project creation and real-phone delivery remain A14 work.
+
+Server configuration:
+
+| Variable | Meaning |
+| --- | --- |
+| `FCM_PROJECT_ID` | Firebase project ID. Required to enable FCM. |
+| `FCM_SERVICE_ACCOUNT_FILE` | Absolute container path to the mounted service-account JSON file. |
+| `FCM_SERVICE_ACCOUNT_JSON` | Alternatively, raw service-account JSON from a secret environment variable. Takes precedence over the file. |
+| `FCM_BASE_URL` | HTTP v1 origin, default `https://fcm.googleapis.com`. |
+| `FCM_OAUTH_TOKEN_URL` | OAuth token endpoint, default `https://oauth2.googleapis.com/token`. |
+
+Without a project ID and account, app devices are skipped with one process-level message. Web Push keeps working. The local Compose stack sets both endpoint URLs to fake-push and project `synthetic-fytorium`; test-clock requests reject non-local FCM endpoints. Production should leave both URL overrides unset. The wizard's SOPS instructions store `FCM_SERVICE_ACCOUNT_JSON` and `FCM_PROJECT_ID`, or mount the JSON and use `FCM_SERVICE_ACCOUNT_FILE`. Migration `20261013120000_fcm.sql` extends notification subscriptions with transport, enabled state and a member-bound app-device reference, and deletes registrations when app devices are revoked.
 
 ## Login and diagnostics
 

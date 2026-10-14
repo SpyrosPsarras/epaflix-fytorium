@@ -13,11 +13,17 @@ import androidx.compose.runtime.getValue
 
 class MainActivity : ComponentActivity() {
     private lateinit var session: SessionController
+    private val homeRequest = androidx.compose.runtime.mutableIntStateOf(0)
+    private fun notificationIntent(intent: Intent) {
+        if (intent.action == com.epaflix.fytorium.notifications.PushMessages.OPEN_HOME) { homeRequest.intValue++; intent.action = null }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as FytoriumApplication
         session = app.session
+        app.push.refresh()
+        notificationIntent(intent)
         val care = app.care
         setContent {
             val state by session.state.collectAsState()
@@ -26,7 +32,7 @@ class MainActivity : ComponentActivity() {
                 AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
                     onLogin = { login() }, onLogout = session::logout,
                     careState = careState, controller = care, thumbnails = app.thumbnails, feed = app.feed,
-                    sitesApi = app.api, sitesConnected = { app.store.tokens != null && care.connected() },
+                    homeRequest = homeRequest.intValue, sitesApi = app.api, sitesConnected = { app.store.tokens != null && care.connected() },
                     onCopyDiagnostics = {
                         getSystemService(ClipboardManager::class.java).setPrimaryClip(
                             ClipData.newPlainText("Fytorium diagnostics", session.copyDiagnostics()))
@@ -40,6 +46,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         (application as FytoriumApplication).care.refresh()
+        (application as FytoriumApplication).push.refresh()
     }
 
     private fun login() {
@@ -48,7 +55,7 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) { session.loginLaunchFailed() }
     }
 
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); forwardRedirect(intent) }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); notificationIntent(intent); forwardRedirect(intent) }
 
     private fun forwardRedirect(intent: Intent) {
         val redirect = intent.dataString ?: return
