@@ -102,9 +102,13 @@ class PhotoScreenTest {
         compose.onNodeWithText("Note").performScrollTo().assertTextContains("Synthetic unsaved note")
         compose.onNodeWithText("Add photo update").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("Taken on: 2026-10-13").performScrollTo().performClick()
+        compose.onNodeWithText("Tuesday, October 13, 2026").assertIsEnabled().performClick().assertIsSelected()
+        compose.onNodeWithText("Wednesday, October 14, 2026", substring = true).assertIsNotEnabled()
         // Calendar mode marks the real current day, making its screenshot date-dependent.
         compose.onNodeWithContentDescription("Switch to text input mode").performClick()
         capture("date")
+        compose.onNodeWithContentDescription("Date, MM/DD/YYYY").performTextReplacement("10142026")
+        compose.onNodeWithText("Set date").assertIsNotEnabled()
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { mode.value = "journal"; state.value = state.value.copy(loading = false) }
         compose.onNodeWithText("Plant journal").assertIsDisplayed()
