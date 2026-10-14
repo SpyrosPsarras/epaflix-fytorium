@@ -73,9 +73,14 @@ class PlantaRepositoryTest {
                 "Planta refused authorization. Start again with a new app code.")
             for (message in messages) {
                 server.enqueue(MockResponse().setBody("[$importFixture]")); assertTrue(repo.refresh())
-                server.enqueue(MockResponse().setResponseCode(502).setBody(JSONObject().put("message", message).toString()))
+                server.enqueue(MockResponse().setResponseCode(if (message.contains("rate-limiting")) 503 else 502)
+                    .setBody(JSONObject().put("message", message).toString()))
                 assertFalse(repo.fetch("synthetic-code"))
                 assertEquals(message, repo.state.value.error)
+                assertFalse(repo.state.value.blocked)
+                server.enqueue(MockResponse().setBody("[$importFixture]"))
+                assertTrue(repo.fetch("new-synthetic-code"))
+                assertNull(repo.state.value.error)
             }
         }
     }
@@ -89,9 +94,12 @@ class PlantaRepositoryTest {
             assertEquals(1, repo.state.value.rows.size)
             assertFalse(repo.state.value.toString().contains("synthetic-code"))
             assertFalse(repo.state.value.toString().contains("synthetic-planta-token"))
-            assertTrue(repo.state.value.blocked)
-            assertFalse(repo.fetch("synthetic-code"))
-            assertEquals(2, server.requestCount)
+            assertFalse(repo.state.value.blocked)
+            server.enqueue(MockResponse().setBody("[$importFixture]"))
+            assertTrue(repo.fetch("new-synthetic-code"))
+            server.takeRequest(); server.takeRequest()
+            assertEquals("new-synthetic-code", JSONObject(server.takeRequest().body.readUtf8()).getString("code"))
+            assertEquals(3, server.requestCount)
         }
     }
     @Test fun offlineUnauthorizedAndFailedReadsNeverWriteOrQueue() {
@@ -122,6 +130,7 @@ class PlantaRepositoryTest {
             server.enqueue(MockResponse().setResponseCode(status).setBody("{}")); assertFalse(repo.refresh())
             assertEquals(status == 426, repo.state.value.updateRequired)
             assertTrue(repo.state.value.blocked)
+            if (status == 503) assertTrue(repo.state.value.error!!.startsWith("Fytorium isn't responding."))
             assertEquals(1, repo.state.value.rows.size)
             assertFalse(repo.confirm("staging-one", 910002))
             assertEquals(2, server.requestCount)
@@ -133,6 +142,7 @@ class PlantaRepositoryTest {
             server.shutdown()
             assertFalse(repo.fetch("synthetic-secret-code"))
             assertTrue(repo.state.value.blocked)
+            assertTrue(repo.state.value.error!!.startsWith("Fytorium isn't responding."))
             assertFalse(repo.state.value.toString().contains("synthetic-secret-code"))
         }
     }

@@ -31,7 +31,7 @@ data class PlantaState(val rows: List<ImportRow> = emptyList(), val loaded: Bool
     val loading: Boolean = false, val saving: Boolean = false, val blocked: Boolean = false,
     val updateRequired: Boolean = false, val error: String? = null, val complete: Boolean = false,
     val searchRow: String? = null, val search: SpeciesSearch? = null)
-private class PlantaFailure(val status: Int, val display: String) : Exception()
+private class PlantaFailure(val status: Int, val display: String, val fetchRejected: Boolean = false) : Exception()
 private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
     val mapped = row.getJSONObject("mapped")
     val candidates = parseSpeciesSearch(JSONObject().put("search_id", "").put("candidates", row.getJSONArray("candidates")).toString()).candidates
@@ -59,7 +59,8 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
                     502 -> "Planta refused authorization or returned invalid data. Start again with a new app code."
                     else -> "Planta did not respond. Refresh, then try again with a new app code."
                 } else serverMessage
-                throw PlantaFailure(response.code, message ?: "Could not reach the server. Refresh to retry.")
+                val fetchRejected = sensitive && (serverMessage in fetchErrors || response.code in listOf(422, 502))
+                throw PlantaFailure(response.code, message ?: "Could not reach the server. Refresh to retry.", fetchRejected)
             }
             text
         }
@@ -113,8 +114,9 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
             action()
             allowed()
         } catch (error: Exception) {
-            if (allowed()) mutable.value = state.value.copy(error = if (error is PlantaFailure) error.display else "Could not reach the server. Your staged plants remain available. Refresh to retry.",
-                blocked = error !is PlantaFailure || error.status >= 500 || error.status in listOf(401, 403, 426),
+            val unavailable = error !is PlantaFailure || (error.status >= 500 && !error.fetchRejected)
+            if (allowed()) mutable.value = state.value.copy(error = if (error is PlantaFailure && !unavailable) error.display else "Fytorium isn't responding. Your staged plants remain available. Refresh to retry.",
+                blocked = unavailable || error.status in listOf(401, 403, 426),
                 updateRequired = state.value.updateRequired || (error is PlantaFailure && error.status == 426))
             false
         } finally {

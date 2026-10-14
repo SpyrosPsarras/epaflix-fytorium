@@ -80,7 +80,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 key(careState.member) {
                     com.epaflix.fytorium.planta.PlantaRoute(sitesApi, careState, sitesConnected, onBack = { plantaImport = false },
                         onPlants = { plantaImport = false; journalPlantId = null; tab = "Plants"; controller?.refresh() },
-                        onPlant = { plantaImport = false; journalPlantId = it; tab = "Plants"; controller?.refresh() })
+                        onPlant = { plantaImport = false; journalPlantId = it; tab = "Plants"; controller?.refresh() },
+                        onSites = { plantaImport = false; sites = true })
                 }
             }
             return@Scaffold
