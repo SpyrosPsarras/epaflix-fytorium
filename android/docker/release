@@ -46,6 +46,8 @@ case "$command" in
       -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEYSTORE_PASSWORD \
       -alias "$ANDROID_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 1 -dname 'CN=Fytorium dry run' >/dev/null 2>&1
     fingerprint=$(keytool -exportcert -keystore "$ANDROID_KEYSTORE_PATH" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" | sha256sum | cut -d' ' -f1)
+    # Dry runs use the obvious placeholder, never an operator Firebase project.
+    export GOOGLE_SERVICES_JSON="$(tr -d '\n' < app/src/debug/google-services.json)" ANDROID_FIREBASE_TEST_CONFIG=true
     build
     verify "$fingerprint"
     # The same verifier must reject the throwaway key as a production release.

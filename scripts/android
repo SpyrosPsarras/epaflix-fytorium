@@ -52,12 +52,12 @@ elif [ "$command" = release-build ] || [ "$command" = release-verify ] || [ "$co
     release-dry-run) set --; action=dry-run;;
   esac
   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e ANDROID_USER_HOME=/tmp/.android \
-    -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp -e PUBLISHED_TAGS "$@" \
+    -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp -e PUBLISHED_TAGS -e GOOGLE_SERVICES_JSON "$@" \
     -v "$PWD":/work -w /work/android "$image-$target" sh docker/release "$action" "$tag"
 else
   case "$command" in
     build) task=assembleDebug;;
-    release-check) task=assembleRelease;;
+    release-check) task=release-check;;
     test) task=testDebugUnitTest;;
     lint) task=lintDebug;;
     screenshots)
@@ -66,6 +66,6 @@ else
       ;;
   esac
   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e ANDROID_USER_HOME=/tmp/.android \
-    -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp \
-    -v "$PWD":/work -w /work/android "$image-$target" sh -ec 'if [ "$1" = testDebugUnitTest ]; then sh docker/release-version-test; fi; ./gradlew --no-daemon --console=plain "$1"; if [ "$1" = assembleRelease ]; then bytes=$(stat -c %s app/build/outputs/apk/release/app-release-unsigned.apk); echo "Release APK size: $bytes bytes"; fi' sh "$task"
+    -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp -e GOOGLE_SERVICES_JSON \
+    -v "$PWD":/work -w /work/android "$image-$target" sh -ec 'if [ "$1" = release-check ]; then exec sh docker/release-check; fi; if [ "$1" = testDebugUnitTest ]; then sh docker/release-version-test; fi; ./gradlew --no-daemon --console=plain "$1"; if [ "$1" = assembleRelease ]; then bytes=$(stat -c %s app/build/outputs/apk/release/app-release-unsigned.apk); echo "Release APK size: $bytes bytes"; fi' sh "$task"
 fi

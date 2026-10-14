@@ -4,5 +4,6 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">app</domain>
         <domain includeSubdomains="false">oidc</domain>
+        <domain includeSubdomains="false">fake-push</domain>
     </domain-config>
 </network-security-config>

@@ -43,7 +43,7 @@ export async function withNotificationLease(notification: Notification, send: ()
     // With no live devices, sent_at records a skip so a new device never replays the notice.
     const completion = await database.query(`UPDATE ${table} SET sent_at = $3 WHERE member_id = $1 AND ${key} = $2::${cast}
       AND claimed_until = $4 AND sent_at IS NULL
-      AND ($5::boolean OR NOT EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = $1))`,
+      AND ($5::boolean OR NOT EXISTS (SELECT 1 FROM push_subscriptions WHERE member_id = $1 AND enabled))`,
     [notification.memberId, notification.key, clock(), until, sent > 0]);
     finished = Boolean(completion.rowCount);
   } catch {

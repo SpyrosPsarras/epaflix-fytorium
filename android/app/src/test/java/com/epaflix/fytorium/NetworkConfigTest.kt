@@ -21,8 +21,8 @@ class NetworkConfigTest {
             .parse(File("src/debug/res/xml/network_security_config.xml"))
         assertEquals("false", document.getElementsByTagName("base-config").item(0).attributes.getNamedItem("cleartextTrafficPermitted").nodeValue)
         val domains = document.getElementsByTagName("domain")
-        assertEquals(2, domains.length)
-        assertEquals(setOf("app", "oidc"), (0 until domains.length).map { domains.item(it).textContent.trim() }.toSet())
+        assertEquals(3, domains.length)
+        assertEquals(setOf("app", "oidc", "fake-push"), (0 until domains.length).map { domains.item(it).textContent.trim() }.toSet())
         for (i in 0 until domains.length) {
             assertEquals("false", domains.item(i).attributes.getNamedItem("includeSubdomains").nodeValue)
         }

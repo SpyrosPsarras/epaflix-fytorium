@@ -38,7 +38,7 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/notifications/key': { GET: self(200) },
   '/api/notifications/settings': { GET: self(200), PUT: self(422) },
   '/api/notifications/subscriptions': { GET: self(200), POST: self(422) },
-  '/api/notifications/subscriptions/[id]': { DELETE: self(404) },
+  '/api/notifications/subscriptions/[id]': { DELETE: self(404), PATCH: self(422) },
   '/api/notifications/test': { POST: self(200) },
   '/api/photos/[id]': { DELETE: edit(404) },
   '/api/photos/[id]/[variant]': { GET: edit(404) },

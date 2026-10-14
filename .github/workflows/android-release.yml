@@ -49,10 +49,13 @@ jobs:
           test -s "$RUNNER_TEMP/android-release.p12"
       - name: Build signed APK in Docker
         env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/android-release.p12
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        run: ./scripts/android release-build "$RELEASE_TAG"
+        run: |
+          test -n "$GOOGLE_SERVICES_JSON" || { echo "GOOGLE_SERVICES_JSON secret is required" >&2; exit 1; }
+          ./scripts/android release-build "$RELEASE_TAG"
       - name: Verify release certificate and checksum in Docker
         # apksigner verify --print-certs must match this SHA-256, not a debug key.
         # 8A:A9:74:16:85:B7:03:12:75:7F:44:37:2E:B0:36:3B:16:F2:C6:A9:11:03:6C:EE:77:7A:9F:39:11:62:0C:F7

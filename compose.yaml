@@ -15,6 +15,9 @@ services:
       MINIO_BUCKET: fytorium-test
       MINIO_ACCESS_KEY: synthetic-minio
       MINIO_SECRET_KEY: synthetic-minio-password
+      FCM_BASE_URL: http://fake-push:8080
+      FCM_OAUTH_TOKEN_URL: http://fake-push:8080/oauth/token
+      FCM_PROJECT_ID: synthetic-fytorium
       FYTORIUM_TEST_PUSH_URL: http://fake-push:8080
       VAPID_SUBJECT: mailto:push@example.test
       PERENUAL_BASE_URL: ${PERENUAL_BASE_URL:-http://perenual:8080}

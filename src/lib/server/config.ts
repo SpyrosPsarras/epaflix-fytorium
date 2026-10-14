@@ -40,6 +40,11 @@ export function config() {
     vapidPrivateKey: env.VAPID_PRIVATE_KEY ?? '',
     vapidSubject: env.VAPID_SUBJECT ?? '',
     pushWorkerEnabled: env.PUSH_WORKER_ENABLED !== 'false',
+    fcmProjectId: env.FCM_PROJECT_ID ?? '',
+    fcmBaseUrl: env.FCM_BASE_URL ?? 'https://fcm.googleapis.com',
+    fcmTokenUrl: env.FCM_OAUTH_TOKEN_URL ?? 'https://oauth2.googleapis.com/token',
+    fcmServiceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON ?? '',
+    fcmServiceAccountFile: env.FCM_SERVICE_ACCOUNT_FILE ?? '',
     // The synthetic transport is unreachable in production, including misconfigured deployments.
     testPushUrl: testClockEnabled && env.FYTORIUM_TEST_PUSH_URL ? new URL(env.FYTORIUM_TEST_PUSH_URL) : null,
     minioEndpoint: new URL(required('MINIO_ENDPOINT')),

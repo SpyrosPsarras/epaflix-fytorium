@@ -6,9 +6,19 @@ import { now } from '../clock';
 import { db } from '../db';
 import { publicAddress, pinnedLookup, publicUrlLimits } from '../net/public-url';
 import { syntheticPush } from './subscriptions';
+import { FcmError } from './fcm';
+import { fcmConfigured, fcmTransport } from './fcm-config';
 
 export type PushPayload = { title: string; body: string; tag: string; url: '/' };
 export const leaseMs = 5 * 60 * 1000;
+
+// Only claim a lease when this member has a device we can actually deliver to.
+export function availableDeviceSql(member: string, at: string) {
+  return `EXISTS (SELECT 1 FROM push_subscriptions s LEFT JOIN app_devices d ON d.id = s.app_device_id
+    WHERE s.member_id = ${member} AND s.enabled AND (
+      (s.transport = 'web' AND ${!!config().vapidPublicKey}) OR
+      (s.transport = 'fcm' AND ${fcmConfigured()} AND d.revoked_at IS NULL AND d.last_used_at > ${at}::timestamptz - INTERVAL '90 days')))`;
+}
 
 class PushResponseError extends Error {
   constructor(readonly statusCode: number) {
@@ -51,19 +61,28 @@ async function deliver(subscription: { endpoint: string; keys: { p256dh: string;
 }
 
 export async function sendToMember(member: string, payload: PushPayload) {
-  const { rows } = await db().query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE member_id = $1', [member]);
+  const { rows } = await db().query(`SELECT s.id, s.transport, s.fcm_token, s.endpoint, s.p256dh, s.auth FROM push_subscriptions s
+    LEFT JOIN app_devices d ON d.id = s.app_device_id
+    WHERE s.member_id = $1 AND s.enabled AND (s.transport = 'web' OR (d.revoked_at IS NULL AND d.last_used_at > $2))`, [member, new Date(now().getTime() - 90 * 86400000)]);
   let cursor = 0, sent = 0;
   await Promise.all(Array.from({ length: Math.min(4, rows.length) }, async () => {
     while (cursor < rows.length) {
       const row = rows[cursor++];
       try {
-        await deliver({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, payload);
+        if (row.transport === 'fcm') {
+          const fcm = fcmTransport();
+          if (!fcm) continue;
+          await fcm.send(row.fcm_token, payload);
+        } else {
+          if (!config().vapidPublicKey) continue;
+          await deliver({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, payload);
+        }
         sent++;
         await db().query('UPDATE push_subscriptions SET last_success_at = $2 WHERE id = $1', [row.id, now()]);
       } catch (cause) {
         const status = cause instanceof PushResponseError ? cause.statusCode : undefined;
-        if (status === 404 || status === 410) await db().query('DELETE FROM push_subscriptions WHERE id = $1', [row.id]);
-        else console.error('Push delivery failed. No immediate retry.');
+        if (status === 404 || status === 410 || cause instanceof FcmError && cause.permanent) await db().query('DELETE FROM push_subscriptions WHERE id = $1', [row.id]);
+        else if (!(cause instanceof FcmError && cause.misconfigured)) console.error('Push delivery failed. No immediate retry.');
       }
     }
   }));
