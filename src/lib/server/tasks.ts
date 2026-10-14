@@ -125,7 +125,7 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
       const key = taskKey(task);
       const completed = completedByTask.get(plant.id + ':' + key);
       if ((task.status === 'due' && task.dueOn <= through) || (completed && (view === 'today' || task.status === 'due'))) {
-        (groups[key] ??= []).push({ ...task, plant_id: plant.id, plant_name: plant.display_name, site_name: plant.site_name, ...(completed ? { completed_event: completed } : {}) });
+        (groups[key] ??= []).push({ ...task, plant_id: plant.id, plant_name: plant.display_name, site_name: plant.site_name, cover_photo_id: plant.cover_photo_id ?? null, ...(completed ? { completed_event: completed } : {}) });
       }
     }
   }

@@ -21,8 +21,8 @@ import org.json.JSONObject
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, initialPlant: String? = null,
     speciesApi: ApiClient? = null, speciesConnected: () -> Boolean = { false }, onCareChanged: () -> Unit = {},
-    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }) {
-    var page by rememberSaveable { mutableStateOf(if (initialPlant == null) "list" else "detail") }
+    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }, initialAdd: Boolean = false) {
+    var page by rememberSaveable { mutableStateOf(if (initialPlant != null) "detail" else if (initialAdd && state.member?.role != Role.sitter) "search" else "list") }
     var id by rememberSaveable { mutableStateOf(initialPlant) }
     var identifyReturn by rememberSaveable { mutableStateOf("search") }
     var graveyard by remember { mutableStateOf<List<Plant>>(emptyList()) }

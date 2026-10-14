@@ -134,7 +134,7 @@ function sitterEvent(resource: unknown) {
 function sitterTask(resource: unknown) {
   const task = record(resource);
   return { ...fields(task, ['status', 'dueOn', 'intervalDays', 'lateDays', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name']),
-    basedOn: [], ...(Object.hasOwn(task, 'site_name') ? { site_name: '' } : {}),
+    basedOn: [], ...(Object.hasOwn(task, 'cover_photo_id') ? { cover_photo_id: null } : {}), ...(Object.hasOwn(task, 'site_name') ? { site_name: '' } : {}),
     ...(task.completed_event ? { completed_event: sitterEvent(task.completed_event) } : {}) };
 }
 function sitterSchedule(resource: unknown) {

@@ -152,6 +152,7 @@ class LaunchTest {
             com.epaflix.fytorium.species.runSpeciesCareScenario(compose, app)
             com.epaflix.fytorium.planta.runPlantaScenario(compose, app)
             com.epaflix.fytorium.notifications.runNotificationScenario(compose, app)
+            runTodayScenario(compose, app)
             // A09 switches identities and restores the owner on Today; A04 logs out last.
             com.epaflix.fytorium.household.runHouseholdScenario(compose, app)
             careScenarios(app, device)
@@ -196,13 +197,17 @@ class LaunchTest {
                 !state.busy && state.today?.today == "2030-06-02" && state.today.settings == TaskSettings(showCompleted = true)
             }
             val waterTag = "task:$plantId:water"
-            fun button(tag: String, label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag(tag)))
+            fun button(tag: String, matcher: SemanticsMatcher) = compose.onNode(matcher and hasAnyAncestor(hasTestTag(tag)))
+            val completeWater = hasContentDescription("Mark Water for Synthetic A04 fern done")
             compose.waitForNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
-            compose.waitForNode(hasText("Done") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().waitForAction("$waterTag Done").performClick()
+            compose.scrollTaskClearOfFabs(waterTag)
+            compose.waitForNode(completeWater and hasAnyAncestor(hasTestTag(waterTag))).waitForAction("$waterTag complete").performClick()
             compose.waitForState("Water completion applied to Today", 30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
             // A real refresh must not remove the row between completion and Undo.
             app.repository.refresh()
-            compose.waitForNode(hasText("Undo") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().waitForAction("$waterTag Undo").performClick()
+            compose.waitForNode(hasText("Undo") and hasAnyAncestor(hasTestTag(waterTag)))
+            compose.scrollTaskClearOfFabs(waterTag)
+            button(waterTag, hasText("Undo")).waitForAction("$waterTag Undo").performClick()
             try {
                 compose.waitForState("Water undo restored one-day lateness", 30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent == null && it.lateDays == 1 } == true }
             } catch (error: Throwable) {
@@ -216,7 +221,7 @@ class LaunchTest {
             val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.first { it.plantId == plantId && it.dueOn!! > "2030-06-02" }
             val futureTag = "task:$plantId:${future.key}"
             compose.waitForNode(hasTestTag(futureTag)).performScrollTo()
-            button(futureTag, "Snooze 2 days").assertDoesNotExist()
+            button(futureTag, hasContentDescription("Snooze 2 days")).assertDoesNotExist()
             compose.onNodeWithTag("view-today").waitForAction("view-today").performClick()
             device.executeShellCommand("cmd connectivity airplane-mode enable")
             app.care.refresh()
@@ -226,15 +231,16 @@ class LaunchTest {
                     true
                 }.getOrDefault(false)
             }
-            button(waterTag, "Done").assertIsNotEnabled()
-            button(waterTag, "Snooze 2 days").assertIsNotEnabled()
+            button(waterTag, completeWater).assertIsNotEnabled()
+            button(waterTag, hasContentDescription("Snooze 2 days")).assertIsNotEnabled()
             // This negative-control click must stay disabled to prove it cannot queue a write.
-            button(waterTag, "Done").performScrollTo().performClick()
+            button(waterTag, completeWater).performScrollTo().performClick()
             assertEquals("Cached Today was lost in airplane mode", "Synthetic A04 fern", app.repository.state.value.today!!.sections.flatMap { it.tasks }.first { it.plantId == plantId }.plantName)
             device.executeShellCommand("cmd connectivity airplane-mode disable")
             waitForGuestNetwork(app)
             app.care.refresh()
             compose.waitForState("Online refresh after airplane mode", 30_000) { !app.repository.state.value.busy && !app.repository.state.value.offline }
+            compose.onNodeWithContentDescription("Add plant").assertIsEnabled()
             assertEquals("Offline click queued a write", history.length(), JSONArray(json("/api/plants/$plantId/history")).length())
             println("A04 E2E PASS: late complete/undo, future snooze absent, cached Today in airplane mode, writes disabled and not queued")
         } catch (error: Throwable) { failure = error; throw error } finally {

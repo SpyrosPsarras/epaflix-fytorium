@@ -16,11 +16,14 @@ class CareController(context: Context, private val store: CredentialStore, val r
     private val work = WorkManager.getInstance(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
+    private val _online = kotlinx.coroutines.flow.MutableStateFlow(connected())
+    val online: kotlinx.coroutines.flow.StateFlow<Boolean> = _online
     private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onLost(network: Network) { api.networkLost(); repository.connectivityChanged(false); feed?.connectivityChanged(false) }
+        override fun onLost(network: Network) { _online.value = false; api.networkLost(); repository.connectivityChanged(false); feed?.connectivityChanged(false) }
         override fun onAvailable(network: Network) { refresh() }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             val online = connected()
+            _online.value = online
             repository.connectivityChanged(online)
             feed?.connectivityChanged(online)
             if (online) refresh()

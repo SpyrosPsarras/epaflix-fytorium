@@ -3993,6 +3993,12 @@ components:
           type: string
         site_name:
           type: string
+        cover_photo_id:
+          description: Current plant cover thumbnail ID on listed tasks. Null when no cover or when photos are not shared with this member.
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
         completed_event:
           $ref: "#/components/schemas/CareEvent"
       required:

@@ -14,7 +14,7 @@ export function taskPresentation(task: { task_type: TaskType | null; custom_task
   return task.task_type ? taskRules[task.task_type] : { label: task.custom_task_name ?? 'Deleted custom task', action: task.custom_task_name ?? 'custom task' };
 }
 
-export type ListedTask = Task & { plant_id: string; plant_name: string; site_name: string; task_type: TaskType | null; custom_task_id?: string | null; custom_task_name?: string | null; completed_event?: CareEvent };
+export type ListedTask = Task & { plant_id: string; plant_name: string; site_name: string; cover_photo_id?: string | null; task_type: TaskType | null; custom_task_id?: string | null; custom_task_name?: string | null; completed_event?: CareEvent };
 export type TaskViewSettings = { sort: 'task' | 'plant' | 'site'; filter: 'all' | 'indoor' | 'outdoor'; show_completed: boolean };
 export type TaskList = { today: string; view: 'today' | 'upcoming'; settings: TaskViewSettings; groups: Record<string, ListedTask[]>; sections: { key: string; label: string; tasks: ListedTask[] }[] };
 export type CareEvent = {

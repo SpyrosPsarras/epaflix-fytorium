@@ -48,7 +48,6 @@ class FeedScreenTest {
             compose.setContent { FytoriumTheme { AppShell(true, false,
                 careState = CareState(member = Member("synthetic-member", Role.sitter)), feed = feed) } }
             compose.onNodeWithTag("feed-cold").assertDoesNotExist()
-            compose.onNodeWithText("Customize my feed").assertDoesNotExist()
             compose.onNodeWithText("More").performClick()
             compose.onNodeWithText("Feed and weather settings").assertDoesNotExist()
         } finally { server.shutdown() }
@@ -71,7 +70,8 @@ class FeedScreenTest {
             compose.runOnIdle { care.value = CareState(member = member, serverUnavailable = true) }
             compose.onNodeWithText("Mark 1 outdoor plants watered").assertIsEnabled()
             server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("""{"location":{"latitude":0.5,"longitude":0.5}}"""))
-            compose.onNodeWithText("Customize my feed").performScrollTo().performClick()
+            compose.onNodeWithText("More").performClick()
+            compose.onNodeWithText("Feed and weather settings").performScrollTo().performClick()
             compose.onNodeWithText("Save my feed").assertIsEnabled()
             compose.onNodeWithText("Latitude").assertIsEnabled()
             compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()
@@ -85,13 +85,13 @@ class FeedScreenTest {
             weather = state().weather!!.copy(lastBatchId = "batch-one")))
         var settings by mutableStateOf(false)
         compose.setContent { Screen(false) {
-            if (settings) FeedSettingsScreen(current.value) else HomeFeed(current.value, onSettings = { settings = true })
+            if (settings) FeedSettingsScreen(current.value) else HomeFeed(current.value)
         } }
         compose.onNodeWithTag("feed-rain").performScrollTo()
         compose.onNodeWithText("Mark 1 outdoor plants watered").assertIsEnabled()
         compose.onNodeWithText("Undo rain watering").assertIsEnabled()
         compose.onNodeWithText("It rained: 6 mm today or yesterday.").assertExists()
-        compose.onNodeWithText("Customize my feed").performScrollTo().performClick()
+        compose.runOnIdle { settings = true }
         compose.onAllNodes(isToggleable()).assertCountEquals(4)
         repeat(4) { compose.onAllNodes(isToggleable())[it].assertIsEnabled() }
         compose.onNodeWithText("Latitude").assertIsEnabled()
@@ -116,7 +116,7 @@ class FeedScreenTest {
             if (settings) {
                 assertEquals(if (dark) DarkColors.background else LightColors.background, MaterialTheme.colorScheme.background)
                 FeedSettingsScreen(current.value, onSaveFeed = { saved = it })
-            } else HomeFeed(current.value, onSettings = { settings = true }, onOpen = { opened = it }, onWater = { waters++ })
+            } else HomeFeed(current.value, onOpen = { opened = it }, onWater = { waters++ })
         } }
         fun capture(name: String) {
             compose.mainClock.advanceTimeBy(1000)
@@ -145,7 +145,7 @@ class FeedScreenTest {
         compose.onNodeWithText("Warning inputs").performClick()
         compose.onNode(hasText("warning.effective_light@1", substring = true)).assertIsDisplayed()
         capture("feed-warnings")
-        compose.onNodeWithText("Customize my feed").performScrollTo().performClick()
+        compose.runOnIdle { settings = true }
         compose.onNodeWithText("Feed settings").performScrollTo().assertIsDisplayed()
         capture("feed-settings")
         compose.onNodeWithText("Plant warnings").performScrollTo().performClick()
@@ -162,12 +162,11 @@ class FeedScreenTest {
         compose.onNodeWithText("Weather location").assertDoesNotExist()
         compose.onNodeWithText("Save my feed").assertDoesNotExist()
         compose.runOnIdle { settings = false }
-        compose.onNodeWithText("Customize my feed").assertDoesNotExist()
         compose.onNodeWithTag("feed-cold").assertDoesNotExist()
         compose.onNodeWithTag("feed-warnings").assertDoesNotExist()
         capture("feed-sitter")
         compose.runOnIdle { current.value = FeedState(member = Member("synthetic-member", Role.owner), offline = true) }
-        compose.onNodeWithText("Feed unavailable offline").assertIsDisplayed()
+        compose.onNodeWithText("Actions are unavailable offline.").assertIsDisplayed()
         capture("feed-unavailable-offline")
     }
 }

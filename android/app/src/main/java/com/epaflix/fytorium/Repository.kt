@@ -16,8 +16,8 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
                      val plants: List<Plant> = emptyList(), val detail: PlantDetail? = null,
                      val offline: Boolean = false, val serverUnavailable: Boolean = false, val lastUpdated: Long? = null, val busy: Boolean = false,
                      val message: String? = null, val updateRequired: Boolean = false,
-                     val handled: Map<String, CareEvent> = emptyMap()) {
-    val writable get() = !offline && !serverUnavailable && !busy && !updateRequired && member != null
+                     val handled: Map<String, CareEvent> = emptyMap(), val timezone: String? = null, val saving: Boolean = false) {
+    val writable get() = !offline && !serverUnavailable && !saving && !updateRequired && member != null
     private fun updatedTime() = lastUpdated?.let {
         DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(it))
     }
@@ -71,7 +71,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         mutable.value = mutable.value.copy(member = member, today = today?.let { parseTaskList(it.json) },
             upcoming = cache.get(member.id, "upcoming")?.let { parseTaskList(it.json) },
             plants = cache.get(member.id, "plants")?.let { JSONArray(it.json).mapObjects(::parsePlant) } ?: emptyList(),
-            lastUpdated = today?.refreshedAt)
+            lastUpdated = today?.refreshedAt,
+            timezone = cache.get(member.id, "meta")?.let { JSONObject(it.json).getString("timezone") })
     }
     fun wipe() = synchronized(monitor) {
         generation++
@@ -100,9 +101,11 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             // Sitters receive the server's shared active header projection, including plants without due tasks.
             val plants = read("/api/plants")
             parseTaskList(today); parseTaskList(upcoming); JSONArray(plants).mapObjects(::parsePlant)
+            val meta = read("/api/meta")
+            ZoneId.of(JSONObject(meta).getString("timezone"))
             synchronized(monitor) {
                 if (epoch == generation) {
-                    cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming, "plants" to plants), clock())
+                    cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming, "plants" to plants, "meta" to meta), clock())
                     loadCached()
                     mutable.value = mutable.value.copy(offline = false, serverUnavailable = false, message = null, updateRequired = false, handled = emptyMap())
                 }
@@ -255,7 +258,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 return false
             }
             if (plantsScreen) plantMutable.value = plantMutable.value.copy(saving = true, errors = emptyMap())
-            else mutable.value = mutable.value.copy(busy = true, message = null)
+            else mutable.value = mutable.value.copy(busy = true, saving = true, message = null)
             generation
         }
         try {
@@ -264,7 +267,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         } catch (error: Exception) { if (plantsScreen) plantFailed(error, epoch, writing = true) else failed(error, epoch); return false }
         finally { synchronized(monitor) { if (epoch == generation) {
             if (plantsScreen) plantMutable.value = plantMutable.value.copy(saving = false)
-            else mutable.value = mutable.value.copy(busy = false)
+            else mutable.value = mutable.value.copy(busy = false, saving = false)
         } } }
         if (refreshSchedulesAfter || (refreshAfter && plantsScreen)) background.launch { refreshSchedules(epoch) }
         if (refreshAfter) {

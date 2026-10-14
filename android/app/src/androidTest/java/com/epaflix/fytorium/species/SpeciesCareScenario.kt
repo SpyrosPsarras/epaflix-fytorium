@@ -42,6 +42,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
     fun showBasis() {
         compose.onNodeWithText("Today").performClick()
         val task = hasAnyAncestor(hasTestTag("task:$plantId:water"))
+        compose.waitForNode(task and hasContentDescription("Task details for $plantName")).performScrollTo().performClick()
         compose.waitForNode(task and hasText("Based on")).performScrollTo().performClick()
     }
     try {

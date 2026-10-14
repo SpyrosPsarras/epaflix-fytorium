@@ -132,7 +132,7 @@ class AppShellRestorationTest {
                     "/api/tasks?view=today" -> taskListFixture("today")
                     "/api/tasks?view=upcoming" -> taskListFixture("upcoming")
                     "/api/plants" -> "[$plantFixture]"
-                    "/api/meta" -> """{"today":"2030-06-01"}"""
+                    "/api/meta" -> """{"today":"2030-06-01","timezone":"Europe/Oslo"}"""
                     "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"late","kind":"late_tasks","href":"/#today","count":1,"plants":[{"id":"plant-one","name":"Synthetic fern"}]}]}"""
                     "/api/weather" -> """{"locationSet":false,"forecastFetchedAt":null,"rain":null,"lastRainBatch":null}"""
                     "/api/household/location" -> """{"location":null}"""
@@ -294,7 +294,7 @@ class AppShellRestorationTest {
                     val tab = when (route) { "journal" -> "Today"; "feed-plant", "plant-species", "photo-form", "journal-plant", "identify" -> "Plants"; else -> "More" }
                     compose.onNode(hasText(tab) and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
                 } else if (reset == "family" && route == "planta") compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
-                else compose.onNodeWithText("Home feed").assertIsDisplayed()
+                else compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
                 compose.onNodeWithText("One-time app code").assertDoesNotExist()
                 compose.onNodeWithText("Synthetic imported fern").assertDoesNotExist()
                 compose.onNodeWithText("Plant journal").assertDoesNotExist()
