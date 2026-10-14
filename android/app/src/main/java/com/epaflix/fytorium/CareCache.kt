@@ -27,7 +27,8 @@ class CareCache(private val db: CareDatabase) {
     }
     fun save(member: String, snapshots: Map<String, String>, time: Long) {
         db.runInTransaction {
-            check(member()?.id == member)
+            // A response can outlive the member binding that started it.
+            if (member()?.id != member) return@runInTransaction
             db.care().put(snapshots.map { (key, json) -> CachedCare(member, key, json, time) })
         }
     }

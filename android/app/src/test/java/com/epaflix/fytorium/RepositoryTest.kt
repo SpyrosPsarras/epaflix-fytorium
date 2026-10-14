@@ -39,6 +39,70 @@ class RepositoryTest {
         assertNull(cache.member())
         db.close()
     }
+    @Test fun staleSaveAfterMemberRebindIsDiscarded() {
+        val db = database()
+        try {
+            val cache = CareCache(db)
+            cache.bind("""{"member":{"id":"member-one","role":"owner"}}""")
+            val pendingMember = cache.member()!!.id
+            cache.bind("""{"member":{"id":"member-two","role":"family"}}""")
+            cache.save("member-two", mapOf("plants" to "[]"), 1234)
+
+            cache.save(pendingMember, mapOf("plants" to "[$plantFixture]", "today" to taskListFixture("today")), 5678)
+
+            assertEquals("member-two", cache.member()!!.id)
+            assertNull(cache.get(pendingMember, "plants"))
+            assertNull(cache.get(pendingMember, "today"))
+            assertNull(cache.get("member-two", "today"))
+            assertEquals(CachedCare("member-two", "plants", "[]", 1234), cache.get("member-two", "plants"))
+        } finally { db.close() }
+    }
+    @Test fun staleSaveAfterWipeIsDiscarded() {
+        val db = database()
+        try {
+            val cache = CareCache(db)
+            cache.bind("""{"member":{"id":"member-one","role":"owner"}}""")
+            val pendingMember = cache.member()!!.id
+            cache.wipe()
+
+            cache.save(pendingMember, mapOf("plants" to "[$plantFixture]", "today" to taskListFixture("today")), 5678)
+
+            assertNull(cache.member())
+            assertNull(cache.get(pendingMember, "plants"))
+            assertNull(cache.get(pendingMember, "today"))
+        } finally { db.close() }
+    }
+    @Test fun pendingPlantOptionsAfterCacheRebindAreDiscardedWithoutThrowing() {
+        withRepository { repository, server, cache ->
+            cache.bind("""{"member":{"id":"member-one","role":"owner"}}""")
+            repository.restore()
+            val started = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                    started.countDown()
+                    check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    return MockResponse().setBody("""{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":["good"]},"nameLanguages":{}}""")
+                }
+            }
+            val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+            try {
+                val pending = executor.submit<com.epaflix.fytorium.plants.PlantOptions?> { repository.plantOptions() }
+                assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                cache.bind("""{"member":{"id":"member-two","role":"family"}}""")
+                release.countDown()
+
+                assertNull(pending.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals("member-two", cache.member()!!.id)
+                assertNull(cache.get("member-one", "plant-choices"))
+                assertNull(cache.get("member-two", "plant-choices"))
+            } finally {
+                release.countDown()
+                executor.shutdownNow()
+                assertTrue(executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+        }
+    }
     @Test fun incompatibleCacheSchemaIsDiscardedRatherThanBlockingStartup() {
         val context = RuntimeEnvironment.getApplication()
         val name = "synthetic-cache-migration.db"

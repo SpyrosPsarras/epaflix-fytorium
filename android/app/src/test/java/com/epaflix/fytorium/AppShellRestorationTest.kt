@@ -9,6 +9,8 @@ import com.epaflix.fytorium.feed.*
 import com.epaflix.fytorium.species.careFixture
 import com.epaflix.fytorium.species.outdoorFixture
 import org.json.JSONObject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -119,6 +121,7 @@ class AppShellRestorationTest {
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun navigation(reset: String?, route: String = "sites-unmatched", initialRole: Role = Role.owner) {
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
@@ -165,10 +168,15 @@ class AppShellRestorationTest {
                     tokens = Tokens("synthetic-access", "synthetic-refresh")
                 }, repository, client)
             }
+            val showShell = mutableStateOf(true)
+            var effects: Job? = null
             try {
             val restoration = StateRestorationTester(compose)
-            restoration.setContent { FytoriumTheme {
-                AppShell(loggedIn.value, false, careState = care.value, controller = controller, feed = feed, sitesApi = api.value, sitesConnected = { true })
+            restoration.setContent { if (showShell.value) {
+                LaunchedEffect(Unit) { effects = coroutineContext[Job]?.parent }
+                FytoriumTheme {
+                    AppShell(loggedIn.value, false, careState = care.value, controller = controller, feed = feed, sitesApi = api.value, sitesConnected = { true })
+                }
             } }
             when (route) {
                 "identify" -> {
@@ -310,7 +318,16 @@ class AppShellRestorationTest {
                 compose.onNodeWithText("Open Plantbook unmatched species").assertDoesNotExist()
                 compose.onNodeWithText("A site groups plants that share the same conditions.").assertDoesNotExist()
             }
-            } finally { controller?.close(); database?.close() }
+            } finally {
+                controller?.close()
+                compose.runOnIdle { showShell.value = false }
+                // Compose idle does not wait for cancelled effects' blocking IO to finish.
+                compose.waitUntil(5_000) {
+                    effects?.children?.none { it.isCancelled && !it.isCompleted } != false &&
+                        controller?.repository?.state?.value?.busy != true
+                }
+                database?.close()
+            }
         }
     }
 }
