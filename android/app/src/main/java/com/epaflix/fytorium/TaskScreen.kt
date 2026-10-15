@@ -21,7 +21,6 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import androidx.compose.material.icons.Icons
@@ -46,26 +45,40 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                            onHandleAll: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
                            onLoadPot: (suspend (String) -> Plant)? = null, thumbnails: Thumbnails? = null,
                            onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
-                           deviceOnline: Boolean = true, now: java.time.Instant? = null, feedContent: @Composable (() -> Unit) -> Unit = {}) {
+                           deviceOnline: Boolean = true, now: java.time.Instant? = null,
+                           thumbnailLoader: suspend (String) -> Bitmap? = { id -> withContext(Dispatchers.IO) {
+                               thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                           } }, feedContent: @Composable (() -> Unit) -> Unit = {}) {
     val clock by produceState(now ?: java.time.Instant.now(), now) {
         if (now == null) while (true) { value = java.time.Instant.now(); delay(60_000) }
     }
     val photoIds = remember(state.today, state.upcoming) {
         listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
     }
-    val photos by produceState<Map<String, Bitmap?>>(emptyMap(), thumbnails, state.lastUpdated, photoIds) {
-        value = emptyMap()
+    val photoRequest by rememberUpdatedState(photoIds to state.lastUpdated)
+    val loadPhoto by rememberUpdatedState(thumbnailLoader)
+    val photos by produceState<Map<String, Bitmap?>>(emptyMap(), thumbnails, state.member) {
         val loaded = mutableMapOf<String, Bitmap?>()
+        val inFlight = mutableSetOf<String>()
         val permits = Semaphore(4)
-        coroutineScope {
-            photoIds.forEach { id -> launch {
-                val bitmap = permits.withPermit { withContext(Dispatchers.IO) {
-                    thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
-                } }
-                // A null entry is a finished, failed load; duplicate rows share this decode.
-                loaded[id] = bitmap
+        // Pin publication to Main even when a Compose test continuation resumes on an IO thread.
+        withContext(Dispatchers.Main.immediate) {
+            // Refreshes keep decoded photos and join existing loads instead of cancelling and refetching.
+            snapshotFlow { photoRequest }.collect { (ids, _) ->
+                loaded.entries.removeAll { it.key !in ids || it.value == null }
                 value = loaded.toMap()
-            } }
+                ids.filter { loaded[it] == null && it !in inFlight }.forEach { id ->
+                    inFlight.add(id)
+                    launch {
+                        try {
+                            val bitmap = permits.withPermit { loadPhoto(id) }
+                            // A null entry is a finished, failed load; duplicate rows share this decode.
+                            if (id in photoRequest.first) loaded[id] = bitmap
+                            value = loaded.toMap()
+                        } finally { inFlight.remove(id) }
+                    }
+                }
+            }
         }
     }
     val pullState = rememberPullToRefreshState()

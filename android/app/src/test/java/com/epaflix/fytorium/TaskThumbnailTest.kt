@@ -1,24 +1,17 @@
 package com.epaflix.fytorium
 
 import android.graphics.Bitmap
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
-import java.io.ByteArrayOutputStream
-import java.io.File
 import java.time.Instant
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
-import okio.Buffer
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -26,53 +19,102 @@ import org.robolectric.annotation.Config
 class TaskThumbnailTest {
     @get:Rule val compose = createComposeRule()
 
+    private val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+    private val requests = mutableListOf<String>()
+    private val pending = (1..5).associate { "photo-$it" to CompletableDeferred<Bitmap?>() }
+    private val state = mutableStateOf(careState())
+    private val view = mutableStateOf("today")
+
+    private fun careState(count: Int = 3): CareState {
+        val template = parseTaskList(taskListFixture("today"))
+        val tasks = (1..count).map { index -> template.sections.single().tasks.single().copy(
+            plantId = "plant-$index", plantName = "Plant $index", coverPhotoId = "photo-$index", lateDays = 0) }
+        val today = template.copy(sections = listOf(TaskSection("water", "Water", tasks)), groups = mapOf("water" to tasks))
+        val plants = tasks.map { parsePlant(org.json.JSONObject(plantFixture)).copy(id = it.plantId) }
+        return CareState(member = Member("owner", Role.owner), plants = plants, today = today, upcoming = today.copy(view = "upcoming"))
+    }
+    private fun show() {
+        compose.setContent { FytoriumTheme {
+            TaskScreen(state.value, view.value, now = Instant.parse("2030-06-02T18:00:00Z"), thumbnailLoader = { id ->
+                requests.add(id)
+                // A duplicate request stays pending, so a refresh cannot hide a refetch behind an instant result.
+                if (requests.count { it == id } > 1) CompletableDeferred<Bitmap?>().await() else pending.getValue(id).await()
+            })
+        } }
+        compose.waitForIdle()
+    }
+    private fun finish(vararg ids: Int) {
+        compose.runOnIdle { ids.forEach { pending.getValue("photo-$it").complete(bitmap) } }
+        compose.waitForIdle()
+    }
+    private fun noSpinners() {
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertCountEquals(0)
+    }
+    private fun loading(id: Int, expected: Boolean) {
+        compose.onNodeWithTag("thumbnail:photo-$id", useUnmergedTree = true)
+            .assert(SemanticsMatcher.expectValue(ThumbnailLoading, expected))
+    }
+
     @Test fun firstAndThirdPhotosAppearWhileSecondIsStillLoading() {
-        val started = CountDownLatch(1)
-        val release = CountDownLatch(1)
-        val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
-        val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-        bitmap.recycle()
-        val disk = ThumbnailCache(File(RuntimeEnvironment.getApplication().cacheDir, "progressive-thumbnails").apply { deleteRecursively() })
-        MockWebServer().use { server ->
-            server.dispatcher = object : Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse {
-                    if (request.path == "/api/photos/photo-2/thumb") {
-                        started.countDown()
-                        check(release.await(30, TimeUnit.SECONDS))
-                    }
-                    return MockResponse().setBody(Buffer().write(bytes))
-                }
-            }
-            server.start()
-            val thumbnails = Thumbnails(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, disk) { true }
-            val template = parseTaskList(taskListFixture("today"))
-            val tasks = (1..3).map { index -> template.sections.single().tasks.single().copy(
-                plantId = "plant-$index", plantName = "Plant $index", coverPhotoId = "photo-$index", lateDays = 0) }
-            val today = template.copy(sections = listOf(TaskSection("water", "Water", tasks)), groups = mapOf("water" to tasks))
-            val plants = tasks.map { parsePlant(org.json.JSONObject(plantFixture)).copy(id = it.plantId) }
-            val state = CareState(member = Member("owner", Role.owner), plants = plants, today = today, upcoming = today.copy(view = "upcoming"))
-            try {
-                compose.setContent { FytoriumTheme { TaskScreen(state, "today", thumbnails = thumbnails, now = Instant.parse("2030-06-02T18:00:00Z")) } }
-                assertTrue("Second thumbnail request reached latch", started.await(5, TimeUnit.SECONDS))
-                compose.waitUntil(5_000) {
-                    compose.onAllNodesWithContentDescription("Photo of Plant 1").fetchSemanticsNodes().isNotEmpty() &&
-                        compose.onAllNodesWithContentDescription("Photo of Plant 3").fetchSemanticsNodes().isNotEmpty()
-                }
+        show()
+        finish(1, 3)
+        compose.onNodeWithContentDescription("Photo of Plant 1").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Photo of Plant 3").assertIsDisplayed()
+        compose.onNodeWithContentDescription("No cover photo for Plant 2").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Photo of Plant 2").assertDoesNotExist()
+        loading(2, true)
+        noSpinners()
+        assertEquals("Today and Upcoming share each photo request", listOf("photo-1", "photo-2", "photo-3"), requests)
+        finish(2)
+        compose.onNodeWithContentDescription("Photo of Plant 2").assertIsDisplayed()
+        loading(2, false)
+    }
+
+    @Test fun refreshAndViewSwitchKeepPhotosWithoutPlaceholderFramesOrDuplicateInFlightRequests() {
+        show()
+        finish(1, 3)
+        compose.mainClock.autoAdvance = false
+        for (screen in listOf("today", "upcoming", "today")) {
+            compose.runOnIdle { state.value = state.value.copy(lastUpdated = (state.value.lastUpdated ?: 0) + 1); view.value = screen }
+            repeat(5) {
+                compose.mainClock.advanceTimeByFrame()
                 compose.onNodeWithContentDescription("Photo of Plant 1").assertIsDisplayed()
                 compose.onNodeWithContentDescription("Photo of Plant 3").assertIsDisplayed()
-                compose.onNodeWithContentDescription("No cover photo for Plant 2").assertIsDisplayed()
-                compose.onNodeWithContentDescription("Photo of Plant 2").assertDoesNotExist()
-                compose.onNodeWithTag("thumbnail:photo-2", useUnmergedTree = true).assert(SemanticsMatcher.expectValue(ThumbnailLoading, true))
-                compose.onAllNodes(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo)).assertCountEquals(0)
-                assertEquals("Today and Upcoming share each photo request", 3, server.requestCount)
-                release.countDown()
-                compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Photo of Plant 2").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithContentDescription("Photo of Plant 2").assertIsDisplayed()
-                compose.onAllNodes(SemanticsMatcher.expectValue(ThumbnailLoading, true), useUnmergedTree = true).assertCountEquals(0)
-            } finally {
-                release.countDown()
+                compose.onNodeWithContentDescription("No cover photo for Plant 1").assertDoesNotExist()
+                compose.onNodeWithContentDescription("No cover photo for Plant 3").assertDoesNotExist()
+                loading(2, true)
+                assertEquals(listOf("photo-1", "photo-2", "photo-3"), requests)
             }
         }
-        disk.wipe()
+        compose.mainClock.autoAdvance = true
+        finish(2)
+        compose.onNodeWithContentDescription("Photo of Plant 2").assertIsDisplayed()
+        assertEquals(3, requests.size)
+    }
+
+    @Test fun failedLoadSettlesAsPlaceholderWithoutSpinnerAndCanRetryOnRefresh() {
+        show()
+        compose.runOnIdle { pending.getValue("photo-2").complete(null) }
+        compose.waitForIdle()
+        loading(2, false)
+        compose.onNodeWithContentDescription("No cover photo for Plant 2").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Photo of Plant 2").assertDoesNotExist()
+        noSpinners()
+        compose.runOnIdle { state.value = state.value.copy(lastUpdated = 1) }
+        compose.waitForIdle()
+        loading(2, true)
+        assertEquals(2, requests.count { it == "photo-2" })
+        assertEquals(1, requests.count { it == "photo-1" })
+        assertEquals(1, requests.count { it == "photo-3" })
+    }
+
+    @Test fun atMostFourLoadsRunAtOnce() {
+        state.value = careState(5)
+        show()
+        assertEquals(4, requests.size)
+        finish(1)
+        assertEquals(5, requests.size)
+        finish(2, 3, 4, 5)
+        compose.onAllNodes(SemanticsMatcher.expectValue(ThumbnailLoading, true), useUnmergedTree = true).assertCountEquals(0)
     }
 }

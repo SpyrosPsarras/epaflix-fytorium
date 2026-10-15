@@ -82,16 +82,20 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val progress = SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
         fun loadingThumbnails() = compose.onAllNodes(SemanticsMatcher.expectValue(ThumbnailLoading, true), useUnmergedTree = true)
             .fetchSemanticsNodes().filter { !it.boundsInRoot.isEmpty }
+        fun settled() = !app.repository.state.value.busy && !app.repository.state.value.saving &&
+            compose.onAllNodes(progress).fetchSemanticsNodes().isEmpty() && loadingThumbnails().isEmpty()
         compose.waitForState("A15 spinner-free and visible thumbnails settled before $name capture", 30_000, details = {
             "progressNodes=${compose.onAllNodes(progress).fetchSemanticsNodes().size}, " +
                 "loadingThumbnails=${loadingThumbnails().map { it.config[SemanticsProperties.TestTag] }}"
         }) {
-            compose.onAllNodes(progress).fetchSemanticsNodes().isEmpty() && loadingThumbnails().isEmpty()
+            if (!settled()) false else {
+                compose.waitForIdle(); device.waitForIdle()
+                Thread.sleep(500) // Let SurfaceFlinger draw; a theme recreation may start another care refresh.
+                settled()
+            }
         }
-        compose.onAllNodes(progress).assertCountEquals(0)
-        compose.waitForIdle(); device.waitForIdle()
-        Thread.sleep(500) // Let SurfaceFlinger draw the settled Compose frame before the device capture.
         val captured = File(output, "$name-${if (dark) "dark" else "light"}.png")
+        compose.onAllNodes(progress).assertCountEquals(0)
         assertTrue(device.takeScreenshot(captured))
         // Shared MediaStore pictures survive Gradle uninstall and are readable by adb.
         val values = ContentValues().apply {
