@@ -262,7 +262,7 @@ class AppShellRestorationTest {
                     "planta" -> {
                         compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic imported fern").fetchSemanticsNodes().isNotEmpty() }
                         compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
-                        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().assertIsEnabled()
+                        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertIsEnabled()
                     }
                     "sites-unmatched" -> {
                         compose.onNodeWithText("Open Plantbook unmatched species").assertIsDisplayed()

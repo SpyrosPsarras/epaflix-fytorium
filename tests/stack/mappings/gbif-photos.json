@@ -1,0 +1,63 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET", "urlPath": "/species/match",
+        "queryParameters": { "name": { "equalTo": "Testoria" }, "kingdom": { "equalTo": "Plantae" } },
+        "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } }
+      },
+      "response": {
+        "status": 200, "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "usageKey": 910000, "scientificName": "Testoria Inventor", "canonicalName": "Testoria", "rank": "GENUS", "kingdom": "Plantae", "matchType": "EXACT", "confidence": 99 }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET", "urlPath": "/species/910002/vernacularNames",
+        "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } }
+      },
+      "response": {
+        "status": 200, "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "results": [{ "vernacularName": "Synthetic cloudleaf", "language": "eng" }] }
+      }
+    },
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/occurrence/search",
+        "queryParameters": { "taxonKey": { "equalTo": "910002" }, "mediaType": { "equalTo": "StillImage" } },
+        "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "results": [{
+            "references": "https://example.org/synthetic-observation",
+            "media": [{
+              "identifier": "https://planta:8443/import-cover.png",
+              "license": "http://creativecommons.org/licenses/by/4.0/",
+              "creator": "Synthetic photographer"
+            }]
+          }]
+        }
+      }
+    },
+    {
+      "priority": 5,
+      "request": {
+        "method": "GET",
+        "urlPath": "/occurrence/search",
+        "headers": { "Host": { "matches": "gbif(:[0-9]+)?" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "results": [] }
+      }
+    }
+  ]
+}

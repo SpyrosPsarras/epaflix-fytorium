@@ -10,6 +10,38 @@ type Match = {
 
 const ranks = ['SPECIES', 'SUBSPECIES', 'VARIETY', 'SUBVARIETY', 'FORM', 'SUBFORM', 'CULTIVAR', 'INFRASPECIFIC_NAME'];
 
+function acceptedRank(rank: string, canonicalName: string, name: string, genus: boolean): boolean {
+  return ranks.includes(rank) || (genus && rank === 'GENUS' && canonicalName === name);
+}
+
+type ReferencePhoto = { identifier: string; creator: string; license: 'CC BY 4.0' | 'CC0'; source_url: string };
+export async function referencePhoto(key: number): Promise<ReferencePhoto | null> {
+  const base = config().gbifBaseUrl.href;
+  const url = new URL('occurrence/search', base.endsWith('/') ? base : base + '/');
+  url.search = new URLSearchParams({ taxonKey: String(key), mediaType: 'StillImage', limit: '1' }).toString();
+  url.searchParams.append('license', 'CC0_1_0');
+  url.searchParams.append('license', 'CC_BY_4_0');
+  let body;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error();
+    body = await response.json();
+    if (!Array.isArray(body?.results)) throw new Error();
+  } catch { error(503, 'Reference photos are unavailable. GBIF did not respond. Try again.'); }
+  const occurrence = body.results[0];
+  const media = occurrence?.media?.[0];
+  if (typeof media?.identifier !== 'string' || typeof media.license !== 'string') return null;
+  const license = /^https?:\/\/creativecommons\.org\/licenses\/by\/4\.0\/?$/.test(media.license) ? 'CC BY 4.0'
+    : /^https?:\/\/creativecommons\.org\/publicdomain\/zero\/1\.0\/?$/.test(media.license) ? 'CC0' : null;
+  if (!license) return null;
+  let source: URL;
+  try { source = new URL(occurrence.references); }
+  catch { return null; }
+  if (!['https:', 'http:'].includes(source.protocol) || source.username || source.password) return null;
+  const creator = [media.creator, media.rightsHolder].find(value => typeof value === 'string' && value.trim());
+  return { identifier: media.identifier, creator: creator?.trim().slice(0, 500) ?? 'Unknown photographer', license, source_url: source.href };
+}
+
 // Rank lookup is optional: identification remains usable during a GBIF outage.
 export async function speciesRank(key: number): Promise<string | undefined> {
   const base = config().gbifBaseUrl.href;
@@ -22,7 +54,7 @@ export async function speciesRank(key: number): Promise<string | undefined> {
   } catch { /* Identification still has Pl@ntNet's GBIF key and canonical name. */ }
 }
 
-export async function matchSpecies(name: string, { alternatives = true } = {}): Promise<Candidate[]> {
+export async function matchSpecies(name: string, { alternatives = true, genus = false } = {}): Promise<Candidate[]> {
   const base = config().gbifBaseUrl.href;
   const url = new URL('species/match', base.endsWith('/') ? base : base + '/');
   url.search = new URLSearchParams({ name, kingdom: 'Plantae', verbose: 'true' }).toString();
@@ -39,7 +71,7 @@ export async function matchSpecies(name: string, { alternatives = true } = {}): 
   if (match.matchType === 'NONE') error(422, 'No plant species matched that name. Try another name.');
   const candidates: Candidate[] = [];
   for (const [index, item] of [match, ...(alternatives ? (match.alternatives ?? []).slice(0, 5) : [])].entries()) {
-    if (!item || item.kingdom !== 'Plantae' || !ranks.includes(item.rank) || (index > 0 && item.rank !== 'SPECIES') || item.matchType === 'NONE') continue;
+    if (!item || item.kingdom !== 'Plantae' || !acceptedRank(item.rank, item.canonicalName, name, genus) || (index > 0 && item.rank !== 'SPECIES') || item.matchType === 'NONE') continue;
     if (!Number.isInteger(item.usageKey) || item.usageKey <= 0 || typeof item.scientificName !== 'string' || typeof item.canonicalName !== 'string') continue;
     const key = item.acceptedUsageKey ?? item.usageKey;
     const confidence = typeof item.confidence === 'number' && Number.isFinite(item.confidence) ? item.confidence : 0;
@@ -56,7 +88,7 @@ export async function matchSpecies(name: string, { alternatives = true } = {}): 
           const response = await fetch(new URL(String(key), url), { signal });
           if (!response.ok) throw new Error('GBIF request failed');
           const accepted = await response.json();
-          if (!accepted || accepted.key !== key || typeof accepted.scientificName !== 'string' || !accepted.scientificName.trim() || typeof accepted.canonicalName !== 'string' || !accepted.canonicalName.trim() || accepted.kingdom !== 'Plantae' || !ranks.includes(accepted.rank)) throw new Error('Invalid GBIF accepted species');
+          if (!accepted || accepted.key !== key || typeof accepted.scientificName !== 'string' || !accepted.scientificName.trim() || typeof accepted.canonicalName !== 'string' || !accepted.canonicalName.trim() || accepted.kingdom !== 'Plantae' || !acceptedRank(accepted.rank, accepted.canonicalName, name, genus)) throw new Error('Invalid GBIF accepted species');
           scientificName = accepted.scientificName;
           canonicalName = accepted.canonicalName;
           rank = accepted.rank;

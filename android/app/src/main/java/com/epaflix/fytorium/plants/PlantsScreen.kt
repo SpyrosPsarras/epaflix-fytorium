@@ -161,7 +161,7 @@ import org.json.JSONObject
                     selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
                     if (page == "change-species") species = Species(candidate.key, candidate.scientificName, emptyList(), false, false)
                     else page = "form"
-                })
+                }, imageApi = speciesApi)
             }
             "form" -> options?.let { choices -> PlantForm(if (id == null) null else detail?.plant, choices, sites, enabled, errors = request.errors) { input ->
                 selection?.takeIf { id == null }?.let { json ->

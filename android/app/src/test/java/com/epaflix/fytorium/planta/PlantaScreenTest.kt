@@ -5,6 +5,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.drawToBitmap
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
@@ -34,6 +36,132 @@ class PlantaScreenTest {
     private val candidate = parseSpeciesSearch("""{"search_id":"search-one","candidates":[$importCandidate]}""").candidates.single()
     private val row = ImportRow("staging-one", "Synthetic imported fern", "Testoria neblosa", "Synthetic nook", "Invented stripe",
         "terracotta", "18", "cactus", mapOf("water" to "2026-06-01"), "review", "pending", null, null, listOf(candidate), null, false, true)
+    @Test fun reviewSummaryAndPhotoPlaceholdersExplainWhyImportIsBlocked() {
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row.copy(id = "confirmed", name = "Synthetic confirmed", status = "confirmed"), row)))
+        compose.setContent { FytoriumTheme { PlantaScreen(state.value) } }
+        compose.onAllNodesWithText("1 plant still needs review:").assertCountEquals(2)
+        compose.onAllNodesWithText("No Planta photo").onFirst().performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("No reference photo").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Import confirmed plants").performScrollTo().assertIsNotEnabled()
+        compose.runOnIdle { state.value = state.value.copy(rows = listOf(row.copy(status = "confirmed", canCommit = true))) }
+        compose.onAllNodesWithText("1 plant still needs review:").assertCountEquals(0)
+        compose.onNodeWithText("Import confirmed plants").performScrollTo().assertIsEnabled()
+    }
+    @Test fun bothReviewSummariesScrollToTheNamedCard() {
+        val rows = List(3) { row.copy(id = "review-$it", name = "Synthetic review $it") }
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = rows)) } }
+        for (summary in listOf("top", "bottom")) {
+            for (target in listOf(rows.last(), rows.first())) {
+                compose.onNode(hasText(target.name) and hasAnyAncestor(hasTestTag("review-summary:$summary")))
+                    .performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
+                compose.waitForIdle()
+                compose.onNodeWithTag("import-heading:${target.id}").assertIsDisplayed()
+            }
+        }
+    }
+    @Test fun reviewSkipIsAvailableWithoutExpandingControls() {
+        var skipped: String? = null
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row)), onSkip = { skipped = it }) } }
+        compose.onNodeWithText("Search species").assertDoesNotExist()
+        compose.onNodeWithText("Skip plant").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(row.id, skipped) }
+    }
+    @Test fun reviewInstructionsExplainReadyAndUnmatchedPlants() {
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row.copy(status = "confirmed", selectedName = candidate.canonicalName))))
+        compose.setContent { FytoriumTheme { PlantaScreen(state.value) } }
+        compose.onNodeWithText("Plants marked Needs review need one tap: choose the matching species or skip. Everything else is ready.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Ready to import").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Change species or skip").performScrollTo().assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(rows = listOf(row.copy(candidates = emptyList()))) }
+        compose.onNodeWithText("No match found. Search for the species or skip this plant.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Search species").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("Search for a species").performScrollTo().performClick()
+        compose.onNodeWithText("Search species").assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(rows = listOf(row)) }
+        compose.onNodeWithText("Which picture looks like your plant?").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertIsEnabled()
+    }
+    @Test fun photoTilesShowSuggestionsAndGenusWithoutNameMatchPercentages() {
+        var picked: Long? = null
+        val genus = candidate.copy(key = 910000, canonicalName = "Testoria", scientificName = "Testoria Inventor", rank = "GENUS")
+        val suggestion = ImportSuggestion(candidate.key, emptyList(), genus)
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row), suggestions = mapOf(row.id to suggestion)))
+        compose.setContent { FytoriumTheme { PlantaScreen(state.value, onConfirm = { _, key, _ -> picked = key }) } }
+        compose.onNodeWithText("This is my plant").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Looks most like your photo").performScrollTo().assertIsDisplayed()
+        compose.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
+        compose.onAllNodes(hasText("confidence", substring = true)).assertCountEquals(0)
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(candidate.key, picked) }
+        compose.onNodeWithText("Not sure: import as Testoria (any kind)").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(910000L, picked); state.value = state.value.copy(rows = listOf(row.copy(status = "confirmed", selectedName = candidate.canonicalName))) }
+        compose.onNodeWithTag("import-ready:${row.id}").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Skip plant").assertDoesNotExist()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").assertDoesNotExist()
+    }
+    @Test fun importChoiceBoundsStayFixedThroughDelayedPhotoCredit() {
+        val creditReady = java.util.concurrent.CountDownLatch(1)
+        MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                    if (request.path.orEmpty().endsWith("/credit")) {
+                        if (!creditReady.await(10, java.util.concurrent.TimeUnit.SECONDS)) return MockResponse().setResponseCode(504)
+                        return MockResponse().setBody("""{"common_name":"Synthetic cloudleaf","photo":{"creator":"Synthetic photographer","license":"CC BY 4.0","source_url":"https://www.gbif.org/occurrence/1"}}""")
+                    }
+                    val image = java.io.ByteArrayOutputStream().apply {
+                        android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+                            .compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, this)
+                    }
+                    return MockResponse().setHeader("Content-Type", "image/jpeg").setBody(okio.Buffer().write(image.toByteArray()))
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
+            compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row)), imageApi = api) } }
+            try {
+                val pill = compose.onNodeWithText("This is my plant", useUnmergedTree = true)
+                pill.performScrollTo().assertIsDisplayed()
+                val before = pill.fetchSemanticsNode().boundsInRoot
+                creditReady.countDown()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("CC BY 4.0 · Photo: Synthetic photographer", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Reference photo of Testoria nebulosa", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+                val after = pill.fetchSemanticsNode().boundsInRoot
+                println("A11 photo credit choice bounds: before=$before after=$after")
+                assertEquals(before, after)
+            } finally { creditReady.countDown() }
+        }
+    }
+    @Test fun disabledPhotoPillsChangeColourAndRejectTaps() {
+        val online = mutableStateOf(true)
+        val blocked = mutableStateOf(false)
+        val dark = mutableStateOf(false)
+        var confirmations = 0
+        lateinit var view: android.view.View
+        compose.setContent { FytoriumTheme(dark.value) {
+            view = LocalView.current
+            PlantaScreen(PlantaState(loaded = true, blocked = blocked.value, rows = listOf(row)), online.value,
+                onConfirm = { _, _, _ -> confirmations++ })
+        } }
+        for (night in listOf(false, true)) {
+            compose.runOnIdle { dark.value = night; online.value = true; blocked.value = false }
+            val pill = compose.onNodeWithText("This is my plant", useUnmergedTree = true)
+            pill.performScrollTo()
+            fun colour(): Int {
+                pill.performScrollTo()
+                val bounds = pill.fetchSemanticsNode().boundsInRoot
+                return compose.runOnIdle { view.drawToBitmap().getPixel(bounds.center.x.toInt(), bounds.top.toInt() + 1) }
+            }
+            val enabledColour = colour()
+            for (offline in listOf(true, false)) {
+                compose.runOnIdle { online.value = !offline; blocked.value = !offline }
+                val tile = compose.onNodeWithContentDescription("This is Testoria nebulosa")
+                tile.assertIsNotEnabled()
+                assertNotEquals(enabledColour, colour())
+                tile.performClick()
+                compose.runOnIdle { assertEquals(0, confirmations) }
+            }
+        }
+    }
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
     private fun screens(dark: Boolean) {
@@ -57,21 +185,28 @@ class PlantaScreenTest {
         compose.runOnIdle { assertEquals("synthetic-secret", fetched); state.value = state.value.copy(rows = listOf(row)) }
         compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
         compose.onNodeWithText("Import confirmed plants").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertHeightIsAtLeast(48.dp)
         capture("review")
-        compose.onNodeWithText("Confirm Testoria nebulosa").performClick()
+        compose.runOnIdle { state.value = state.value.copy(rows = listOf(row.copy(candidates = emptyList()))) }
+        compose.onNodeWithText("Search for a species").assertExists()
+        compose.onNodeWithText("Search species").performScrollTo().assertIsEnabled()
+        capture("unmatched")
+        compose.runOnIdle { state.value = state.value.copy(rows = listOf(row)) }
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(910002L, confirmed); state.value = state.value.copy(rows = listOf(row.copy(status = "confirmed", selectedName = "Testoria nebulosa", canCommit = true))) }
         compose.onNodeWithText("Import confirmed plants").performScrollTo().assertIsEnabled()
         capture("confirmed")
-        compose.onNodeWithText("Search again").performScrollTo().performClick()
+        compose.onNodeWithText("Change species or skip").performScrollTo().performClick()
         compose.onNodeWithText("Search species").performTextInput("Testoria typo")
         compose.runOnIdle { state.value = state.value.copy(searchRow = row.id, search = com.epaflix.fytorium.plants.SpeciesSearch("search-one", listOf(candidate))) }
-        compose.onNodeWithText("Confirm searched Testoria nebulosa").performScrollTo().assertIsEnabled()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertIsEnabled()
         capture("search")
         compose.runOnIdle { online.value = false }
-        compose.onNodeWithText("Confirm searched Testoria nebulosa").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").assertIsNotEnabled()
         compose.onNodeWithText("Actions are unavailable offline. Reconnect and refresh to make changes.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertIsNotEnabled()
         capture("offline")
+        compose.onNodeWithText("Actions are unavailable offline. Reconnect and refresh to make changes.").performScrollTo()
         compose.runOnIdle { online.value = true; state.value = state.value.copy(blocked = true, error = "Fytorium isn't responding. Your staged plants remain available. Refresh to retry.") }
         compose.onNodeWithText("Refresh review").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("Fetch Planta plants").assertIsNotEnabled()
@@ -122,9 +257,10 @@ class PlantaScreenTest {
         MockWebServer().use { server ->
             server.start()
             val message = "Planta is rate-limiting this import. Try again later with a new app code."
-            server.enqueue(MockResponse().setBody("[$importFixture]"))
+            val fixture = org.json.JSONObject(importFixture).put("status", "confirmed").put("candidates", org.json.JSONArray()).apply { getJSONObject("mapped").put("has_cover", false) }
+            server.enqueue(MockResponse().setBody("[$fixture]"))
             server.enqueue(MockResponse().setResponseCode(503).setBody(org.json.JSONObject().put("message", message).toString()))
-            server.enqueue(MockResponse().setBody("[$importFixture]"))
+            server.enqueue(MockResponse().setBody("[$fixture]"))
             val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
             compose.setContent { FytoriumTheme { PlantaRoute(api, CareState(member = Member("owner", Role.owner)), { true }, {}, {}, {}) } }
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("One-time app code") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
@@ -143,11 +279,17 @@ class PlantaScreenTest {
             assertEquals("synthetic-new-code", org.json.JSONObject(retry.body.readUtf8()).getString("code"))
         }
     }
-    @Test fun skippedPlantsCanBeSearchedButCannotBeSkippedAgain() {
-        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(status = "skipped")))) } }
-        compose.onNodeWithText("Skip plant").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Search again").performScrollTo().assertIsEnabled().performClick()
-        compose.onNodeWithText("Search species").assertIsEnabled()
+    @Test fun skippedPlantsCanBeRestoredByChoosingASpecies() {
+        var confirmed: Long? = null
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(status = "skipped"))),
+            onConfirm = { _, key, _ -> confirmed = key }) } }
+        compose.onNodeWithText("Skipped. This plant will not be imported.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Skip plant").assertDoesNotExist()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").assertDoesNotExist()
+        compose.onNodeWithText("Undo skip").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithText("Search species").performScrollTo().assertIsEnabled()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(910002L, confirmed) }
     }
     @Test fun attributionOpensGbifExternally() {
         var opened: String? = null
@@ -180,13 +322,13 @@ class PlantaScreenTest {
         suspend fun write() { writes++; release.await() }
         compose.setContent { FytoriumTheme { PlantaScreen(state.value, onFetch = { write() },
             onConfirm = { _, _, _ -> write() }, onSkip = { write() }, onCommit = { write() }) } }
-        for ((index, label) in listOf("Fetch Planta plants", "Confirm Testoria nebulosa", "Skip plant", "Import confirmed plants").withIndex()) {
+        for ((index, label) in listOf("Fetch Planta plants", "This is Testoria nebulosa", "Skip plant", "Import confirmed plants").withIndex()) {
             compose.runOnIdle {
                 release = CompletableDeferred()
                 state.value = state.value.copy(rows = listOf(if (index == 3) row.copy(status = "confirmed", canCommit = true) else row))
             }
             if (index == 0) compose.onNodeWithText("One-time app code").performTextInput("synthetic-once")
-            val control = compose.onNodeWithText(label).performScrollTo()
+            val control = (if (index == 1) compose.onNodeWithContentDescription(label) else compose.onNodeWithText(label)).performScrollTo()
             val click = control.fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
             // Invoke the same event twice before recomposition can disable the button.
             compose.runOnIdle { click(); click() }
@@ -200,11 +342,12 @@ class PlantaScreenTest {
     @Test fun aBackgroundReadNeverDisablesReviewControls() {
         val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row)))
         compose.setContent { FytoriumTheme { PlantaScreen(state.value) } }
-        compose.onNodeWithText("Search again").performScrollTo().performClick()
+        compose.onNodeWithText("Search for another species").performScrollTo().performClick()
+        compose.onAllNodesWithText("Skip plant").assertCountEquals(1)
         compose.onNodeWithText("Search species").performTextInput("Testoria")
         compose.runOnIdle { state.value = state.value.copy(loading = true) }
         compose.onNodeWithText("Find species").performScrollTo().assertIsEnabled()
-        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().assertIsEnabled()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("One-time app code").performScrollTo().assertIsEnabled()
     }
     @Test fun onlyOwnerSeesImportEntry() {

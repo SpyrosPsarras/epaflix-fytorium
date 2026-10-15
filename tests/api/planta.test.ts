@@ -31,6 +31,40 @@ test('exchanges a one-time code, pages plants and retains only mapped staging wi
   }
 });
 
+test('previews staged covers without leaking URLs and refuses missing or foreign covers', async () => {
+  const withCover = syntheticPlant('synthetic-preview-cover');
+  withCover.image.url = imageHost.url + '?synthetic-signed-value=private';
+  fake.setPlants([withCover, syntheticPlant('synthetic-preview-no-cover')]);
+  const staged = await owner.request(endpoint, 'POST', { code: fake.code });
+  const text = await staged.text();
+  expect(text).not.toContain('cover_url');
+  expect(text).not.toContain('synthetic-signed-value');
+  const rows = JSON.parse(text);
+  const row = rows.find((row: { mapped: { has_cover: boolean } }) => row.mapped.has_cover);
+  const before = await imageHost.calls();
+  const response = await owner.request(`${endpoint}/${row.id}/cover`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toBe('image/jpeg');
+  expect(response.headers.get('cache-control')).toBe('private, max-age=3600');
+  const metadata = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+  expect(metadata).toMatchObject({ width: 400, height: 300 });
+  expect(metadata.orientation).toBeUndefined();
+  expect(metadata.exif).toBeUndefined();
+  expect((await owner.request(`${endpoint}/${row.id}/cover`)).status).toBe(200);
+  expect(await imageHost.calls()).toBe(before + 1);
+  const noCover = rows.find((row: { mapped: { has_cover: boolean } }) => !row.mapped.has_cover);
+  expect((await owner.request(`${endpoint}/${noCover.id}/cover`)).status).toBe(404);
+  expect((await owner.request(`${endpoint}/invalid/cover`)).status).toBe(404);
+  const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await fixtureDb.query('DROP INDEX IF EXISTS households_singleton');
+    const other = await fixtureDb.query("INSERT INTO households (name) VALUES ('Synthetic cover household') RETURNING id");
+    await fixtureDb.query("INSERT INTO members (household_id, issuer, subject, role) SELECT $1, issuer, 'synthetic-cover-other', 'owner' FROM members LIMIT 1", [other.rows[0].id]);
+  } finally { await fixtureDb.end(); }
+  const other = await harness.login('synthetic-cover-other');
+  expect((await other.request(`${endpoint}/${row.id}/cover`)).status).toBe(404);
+});
+
 test('requires explicit fuzzy confirmation, accepts an alternative and persists skipped plants', async () => {
   harness.setGbif({ usageKey: 910020, scientificName: 'Testoria incerta Inventor', canonicalName: 'Testoria incerta', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 88,
     alternatives: [{ usageKey: 910021, scientificName: 'Testoria altera Inventor', canonicalName: 'Testoria altera', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 }] });
@@ -44,6 +78,10 @@ test('requires explicit fuzzy confirmation, accepts an alternative and persists 
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { gbif_key: 910021 })).status).toBe(422);
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { gbif_key: 42, confirmed: true })).status).toBe(422);
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { gbif_key: 910021, confirmed: true })).status).toBe(200);
+  expect((await owner.request(endpoint + '/' + rows[1].id, 'PUT', { skip: true })).status).toBe(200);
+  const restored = await owner.request(endpoint + '/' + rows[1].id, 'PUT', { gbif_key: 910021, confirmed: true });
+  expect(restored.status).toBe(200);
+  expect(await restored.json()).toMatchObject({ status: 'confirmed', selected: { gbif_key: 910021 } });
   expect((await owner.request(endpoint + '/' + rows[1].id, 'PUT', { skip: true })).status).toBe(200);
   expect(await (await owner.request(endpoint)).json()).toEqual(expect.arrayContaining([expect.objectContaining({ can_commit: true, can_review: true })]));
   const committed = await owner.request(endpoint + '/commit', 'POST', {});
@@ -458,7 +496,7 @@ test('allows only owners, scopes review and commit to the household, and checks 
   const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   try {
     for (const role of ['family', 'sitter']) await fixtureDb.query('INSERT INTO members (household_id, issuer, subject, role) SELECT household_id, issuer, $1, $2 FROM members LIMIT 1', ['synthetic-import-' + role, role]);
-    await fixtureDb.query('DROP INDEX households_singleton');
+    await fixtureDb.query('DROP INDEX IF EXISTS households_singleton');
     const foreign = await fixtureDb.query("INSERT INTO households (name) VALUES ('Test other import household') RETURNING id");
     await fixtureDb.query("INSERT INTO members (household_id, issuer, subject, role) SELECT $1, issuer, 'synthetic-import-other', 'owner' FROM members LIMIT 1", [foreign.rows[0].id]);
   } finally { await fixtureDb.end(); }
@@ -475,6 +513,114 @@ test('allows only owners, scopes review and commit to the household, and checks 
   expect((await (await owner.request(endpoint)).json())[0].status).toBe('confirmed');
   for (const id of ['invalid', randomUUID()]) expect((await owner.request(endpoint + '/' + id, 'PUT', { skip: true })).status).toBe(404);
   for (const value of [[], null, 'invalid']) expect((await owner.request(endpoint, 'POST', value)).status).toBe(400);
+});
+
+test('photo suggestions persist once per staging row, reset on fetch and validate extra and genus choices', async () => {
+  const match = { usageKey: 910801, scientificName: 'Trialia obscura Inventor', canonicalName: 'Trialia obscura', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 82 };
+  harness.setGbif(match);
+  harness.setPlantnet({ results: [{ score: 0.83, species: { scientificNameWithoutAuthor: 'Trialia picta', commonNames: ['Synthetic picture plant'] }, gbif: { id: 910802 } }], remainingIdentificationRequests: 49 });
+  const plant = importPlant('synthetic-suggestion');
+  plant.names.scientific = 'Trialia obscur';
+  plant.image.url = imageHost.url;
+  fake.setPlants([plant]);
+  let rows = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect(rows[0].candidates.map((candidate: { canonical_name: string }) => candidate.canonical_name.split(' ')[0])).toEqual(['Trialia']);
+  harness.setGbif({ ...match, usageKey: 910800, scientificName: 'Trialia Inventor', canonicalName: 'Trialia', rank: 'GENUS', matchType: 'EXACT' });
+  const before = harness.identificationRequests.length;
+  const path = `${endpoint}/${rows[0].id}/suggestion`;
+  const coversBefore = await imageHost.calls();
+  const responses = await Promise.all([owner.request(path, 'POST', {}), owner.request(path, 'POST', {}), owner.request(`${endpoint}/${rows[0].id}/cover`)]);
+  expect(responses.pop()!.status).toBe(200);
+  expect(await imageHost.calls()).toBe(coversBefore + 1);
+  expect((await owner.request(`${endpoint}/${rows[0].id}/cover`)).status).toBe(200);
+  expect(await imageHost.calls()).toBe(coversBefore + 1);
+  expect(responses.map(response => response.status)).toEqual([200, 200]);
+  const suggestion = await responses[0].json();
+  expect(await responses[1].json()).toEqual(suggestion);
+  expect(suggestion).toMatchObject({ suggested_gbif_key: 910802, candidates: [{ gbif_key: 910802 }], genus: { gbif_key: 910800, rank: 'GENUS' } });
+  expect(harness.identificationRequests).toHaveLength(before + 1);
+  expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 49 });
+  await harness.restartApp();
+  expect(await (await owner.request(path, 'POST', {})).json()).toEqual(suggestion);
+  expect(harness.identificationRequests).toHaveLength(before + 1);
+  expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910802 })).status).toBe(422);
+  expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910802, confirmed: true })).status).toBe(200);
+  expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910800, confirmed: true })).status).toBe(200);
+  harness.setGbif(match);
+  rows = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910802, confirmed: true })).status).toBe(422);
+  expect((await owner.request(`${endpoint}/${rows[0].id}/suggestion`, 'POST', {})).status).toBe(200);
+  expect(harness.identificationRequests).toHaveLength(before + 2);
+  const other = await harness.login('synthetic-import-other');
+  expect((await other.request(`${endpoint}/${rows[0].id}/suggestion`, 'POST', {})).status).toBe(404);
+  harness.setGbif(match);
+  rows = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  harness.setGbif({ ...match, usageKey: 910800, scientificName: 'Trialia Inventor', canonicalName: 'Trialia', rank: 'GENUS', matchType: 'EXACT' });
+  harness.setPlantnet({ results: [{ score: 0.71, species: { scientificNameWithoutAuthor: 'Trialia' } }], remainingIdentificationRequests: 48 });
+  expect(await (await owner.request(`${endpoint}/${rows[0].id}/suggestion`, 'POST', {})).json()).toMatchObject({ suggested_gbif_key: 910800, candidates: [], genus: { gbif_key: 910800 } });
+});
+
+test('quota exhaustion persists no suggestion, and missing covers never call Pl@ntNet', async () => {
+  harness.setGbif({ usageKey: 910803, scientificName: 'Trialia incerta Inventor', canonicalName: 'Trialia incerta', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 82 });
+  const plant = importPlant('synthetic-suggestion-quota');
+  plant.image.url = imageHost.url;
+  fake.setPlants([plant, importPlant('synthetic-suggestion-no-cover')]);
+  const rows = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  harness.setPlantnet({}, 429);
+  const before = harness.identificationRequests.length;
+  const covered = rows.find((row: { mapped: { has_cover: boolean } }) => row.mapped.has_cover);
+  const absent = rows.find((row: { mapped: { has_cover: boolean } }) => !row.mapped.has_cover);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await owner.request(`${endpoint}/${covered.id}/suggestion`, 'POST', {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ suggested_gbif_key: null, candidates: [] });
+    expect((await owner.request(`${endpoint}/${absent.id}/suggestion`, 'POST', {})).status).toBe(200);
+  }
+  expect(harness.identificationRequests).toHaveLength(before + 1);
+  expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 0 });
+  expect(harness.identificationKeyLeaked).toBe(false);
+});
+
+test('a full page of parallel photo suggestions does not exhaust the database pool', async () => {
+  harness.setGbif({ usageKey: 910805, scientificName: 'Trialia incerta Inventor', canonicalName: 'Trialia incerta', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 82 });
+  harness.setPlantnet({ results: [{ score: 0.84, species: { scientificNameWithoutAuthor: 'Trialia picta' }, gbif: { id: 910806 } }], remainingIdentificationRequests: 40 }, 200, 11000);
+  fake.setPlants(Array.from({ length: 12 }, (_, index) => {
+    const plant = syntheticPlant(`synthetic-parallel-${index}`);
+    plant.names.scientific = 'Trialia pooled';
+    plant.image.url = imageHost.url;
+    return plant;
+  }));
+  const rows: { id: string }[] = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect(rows).toHaveLength(12);
+  const before = harness.identificationRequests.length;
+  const loading = Promise.all(rows.flatMap(row => Array.from({ length: 2 }, () => owner.request(`${endpoint}/${row.id}/suggestion`, 'POST', {}))));
+  await expect.poll(() => harness.identificationRequests.length, { timeout: 8000 }).toBe(before + rows.length);
+  const start = Date.now();
+  expect((await owner.request(endpoint)).status).toBe(200);
+  expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910805, confirmed: true })).status).toBe(200);
+  fake.setPlants([syntheticPlant('synthetic-refetch-during-suggestion')]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  expect(Date.now() - start).toBeLessThan(5000);
+  const responses = await loading;
+  expect(responses.every(response => response.status === 200)).toBe(true);
+  const suggestions = await Promise.all(responses.map(response => response.json()));
+  expect(suggestions.map(suggestion => suggestion.suggested_gbif_key)).toEqual(Array(24).fill(910806));
+  expect(harness.identificationRequests).toHaveLength(before + rows.length);
+  expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 40 });
+  harness.setPlantnet();
+}, 30000);
+
+test('a claimed suggestion without a result is a successful empty pending response', async () => {
+  const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await fixtureDb.query("UPDATE import_staging SET status = 'review', identified_at = now(), suggestion = NULL");
+  } finally { await fixtureDb.end(); }
+  const [row] = await (await owner.request(endpoint)).json();
+  const before = harness.identificationRequests.length;
+  const response = await owner.request(`${endpoint}/${row.id}/suggestion`, 'POST', {});
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ suggested_gbif_key: null, candidates: [], genus: null });
+  expect(harness.identificationRequests).toHaveLength(before);
 });
 
 function importPlant(id: string) {

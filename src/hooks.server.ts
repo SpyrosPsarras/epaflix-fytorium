@@ -60,7 +60,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       response = new Response(body, { status: response.status, headers });
     }
     status = response.status;
-    response.headers.set('Cache-Control', 'no-store');
+    if (!response.headers.has('Cache-Control')) response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Content-Type-Options', 'nosniff');
     response.headers.set('Referrer-Policy', 'no-referrer');
     return response;

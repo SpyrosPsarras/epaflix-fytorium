@@ -5,7 +5,7 @@ import { db, withTransaction } from '../db';
 import { now, calendarDate } from '../clock';
 import { chosenSpecies, recordSpeciesSearch, searchSpecies } from '../species';
 import { isUuid } from '../plants';
-import type { ImportedFields, ImportStaging } from '$lib/import';
+import type { ImportedFields, ImportStaging, ImportSuggestion } from '$lib/import';
 import { PlantaClient } from './client';
 
 export function requireOwner(identity: Identity | null): Identity {
@@ -48,9 +48,9 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
     care, cover_url: typeof raw.image?.url === 'string' && raw.image.url.length <= 4096 ? raw.image.url : null,
   } };
 }
-export type StoredImportStaging = Omit<ImportStaging, 'mapped' | 'can_commit' | 'can_review' | 'cover_status'> & { mapped: ImportedFields };
+export type StoredImportStaging = Omit<ImportStaging, 'mapped' | 'can_commit' | 'can_review' | 'cover_status'> & { mapped: ImportedFields; suggestion: ImportSuggestion | null; identified_at: Date | null };
 export async function storedStaging(household: string): Promise<StoredImportStaging[]> {
-  const result = await db().query('SELECT id, planta_plant_id, mapped, candidates, selected, status, plant_id, cover_error FROM import_staging WHERE household_id = $1 ORDER BY planta_plant_id', [household]);
+  const result = await db().query('SELECT id, planta_plant_id, mapped, candidates, selected, status, plant_id, cover_error, suggestion, identified_at FROM import_staging WHERE household_id = $1 ORDER BY planta_plant_id', [household]);
   return result.rows;
 }
 export async function staging(household: string): Promise<ImportStaging[]> {
@@ -59,10 +59,11 @@ export async function staging(household: string): Promise<ImportStaging[]> {
   const covers = await db().query('SELECT planta_plant_id FROM plants WHERE household_id = $1 AND planta_cover_imported', [household]);
   const importedCovers = new Set(covers.rows.map(row => row.planta_plant_id));
   return rows.map(row => {
+    const { suggestion, identified_at, ...publicRow } = row;
     const { cover_url, ...mapped } = row.mapped;
     const coverStatus: ImportStaging['cover_status'] = importedCovers.has(row.planta_plant_id) ? 'imported'
       : row.cover_error ? 'failed' : !cover_url ? 'none' : ['skipped', 'committed'].includes(row.status) ? 'skipped' : 'pending';
-    return { ...row, mapped: { ...mapped, has_cover: Boolean(cover_url) },
+    return { ...publicRow, mapped: { ...mapped, has_cover: Boolean(cover_url) },
       can_commit: canCommit, can_review: row.status !== 'committed', cover_status: coverStatus };
   });
 }
@@ -106,8 +107,8 @@ export async function reviewImport(id: string, household: string, input: Record<
   if (!isUuid(id)) error(404, 'Import plant not found');
   await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
-    const result = await client.query('SELECT * FROM import_staging WHERE id = $1 AND household_id = $2 FOR UPDATE', [id, household]);
-    const row = result.rows[0] as StoredImportStaging | undefined;
+    const result = await client.query<Pick<StoredImportStaging, 'status' | 'candidates' | 'suggestion'>>('SELECT status, candidates, suggestion FROM import_staging WHERE id = $1 AND household_id = $2 FOR UPDATE', [id, household]);
+    const row = result.rows[0];
     if (!row) error(404, 'Import plant not found');
     if (row.status === 'committed') error(409, 'This plant is already imported. Fetch again to update it.');
     let selected = null;
@@ -115,7 +116,7 @@ export async function reviewImport(id: string, household: string, input: Record<
     if (input.skip !== true) {
       selected = input.search_id !== undefined
         ? chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed)
-        : chosenSpecies(recordSpeciesSearch(row.candidates, household).search_id, input.gbif_key, household, input.confirmed);
+        : chosenSpecies(recordSpeciesSearch([...row.candidates, ...(row.suggestion?.candidates ?? []), ...(row.suggestion?.genus ? [row.suggestion.genus] : [])], household).search_id, input.gbif_key, household, input.confirmed);
       if (!selected) error(422, 'Choose a species from the candidates or search again.');
       if (selected.requires_confirmation && input.confirmed !== true) error(422, 'Confirm this species before importing.');
       status = 'confirmed';
