@@ -65,7 +65,6 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         }
         compose.waitForState("A15 care settled before $name capture", 30_000) { !app.repository.state.value.busy && !app.repository.state.value.saving }
         compose.waitForIdle(); device.waitForIdle()
-        Thread.sleep(500) // Let SurfaceFlinger draw the recreated Activity before the device capture.
         val bars = androidx.core.view.WindowCompat.getInsetsController(compose.activity.window, compose.activity.window.decorView)
         assertEquals(!dark, bars.isAppearanceLightStatusBars)
         assertEquals(!dark, bars.isAppearanceLightNavigationBars)
@@ -77,13 +76,26 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             val viewport = compose.onNodeWithTag("task-list").fetchSemanticsNode().boundsInRoot
             assertTrue("Last row must clear the FAB", row.bottom < fab.top)
             assertTrue("Viewport must extend behind the FAB", viewport.bottom > fab.bottom)
-            compose.waitForIdle(); device.waitForIdle(); Thread.sleep(500)
         } else {
             compose.onNodeWithText(app.repository.state.value.todayPresentation().greeting).performScrollTo()
-            compose.waitForIdle(); device.waitForIdle(); Thread.sleep(500)
         }
-        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertCountEquals(0)
+        val progress = SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
+        fun loadingThumbnails() = compose.onAllNodes(SemanticsMatcher.expectValue(ThumbnailLoading, true), useUnmergedTree = true)
+            .fetchSemanticsNodes().filter { !it.boundsInRoot.isEmpty }
+        fun settled() = !app.repository.state.value.busy && !app.repository.state.value.saving &&
+            compose.onAllNodes(progress).fetchSemanticsNodes().isEmpty() && loadingThumbnails().isEmpty()
+        compose.waitForState("A15 spinner-free and visible thumbnails settled before $name capture", 30_000, details = {
+            "progressNodes=${compose.onAllNodes(progress).fetchSemanticsNodes().size}, " +
+                "loadingThumbnails=${loadingThumbnails().map { it.config[SemanticsProperties.TestTag] }}"
+        }) {
+            if (!settled()) false else {
+                compose.waitForIdle(); device.waitForIdle()
+                Thread.sleep(500) // Let SurfaceFlinger draw; a theme recreation may start another care refresh.
+                settled()
+            }
+        }
         val captured = File(output, "$name-${if (dark) "dark" else "light"}.png")
+        compose.onAllNodes(progress).assertCountEquals(0)
         assertTrue(device.takeScreenshot(captured))
         // Shared MediaStore pictures survive Gradle uninstall and are readable by adb.
         val values = ContentValues().apply {

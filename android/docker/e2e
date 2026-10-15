@@ -51,8 +51,26 @@ wait_ready() {
   timeout 10 adb shell -n getprop sys.boot_completed >&2 || true
   timeout 10 adb shell -n pm path android >&2 || true
   grep -E '(query|reply|cached).* (app|oidc)( |$)' /tmp/dns.log | tail -n 20 >&2 || true
-  timeout 10 adb shell -n dumpsys connectivity >&2 || true
+  mkdir -p /work/.scratch
+  guest_diagnostics 2>&1 | tee /work/.scratch/guest-network-timeout.log >&2
   return 1
+}
+guest_diagnostics() {
+  echo 'Guest DNS diagnostics: resolver state, addresses, routes, and app/oidc lookups'
+  timeout 10 adb shell -n su 0 dumpsys dnsresolver || true
+  timeout 10 adb shell -n ip addr || true
+  timeout 10 adb shell -n ip route || true
+  for host in app oidc; do
+    timeout 10 adb shell -n ping -c 1 -W 1 "$host" || true
+    dig +time=2 +tries=1 @"$ip" "$host" A || true
+    address=$(dig +time=2 +tries=1 +short @"$ip" "$host" A | head -n 1)
+    case "$host" in app) port=3000; path=/healthz;; oidc) port=8080; path=/default/.well-known/openid-configuration;; esac
+    echo "Guest HTTP by numeric address: $host $address:$port"
+    timeout 10 adb shell -n "{ printf 'GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n'; sleep 5; } | toybox nc -w 3 -W 3 $address $port" || true
+  done
+  timeout 10 adb shell -n dumpsys connectivity || true
+  echo 'dnsmasq queries and answers:'
+  tail -n 80 /tmp/dns.log || true
 }
 dns_ready() {
   kill -0 "$dns_pid" || return 1
@@ -91,6 +109,11 @@ adb shell svc wifi enable
 adb shell svc data enable
 adb shell settings put global animator_duration_scale 0
 adb shell input keyevent 82
+# Bypass the emulator's intermittent 10.0.2.3 DNS proxy, not Docker DNS or hostname checks.
+# These rules exist only inside this disposable guest; the ready forwarder is container-local.
+for protocol in udp tcp; do
+  adb shell su 0 iptables -t nat -A OUTPUT -d 10.0.2.3 -p "$protocol" --dport 53 -j DNAT --to-destination "$ip:53"
+done
 guest_http() {
   # Keep stdin open until the response; toybox nc otherwise exits at pipe EOF.
   timeout 10 adb shell -n "{ printf 'GET $3 HTTP/1.1\r\nHost: $1\r\nConnection: close\r\n\r\n'; sleep 5; } | toybox nc -w 3 -W 3 $1 $2" > /tmp/guest-http || return 1
