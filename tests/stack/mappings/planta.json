@@ -88,7 +88,7 @@
         "jsonBody": {
           "data": [
             {
-              "id": "synthetic-browser-planta-a",
+              "id": "synthetic-browser-planta-z",
               "names": {
                 "custom": "Test import amber",
                 "scientific": "Testoria neblosa",
@@ -165,6 +165,15 @@
         },
         "jsonBody": {
           "data": [
+            {
+              "id": "synthetic-browser-planta-unmatched",
+              "names": {
+                "custom": "Test import unmatched"
+              },
+              "site": {
+                "name": "Test imported nook"
+              }
+            },
             {
               "id": "synthetic-browser-planta-b",
               "names": {

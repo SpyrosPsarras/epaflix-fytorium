@@ -68,6 +68,52 @@ class PlantsScreenTest {
         scroll("Confirm Testoria lucida").performClick()
         assertTrue(accepted)
     }
+    @Test fun confirmationBoundsStayFixedThroughDelayedPhotoCreditAndEqualSearchResults() {
+        val creditReady = java.util.concurrent.CountDownLatch(1)
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (!request.path.orEmpty().endsWith("/credit")) {
+                        val image = java.io.ByteArrayOutputStream().apply {
+                            android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+                                .compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, this)
+                        }
+                        return MockResponse().setHeader("Content-Type", "image/jpeg").setBody(okio.Buffer().write(image.toByteArray()))
+                    }
+                    if (!creditReady.await(10, TimeUnit.SECONDS)) return MockResponse().setResponseCode(504)
+                    return MockResponse().setBody("""{"common_name":"Synthetic cloudleaf","photo":{"creator":"Synthetic photographer","license":"CC BY 4.0","source_url":"https://www.gbif.org/occurrence/1"}}""")
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
+            val candidate = SpeciesCandidate(910002, "Testoria nebulosa Inventor", "Testoria nebulosa", "SPECIES", "FUZZY", 92, true, null, null)
+            val result = mutableStateOf(SpeciesSearch("synthetic-search", listOf(candidate)), neverEqualPolicy())
+            var accepted = false
+            compose.setContent { FytoriumTheme {
+                SpeciesPicker(true, result.value, {}, { selected, searchId, confirmed ->
+                    assertEquals(candidate, selected)
+                    assertEquals("synthetic-search", searchId)
+                    accepted = confirmed
+                }, imageApi = api)
+            } }
+            try {
+                scroll("Choose Testoria nebulosa").performClick()
+                val confirm = scroll("Confirm Testoria nebulosa")
+                val before = confirm.fetchSemanticsNode().boundsInRoot
+                compose.runOnIdle { result.value = result.value.copy(candidates = result.value.candidates.toList()) }
+                confirm.assertExists()
+                creditReady.countDown()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("CC BY 4.0 · Photo: Synthetic photographer").fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Reference photo of Testoria nebulosa").fetchSemanticsNodes().isNotEmpty() }
+                val after = compose.onNodeWithText("Confirm Testoria nebulosa").fetchSemanticsNode().boundsInRoot
+                println("A05 photo credit confirmation bounds: before=$before after=$after")
+                assertEquals(before, after)
+                assertFalse(accepted)
+                scroll("Confirm Testoria nebulosa").performClick()
+                compose.runOnIdle { assertTrue(accepted) }
+            } finally { creditReady.countDown() }
+        }
+    }
     @Test fun sittersHaveHeadersButNoPrivateDetailOrMutationControls() {
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(member = Member("sitter-one", Role.sitter)), PlantDetail(plant, emptyList(), emptyMap()), {}, { _, _ -> }, {}, {}, options = syntheticOptions()) } }

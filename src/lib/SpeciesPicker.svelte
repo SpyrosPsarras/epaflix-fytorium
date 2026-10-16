@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import SpeciesPhoto from './SpeciesPhoto.svelte';
   import { nameLanguages } from '$lib/names';
   import { shrinkIdentificationImage } from '$lib/identification-images';
   import { identificationQuotaExhausted } from '$lib/identification';
   import type { Candidate, SpeciesSearch } from '$lib/plants';
-  let { children, allowIdentification = false, remaining = undefined }: {
-    children: Snippet<[Candidate, string, boolean]>; allowIdentification?: boolean; remaining?: number;
+  let { children, allowIdentification = false, remaining = undefined, hideMatchDetails = false }: {
+    children: Snippet<[Candidate, string, boolean]>; allowIdentification?: boolean; remaining?: number; hideMatchDetails?: boolean;
   } = $props();
   let query = $state('');
   let photoMode = $state(false);
@@ -93,8 +94,9 @@
 {#if result && !chosen}
   <h2>Choose a species</h2>
   {#each result.candidates as candidate, index}
-    <article>
-      <p>{candidate.identification_name ?? candidate.scientific_name}</p>
+    <article class="candidate">
+      <SpeciesPhoto gbifKey={candidate.gbif_key} name={candidate.canonical_name} showName size="100%" />
+      <div><p>{candidate.identification_name ?? candidate.scientific_name}</p>
       {#if candidate.source === 'identification'}
         <p>{Math.round(candidate.score * 100)}% identification score</p>
         {#if candidate.common_names?.length}<p>{candidate.common_names.join(', ')}</p>{/if}
@@ -103,13 +105,14 @@
         {/if}
       {:else}
         {#if candidate.matched_name && candidate.matched_language}<p>Matched {candidate.matched_name} · {nameLanguages[candidate.matched_language]}</p>{/if}
-        <p>{candidate.match_type === null ? 'Stored species' : candidate.match_type.toLowerCase()}{candidate.confidence === null ? '' : ' · ' + candidate.confidence + '% confidence'} · {candidate.rank.toLowerCase()}{index > 0 ? ' · alternative' : ''}</p>
+        {#if !hideMatchDetails}<p>{candidate.match_type === null ? 'Stored species' : candidate.match_type.toLowerCase()}{candidate.confidence === null ? '' : ' · ' + candidate.confidence + '% confidence'} · {candidate.rank.toLowerCase()}{index > 0 ? ' · alternative' : ''}</p>{/if}
       {/if}
-      <button onclick={() => { chosen = candidate; confirmed = false; }}>Choose {candidate.canonical_name}</button>
+      <button onclick={() => { chosen = candidate; confirmed = false; }}>Choose {candidate.canonical_name}</button></div>
     </article>
   {/each}
 {/if}
 {#if chosen && result}
+  <SpeciesPhoto gbifKey={chosen.gbif_key} name={chosen.canonical_name} />
   {#if chosen.requires_confirmation && !confirmed}
     <section><h2>Confirm species</h2>
       {#if chosen.source === 'identification'}<p>Pl@ntNet suggested {chosen.identification_name}, {Math.round(chosen.score * 100)}% identification score.</p>{/if}
@@ -132,5 +135,6 @@
   article, section { background: white; border-radius: .75rem; padding: 1rem; margin-top: 1rem; overflow-wrap: anywhere; }
   section button { margin: .25rem; }
   li { overflow-wrap: anywhere; margin-bottom: .5rem; }
+  .candidate { display: grid; grid-template-columns: minmax(0, min(35%, 10rem)) minmax(0, 1fr); gap: 1rem; }
   .error { color: #991b1b; }
 </style>

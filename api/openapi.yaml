@@ -3184,6 +3184,177 @@ paths:
           required: false
           schema:
             type: string
+  /api/import/planta/{id}/suggestion:
+    post:
+      operationId: post_api_import_planta_suggestion
+      summary: Owner-only lazy photo suggestion and genus choice. Attempts persist until the next Planta fetch, including failures and quota exhaustion.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Server-validated additional choices and optional photo suggestion. Quota or provider failures show no suggestion.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [suggested_gbif_key, candidates, genus]
+                properties:
+                  suggested_gbif_key:
+                    type: [integer, "null"]
+                  candidates:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Candidate"
+                  genus:
+                    anyOf:
+                      - type: "null"
+                      - $ref: "#/components/schemas/Candidate"
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, missing row or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/import/planta/{id}/cover:
+    get:
+      operationId: get_api_import_planta_cover
+      summary: Owner-only staged Planta cover. Missing or foreign staging rows return 404. Signed URLs stay server-side.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Sanitised JPEG thumbnail, at most 400 pixels. Cache-Control: private, max-age=3600."
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, missing photo or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/species/{gbifKey}/photo:
+    get:
+      operationId: get_api_species_photo
+      summary: Owner and family reference thumbnail. Positive integer GBIF key up to 2147483647, invalid keys return 422, no photo returns 404. Cached for 30 days.
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Sanitised JPEG thumbnail, at most 400 pixels. Cache-Control: private, max-age=86400."
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, missing photo or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/species/{gbifKey}/photo/credit:
+    get:
+      operationId: get_api_species_photo_credit
+      summary: Owner and family reference credit. Uses the same persistent 30-day cache as the thumbnail, including absent photos. Positive integer GBIF key, invalid keys return 422.
+      parameters:
+        - name: gbifKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Cached GBIF photo attribution, or null when no reusable photo exists. Cache-Control: private, max-age=86400 with a photo; no-store without a photo."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [photo, common_name]
+                properties:
+                  common_name:
+                    type: [string, "null"]
+                  photo:
+                    anyOf:
+                      - type: "null"
+                      - type: object
+                        additionalProperties: false
+                        required: [creator, license, source_url]
+                        properties:
+                          creator:
+                            type: string
+                          license:
+                            type: string
+                            enum: [CC BY 4.0, CC0]
+                          source_url:
+                            type: string
+                            pattern: ^https?://
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, missing photo or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   responses:
     ApiError:

@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.items
 import java.time.LocalDate
 import java.time.Instant
 import java.time.ZoneOffset
+import com.epaflix.fytorium.ApiClient
+import com.epaflix.fytorium.ReferencePhoto
 import com.epaflix.fytorium.Plant
 import com.epaflix.fytorium.nullable
 import com.epaflix.fytorium.taskLabel
@@ -118,7 +120,7 @@ import org.json.JSONObject
         }, enabled = writable && validNumbers && (plant?.status == "graveyard" || !choices["site_id"].isNullOrBlank()), modifier = Modifier.heightIn(min = 48.dp)) { Text("Save plant") }
     }
 }
-@Composable fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit, onSelect: (SpeciesCandidate, String, Boolean) -> Unit) {
+@Composable fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit, onSelect: (SpeciesCandidate, String, Boolean) -> Unit, imageApi: ApiClient? = null) {
     var query by rememberSaveable { mutableStateOf("") }
     var selected by remember(result) { mutableStateOf<SpeciesCandidate?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -129,15 +131,21 @@ import org.json.JSONObject
             if (selected == null) {
                 if (result.candidates.isEmpty()) item { Text("No species found.") }
                 items(result.candidates, key = { it.key }) { candidate ->
-                    Heading(candidate.scientificName, style = MaterialTheme.typography.titleMedium)
-                    candidate.matchedName?.let { Text("Matched " + it + " · " + candidate.matchedLanguage.orEmpty()) }
-                    Text((candidate.matchType ?: "Stored species") + " · " + candidate.confidence?.let { "$it% confidence · " }.orEmpty() + candidate.rank)
-                    OutlinedButton(onClick = {
-                        if (candidate.requiresConfirmation) selected = candidate else onSelect(candidate, result.id, false)
-                    }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.canonicalName) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ReferencePhoto(imageApi, candidate.key, candidate.canonicalName, showName = true)
+                        Column(Modifier.weight(1f)) {
+                            Heading(candidate.scientificName, style = MaterialTheme.typography.titleMedium)
+                            candidate.matchedName?.let { Text("Matched " + it + " · " + candidate.matchedLanguage.orEmpty()) }
+                            Text((candidate.matchType ?: "Stored species") + " · " + candidate.confidence?.let { "$it% confidence · " }.orEmpty() + candidate.rank)
+                            OutlinedButton(onClick = {
+                                if (candidate.requiresConfirmation) selected = candidate else onSelect(candidate, result.id, false)
+                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.canonicalName) }
+                        }
+                    }
                 }
             } else selected?.let { candidate -> item {
                 Heading("Confirm species")
+                ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
                 Text("This match needs your confirmation. Is " + candidate.scientificName + " the species you meant?")
                 Button(onClick = { onSelect(candidate, result.id, true) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm " + candidate.canonicalName) }
                 TextButton(onClick = { selected = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }

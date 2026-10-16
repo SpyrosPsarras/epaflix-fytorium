@@ -36,8 +36,8 @@ export async function commitImport(identity: Identity) {
       await withTransaction(async (client) => {
         // Serializes site matching, competing commits, review and staging replacement.
         await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
-        const result = await client.query('SELECT * FROM import_staging WHERE id = $1 AND household_id = $2 FOR UPDATE', [candidate.id, household]);
-        const row = result.rows[0] as StoredImportStaging | undefined;
+        const result = await client.query<Pick<StoredImportStaging, 'id' | 'status' | 'mapped' | 'selected' | 'planta_plant_id'>>('SELECT id, status, mapped, selected, planta_plant_id FROM import_staging WHERE id = $1 AND household_id = $2 FOR UPDATE', [candidate.id, household]);
+        const row = result.rows[0];
         if (!row) error(409, 'The import was replaced. Reload the review before committing.');
         if (row.status !== 'confirmed') { return; }
         if (row.mapped.cover_url !== candidate.mapped.cover_url) error(409, 'The import changed. Reload the review before committing.');

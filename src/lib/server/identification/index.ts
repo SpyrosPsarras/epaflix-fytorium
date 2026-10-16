@@ -7,7 +7,7 @@ import { matchSpecies, speciesRank } from '../gbif';
 import { recordSpeciesSearch } from '../species';
 import { plantnet } from './plantnet';
 
-async function storeQuota(remaining: number) {
+export async function storeQuota(remaining: number) {
   await db().query('INSERT INTO identification_quota (singleton, remaining) VALUES (true, $1) ON CONFLICT (singleton) DO UPDATE SET remaining = EXCLUDED.remaining', [remaining]);
 }
 export async function identificationQuota(): Promise<{ remaining?: number }> {
@@ -34,6 +34,15 @@ export async function identifyPlant(request: Request, household: string) {
     throw cause;
   }
   if (identification.remaining !== undefined) await storeQuota(identification.remaining);
+  const candidates = await identificationCandidates(identification);
+  if (!candidates.length) {
+    if (identification.remaining === 0) error(429, identificationQuotaExhausted);
+    error(422, 'No plant species could be identified. Try clearer photos or search by name.');
+  }
+  return { ...recordSpeciesSearch(candidates, household), ...await identificationQuota() };
+}
+
+export async function identificationCandidates(identification: Pick<Awaited<ReturnType<typeof plantnet.identify>>, 'candidates'>): Promise<Candidate[]> {
   const candidates: Candidate[] = [];
   for (const item of identification.candidates) {
     let candidate: Candidate;
@@ -54,9 +63,5 @@ export async function identifyPlant(request: Request, household: string) {
     if (candidates.some(existing => existing.gbif_key === candidate.gbif_key)) continue;
     candidates.push({ ...candidate, source: 'identification', requires_confirmation: true, score: item.score, common_names: item.commonNames, identification_name: item.scientificName });
   }
-  if (!candidates.length) {
-    if (identification.remaining === 0) error(429, identificationQuotaExhausted);
-    error(422, 'No plant species could be identified. Try clearer photos or search by name.');
-  }
-  return { ...recordSpeciesSearch(candidates, household), ...await identificationQuota() };
+  return candidates;
 }

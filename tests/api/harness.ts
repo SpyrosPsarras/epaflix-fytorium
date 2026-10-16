@@ -26,6 +26,8 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
   let gbifStatus = 200;
   let gbifDelay = 0;
   const gbifSpecies = new Map<number, unknown>();
+  const gbifOccurrences = new Map<number, { payload: unknown; status: number }>();
+  const occurrenceRequests: URL[] = [];
   const names = {
     gbif: { payload: { results: [], endOfRecords: true } as unknown, status: 200, delay: 0 },
     wikidata: { payload: { entities: {} } as unknown, status: 200, delay: 0 },
@@ -43,6 +45,13 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
   }
   const gbif = createServer((request, response) => {
     const url = new URL(request.url!, 'http://fake');
+    if (url.pathname === '/occurrence/search') {
+      occurrenceRequests.push(url);
+      const result = gbifOccurrences.get(Number(url.searchParams.get('taxonKey')));
+      response.writeHead(result?.status ?? 200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(result?.payload ?? { results: [] }));
+      return;
+    }
     if (/^\/species\/\d+\/vernacularNames$/.test(url.pathname)) return nameResponse('gbif', response, url.pathname.split('/')[2]);
     if (url.pathname === '/wikidata/w/api.php') {
       if (url.searchParams.get('action') === 'query' && /^haswbstatement:P846=\d+$/.test(url.searchParams.get('srsearch') ?? '')) {
@@ -242,6 +251,8 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     identificationRequests,
     setPlantnet(payload: unknown = identificationResponse, status = 200, delay = 0) { plantnetResponse = payload; plantnetStatus = status; plantnetDelay = delay; },
     setGbifSpecies(key: number, payload: unknown) { gbifSpecies.set(key, payload); },
+    setGbifOccurrences(key: number, payload: unknown, status = 200) { gbifOccurrences.set(key, { payload, status }); },
+    occurrenceRequests,
     async restartApp(overrides: NodeJS.ProcessEnv = {}) {
       const exited = new Promise<void>(resolve => app.once('exit', () => resolve()));
       app.kill('SIGTERM');

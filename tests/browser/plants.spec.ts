@@ -2,6 +2,29 @@ import { expect, test } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { logIn } from './helpers/login';
 
+test('long reference-photo credit stays visible without clipping on a phone', async ({ page }) => {
+  const creator = 'Synthetic photographer '.repeat(14).slice(0, 300);
+  const creditText = `CC BY 4.0 · Photo: ${creator}`;
+  await logIn(page, 'synthetic-browser-owner');
+  await page.route('**/api/species/*/photo/credit', route => route.fulfill({ json: {
+    common_name: null,
+    photo: { creator, license: 'CC BY 4.0', source_url: 'https://example.org/observation' }
+  } }));
+  await page.goto('/plants/new');
+  await page.getByLabel('Species name', { exact: true }).fill('Testoria neblosa');
+  await page.getByRole('button', { name: 'Search species', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose Testoria nebulosa', exact: true }).click();
+  const credit = page.getByRole('link', { name: creditText, exact: true });
+  await credit.scrollIntoViewIfNeeded();
+  await expect(credit).toBeVisible();
+  await expect(credit).toHaveAttribute('title', creditText);
+  expect(await credit.evaluate(element => {
+    const caption = element.closest('figcaption')!;
+    return element.scrollHeight <= element.clientHeight && element.scrollWidth <= element.clientWidth
+      && caption.scrollHeight <= caption.clientHeight && caption.scrollWidth <= caption.clientWidth;
+  })).toBe(true);
+});
+
 test('searches a typo, confirms, adds and edits a plant on a phone', async ({ page }, testInfo) => {
   const suffix = randomUUID();
   const siteName = 'Test plant room ' + suffix;
@@ -17,6 +40,12 @@ test('searches a typo, confirms, adds and edits a plant on a phone', async ({ pa
   await page.getByRole('link', { name: 'Home', exact: true }).click();
   await page.getByRole('link', { name: 'Plants', exact: true }).click();
   await page.getByRole('link', { name: 'Add plant', exact: true }).click();
+  let releaseCredit!: () => void;
+  const creditHeld = new Promise<void>(resolve => { releaseCredit = resolve; });
+  await page.route('**/api/species/*/photo/credit', async route => {
+    await creditHeld;
+    await route.continue();
+  });
   await page.getByLabel('Species name', { exact: true }).fill('Testoria neblosa');
   await page.getByRole('button', { name: 'Search species', exact: true }).click();
   await expect(page.getByText('Testoria alternativa Inventor', { exact: true })).toBeVisible();
@@ -24,8 +53,18 @@ test('searches a typo, confirms, adds and edits a plant on a phone', async ({ pa
   await page.getByRole('button', { name: 'Choose Testoria nebulosa', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Save plant', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Confirm species', exact: true })).toBeVisible();
+  const confirm = page.getByRole('button', { name: 'Confirm Testoria nebulosa', exact: true });
+  await confirm.scrollIntoViewIfNeeded();
+  const beforeCredit = await confirm.boundingBox();
+  expect(beforeCredit).not.toBeNull();
+  releaseCredit();
+  await expect(page.getByRole('link', { name: 'CC BY 4.0 · Photo: Synthetic photographer', exact: true })).toBeVisible();
+  await expect.poll(() => page.getByRole('img', { name: 'Reference photo of Testoria nebulosa', exact: true })
+    .evaluate(element => element instanceof HTMLImageElement && element.complete && element.naturalWidth > 0)).toBe(true);
+  expect(await confirm.boundingBox()).toEqual(beforeCredit);
+  await page.unrouteAll({ behavior: 'wait' });
   await screenshot('plants-confirm.png');
-  await page.getByRole('button', { name: 'Confirm Testoria nebulosa', exact: true }).click();
+  await confirm.click();
   await page.getByLabel('Nickname', { exact: true }).fill(nickname);
   await page.getByLabel('Cultivar', { exact: true }).fill('Test silver');
   await page.getByLabel('Birthday', { exact: true }).fill('2020-05-06');

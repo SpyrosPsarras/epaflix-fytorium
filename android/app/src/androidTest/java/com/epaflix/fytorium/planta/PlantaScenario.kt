@@ -12,7 +12,7 @@ import org.json.JSONObject
 import org.junit.Assert.*
 
 fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainActivity>, MainActivity>, app: FytoriumApplication) {
-    val names = setOf("Test import amber", "Test import blue")
+    val names = setOf("Test import amber", "Test import blue", "Test import unmatched")
     val siteName = "Test imported nook"
     fun json(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
         app.api.request(path, method = method, body = body, query = query).use {
@@ -51,18 +51,27 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         // Actual Activity restoration re-fetches server staging without another code exchange.
         compose.activityRule.scenario.recreate()
         compose.waitForState("A11 review resumed after recreation", 30_000) {
-            compose.onAllNodes(hasText("Confirm Testoria nebulosa") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(hasContentDescription("This is Testoria nebulosa") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
+        val unmatched = staged.single { it.getJSONObject("mapped").getString("nickname") == "Test import unmatched" }
+        val unmatchedCard = hasAnyAncestor(hasTestTag("import:${unmatched.getString("id")}"))
+        compose.onNode(hasText("Search species") and unmatchedCard).performScrollTo().assertIsEnabled()
+        compose.onNode(hasText("Skip plant") and unmatchedCard).performScrollTo().performClick()
+        compose.waitForState("A11 unmatched plant skipped", 30_000) {
+            compose.onAllNodes(hasText("Undo skip") and unmatchedCard).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNode(hasText("Search for another species") and hasAnyAncestor(hasTestTag("import:${fuzzy.getString("id")}"))).performScrollTo().assertIsEnabled()
+        compose.onAllNodesWithText("This is my plant").onFirst().performScrollTo().assertIsDisplayed()
         assertEquals(staged.map { it.getString("id") }, rows(json("/api/import/planta")).map { it.getString("id") })
-        action("Confirm Testoria nebulosa").performClick()
+        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().performClick()
         compose.waitForState("A11 fuzzy species confirmed", 30_000) {
-            compose.onAllNodesWithText("Confirmed species: Testoria nebulosa").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("import-ready:${fuzzy.getString("id")}").fetchSemanticsNodes().isNotEmpty()
         }
         action("Import confirmed plants").performClick()
         compose.waitForState("A11 commit complete", 30_000) { compose.onAllNodesWithText("Import complete.").fetchSemanticsNodes().isNotEmpty() }
         val committed = rows(json("/api/import/planta"))
-        assertTrue(committed.all { it.getString("status") == "committed" && !it.getBoolean("can_commit") })
+        assertTrue(committed.all { it.getString("status") == (if (it.getString("id") == unmatched.getString("id")) "skipped" else "committed") && !it.getBoolean("can_commit") })
         assertEquals("imported", committed.single { it.getString("id") == fuzzy.getString("id") }.getString("cover_status"))
         val plantId = committed.single { it.getString("id") == fuzzy.getString("id") }.getString("plant_id")
         action("View imported plants").performClick()

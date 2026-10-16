@@ -9,6 +9,7 @@ import com.epaflix.fytorium.plants.parseSpeciesSearch
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -26,11 +27,13 @@ private val fetchErrors = setOf(
 data class ImportRow(val id: String, val name: String, val scientificName: String, val site: String,
     val cultivar: String?, val pot: String, val size: String, val soil: String, val care: Map<String, String>,
     val status: String, val coverStatus: String, val coverError: String?, val plantId: String?,
-    val candidates: List<SpeciesCandidate>, val selectedName: String?, val canCommit: Boolean, val canReview: Boolean)
+    val candidates: List<SpeciesCandidate>, val selectedName: String?, val canCommit: Boolean, val canReview: Boolean,
+    val hasCover: Boolean = false, val selectedKey: Long? = null)
+data class ImportSuggestion(val suggestedKey: Long?, val candidates: List<SpeciesCandidate>, val genus: SpeciesCandidate?)
 data class PlantaState(val rows: List<ImportRow> = emptyList(), val loaded: Boolean = false,
     val loading: Boolean = false, val saving: Boolean = false, val blocked: Boolean = false,
     val updateRequired: Boolean = false, val error: String? = null, val complete: Boolean = false,
-    val searchRow: String? = null, val search: SpeciesSearch? = null)
+    val searchRow: String? = null, val search: SpeciesSearch? = null, val suggestions: Map<String, ImportSuggestion> = emptyMap())
 private class PlantaFailure(val status: Int, val display: String, val fetchRejected: Boolean = false) : Exception()
 private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
     val mapped = row.getJSONObject("mapped")
@@ -41,7 +44,7 @@ private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
         mapped.getString("pot_type"), mapped.nullable("pot_size_cm") ?: "unknown", mapped.getString("soil_type"),
         care.keys().asSequence().associateWith { care.getString(it) }, row.getString("status"), row.getString("cover_status"),
         row.nullable("cover_error"), row.nullable("plant_id"), candidates, row.optJSONObject("selected")?.getString("canonical_name"),
-        row.getBoolean("can_commit"), row.getBoolean("can_review"))
+        row.getBoolean("can_commit"), row.getBoolean("can_review"), mapped.optBoolean("has_cover"), row.optJSONObject("selected")?.getLong("gbif_key"))
 }
 
 // The server owns staging. No code, token, review or search receipt is persisted here.
@@ -68,11 +71,24 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
         val rows = parseRows(request(endpoint))
         if (allowed()) mutable.value = state.value.copy(rows = rows, loaded = true, blocked = false)
     }
+    fun suggest(rowId: String) {
+        if (!allowed() || !connected() || state.value.rows.none { it.id == rowId && it.status == "review" }) return
+        require(rowId.matches(Regex("[A-Za-z0-9_-]+")))
+        val suggestion = runCatching {
+            val body = JSONObject(request("$endpoint/$rowId/suggestion", "POST", JSONObject()))
+            fun candidates(array: JSONArray) = parseSpeciesSearch(JSONObject().put("search_id", "").put("candidates", array).toString()).candidates
+            ImportSuggestion(if (body.isNull("suggested_gbif_key")) null else body.getLong("suggested_gbif_key"), candidates(body.getJSONArray("candidates")),
+                body.optJSONObject("genus")?.let { candidates(JSONArray().put(it)).first() })
+        }.getOrNull() ?: return
+        if (allowed()) mutable.update { current ->
+            if (current.rows.any { it.id == rowId }) current.copy(suggestions = current.suggestions + (rowId to suggestion)) else current
+        }
+    }
     @Synchronized fun refresh() = run(false) { load() }
     @Synchronized fun fetch(code: String) = run(true) {
         val rows = parseRows(request(endpoint, "POST", JSONObject().put("code", code), sensitive = true))
         if (allowed()) mutable.value = state.value.copy(rows = rows, loaded = true, blocked = false,
-            complete = false, searchRow = null, search = null)
+            complete = false, searchRow = null, search = null, suggestions = emptyMap())
     }
     @Synchronized fun confirm(rowId: String, key: Long, searchId: String? = null): Boolean = review(rowId,
         JSONObject().put("gbif_key", key).put("confirmed", true).apply { searchId?.let { put("search_id", it) } })
