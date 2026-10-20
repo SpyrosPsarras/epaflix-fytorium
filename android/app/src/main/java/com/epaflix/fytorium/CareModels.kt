@@ -20,7 +20,6 @@ data class CareTask(val status: String, val dueOn: String?, val intervalDays: In
                     val plantId: String, val plantName: String, val siteName: String, val completedEvent: CareEvent?, val coverPhotoId: String? = null) {
     val key get() = customTaskId ?: taskType ?: error("Missing task identity")
     val label get() = taskLabel(taskType, customTaskName)
-    val actionLabel get() = taskNames[taskType]?.second ?: customTaskName ?: "custom task"
     fun actions(today: String, member: Member, event: CareEvent? = completedEvent): List<String> {
         if (event != null) return if (event.canUndo) listOf("undo") else emptyList()
         if (status != "due") return emptyList()
@@ -41,16 +40,12 @@ data class Plant(val id: String, val displayName: String, val scientificName: St
                  val attributesJson: String = "{}")
 data class PlantDetail(val plant: Plant, val history: List<CareEvent>, val tasks: Map<String, CareTask>,
                        val careSettingsJson: String? = null, val speciesChangesJson: String = "[]")
-data class PotDetails(val potType: String, val potSizeCm: Int?, val soilType: String) {
-    fun json() = JSONObject().put("pot_type", potType).put("pot_size_cm", potSizeCm ?: JSONObject.NULL).put("soil_type", soilType)
-}
-
 internal val taskNames = mapOf(
-    "water" to ("Water" to "watering"), "fertilize" to ("Fertilize" to "fertilizing"), "mist" to ("Mist" to "misting"),
-    "clean_leaves" to ("Clean leaves" to "leaf cleaning"), "remove_dead" to ("Remove dead flowers and leaves" to "removing dead flowers and leaves"),
-    "cut_back" to ("Seasonal cut-back" to "seasonal cut-back"), "repot" to ("Repot" to "repotting")
+    "water" to "Water", "fertilize" to "Fertilize", "mist" to "Mist",
+    "clean_leaves" to "Clean leaves", "remove_dead" to "Remove dead flowers and leaves",
+    "cut_back" to "Seasonal cut-back", "repot" to "Repot"
 )
-fun taskLabel(type: String?, custom: String? = null): String = taskNames[type]?.first ?: custom ?: "Deleted custom task"
+fun taskLabel(type: String?, custom: String? = null): String = taskNames[type] ?: custom ?: "Deleted custom task"
 internal fun JSONObject.nullable(name: String): String? = if (isNull(name)) null else getString(name)
 internal fun <T> JSONArray.mapObjects(parse: (JSONObject) -> T): List<T> = (0 until length()).map { parse(getJSONObject(it)) }
 internal fun parseMember(json: String): Member = JSONObject(json).getJSONObject("member").let { Member(it.getString("id"), Role.valueOf(it.getString("role"))) }

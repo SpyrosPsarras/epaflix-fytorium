@@ -161,12 +161,11 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it }, scrollState = todayScroll,
                     onOpenTask = { todayTaskKey = "${it.plantId}:${it.key}"; feedPlant = it.plantId; tab = "Plants" },
-                    onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
+                    onRefresh = { controller?.refresh() }, onAction = { task, action -> controller?.act(task, action) },
                     onHandleType = { controller?.handleType(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
                     onNotifications = { tab = "More"; notifications = true },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
-                    onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } },
                     feedContent = { seeTasks -> if (feedState != null && feedState.cards.isNotEmpty()) HomeFeed(feedState,
                         onOpen = { href -> when {
                             href == "/#today" -> seeTasks()
@@ -177,7 +176,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
                     onBack = { tab = "Today"; feedPlant = null; todayTaskKey = null; journalPlantId = null; addPlant = false },
                     initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,
-                    onTaskAction = { task, action -> controller?.act(task, action, null) },
+                    onTaskAction = { task, action -> controller?.act(task, action) },
                     photosApi = sitesApi, photosConnected = sitesConnected,
                     speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() }) }
             }

@@ -70,6 +70,7 @@ class PlantsScreenTest {
         compose.onNode(block and hasText("Based on")).performScrollTo().performClick()
         compose.onNode(block and hasText("Source: rule · repot.synthetic@1")).performScrollTo().assertIsDisplayed()
         if (role == Role.sitter) {
+            compose.onNodeWithText("Care tasks are on Today and Upcoming.").assertDoesNotExist()
             compose.onNodeWithText("Repot with new pot and soil").assertDoesNotExist()
             for (label in listOf("Edit plant", "Photo updates", "Species and site", "Pot and plant attributes", "Care history", "Handle all tasks"))
                 compose.onNodeWithText(label).assertDoesNotExist()
@@ -93,6 +94,11 @@ class PlantsScreenTest {
         assertEquals(listOf("skip", "undo"), actions)
         if (role != Role.sitter) scroll("Repot with new pot and soil").assertIsDisplayed().performClick()
         if (role != Role.sitter) assertEquals(listOf("repot-form", "repot-form"), commands)
+    }
+    @Test fun sitterPlantWithoutTappedTaskKeepsTodayAndUpcomingHint() {
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(member = Member("member-one", Role.sitter)),
+            PlantDetail(plant, emptyList(), emptyMap()), {}, { _, _ -> }, {}, {}) } }
+        compose.onNodeWithText("Care tasks are on Today and Upcoming.").assertIsDisplayed()
     }
     @Test fun ownerOfflineTaskShowsOnlyOneUnavailableNotice() = offlineTaskNotice(Role.owner)
     @Test fun sitterOfflineTaskShowsOnlyOneUnavailableNotice() = offlineTaskNotice(Role.sitter)

@@ -114,7 +114,7 @@ internal fun CareState.currentTask(key: String?): CareTask? =
         }
         if (state.member?.role == Role.sitter) item {
             Text(attributes.nullable("cultivar").orEmpty())
-            Text("Care tasks are on Today and Upcoming.")
+            if (task == null) Text("Care tasks are on Today and Upcoming.")
         } else {
             item {
                 Thumbnail(plant, thumbnails)

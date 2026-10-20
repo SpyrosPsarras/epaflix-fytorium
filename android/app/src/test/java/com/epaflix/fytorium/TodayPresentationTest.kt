@@ -66,11 +66,4 @@ class TodayPresentationTest {
         assertEquals("Next: Water Synthetic fern · Thursday, 6 June",
             state.copy(handled = mapOf("next:water" to event)).todayPresentation().nextTask)
     }
-    @Test fun presentationKeepsServerDueDatesRegardlessOfPhoneTimezone() {
-        val state = CareState(today = parseTaskList(taskListFixture("today")), upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04")))
-        val shown = state.copy(timezone = "Europe/Oslo").todayPresentation()
-        assertEquals("2030-06-01", shown.sections.single().tasks.single().dueOn)
-        assertEquals("Next: Water Synthetic fern · Tuesday, 4 June", shown.nextTask)
-        assertEquals(shown, state.copy(timezone = "America/Los_Angeles").todayPresentation())
-    }
 }

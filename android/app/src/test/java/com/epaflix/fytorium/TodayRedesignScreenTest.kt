@@ -39,7 +39,7 @@ class TodayRedesignScreenTest {
         val list = parseTaskList(taskListFixture("today"))
         val view = mutableStateOf("today")
         compose.setContent { FytoriumTheme { TaskScreen(CareState(member = Member("owner", Role.owner), today = list,
-            upcoming = list.copy(view = "upcoming"), plants = listOf(parsePlant(org.json.JSONObject(plantFixture))), timezone = "Europe/Oslo"),
+            upcoming = list.copy(view = "upcoming"), plants = listOf(parsePlant(org.json.JSONObject(plantFixture)))),
             view.value, onView = { view.value = it }) } }
         fun assertTitle(label: String) {
             val title = compose.onNode(hasText(label) and !hasClickAction()).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
@@ -129,7 +129,7 @@ class TodayRedesignScreenTest {
         val actions = mutableListOf<String>()
         compose.setContent { FytoriumTheme { TaskScreen(CareState(member = Member("owner", Role.owner), today = list,
             upcoming = list.copy(view = "upcoming"), plants = listOf(parsePlant(org.json.JSONObject(plantFixture)))), view.value,
-            onOpenTask = { opened.add(it) }, onAction = { _, action, _ -> actions.add(action) }) } }
+            onOpenTask = { opened.add(it) }, onAction = { _, action -> actions.add(action) }) } }
         for (selected in listOf("today", "upcoming")) {
             compose.runOnIdle { view.value = selected }
             compose.onNodeWithContentDescription("Open Synthetic fern").performClick()
@@ -205,7 +205,7 @@ class TodayRedesignScreenTest {
         val water = rows("water", 8)
         val base = TaskList("2030-06-02", "today", TaskSettings(), mapOf("water" to water), listOf(TaskSection("water", "Water", water), TaskSection("mist", "Mist", emptyList())))
         val upcoming = base.copy(view = "upcoming", sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows("fertilize", 3).map { it.copy(dueOn = "2030-06-04", lateDays = 0) })))
-        val full = CareState(member = Member("owner", Role.owner), today = base, upcoming = upcoming, plants = plants, timezone = "Europe/Oslo", lastUpdated = Instant.parse("2030-06-02T10:42:00Z").toEpochMilli())
+        val full = CareState(member = Member("owner", Role.owner), today = base, upcoming = upcoming, plants = plants, lastUpdated = Instant.parse("2030-06-02T10:42:00Z").toEpochMilli())
         val state = mutableStateOf(full)
         val view = mutableStateOf("today")
         var adds = 0

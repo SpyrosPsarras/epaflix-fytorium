@@ -242,8 +242,7 @@ export async function completeType(identity: Identity, taskType: string, request
   if (isUuid(taskType)) taskType = taskType.toLowerCase();
   if (!taskTypes.includes(taskType as TaskType) && !isUuid(taskType)) error(404, 'Task type not found');
   const household = identity.household.id;
-  const settings = await taskViewSettings(identity);
-  const filter = identity.member.role === 'sitter' ? 'all' : settings.filter;
+  const { filter } = await taskViewSettings(identity);
   const { action, events } = await careAction(identity, null, requestId, 'complete-type', { task_type: taskType }, async (client, _, at) => {
     if (isUuid(taskType)) await getCustomTask(household, taskType, client);
     const plants = await client.query(plantSelectFor(identity.language) + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$2')} AND ($3 = 'all' OR t.location = $3) ORDER BY p.id FOR UPDATE OF p`, [household, identity.member.id, filter]);

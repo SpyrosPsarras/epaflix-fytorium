@@ -38,7 +38,7 @@ class TaskScreenTest {
         var added = 0
         var completed: String? = null
         compose.setContent { TaskTestTheme { TaskScreen(base.copy(today = list), "today", onAddPlant = { added++ },
-            onAction = { task, action, _ -> if (action == "complete") completed = task.plantId }) } }
+            onAction = { task, action -> if (action == "complete") completed = task.plantId }) } }
         compose.onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, 100_000f) }
         val fab = compose.onNodeWithContentDescription("Add plant").fetchSemanticsNode().boundsInRoot
         val viewport = compose.onNodeWithTag("task-list").fetchSemanticsNode().boundsInRoot
@@ -104,49 +104,6 @@ class TaskScreenTest {
             compose.onNodeWithText("Undo").assertIsNotEnabled()
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         }
-    }
-    @Test fun todayRepotOwnsLoadingAndErrorsAndRetainsEditedFields() {
-        val result = kotlinx.coroutines.CompletableDeferred<Plant>()
-        val current = mutableStateOf(state())
-        val task = state().today!!.sections.first().tasks.first().copy(taskType = "repot")
-        compose.setContent { TaskTestTheme { RepotForm(task, current.value, { result.await() }, {}, {}) } }
-        compose.onNodeWithText("Loading current pot…").assertExists()
-        compose.onNodeWithText("Pot size in cm").assertIsNotEnabled()
-        compose.onNodeWithText("Pot type: plastic").assertIsNotEnabled()
-        compose.onNodeWithText("Save repot").assertIsNotEnabled()
-        compose.runOnIdle { result.complete(parsePlant(org.json.JSONObject(plantFixture))) }
-        compose.waitUntil { runCatching { compose.onNodeWithText("Pot size in cm").assertIsEnabled(); true }.getOrDefault(false) }
-        compose.onNodeWithText("Pot size in cm").performTextReplacement("23")
-        compose.onNodeWithText("Pot type: plastic").performClick()
-        compose.onNodeWithText("terracotta").performClick()
-        compose.runOnIdle { current.value = current.value.copy(detail = PlantDetail(parsePlant(org.json.JSONObject(plantFixture)), emptyList(), emptyMap())) }
-        compose.onNodeWithText("23").assertExists()
-        compose.onNodeWithText("Pot type: terracotta").assertExists()
-        compose.onNodeWithText("Save repot").assertIsEnabled()
-    }
-    @Test fun todayRepotFailedReadShowsErrorWithoutBlockingEditsOrPlants() {
-        val result = kotlinx.coroutines.CompletableDeferred<Plant>()
-        val task = state().today!!.sections.first().tasks.first().copy(taskType = "repot")
-        compose.setContent { TaskTestTheme { RepotForm(task, state(), { result.await() }, {}, {}) } }
-        compose.runOnIdle { result.completeExceptionally(java.io.IOException("Could not load the current pot")) }
-        compose.waitUntil { runCatching { compose.onNodeWithText("Could not load the current pot").assertExists(); true }.getOrDefault(false) }
-        compose.onNodeWithText("Pot size in cm").assertIsEnabled().performTextReplacement("20")
-        compose.onNodeWithText("Save repot").assertIsEnabled()
-    }
-    @Test fun repotFormUsesExistingDetailsAndRejectsInvalidPotSize() {
-        val list = parseTaskList(taskListFixture("today"))
-        val repot = list.copy(sections = list.sections.map { it.copy(tasks = it.tasks.map { row -> row.copy(taskType = "repot") }) })
-        val detail = PlantDetail(parsePlant(org.json.JSONObject(plantFixture)), emptyList(), emptyMap())
-        compose.enableAccessibilityChecks()
-        val care = state().copy(today = repot, detail = detail)
-        compose.setContent { TaskTestTheme { RepotForm(repot.sections.single().tasks.single(), care, onDismiss = {}, onSave = {}) } }
-        compose.onNodeWithText("Pot type: plastic").assertIsDisplayed()
-        compose.onNodeWithText("Soil type: all purpose").assertIsDisplayed()
-        compose.onNodeWithText("Pot size in cm").performTextReplacement("0")
-        compose.onNodeWithText("Save repot").assertIsNotEnabled()
-        compose.onNodeWithText("Pot size in cm").performTextReplacement("20")
-        compose.onNodeWithText("Save repot").assertIsEnabled().assertHeightIsAtLeast(48.dp)
-        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
     @Test fun sitterNeverSeesSettingsOrPrivateBasisAndCannotUndoAnotherMembersCare() {
         compose.enableAccessibilityChecks()

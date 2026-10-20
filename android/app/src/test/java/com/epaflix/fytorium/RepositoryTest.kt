@@ -100,18 +100,6 @@ class RepositoryTest {
             repeat(2) { assertNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)) }
         }
     }
-    @Test fun householdTimezoneIsLoadedFromMetaAndSurvivesOfflineRestore() {
-        withRepository { repository, server, cache ->
-            enqueueRefresh(server)
-            repository.refresh()
-            assertEquals("Europe/Oslo", repository.state.value.timezone)
-            val restored = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
-            restored.restore()
-            assertEquals("Europe/Oslo", restored.state.value.timezone)
-            restored.wipe()
-            assertNull(restored.state.value.timezone)
-        }
-    }
     @Test fun logoutAndMemberChangeEraseEveryCachedResource() {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
         val cache = CareCache(db)
