@@ -1,4 +1,5 @@
 import { error, json } from '@sveltejs/kit';
+import type pg from 'pg';
 import { db } from './db';
 import { now } from './clock';
 import { getPlant, isUuid } from './plants';
@@ -38,9 +39,9 @@ export async function createCustomTask(household: string, input: Record<string, 
   return json(result.rows[0], { status: 201 });
 }
 
-export async function getCustomTask(household: string, id: string): Promise<CustomTask> {
+export async function getCustomTask(household: string, id: string, database: pg.Pool | pg.PoolClient = db()): Promise<CustomTask> {
   if (!isUuid(id)) error(404, 'Custom task not found');
-  const result = await db().query('SELECT * FROM custom_tasks WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL', [id, household]);
+  const result = await database.query('SELECT * FROM custom_tasks WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL', [id, household]);
   if (!result.rowCount) error(404, 'Custom task not found');
   return result.rows[0];
 }

@@ -199,10 +199,10 @@ Care tasks grouped by household calendar day for fourteen days including today, 
 A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show today's completed tasks with Undo. The choice belongs to the member across sessions, not the device.
 
 **Handle all tasks**:
-One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. The completions form one care batch. Undo on any event calls the batch undo API to reverse the whole action.
+One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. A Today card's Handle all tasks completes every due or late task of that card's type on the plants shown in the member's Today view. Either action forms one undoable care batch.
 
 **Care batch**:
-One `care_actions` request identity groups `care_events.batch_id` completions. Handle all tasks and rain watering share this mechanism and `POST /api/task-batches/:id/undo`. Single-event undo refuses batched events. Rain tap aliases live in `care_actions.batch_id`, and `weather_events.batch_id` links to the original `care_actions.request_id`. Undo marks the action and its completions undone without deleting history.
+One `care_actions` request identity groups `care_events.batch_id` completions. Per-plant Handle all tasks, per-type Today card completion and rain watering share this mechanism and `POST /api/task-batches/:id/undo`. Single-event undo refuses batched events. Rain tap aliases live in `care_actions.batch_id`, and `weather_events.batch_id` links to the original `care_actions.request_id`. Undo marks the action and its completions undone without deleting history.
 
 **Repot flow**:
 A repot completion together with new pot type, pot size and soil type. Undo restores the previous pot data and schedule; multiple repot flows must be undone newest first.
@@ -238,7 +238,7 @@ A household task with a trimmed name of 1–60 characters and a fixed interval o
 A custom task belonging to one plant. Moving the plant to another site does not change it. A graveyard plant has no tasks; restoring it resumes scheduling from its retained history.
 
 **Site task**:
-A custom task applied on read to every active plant currently on its site, including later additions. Each plant has independent completion, snooze, skip and undo history. Moving off the site or into the graveyard stops that instance. There is no separate whole-site completion action. Handle all tasks includes due custom tasks for one plant in its existing undoable batch.
+A custom task applied on read to every active plant currently on its site, including later additions. Each plant has independent completion, snooze, skip and undo history. Moving off the site or into the graveyard stops that instance. A Today card's Handle all tasks completes every due or late instance of that custom task on plants shown in the member's Today view as one undoable batch. Per-plant Handle all tasks includes due custom tasks in that plant's batch.
 
 Deleting a custom task sets deleted_at. Its definition and current name stay available to care history, but it disappears from schedules, Today, Upcoming and settings. Renaming also changes its historical display name. Target deletion retires custom tasks without discarding their definitions. Database triggers validate and lock the same-household target on creation or target changes, then retain the target UUID after retirement. This lets deleting a site keep custom history for its graveyard plants. Full plant deletion still cascades its care events.
 

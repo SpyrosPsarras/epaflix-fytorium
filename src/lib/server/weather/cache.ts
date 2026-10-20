@@ -1,3 +1,4 @@
+import type pg from 'pg';
 import type { ForecastDay, WeatherReport } from '$lib/weather';
 import type { Identity } from '../auth';
 import { db } from '../db';
@@ -17,8 +18,8 @@ function scheduleSnapshot(days: ForecastDay[], fetchedAt: Date | null, today: st
 }
 
 // Task-only readers need forecast factors, not the private feed weather report.
-export async function taskWeather(household: string): Promise<WeatherReport> {
-  const { rows } = await db().query("SELECT data, fetched_at FROM weather_cache WHERE household_id = $1 AND kind = 'forecast'", [household]);
+export async function taskWeather(household: string, database: pg.Pool | pg.PoolClient = db()): Promise<WeatherReport> {
+  const { rows } = await database.query("SELECT data, fetched_at FROM weather_cache WHERE household_id = $1 AND kind = 'forecast'", [household]);
   return { locationSet: false, forecastFetchedAt: null, unavailableSince: null, current: null, alerts: [], events: [], lastRainBatch: null, rain: null,
     snapshot: scheduleSnapshot(rows[0]?.data ?? [], rows[0]?.fetched_at ?? null, calendarDate(now())) };
 }

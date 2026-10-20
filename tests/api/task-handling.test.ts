@@ -430,6 +430,43 @@ describe('complete-type', () => {
     await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
   });
 
+  test.each(['outdoor', 'indoor', 'all'])('uses the acting member Today filter %s and replays after that filter changes', async (filter) => {
+    const family = await harness.login('synthetic-handling-family');
+    const settings = { sort: 'task', filter, show_completed: false };
+    expect((await family.request('/api/tasks/settings', 'PUT', settings)).status).toBe(200);
+    expect((await (await request('/api/tasks/settings')).json()).filter).toBe('all');
+    const before = await Promise.all([plantTasks(late), plantTasks(outdoor)]);
+    const histories = await Promise.all([plantHistory(late), plantHistory(outdoor)]);
+    const included = filter === 'outdoor' ? [outdoor] : filter === 'indoor' ? [late] : [late, outdoor];
+    const excluded = filter === 'outdoor' ? [late] : filter === 'indoor' ? [outdoor] : [];
+    for (const task of before) expect(task.water).toMatchObject({ status: 'due', dueOn: '2026-06-06', lateDays: 2 });
+    const key = randomUUID();
+    let batchId: string | undefined;
+    try {
+      const response = await family.request('/api/tasks/water/complete-all', 'POST', { request_id: key });
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      batchId = result.batch_id;
+      const ids = result.events.map((event: { plant_id: string }) => event.plant_id);
+      expect(ids).toEqual(expect.arrayContaining(included));
+      for (const id of excluded) expect(ids).not.toContain(id);
+      for (const id of included) expect((await plantTasks(id)).water).toMatchObject({ status: 'due', dueOn: id === outdoor ? '2026-06-14' : '2026-06-15', lateDays: 0 });
+      expect((await family.request('/api/tasks/settings', 'PUT', { ...settings, filter: filter === 'all' ? 'outdoor' : 'all' })).status).toBe(200);
+      const replay = await family.request('/api/tasks/water/complete-all', 'POST', { request_id: key });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual(result);
+      for (const id of excluded) {
+        const index = [late, outdoor].indexOf(id);
+        expect(await plantTasks(id)).toEqual(before[index]);
+        expect(await plantHistory(id)).toEqual(histories[index]);
+      }
+    } finally {
+      if (batchId) expect((await family.request(`/api/task-batches/${batchId}/undo`, 'POST')).status).toBe(200);
+      await family.request('/api/tasks/settings', 'PUT', { sort: 'plant', filter: 'indoor', show_completed: true });
+    }
+    expect(await Promise.all([plantTasks(late), plantTasks(outdoor)])).toEqual(before);
+  });
+
   test('is idempotent per request id, including concurrent retries and replay after undo', async () => {
     const key = randomUUID();
     const responses = await Promise.all([completeType('clean_leaves', key), completeType('clean_leaves', key)]);
@@ -484,7 +521,7 @@ describe('complete-type', () => {
   });
 
   test('validates types, JSON, request ids, sessions and origins before writing', async () => {
-    for (const type of ['nope', randomUUID()]) expect((await completeType(type)).status).toBe(404);
+    for (const type of ['nope', 'WATER', randomUUID()]) expect((await completeType(type)).status).toBe(404);
     const path = '/api/tasks/clean_leaves/complete-all';
     for (const body of [null, [], 'bad']) expect((await request(path, 'POST', body)).status).toBe(400);
     for (const request_id of [undefined, 3, 'bad']) expect((await request(path, 'POST', { request_id })).status).toBe(422);
@@ -492,6 +529,36 @@ describe('complete-type', () => {
     expect((await fetch(harness.base + path, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{' })).status).toBe(400);
     expect((await fetch(harness.base + path, { method: 'POST', headers: { cookie, origin: 'https://untrusted.example', 'content-type': 'application/json' }, body: '{}' })).status).toBe(403);
     for (const cookie of ['', 'fytorium_session=invalid']) expect((await request(path, 'POST', { request_id: randomUUID() }, cookie)).status).toBe(401);
+  });
+
+  test('accepts uppercase custom task UUIDs and replays using either case', async () => {
+    const created = await request('/api/custom-tasks', 'POST', { plant_id: late, name: 'Test uppercase type inspect', interval_days: 1 });
+    expect(created.status).toBe(201);
+    const custom = await created.json();
+    await clock('2026-06-09T12:00:00Z');
+    const key = randomUUID();
+    let batchId: string | undefined;
+    try {
+      const response = await completeType(custom.id.toUpperCase(), key);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      batchId = result.batch_id;
+      expect(result.events).toEqual([expect.objectContaining({ plant_id: late, task_type: null, custom_task_id: custom.id, batch_id: key })]);
+      const replay = await completeType(custom.id, key);
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual(result);
+      expect((await undoBatch(key)).status).toBe(200);
+      batchId = undefined;
+      const lowercase = await completeType(custom.id);
+      expect(lowercase.status).toBe(200);
+      const second = await lowercase.json();
+      batchId = second.batch_id;
+      expect(second.events).toEqual([expect.objectContaining({ plant_id: late, task_type: null, custom_task_id: custom.id, batch_id: second.batch_id })]);
+    } finally {
+      if (batchId) expect((await undoBatch(batchId)).status).toBe(200);
+      expect((await request(`/api/custom-tasks/${custom.id}`, 'DELETE')).status).toBe(204);
+      await clock('2026-06-08T12:00:00Z');
+    }
   });
 
   test('accepts custom task ids and completes only their applicable due plants', async () => {
