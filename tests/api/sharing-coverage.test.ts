@@ -79,6 +79,7 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/species/[gbifKey]/outdoor-months': { GET: edit(200) },
   '/api/task-batches/[id]/undo': { POST: [404, 404, 404, 404, 401, 401] },
   '/api/tasks': { GET: self(200) },
+  '/api/tasks/[taskType]/complete-all': { POST: edit(422) },
   '/api/tasks/settings': { GET: edit(200), PUT: edit(422) },
   '/api/weather': { GET: edit(200) },
   '/api/weather/rain/water': { POST: edit(422) },

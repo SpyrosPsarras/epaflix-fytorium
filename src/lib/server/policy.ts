@@ -53,6 +53,7 @@ const policies: Record<string, RoutePolicy> = {
   '/__test/care-quota/[source]': 'owner',
   '/upcoming': { action: 'tasks', projection: 'taskList' },
   '/api/tasks': { action: 'tasks', projection: 'taskList' },
+  '/api/tasks/[taskType]/complete-all': 'edit',
   '/members': 'owner', '/import': 'owner', '/settings': 'owner',
   '/api/household/invites': 'owner', '/api/household/invites/[id]': 'owner',
   '/api/household/members': 'owner', '/api/household/members/[id]': 'owner',

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { taskRules } from '$lib/schedule/rules';
 import { taskViewSettings } from './task-view-settings';
 import { householdSettings } from './care-settings';
+import { getCustomTask } from './custom-tasks';
 import { schedule, taskTypes, type TaskType, type ScheduleInput } from '$lib/schedule/engine';
 import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList, type PlantSchedule } from '$lib/tasks';
 import type { Identity } from './auth';
@@ -237,6 +238,22 @@ export async function completeAll(identity: Identity, plantId: string, requestId
   return { events, tasks: await plantTasks(plantId, identity.household.id, identity.language) };
 }
 
+export async function completeType(identity: Identity, taskType: string, requestId: string) {
+  if (!taskTypes.includes(taskType as TaskType) && !isUuid(taskType)) error(404, 'Task type not found');
+  const household = identity.household.id;
+  const { action, events } = await careAction(identity, null, requestId, 'complete-type', { task_type: taskType }, async (client, _, at) => {
+    if (isUuid(taskType)) await getCustomTask(household, taskType);
+    const plants = await client.query(plantSelectFor(identity.language) + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$2')} ORDER BY p.id FOR UPDATE OF p`, [household, identity.member.id]);
+    const today = calendarDate(at);
+    const { schedules } = await schedulePlantTasks(plants.rows, household, today, identity.language, client);
+    for (const plant of plants.rows) {
+      const task = taskIn(schedules.get(plant.id)!, taskType);
+      if (task?.status === 'due' && task.dueOn <= today) await recordEvent(client, identity, plant.id, taskType, 'completed', randomUUID(), at, requestId);
+    }
+  });
+  return { batch_id: action.request_id as string, events };
+}
+
 export async function repot(identity: Identity, plantId: string, input: Record<string, unknown>) {
   await getPlant(plantId, identity.household.id, identity.language);
   const errors = potErrors(input);
@@ -296,7 +313,7 @@ export async function undoBatch(identity: Identity, batchId: string) {
     await client.query('SELECT id FROM households WHERE id = $1 FOR NO KEY UPDATE', [household]);
     // Plant locks come before the action lock, matching careAction and lifecycle commands.
     const plants = await client.query('SELECT p.status FROM plants p WHERE p.household_id = $2 AND (p.id IN (SELECT plant_id FROM care_events WHERE batch_id = $1 AND household_id = $2) OR p.id IN (SELECT plant_id FROM care_actions WHERE request_id = $1 AND household_id = $2)) ORDER BY p.id FOR UPDATE', [batchId, household]);
-    const batch = await client.query("SELECT undone_at FROM care_actions WHERE request_id = $1 AND household_id = $2 AND action IN ('complete-all', 'rain') AND batch_id IS NULL FOR UPDATE", [batchId, household]);
+    const batch = await client.query("SELECT undone_at FROM care_actions WHERE request_id = $1 AND household_id = $2 AND action IN ('complete-all', 'complete-type', 'rain') AND batch_id IS NULL FOR UPDATE", [batchId, household]);
     if (!batch.rowCount) error(404, 'Task batch not found');
     await requireUndo(identity, batchId, true, client);
     const time = now();

@@ -55,12 +55,12 @@ export function undoDenialFrom(context: UndoContext, id: string, batch = false):
   const plant = action.plant_id ? context.plants.get(action.plant_id) : undefined;
   if (sitter) {
     if (!plant || plant.status !== 'active' || !plant.shared) return deny(404, 'Plant not found');
-    if (action.by_member !== context.identity.member.id || ('previous_pot' in action && action.previous_pot) || (batch && 'action' in action && action.action !== 'complete-all')) {
+    if (action.by_member !== context.identity.member.id || ('previous_pot' in action && action.previous_pot) || (batch && 'action' in action && !['complete-all', 'complete-type'].includes(action.action))) {
       return deny(403, 'Sitters can undo only their own task actions');
     }
   }
   if (batch) {
-    if (!('action' in action) || !['complete-all', 'rain'].includes(action.action) || action.batch_id) return deny(404, 'Task batch not found');
+    if (!('action' in action) || !['complete-all', 'complete-type', 'rain'].includes(action.action) || action.batch_id) return deny(404, 'Task batch not found');
     if (action.undone_at) return deny(409, 'Task batch already undone');
     if ([...context.batchPlants.get(id) ?? []].some(plantId => context.plants.get(plantId)?.status !== 'active')) {
       return deny(409, 'Restore graveyard plants before undoing their care.');
