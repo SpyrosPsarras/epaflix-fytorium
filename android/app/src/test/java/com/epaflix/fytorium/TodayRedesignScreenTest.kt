@@ -35,6 +35,70 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
 class TodayRedesignScreenTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun selectedViewHasACentredTitleWithoutGreetingTipOrSummary() {
+        val list = parseTaskList(taskListFixture("today"))
+        val view = mutableStateOf("today")
+        compose.setContent { FytoriumTheme { TaskScreen(CareState(member = Member("owner", Role.owner), today = list,
+            upcoming = list.copy(view = "upcoming"), plants = listOf(parsePlant(org.json.JSONObject(plantFixture))), timezone = "Europe/Oslo"),
+            view.value, onView = { view.value = it }) } }
+        fun assertTitle(label: String) {
+            val title = compose.onNode(hasText(label) and !hasClickAction()).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+            assertEquals(root.center.x, title.center.x, 1f)
+        }
+        assertTitle("Today")
+        compose.onNodeWithText("Good morning").assertDoesNotExist()
+        compose.onNode(hasText("Today's tasks:", substring = true)).assertDoesNotExist()
+        for (tip in listOf("Check the soil before watering.", "Empty standing water from saucers.", "Turn pots for more even light.",
+            "Check leaf undersides for pests.", "Use clean tools when pruning.")) compose.onNodeWithText(tip).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
+        compose.onNodeWithContentDescription("My notifications").assertIsDisplayed()
+        compose.onNodeWithTag("view-today").assertIsSelected()
+        compose.onNodeWithTag("view-upcoming").performClick().assertIsSelected()
+        assertTitle("Upcoming")
+    }
+    @Test fun cardHandlingRequiresADuePendingTaskAndAnEditingRole() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val base = CareState(member = Member("owner", Role.owner), today = list, upcoming = list,
+            plants = listOf(parsePlant(org.json.JSONObject(plantFixture))))
+        val state = mutableStateOf(base)
+        val view = mutableStateOf("today")
+        val handledTypes = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { TaskScreen(state.value, view.value, onHandleType = { handledTypes.add(it) }) } }
+        val button = compose.onNodeWithContentDescription("Handle all Water tasks")
+        button.assertIsDisplayed().assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(listOf("water"), handledTypes) }
+        compose.onNodeWithText("Handle all tasks").assertExists()
+        for (role in Role.entries) {
+            compose.runOnIdle { state.value = base.copy(member = Member("member", role)) }
+            if (role == Role.sitter) button.assertDoesNotExist() else button.assertIsEnabled()
+        }
+        compose.runOnIdle { state.value = base; view.value = "upcoming" }
+        button.assertDoesNotExist()
+        compose.runOnIdle { view.value = "today" }
+        val event = parseEvent(org.json.JSONObject(eventFixture))
+        for (rows in listOf(listOf(task.copy(completedEvent = event)), listOf(task.copy(dueOn = "2030-06-03")),
+            listOf(task.copy(dueOn = null)), listOf(task.copy(status = "not_applicable")))) {
+            compose.runOnIdle { state.value = base.copy(today = list.copy(sections = listOf(TaskSection("water", "Water", rows)))) }
+            button.assertDoesNotExist()
+        }
+        compose.runOnIdle { state.value = base.copy(handled = mapOf("plant-one:water" to event)) }
+        button.assertDoesNotExist()
+        for (blocked in listOf(base.copy(offline = true), base.copy(serverUnavailable = true), base.copy(saving = true), base.copy(updateRequired = true))) {
+            compose.runOnIdle { state.value = blocked }
+            button.assertExists().assertIsNotEnabled()
+        }
+        compose.runOnIdle { state.value = base.copy(busy = true) }
+        button.assertIsEnabled()
+        val custom = task.copy(taskType = null, customTaskId = "91000000-0000-4000-8000-000000000001", customTaskName = "Rotate")
+        compose.runOnIdle { state.value = base.copy(today = list.copy(sections = listOf(
+            TaskSection("water", "Water", listOf(task.copy(completedEvent = event), task.copy(plantId = "plant-two", dueOn = "2030-06-02"))),
+            TaskSection(custom.key, "Rotate", listOf(custom))))) }
+        button.assertIsEnabled().performClick()
+        compose.onNodeWithContentDescription("Handle all Rotate tasks").performClick()
+        compose.runOnIdle { assertEquals(listOf("water", "water", "91000000-0000-4000-8000-000000000001"), handledTypes) }
+    }
     @Test fun lateLabelBoundaries() {
         for ((days, label) in listOf(1 to "1d late", 59 to "59d late", 60 to "2mo late", 89 to "2mo late", 90 to "3mo late")) {
             assertEquals(label, lateLabel(days))
@@ -71,7 +135,7 @@ class TodayRedesignScreenTest {
         val template = parseTaskList(taskListFixture("today"))
         val list = template.copy(sections = template.sections.map { section -> section.copy(tasks = section.tasks.map { it.copy(lateDays = 46) }) })
         compose.setContent { FytoriumTheme { TaskScreen(CareState(member = Member("owner", Role.owner), today = list,
-            plants = listOf(parsePlant(org.json.JSONObject(plantFixture)))), "today", now = Instant.parse("2030-06-02T18:00:00Z")) } }
+            plants = listOf(parsePlant(org.json.JSONObject(plantFixture)))), "today") } }
         val pill = compose.onNodeWithText("46d late", useUnmergedTree = true).assertIsDisplayed()
         val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
         pill.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
@@ -136,7 +200,7 @@ class TodayRedesignScreenTest {
                 NavigationBarItem(selected = label == "Today", onClick = {}, icon = { Icon(when (label) { "Today" -> Icons.Default.Check; "Plants" -> Icons.Default.Eco; "Journal" -> Icons.Default.Book; else -> Icons.Default.Menu }, contentDescription = null) }, label = { Text(label) })
             }
         } }) { padding -> Box(Modifier.padding(padding)) { TaskScreen(state.value, view.value, onView = { view.value = it },
-            thumbnails = thumbnails, now = Instant.parse("2030-06-02T18:00:00Z"), onAddPlant = { adds++ }, onImport = { imports++ }, deviceOnline = !state.value.offline) } } } }
+            thumbnails = thumbnails, onAddPlant = { adds++ }, onImport = { imports++ }, deviceOnline = !state.value.offline) } } } }
         fun awaitPhotos() {
             val list = if (view.value == "upcoming") state.value.upcoming else state.value.today
             val covers = list?.sections.orEmpty().flatMap { it.tasks }.filter { it.coverPhotoId != null }
@@ -155,8 +219,9 @@ class TodayRedesignScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/a15-$name-${if (dark) "dark" else "light"}.png")
         }
-        compose.onNodeWithText("Good evening").assertIsDisplayed()
-        compose.onNodeWithText("Today's tasks: 8 watering").assertIsDisplayed()
+        compose.onNode(hasText("Today") and !hasClickAction()).assertIsDisplayed()
+        compose.onNodeWithText("Good evening").assertDoesNotExist()
+        compose.onNodeWithText("Today's tasks: 8 watering").assertDoesNotExist()
         compose.onNodeWithText("Mist").assertDoesNotExist()
         compose.onNodeWithText("46d late").assertIsDisplayed()
         compose.onNodeWithText("2mo late").assertIsDisplayed()

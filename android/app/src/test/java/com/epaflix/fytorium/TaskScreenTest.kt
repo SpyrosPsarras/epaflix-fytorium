@@ -55,7 +55,7 @@ class TaskScreenTest {
         compose.enableAccessibilityChecks()
         val current = mutableStateOf(state())
         val view = mutableStateOf("today")
-        compose.setContent { TaskTestTheme(dark) { TaskScreen(current.value, view.value, now = java.time.Instant.parse("2030-06-02T18:00:00Z")) } }
+        compose.setContent { TaskTestTheme(dark) { TaskScreen(current.value, view.value) } }
         fun capture(name: String) {
             compose.mainClock.advanceTimeBy(1000)
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
@@ -80,7 +80,7 @@ class TaskScreenTest {
         val current = mutableStateOf(state(sitter = true))
         val view = mutableStateOf("today")
         val own = parseEvent(org.json.JSONObject(eventFixture))
-        compose.setContent { TaskTestTheme(dark) { TaskScreen(current.value, view.value, now = java.time.Instant.parse("2030-06-02T18:00:00Z")) } }
+        compose.setContent { TaskTestTheme(dark) { TaskScreen(current.value, view.value) } }
         fun event(event: CareEvent?) {
             compose.runOnIdle {
                 val fresh = state(view.value, sitter = true)
@@ -188,7 +188,7 @@ class TaskScreenTest {
     @Test fun rowsOpenWithoutInlineActionsAndUndoFollowsTheServer() {
         val current = mutableStateOf(state())
         val view = mutableStateOf("today")
-        compose.setContent { TaskTestTheme { TaskScreen(current.value, view.value, now = java.time.Instant.parse("2030-06-02T18:00:00Z")) } }
+        compose.setContent { TaskTestTheme { TaskScreen(current.value, view.value) } }
         compose.onNodeWithContentDescription("Open Synthetic fern").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithText("Skip").assertDoesNotExist()
         compose.onNodeWithText("Based on").assertDoesNotExist()

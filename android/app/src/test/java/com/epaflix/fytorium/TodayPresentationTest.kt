@@ -1,6 +1,5 @@
 package com.epaflix.fytorium
 
-import java.time.Instant
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -10,7 +9,7 @@ import org.junit.Test
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class TodayPresentationTest {
-    @Test fun summaryCountsServerRowsAndOmitsEmptyGroupsAndCompletedRows() {
+    @Test fun cardsKeepServerRowsIncludingHandledTasksAndOmitEmptyGroups() {
         val row = parseTaskList(taskListFixture("today")).sections.single().tasks.single()
         val event = parseEvent(org.json.JSONObject(eventFixture))
         val list = TaskList("2030-06-02", "today", TaskSettings(), emptyMap(), listOf(
@@ -19,9 +18,10 @@ class TodayPresentationTest {
             TaskSection("mist", "Mist", listOf(row.copy(taskType = "mist"), row.copy(taskType = "mist", plantId = "two"))),
             TaskSection("clean_leaves", "Clean leaves", emptyList())))
         val shown = CareState(today = list).todayPresentation()
-        assertEquals("Today's tasks: 3 watering, 1 fertilizing + 2 more", shown.summary)
+        assertEquals(listOf(4, 1, 2), shown.sections.map { it.tasks.size })
+        assertEquals(event, shown.sections.first().tasks.last().completedEvent)
         assertEquals(listOf("water", "fertilize", "mist"), shown.sections.map { it.key })
-        assertEquals("Nothing to do today", CareState(today = list.copy(sections = emptyList())).todayPresentation().summary)
+        assertTrue(CareState(today = list.copy(sections = emptyList())).todayPresentation().sections.isEmpty())
     }
 
     @Test fun siteSortRetainsServerRowOrderInsideCareTypeCards() {
@@ -55,23 +55,22 @@ class TodayPresentationTest {
         assertEquals("Connect to load your tasks", CareState(offline = true).todayPresentation().emptyTitle)
         assertNull(state.copy(upcoming = empty).todayPresentation().nextTask)
     }
-    @Test fun tipIsStableForTheHouseholdDayAndRotatesAtItsMidnight() {
-        val oslo = CareState(timezone = "Europe/Oslo")
-        val early = Instant.parse("2030-06-01T22:00:00Z")
-        val late = Instant.parse("2030-06-02T21:59:59Z")
-        val midnight = Instant.parse("2030-06-02T22:00:00Z")
-        assertEquals(oslo.todayPresentation(early).tip, oslo.todayPresentation(late).tip)
-        assertNotEquals(oslo.todayPresentation(late).tip, oslo.todayPresentation(midnight).tip)
-        val la = oslo.copy(timezone = "America/Los_Angeles")
-        assertNotEquals(oslo.todayPresentation(early).tip, la.todayPresentation(early).tip)
-        assertEquals(oslo.todayPresentation(early).tip, oslo.todayPresentation(early.plusSeconds(5 * 86_400)).tip)
-        assertEquals(CareState(timezone = "UTC").todayPresentation(early).tip, CareState().todayPresentation(early).tip)
+    @Test fun nextTaskSkipsHandledRowsAndUsesTheEarliestServerDate() {
+        val upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04"))
+        val task = upcoming.sections.single().tasks.single()
+        val event = parseEvent(org.json.JSONObject(eventFixture))
+        val rows = listOf(task.copy(plantId = "later", dueOn = "2030-06-06"), task.copy(completedEvent = event),
+            task.copy(plantId = "next", plantName = "Synthetic palm", dueOn = "2030-06-05"), task.copy(plantId = "no-date", dueOn = null))
+        val state = CareState(upcoming = upcoming.copy(sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows))))
+        assertEquals("Next: Water Synthetic palm · Wednesday, 5 June", state.todayPresentation().nextTask)
+        assertEquals("Next: Water Synthetic fern · Thursday, 6 June",
+            state.copy(handled = mapOf("next:water" to event)).todayPresentation().nextTask)
     }
-    @Test fun greetingUsesHouseholdTimeRatherThanPhoneTime() {
-        val state = CareState(timezone = "Europe/Oslo")
-        assertEquals("Good morning", state.todayPresentation(Instant.parse("2030-06-02T03:00:00Z")).greeting)
-        assertEquals("Good afternoon", state.todayPresentation(Instant.parse("2030-06-02T10:00:00Z")).greeting)
-        assertEquals("Good evening", state.todayPresentation(Instant.parse("2030-06-02T16:00:00Z")).greeting)
-        assertEquals("Good evening", state.copy(timezone = "America/Los_Angeles").todayPresentation(Instant.parse("2030-06-02T03:00:00Z")).greeting)
+    @Test fun presentationKeepsServerDueDatesRegardlessOfPhoneTimezone() {
+        val state = CareState(today = parseTaskList(taskListFixture("today")), upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04")))
+        val shown = state.copy(timezone = "Europe/Oslo").todayPresentation()
+        assertEquals("2030-06-01", shown.sections.single().tasks.single().dueOn)
+        assertEquals("Next: Water Synthetic fern · Tuesday, 4 June", shown.nextTask)
+        assertEquals(shown, state.copy(timezone = "America/Los_Angeles").todayPresentation())
     }
 }

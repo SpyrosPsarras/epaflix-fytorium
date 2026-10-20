@@ -34,7 +34,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.delay
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role as SemanticsRole
@@ -42,16 +43,13 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String, PotDetails?) -> Unit = { _, _, _ -> },
-                           onHandleAll: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
+                           onHandleType: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
                            onLoadPot: (suspend (String) -> Plant)? = null, thumbnails: Thumbnails? = null,
                            onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
-                           deviceOnline: Boolean = true, now: java.time.Instant? = null,
+                           deviceOnline: Boolean = true,
                            thumbnailLoader: suspend (String) -> Bitmap? = { id -> withContext(Dispatchers.IO) {
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
                            } }, feedContent: @Composable (() -> Unit) -> Unit = {}) {
-    val clock by produceState(now ?: java.time.Instant.now(), now) {
-        if (now == null) while (true) { value = java.time.Instant.now(); delay(60_000) }
-    }
     val photoIds = remember(state.today, state.upcoming) {
         listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
     }
@@ -97,13 +95,13 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     if (settingsOpen && list != null) ModalBottomSheet(onDismissRequest = { settingsOpen = false }) {
         ViewSettings(list.settings, state.writable) { onSettings(it); settingsOpen = false }
     }
-    val presentation = state.todayPresentation(clock)
+    val presentation = state.todayPresentation()
     val noPlants = state.today != null && state.plants.isEmpty()
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
     val showFab = state.member?.role in listOf(Role.owner, Role.family)
     val canAdd = state.member?.role in listOf(Role.owner, Role.family) && deviceOnline && !state.updateRequired
     Scaffold(topBar = {
-        TopAppBar(title = {}, navigationIcon = {
+        CenterAlignedTopAppBar(title = { Text(if (view == "upcoming") "Upcoming" else "Today") }, navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
         }, actions = {
             IconButton(onClick = onNotifications) { Icon(Icons.Outlined.Notifications, contentDescription = "My notifications") }
@@ -128,12 +126,6 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
             }) {
             Column(Modifier.fillMaxSize().testTag("task-list").verticalScroll(rememberScrollState())
                 .padding(start = 16.dp, end = 16.dp, bottom = (if (showFab) 88.dp else 16.dp) + padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(presentation.greeting, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.padding(top = 8.dp))
-                Text(presentation.tip, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (state.today != null && presentation.sections.isNotEmpty()) Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                    Text(presentation.summary, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-                }
                 if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
                 if (!noPlants) SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     listOf("today" to "Today", "upcoming" to "Upcoming").forEachIndexed { index, (key, label) ->
@@ -157,13 +149,22 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                 sections.forEachIndexed { index, section ->
                     Card(Modifier.fillMaxWidth().then(if (index == 0) Modifier.bringIntoViewRequester(taskAnchor) else Modifier),
                         shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) taskDate(section.key) else section.label, style = MaterialTheme.typography.titleLarge,
+                        Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) taskDate(section.key) else section.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp).semantics { heading() })
                         section.tasks.forEach { task ->
                             key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
                                 onAction = { action -> if (action == "repot") repot = task else onAction(task, action, null) },
                                 showType = view == "upcoming",
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
+                        }
+                        if (view == "today" && state.member?.role in listOf(Role.owner, Role.family) && section.tasks.any { task ->
+                            task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today &&
+                                (state.handled[task.plantId + ":" + task.key] ?: task.completedEvent) == null
+                        }) {
+                            FilledTonalButton(onClick = { onHandleType(section.key) }, enabled = state.writable,
+                                shape = RoundedCornerShape(50), modifier = Modifier.align(Alignment.CenterHorizontally)
+                                    .padding(top = 12.dp, bottom = 16.dp).heightIn(min = 48.dp)
+                                    .semantics { contentDescription = "Handle all ${section.label} tasks" }) { Text("Handle all tasks") }
                         }
                     }
                 }

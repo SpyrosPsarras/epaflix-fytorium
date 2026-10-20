@@ -77,7 +77,8 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             assertTrue("Last row must clear the FAB", row.bottom < fab.top)
             assertTrue("Viewport must extend behind the FAB", viewport.bottom > fab.bottom)
         } else {
-            compose.onNodeWithText(app.repository.state.value.todayPresentation().greeting).performScrollTo()
+            compose.onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, -100_000f) }
+            compose.onNode(hasText(if (name == "upcoming") "Upcoming" else "Today") and !hasClickAction()).assertIsDisplayed()
         }
         val progress = SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
         fun loadingThumbnails() = compose.onAllNodes(SemanticsMatcher.expectValue(ThumbnailLoading, true), useUnmergedTree = true)

@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
-import java.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
 import org.junit.Rule
@@ -35,7 +34,7 @@ class TaskThumbnailTest {
     }
     private fun show() {
         compose.setContent { FytoriumTheme {
-            TaskScreen(state.value, view.value, now = Instant.parse("2030-06-02T18:00:00Z"), thumbnailLoader = { id ->
+            TaskScreen(state.value, view.value, thumbnailLoader = { id ->
                 requests.add(id)
                 // A duplicate request stays pending, so a refresh cannot hide a refetch behind an instant result.
                 if (requests.count { it == id } > 1) CompletableDeferred<Bitmap?>().await() else pending.getValue(id).await()

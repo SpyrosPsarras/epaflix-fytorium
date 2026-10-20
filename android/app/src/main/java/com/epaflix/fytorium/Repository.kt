@@ -217,6 +217,17 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         requestIds.remove("all:$plantId")
         mutable.value = mutable.value.copy(handled = state.value.handled + events.associateBy { it.plantId + ":" + (it.customTaskId ?: it.taskType) })
     }
+    fun handleType(taskKey: String): Boolean {
+        if (state.value.member?.role !in listOf(Role.owner, Role.family)) return false
+        return write("/api/tasks/${requireSafeId(taskKey)}/complete-all",
+            body = JSONObject().put("request_id", requestId("type:$taskKey")), refreshSchedulesAfter = true) { result ->
+            val events = JSONObject(result).getJSONArray("events")
+            val handled = events.mapObjects(::parseEvent).associateBy { it.plantId + ":" + (it.customTaskId ?: it.taskType) }
+            patchEvents(events.mapObjects { it }, emptyMap())
+            requestIds.remove("type:$taskKey")
+            mutable.value = mutable.value.copy(handled = state.value.handled + handled)
+        }
+    }
     fun saveSettings(settings: TaskSettings): Boolean {
         if (state.value.member?.role == Role.sitter) return false
         return write("/api/tasks/settings", "PUT", settings.json(), refreshAfter = true) {}

@@ -153,7 +153,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
                     onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
-                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
+                    onHandleType = { controller?.handleType(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
                     onNotifications = { tab = "More"; notifications = true },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
