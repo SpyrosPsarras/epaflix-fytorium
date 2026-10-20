@@ -97,11 +97,6 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     if (settingsOpen && list != null) ModalBottomSheet(onDismissRequest = { settingsOpen = false }) {
         ViewSettings(list.settings, state.writable) { onSettings(it); settingsOpen = false }
     }
-    val handlePlants = if (view == "today" && state.member?.role in listOf(com.epaflix.fytorium.Role.owner, com.epaflix.fytorium.Role.family))
-        list?.sections.orEmpty().flatMap { it.tasks }.filter { task ->
-            task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today &&
-                (state.handled[task.plantId + ":" + task.key] ?: task.completedEvent) == null
-        }.map { it.plantId }.toSet() else emptySet()
     val presentation = state.todayPresentation(clock)
     val noPlants = state.today != null && state.plants.isEmpty()
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
@@ -159,18 +154,15 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                         if (state.member?.role == Role.owner) TextButton(onClick = onImport, enabled = canAdd, modifier = Modifier.heightIn(min = 48.dp)) { Text("Import from Planta") }
                     }
                 }
-                val shownPlants = mutableSetOf<String>()
                 sections.forEachIndexed { index, section ->
                     Card(Modifier.fillMaxWidth().then(if (index == 0) Modifier.bringIntoViewRequester(taskAnchor) else Modifier),
                         shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                         Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) taskDate(section.key) else section.label, style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp).semantics { heading() })
-                        section.tasks.forEachIndexed { rowIndex, task ->
-                            if (rowIndex > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                        section.tasks.forEach { task ->
                             key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
-                                task.plantId in handlePlants && shownPlants.add(task.plantId),
                                 onAction = { action -> if (action == "repot") repot = task else onAction(task, action, null) },
-                                onHandleAll = { onHandleAll(task.plantId) }, showType = view == "upcoming",
+                                showType = view == "upcoming",
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
                     }

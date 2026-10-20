@@ -122,8 +122,10 @@ import org.json.JSONObject
                     Text("Starting estimates, not a substitute for checking the plant. Month factors use the northern hemisphere and the anchor date.")
                 }
                 items(detail.tasks.toList(), key = { "basis:${it.first}" }) { (key, task) ->
-                    Heading(taskLabel(task.taskType ?: key, task.customTaskName), MaterialTheme.typography.titleMedium)
-                    if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
+                    Column(Modifier.testTag("basis:$key")) {
+                        Heading(taskLabel(task.taskType ?: key, task.customTaskName), MaterialTheme.typography.titleMedium)
+                        if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
+                    }
                 }
             }
             item { Heading("Care history") }

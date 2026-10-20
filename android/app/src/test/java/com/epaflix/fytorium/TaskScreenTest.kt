@@ -139,9 +139,7 @@ class TaskScreenTest {
         val detail = PlantDetail(parsePlant(org.json.JSONObject(plantFixture)), emptyList(), emptyMap())
         compose.enableAccessibilityChecks()
         val care = state().copy(today = repot, detail = detail)
-        compose.setContent { TaskTestTheme { TaskScreen(care, "today") } }
-        compose.onNodeWithContentDescription("Task details for Synthetic fern").performScrollTo().performClick()
-        compose.onNodeWithText("Repot with new pot and soil").performScrollTo().performClick()
+        compose.setContent { TaskTestTheme { RepotForm(repot.sections.single().tasks.single(), care, onDismiss = {}, onSave = {}) } }
         compose.onNodeWithText("Pot type: plastic").assertIsDisplayed()
         compose.onNodeWithText("Soil type: all purpose").assertIsDisplayed()
         compose.onNodeWithText("Pot size in cm").performTextReplacement("0")
@@ -187,11 +185,13 @@ class TaskScreenTest {
         compose.runOnIdle { assertEquals(TaskSettings("plant", "outdoor", true), saved) }
         compose.onNodeWithText("Show completed").assertDoesNotExist()
     }
-    @Test fun handleAllVisibilityMatrixAndUndoFollowTheServer() {
+    @Test fun rowsOpenWithoutInlineActionsAndUndoFollowsTheServer() {
         val current = mutableStateOf(state())
         val view = mutableStateOf("today")
         compose.setContent { TaskTestTheme { TaskScreen(current.value, view.value, now = java.time.Instant.parse("2030-06-02T18:00:00Z")) } }
-        compose.onNodeWithContentDescription("Task details for Synthetic fern").performClick()
+        compose.onNodeWithContentDescription("Open Synthetic fern").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithText("Skip").assertDoesNotExist()
+        compose.onNodeWithText("Based on").assertDoesNotExist()
         val original = state().today!!
         val event = parseEvent(org.json.JSONObject(eventFixture))
         for (role in Role.entries) for (screen in listOf("today", "upcoming")) for (done in listOf(false, true)) {
@@ -202,12 +202,15 @@ class TaskScreenTest {
                 current.value = state().copy(member = Member("member-one", role), today = list, upcoming = list)
                 view.value = screen
             }
-            val handle = compose.onNodeWithText("Handle all tasks for Synthetic fern")
-            if (role != Role.sitter && screen == "today" && !done) handle.performScrollTo().assertIsDisplayed() else handle.assertDoesNotExist()
+            compose.onNodeWithContentDescription("Open Synthetic fern").assertHasClickAction()
+            compose.onNodeWithText("Handle all tasks for Synthetic fern").assertDoesNotExist()
             if (done && role != Role.sitter) compose.onNodeWithText("Undo").assertExists() else compose.onNodeWithText("Undo").assertDoesNotExist()
         }
         compose.runOnIdle { current.value = state().copy(handled = mapOf("plant-one:water" to event)) ; view.value = "today" }
-        compose.onNodeWithText("Handle all tasks for Synthetic fern").assertDoesNotExist()
+        val handledRow = hasAnyAncestor(hasTestTag("task:plant-one:water"))
+        compose.onNode(handledRow and hasContentDescription("Done for Synthetic fern")).assertIsDisplayed()
+        compose.onNode(handledRow and hasText("Undo")).assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithContentDescription("Mark Water for Synthetic fern done").assertDoesNotExist()
     }
     @Test fun offlineAndServerBannersBeforeAndAfterRefreshDisableActions() {
         val current = mutableStateOf(state(offline = true).copy(lastUpdated = null))
@@ -239,12 +242,18 @@ class TaskScreenTest {
         compose.onNodeWithText("Back to plants").performClick()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
-    @Test fun futureTaskHasNoSnoozeAndProvenanceIsReadable() {
+    @Test fun futureTaskHasNoSnoozeOrInlineDetails() {
         val upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04", basis = """[{"input":"wateringIntervalDays","value":7,"source":"perenual","adjustment":"Species interval","fetchedAt":"2030-06-01T10:00:00Z"}]"""))
         compose.setContent { TaskTestTheme { TaskScreen(state().copy(upcoming = upcoming), "upcoming") } }
         compose.onNodeWithContentDescription("Snooze 2 days").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Task details for Synthetic fern").performScrollTo().performClick()
-        compose.onNodeWithText("Based on").performScrollTo().performClick()
-        compose.onNodeWithText("Source: perenual · Fetched 2030-06-01T10:00:00Z").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open Synthetic fern").performScrollTo().performClick()
+        compose.onNodeWithText("Based on").assertDoesNotExist()
+        compose.onNodeWithText("Skip").assertDoesNotExist()
+    }
+    @Test fun provenanceShowsTheSourceAndFetchTime() {
+        val upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04", basis = """[{"input":"wateringIntervalDays","value":7,"source":"perenual","adjustment":"Species interval","fetchedAt":"2030-06-01T10:00:00Z"}]"""))
+        compose.setContent { TaskTestTheme { Provenance(upcoming.sections.single().tasks.single().basedOn) } }
+        compose.onNodeWithText("Based on").performClick()
+        compose.onNodeWithText("Source: perenual · Fetched 2030-06-01T10:00:00Z").assertIsDisplayed()
     }
 }

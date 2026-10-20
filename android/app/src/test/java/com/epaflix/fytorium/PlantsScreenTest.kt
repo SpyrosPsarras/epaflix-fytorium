@@ -123,6 +123,22 @@ class PlantsScreenTest {
         compose.onNodeWithContentDescription("Plant settings").assertDoesNotExist()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
+    @Test fun wateringProvenanceOnThePlantPageShowsOverrideAndReset() {
+        val rule = parseTaskList(taskListFixture("today", basis = """[{"input":"wateringIntervalDays","value":7,"source":"rule","adjustment":"Default watering interval","ruleId":"water.default@1"}]"""))
+            .sections.single().tasks.single()
+        val task = mutableStateOf(rule.copy(basedOn = rule.basedOn.map { it.copy(value = 9, source = "override", ruleId = null) }))
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner, PlantDetail(plant, emptyList(), mapOf("water" to task.value)), {}, { _, _ -> }, {}, {}) } }
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("basis:water"))
+        val water = hasAnyAncestor(hasTestTag("basis:water"))
+        compose.onNode(water and hasText("Based on")).performScrollTo().performClick()
+        compose.onNode(water and hasText("wateringIntervalDays")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("9")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("Source: override")).performScrollTo().assertIsDisplayed()
+        compose.runOnIdle { task.value = rule }
+        compose.onNode(water and hasText("Source: rule · water.default@1")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("7")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("Source: override")).assertDoesNotExist()
+    }
     @Test fun historyUndoAndPermanentDeletionFollowServerFlagAndExactName() {
         val allowed = mutableStateOf(true)
         var undone = false
