@@ -7,11 +7,11 @@ import { completionEligible, notificationAttemptLimit, withNotificationLease } f
 
 export async function sendCompletionNotices() {
   const { rows } = await db().query(`SELECT e.id, m.id AS member_id, e.task_type, c.name AS custom_name,
-    COALESCE(p.nickname, s.canonical_name) AS plant_name
+    plant_display_name(p.nickname, p.gbif_key, 'en') AS plant_name
     FROM completion_notice_sends n JOIN care_events e ON e.id = n.event_id
     JOIN members m ON m.id = n.member_id AND m.household_id = e.household_id
     JOIN plants p ON p.id = e.plant_id AND p.household_id = e.household_id
-    JOIN species s ON s.gbif_key = p.gbif_key LEFT JOIN custom_tasks c ON c.id = e.custom_task_id
+    LEFT JOIN custom_tasks c ON c.id = e.custom_task_id
     WHERE ${completionEligible} AND ${availableDeviceSql('m.id', '$1')}
     AND n.sent_at IS NULL AND n.claimed_until < $1 AND n.attempts < $2 ORDER BY e.occurred_at, e.id, m.id`, [now(), notificationAttemptLimit]);
   for (const row of rows) {

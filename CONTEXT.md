@@ -23,7 +23,7 @@ A room, garden or terrace where plants live. A site belongs to the household. It
 A site with plants cannot be deleted. Move or remove its plants first.
 
 **Plant**:
-An individual plant in the household, with a species and a required site in the same household. Its display name is its nickname, or its species' canonical name if no nickname is set. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded. Active plants require a site; graveyard plants can keep their history without one.
+An individual plant in the household, with a species and a required site in the same household. Its display name is its non-blank nickname, then a vernacular name in the request language, then an English vernacular name, then its species' canonical name. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded. Active plants require a site; graveyard plants can keep their history without one.
 
 **Pot attributes**:
 Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabric`, `in_ground` or `other`. `other` records an unknown material without changing the schedule. Soil type is `all_purpose`, `cactus`, `orchid`, `aroid` or `other`. Pot size in cm is a positive whole number or unknown. Drainage is a boolean.

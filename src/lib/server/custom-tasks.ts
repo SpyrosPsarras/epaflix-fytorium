@@ -8,7 +8,7 @@ export async function checkTarget(household: string, plantId: unknown, siteId: u
   if ((plantId != null) === (siteId != null)) error(422, 'Choose exactly one plant or site.');
   if (plantId != null) {
     if (typeof plantId !== 'string' || !isUuid(plantId)) error(422, 'Choose a valid plant.');
-    await getPlant(plantId, household);
+    await getPlant(plantId, household, 'en');
   } else {
     if (typeof siteId !== 'string' || !isUuid(siteId)) error(422, 'Choose a valid site.');
     const result = await db().query('SELECT id FROM sites WHERE id = $1 AND household_id = $2', [siteId, household]);

@@ -3457,6 +3457,11 @@ components:
     Identity:
       type: object
       properties:
+        language:
+          enum:
+            - en
+            - nb
+            - el
         member:
           type: object
           properties:
@@ -3485,6 +3490,7 @@ components:
             - name
           additionalProperties: false
       required:
+        - language
         - member
         - household
       additionalProperties: false

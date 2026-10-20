@@ -1,4 +1,5 @@
 import type { ForecastDay, WeatherReport } from '$lib/weather';
+import type { Identity } from '../auth';
 import { db } from '../db';
 import { calendarDate, now } from '../clock';
 import { rainRule } from '$lib/schedule/rules';
@@ -22,11 +23,11 @@ export async function taskWeather(household: string): Promise<WeatherReport> {
     snapshot: scheduleSnapshot(rows[0]?.data ?? [], rows[0]?.fetched_at ?? null, calendarDate(now())) };
 }
 
-export async function weatherReport(household: string, plantId?: string): Promise<WeatherReport> {
+export async function weatherReport(household: string, language: Identity['language'], plantId?: string): Promise<WeatherReport> {
   const [location, cache, events, count, batches, rainBatches] = await Promise.all([
     db().query('SELECT latitude FROM households WHERE id = $1', [household]),
     db().query('SELECT * FROM weather_cache WHERE household_id = $1', [household]),
-    db().query("SELECT e.*, e.starts_on::text, e.ends_on::text, COALESCE(p.nickname, sp.canonical_name) AS plant_name FROM weather_events e LEFT JOIN plants p ON p.id = e.plant_id AND p.household_id = e.household_id LEFT JOIN species sp ON sp.gbif_key = p.gbif_key LEFT JOIN sites s ON s.id = p.site_id WHERE e.household_id = $1 AND e.resolved_at IS NULL AND ((e.kind = 'rain' AND e.plant_id IS NULL) OR (p.status = 'active' AND s.location = 'outdoor' AND e.ends_on >= $2::date)) AND ($3::uuid IS NULL OR p.id = $3) ORDER BY e.starts_on, e.id", [household, calendarDate(now()), plantId ?? null]),
+    db().query("SELECT e.*, e.starts_on::text, e.ends_on::text, plant_display_name(p.nickname, p.gbif_key, $4) AS plant_name FROM weather_events e LEFT JOIN plants p ON p.id = e.plant_id AND p.household_id = e.household_id LEFT JOIN sites s ON s.id = p.site_id WHERE e.household_id = $1 AND e.resolved_at IS NULL AND ((e.kind = 'rain' AND e.plant_id IS NULL) OR (p.status = 'active' AND s.location = 'outdoor' AND e.ends_on >= $2::date)) AND ($3::uuid IS NULL OR p.id = $3) ORDER BY e.starts_on, e.id", [household, calendarDate(now()), plantId ?? null, language]),
     db().query("SELECT count(*)::integer AS n FROM plants p JOIN sites s ON s.id = p.site_id WHERE p.household_id = $1 AND p.status = 'active' AND s.location = 'outdoor'", [household]),
     db().query("SELECT b.request_id AS id, (SELECT count(*)::integer FROM care_events e WHERE e.batch_id = b.request_id AND e.household_id = $1) AS plant_count FROM care_actions b WHERE b.household_id = $1 AND b.action = 'rain' AND b.batch_id IS NULL AND b.undone_at IS NULL ORDER BY b.created_at DESC, b.request_id DESC LIMIT 1", [household]),
     db().query("SELECT e.starts_on::text, b.request_id AS id FROM weather_events e JOIN care_actions b ON b.request_id = e.batch_id WHERE e.household_id = $1 AND e.kind = 'rain' AND e.resolved_at IS NULL AND b.undone_at IS NULL ORDER BY e.starts_on DESC", [household]),

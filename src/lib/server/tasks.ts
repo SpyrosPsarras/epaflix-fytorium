@@ -9,7 +9,7 @@ import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskLi
 import type { Identity } from './auth';
 import { visiblePlantSql, requireSharedPlant, requireOwnUndo } from './policy';
 import { requireUndo, withUndoFlag, withUndoFlags } from './undo-policy';
-import { getPlant, isUuid, plantSelect, potErrors } from './plants';
+import { getPlant, isUuid, plantSelectFor, potErrors } from './plants';
 import { db, withTransaction } from './db';
 import { now, calendarDate } from './clock';
 import type { ForecastDay } from '$lib/weather';
@@ -24,12 +24,12 @@ function taskIn(schedule: Partial<PlantSchedule>, key: string) {
 
 export async function history(plantId: string, identity: Identity): Promise<CareEvent[]> {
   const household = identity.household.id;
-  await getPlant(plantId, household);
+  await getPlant(plantId, household, identity.language);
   const result = await db().query('SELECT e.*, c.name AS custom_task_name FROM care_events e LEFT JOIN custom_tasks c ON c.id = e.custom_task_id AND c.household_id = e.household_id WHERE e.plant_id = $1 AND e.household_id = $2 ORDER BY e.occurred_at DESC, e.event_order DESC', [plantId, household]);
   return withUndoFlags(identity, result.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) })));
 }
 
-async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string, database: Database = db(), taskOnly = false) {
+async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string, language: Identity['language'], database: Database = db(), taskOnly = false) {
   const plantIds = plants.map(plant => plant.id);
   const [sites, events, intervals, settings, profiles, custom, weather] = await Promise.all([
     database.query('SELECT * FROM sites WHERE id = ANY($1::uuid[]) AND household_id = $2', [plants.map(plant => plant.site_id), household]),
@@ -38,7 +38,7 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
     householdSettings(household, database),
     effectiveCareProfiles(plants.map(plant => plant.gbif_key), household),
     database.query('SELECT * FROM custom_tasks WHERE household_id = $1 AND deleted_at IS NULL AND (plant_id = ANY($2::uuid[]) OR site_id = ANY($3::uuid[])) ORDER BY name, id', [household, plantIds, plants.map(plant => plant.site_id)]),
-    taskOnly ? taskWeather(household) : weatherReport(household),
+    taskOnly ? taskWeather(household) : weatherReport(household, language),
   ]);
   const sitesById = new Map(sites.rows.map(site => [site.id, site]));
   const historyByPlant: Record<string, ScheduleInput['history']> = {};
@@ -75,10 +75,10 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
   return { schedules, sites: sitesById, profiles, weather };
 }
 
-export async function plantTasks(plantId: string, household: string): Promise<Partial<PlantSchedule>> {
-  const plant = await getPlant(plantId, household);
+export async function plantTasks(plantId: string, household: string, language: Identity['language']): Promise<Partial<PlantSchedule>> {
+  const plant = await getPlant(plantId, household, language);
   if (plant.status === 'graveyard') return {};
-  return (await schedulePlantTasks([plant], household, calendarDate(now()))).schedules.get(plant.id)!;
+  return (await schedulePlantTasks([plant], household, calendarDate(now()), language)).schedules.get(plant.id)!;
 }
 
 export async function listedTasks(identity: Identity, view: TaskList['view']): Promise<TaskList> {
@@ -99,9 +99,9 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
   end.setUTCDate(end.getUTCDate() + (view === 'upcoming' ? 13 : 0));
   const through = end.toISOString().slice(0, 10);
   const plants = batch ? { rows: batch.plants.filter(plant => settings.filter === 'all' || batch.sites.get(plant.site_id)?.location === settings.filter) }
-    : await db().query(plantSelect + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$3')} AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id`, [household, settings.filter, identity.member.id]);
+    : await db().query(plantSelectFor(identity.language) + ` WHERE p.household_id = $1 AND ${visiblePlantSql('$3')} AND ($2 = 'all' OR t.location = $2) ORDER BY display_name, p.id`, [household, settings.filter, identity.member.id]);
   const groups = Object.fromEntries(taskTypes.map(type => [type, new Array<ListedTask>()])) as TaskList['groups'];
-  const context = batch ?? await schedulePlantTasks(plants.rows, household, today, db(), identity.member.role === 'sitter');
+  const context = batch ?? await schedulePlantTasks(plants.rows, household, today, identity.language, db(), identity.member.role === 'sitter');
   const { schedules } = context;
   const completedByTask = new Map<string, CareEvent>();
   if (settings.show_completed) {
@@ -176,7 +176,7 @@ export async function undo(identity: Identity, eventId: string) {
     }
     return event;
   });
-  const tasks = await plantTasks(event.plant_id, household);
+  const tasks = await plantTasks(event.plant_id, household, identity.language);
   return { event: await withUndoFlag(identity, { ...event, occurred_on: calendarDate(event.occurred_at) }), task: taskIn(tasks, taskKey(event)) };
 }
 
@@ -187,7 +187,7 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
   const household = identity.household.id;
   if (plantId) {
     await requireSharedPlant(identity, plantId);
-    await getPlant(plantId, household);
+    await getPlant(plantId, household, identity.language);
   }
   if (!isUuid(requestId)) error(422, 'Send a UUID request_id.');
   return await withTransaction(async (client) => {
@@ -195,7 +195,7 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
     await client.query('SELECT id FROM households WHERE id = $1 FOR NO KEY UPDATE', [household]);
     let plants: Awaited<ReturnType<typeof getPlant>>[] = [];
     if (plantId) {
-      const locked = await client.query(plantSelect + ' WHERE p.id = $1 AND p.household_id = $2 FOR UPDATE OF p', [plantId, household]);
+      const locked = await client.query(plantSelectFor(identity.language) + ' WHERE p.id = $1 AND p.household_id = $2 FOR UPDATE OF p', [plantId, household]);
       if (!locked.rowCount) error(404, 'Plant not found');
       if (locked.rows[0].status !== 'active') error(409, 'Graveyard plants have no tasks. Restore the plant first.');
       plants = locked.rows;
@@ -228,17 +228,17 @@ async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: s
 export async function completeAll(identity: Identity, plantId: string, requestId: string) {
   const { events } = await careAction(identity, plantId, requestId, 'complete-all', {}, async (client, [plant], at) => {
     const today = calendarDate(at);
-    const tasks = (await schedulePlantTasks([plant], identity.household.id, today, client)).schedules.get(plantId)!;
+    const tasks = (await schedulePlantTasks([plant], identity.household.id, today, identity.language, client)).schedules.get(plantId)!;
     for (const type of [...taskTypes, ...Object.keys(tasks.customTasks)]) {
       const task = taskIn(tasks, type)!;
       if (task.status === 'due' && task.dueOn <= today) await recordEvent(client, identity, plantId, type, 'completed', randomUUID(), at, requestId);
     }
   });
-  return { events, tasks: await plantTasks(plantId, identity.household.id) };
+  return { events, tasks: await plantTasks(plantId, identity.household.id, identity.language) };
 }
 
 export async function repot(identity: Identity, plantId: string, input: Record<string, unknown>) {
-  await getPlant(plantId, identity.household.id);
+  await getPlant(plantId, identity.household.id, identity.language);
   const errors = potErrors(input);
   if (Object.keys(errors).length) return json({ errors }, { status: 422 });
   if (typeof input.request_id !== 'string') error(422, 'Send a UUID request_id.');
@@ -249,21 +249,21 @@ export async function repot(identity: Identity, plantId: string, input: Record<s
     await client.query('UPDATE plants SET pot_type = $1, pot_size_cm = $2, soil_type = $3 WHERE id = $4 AND household_id = $5', [pot.pot_type, pot.pot_size_cm, pot.soil_type, plantId, identity.household.id]);
     await recordEvent(client, identity, plantId, 'repot', 'completed', requestId, at, null, previous);
   });
-  return json({ event: events[0], task: (await plantTasks(plantId, identity.household.id)).repot });
+  return json({ event: events[0], task: (await plantTasks(plantId, identity.household.id, identity.language)).repot });
 }
 
 
 export async function complete(identity: Identity, plantId: string, taskType: string, requestId: string, kind: CareEvent['kind'] = 'completed') {
   if (!taskTypes.includes(taskType as TaskType) && !isUuid(taskType)) error(404, 'Task type not found');
   const { events } = await careAction(identity, plantId, requestId, taskType + ':' + kind, {}, async (client, [plant], at) => {
-    const tasks = (await schedulePlantTasks([plant], identity.household.id, calendarDate(at), client)).schedules.get(plantId)!;
+    const tasks = (await schedulePlantTasks([plant], identity.household.id, calendarDate(at), identity.language, client)).schedules.get(plantId)!;
     const task = taskIn(tasks, taskType);
     if (!task) error(404, 'Custom task not found for this plant');
     if (task.status === 'not_applicable') error(422, 'This task is not applicable.');
     if (kind === 'snoozed' && task.dueOn > calendarDate(at)) error(409, 'Only due or late tasks can be snoozed.');
     await recordEvent(client, identity, plantId, taskType, kind, requestId, at);
   });
-  const tasks = await plantTasks(plantId, identity.household.id);
+  const tasks = await plantTasks(plantId, identity.household.id, identity.language);
   return { event: events[0], task: taskIn(tasks, taskType) };
 }
 

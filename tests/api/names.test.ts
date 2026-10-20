@@ -1,4 +1,5 @@
 import { beforeAll, expect, test } from 'vitest';
+import pg from 'pg';
 import { createApiHarness } from './harness';
 import { fixturePlant } from '../plant-fixture';
 
@@ -276,6 +277,101 @@ test('an exact stored scientific name ranks ahead of another species fuzzy verna
     expect.objectContaining({ gbif_key: 910007, matched_name: 'Testoria lucida Inventor leaf', requires_confirmation: true }),
   ]));
   expect((await add(result)).status).toBe(201);
+});
+
+test('plant names follow Accept-Language', async () => {
+  const { cookie } = await harness.login();
+  const localRequest = (url: string, language: string, method = 'GET', body?: unknown) => fetch(harness.base + url, {
+    method, headers: { cookie, 'accept-language': language, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  harness.setNames('gbif', { results: [], endOfRecords: true });
+  harness.setNames('wikidata', { entities: { Q910010: { labels: {}, aliases: {} }, Q910011: { labels: {}, aliases: {} } } });
+  harness.setNames('nortaxa', []);
+  const create = async (gbif_key: number, canonicalName: string, nickname: string | null = null) => {
+    harness.setGbif({ usageKey: gbif_key, scientificName: canonicalName + ' Inventor', canonicalName, rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+    const response = await add(await search(canonicalName), gbif_key, { nickname });
+    expect(response.status).toBe(201);
+    return response.json();
+  };
+  const plant = await create(910010, 'Syntheticia bacca');
+  const unnamed = await create(910011, 'Syntheticia innominata');
+  for (const [language, name] of [['en', 'Synthetic berry'], ['nb', 'Syntetisk bær'], ['el', 'Συνθετικό μούρο']]) {
+    expect((await request('/api/species/910010/names', 'POST', { language, name })).status).toBe(201);
+  }
+  const assertNames = async (id: string, language: string, name: string) => {
+    expect((await (await localRequest('/api/plants', language)).json()).find((row: { id: string }) => row.id === id).display_name).toBe(name);
+    expect((await (await localRequest('/api/plants/' + id, language)).json()).display_name).toBe(name);
+    const tasks = await (await localRequest('/api/tasks?view=today', language)).json();
+    expect(tasks.groups.water).toEqual(expect.arrayContaining([expect.objectContaining({ plant_id: id, plant_name: name })]));
+  };
+  for (const [language, name] of [['nb-NO', 'Syntetisk bær'], ['el', 'Συνθετικό μούρο'], ['fr', 'Synthetic berry']]) {
+    await assertNames(plant.id, language, name);
+    await assertNames(unnamed.id, language, 'Syntheticia innominata');
+  }
+  const nickname = await create(910010, 'Syntheticia bacca', 'Bob');
+  for (const language of ['nb-NO', 'el', 'fr']) await assertNames(nickname.id, language, 'Bob');
+  expect((await localRequest('/api/plants/' + plant.id, 'el', 'DELETE', { confirm_name: 'Syntheticia innominata' })).status).toBe(422);
+  expect((await localRequest('/api/plants/' + plant.id, 'el', 'DELETE', { confirm_name: 'Συνθετικό μούρο' })).status).toBe(204);
+  expect((await localRequest('/api/plants/' + nickname.id, 'el', 'DELETE', { confirm_name: 'Bob' })).status).toBe(204);
+  const canonical = await create(910010, 'Syntheticia bacca', 'Bob');
+  expect((await localRequest('/api/plants/' + canonical.id, 'el', 'DELETE', { confirm_name: 'Syntheticia bacca' })).status).toBe(204);
+});
+
+test.each([
+  ['nb-NO', 'Syntetisk kuldeblad'],
+  ['el', 'Συνθετικό ψυχρόφυλλο'],
+])('weather alert plant names follow Accept-Language %s', async (language, name) => {
+  const { cookie } = await harness.login();
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910013, 'Syntheticia frigida Inventor', 'Syntheticia frigida', 'SPECIES', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING");
+    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910013, 'Synthetic coldleaf', 'en', 'owner'), (910013, 'Syntetisk kuldeblad', 'nb', 'owner'), (910013, 'Συνθετικό ψυχρόφυλλο', 'el', 'owner') ON CONFLICT DO NOTHING");
+    const site = await (await request('/api/sites', 'POST', {
+      name: 'Synthetic cold site', location: 'outdoor', light: 'part_sun', grow_light: false, humidity: 'normal', draft: false,
+    })).json();
+    const plant = await database.query('INSERT INTO plants (household_id, site_id, gbif_key) SELECT household_id, id, 910013 FROM sites WHERE id = $1 RETURNING id, household_id', [site.id]);
+    const { id, household_id } = plant.rows[0];
+    const today = (await (await request('/api/tasks?view=today')).json()).today;
+    await database.query("INSERT INTO weather_events (kind, household_id, plant_id, starts_on, ends_on, payload, created_at) VALUES ('low_temperature', $1, $2, $3, $3, '{}', CURRENT_TIMESTAMP)", [household_id, id, today]);
+    const localGet = async (url: string) => {
+      const response = await fetch(harness.base + url, { headers: { cookie, 'accept-language': language } });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    for (const url of ['/api/weather', '/api/plants/' + id + '/weather']) {
+      const weather = await localGet(url);
+      expect(weather.alerts).toContainEqual(expect.objectContaining({ plant_id: id, plant_name: name }));
+      expect(weather.events).toContainEqual(expect.objectContaining({ plant_id: id, plant_name: name }));
+    }
+    const feed = await localGet('/api/feed');
+    expect(feed.cards).toContainEqual(expect.objectContaining({ kind: 'weather_alerts', event: expect.objectContaining({ plant_id: id, plant_name: name }) }));
+  } finally {
+    await database.end();
+  }
+});
+
+test('display names use language before source, then source priority and alphabetical order', async () => {
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910012, 'Syntheticia ordinata Inventor', 'Syntheticia ordinata', 'SPECIES', CURRENT_TIMESTAMP)");
+    const display = async (language: string, nickname: string | null = null) =>
+      (await database.query('SELECT plant_display_name($1, 910012, $2) AS name', [nickname, language])).rows[0].name;
+    expect(await display('el', '  ')).toBe('Syntheticia ordinata');
+    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, 'Latin only', 'la', 'owner')");
+    expect(await display('fr')).toBe('Syntheticia ordinata');
+    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, 'English owner', 'en', 'owner'), (910012, 'Greek GBIF', 'el', 'gbif')");
+    expect(await display('nb')).toBe('English owner');
+    expect(await display('fr')).toBe('English owner');
+    expect(await display('el')).toBe('Greek GBIF');
+    for (const [source, name] of [['wikidata', 'Zulu wiki'], ['nortaxa', 'Zulu north'], ['owner', 'Zulu owner'], ['owner', 'Alpha owner']]) {
+      await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, $1, 'el', $2)", [name, source]);
+      expect(await display('el')).toBe(name);
+    }
+    expect(await display('el', 'Bob')).toBe('Bob');
+  } finally {
+    await database.end();
+  }
 });
 
 test('refuses unauthenticated name reads and writes and cross-origin owner writes', async () => {

@@ -1,5 +1,17 @@
 export const nameLanguages = { en: 'English', nb: 'Norwegian', el: 'Greek', la: 'Latin' } as const;
 export type NameLanguage = keyof typeof nameLanguages;
+export function requestLanguage(header: string | null): 'en' | 'nb' | 'el' {
+  const preferences = (header?.split(',') ?? []).map(entry => {
+    const [tag, ...parameters] = entry.trim().toLowerCase().split(';');
+    const quality = parameters.map(parameter => parameter.trim()).find(parameter => parameter.startsWith('q='));
+    return { language: tag.trim().split('-')[0], weight: quality === undefined ? 1 : Number(quality.slice(2)) };
+  }).filter(({ weight }) => weight > 0 && weight <= 1).sort((a, b) => b.weight - a.weight);
+  for (const { language } of preferences) {
+    if (language === 'no' || language === 'nn') return 'nb';
+    if (language === 'en' || language === 'nb' || language === 'el') return language;
+  }
+  return 'en';
+}
 export function vernacularName(names: { name: string; language: NameLanguage }[]): string | null {
   return names.find(item => item.language === 'en' && nameValidationError(item.name, item.language) === undefined)?.name.trim() ?? null;
 }

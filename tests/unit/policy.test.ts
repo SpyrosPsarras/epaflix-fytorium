@@ -7,7 +7,7 @@ vi.mock('../../src/lib/server/config', () => ({ config: () => ({}) }));
 afterEach(() => vi.restoreAllMocks());
 
 test.each(['owner', 'family', 'sitter', null] as const)('unlisted pages and non-API handlers refuse %s with 404 and name the missing route', async role => {
-  const identity: Identity | null = role ? { member: { id: 'synthetic-member', role }, household: { id: 'synthetic-household', name: 'Test household' } } : null;
+  const identity: Identity | null = role ? { language: 'en', member: { id: 'synthetic-member', role }, household: { id: 'synthetic-household', name: 'Test household' } } : null;
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   for (const route of ['/export', '/api/export']) {
     for (const method of ['GET', 'HEAD', 'POST']) {

@@ -6,19 +6,22 @@ import { now } from './clock';
 import { healthValues } from '$lib/photos';
 
 export const plantFields = ['site_id', 'nickname', 'cultivar', 'birthday', 'pot_type', 'pot_size_cm', 'drainage', 'soil_type', 'plant_size', 'growth_stage', 'window_distance_cm', 'grow_light', 'near_ac', 'near_heater', 'fertilizer_type', 'health'] as const;
-export const plantSelect = `SELECT p.id, p.household_id, p.site_id, p.gbif_key, p.nickname, p.cultivar,
+export function plantSelectFor(language: 'en' | 'nb' | 'el'): string {
+  if (!['en', 'nb', 'el'].includes(language)) throw new Error('Unsupported plant name language');
+  return `SELECT p.id, p.household_id, p.site_id, p.gbif_key, p.nickname, p.cultivar,
   to_char(p.birthday, 'YYYY-MM-DD') AS birthday, p.created_at, p.attributes_as_of,
   p.status, to_char(p.graveyard_on, 'YYYY-MM-DD') AS graveyard_on, p.pot_type, p.pot_size_cm, p.drainage, p.soil_type, p.plant_size, p.growth_stage,
   p.window_distance_cm, p.grow_light, p.near_ac, p.near_heater, p.fertilizer_type, p.misting_enabled, p.health,
   (SELECT u.id FROM photo_updates u WHERE u.plant_id = p.id AND u.household_id = p.household_id AND u.is_cover) AS cover_photo_id,
-  s.scientific_name, s.canonical_name, s.rank, coalesce(nullif(p.nickname, ''), s.canonical_name) AS display_name, t.name AS site_name
+  s.scientific_name, s.canonical_name, s.rank, plant_display_name(p.nickname, p.gbif_key, '${language}') AS display_name, t.name AS site_name
   FROM plants p JOIN species s ON s.gbif_key = p.gbif_key LEFT JOIN sites t ON t.id = p.site_id AND t.household_id = p.household_id`;
+}
 export function isUuid(id: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
-export async function getPlant(id: string, household: string) {
+export async function getPlant(id: string, household: string, language: 'en' | 'nb' | 'el') {
   if (!isUuid(id)) error(404, 'Plant not found');
-  const result = await db().query(plantSelect + ' WHERE p.id = $1 AND p.household_id = $2', [id, household]);
+  const result = await db().query(plantSelectFor(language) + ' WHERE p.id = $1 AND p.household_id = $2', [id, household]);
   if (!result.rowCount) error(404, 'Plant not found');
   return result.rows[0];
 }
