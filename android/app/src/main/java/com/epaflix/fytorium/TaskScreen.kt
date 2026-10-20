@@ -1,6 +1,7 @@
 package com.epaflix.fytorium
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -46,7 +47,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                            onHandleType: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
                            onLoadPot: (suspend (String) -> Plant)? = null, thumbnails: Thumbnails? = null,
                            onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
-                           deviceOnline: Boolean = true,
+                           deviceOnline: Boolean = true, onOpenTask: (CareTask) -> Unit = {}, scrollState: ScrollState = rememberScrollState(),
                            thumbnailLoader: suspend (String) -> Bitmap? = { id -> withContext(Dispatchers.IO) {
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
                            } }, feedContent: @Composable (() -> Unit) -> Unit = {}) {
@@ -124,7 +125,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                     modifier = Modifier.align(Alignment.TopCenter), state = pullState, isRefreshing = state.busy,
                     containerColor = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }) {
-            Column(Modifier.fillMaxSize().testTag("task-list").verticalScroll(rememberScrollState())
+            Column(Modifier.fillMaxSize().testTag("task-list").verticalScroll(scrollState)
                 .padding(start = 16.dp, end = 16.dp, bottom = (if (showFab) 88.dp else 16.dp) + padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
                 if (!noPlants) SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -154,7 +155,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                         section.tasks.forEach { task ->
                             key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
                                 onAction = { action -> if (action == "repot") repot = task else onAction(task, action, null) },
-                                showType = view == "upcoming",
+                                onOpen = { onOpenTask(task) }, showType = view == "upcoming",
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
                         if (view == "today" && state.member?.role in listOf(Role.owner, Role.family) && section.tasks.any { task ->

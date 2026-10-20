@@ -121,6 +121,21 @@ class TodayRedesignScreenTest {
         compose.onNodeWithText("Skip").assertDoesNotExist()
         compose.onNodeWithText("Based on").assertDoesNotExist()
     }
+    @Test fun todayAndUpcomingForwardTheTappedTaskWithoutActing() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val view = mutableStateOf("today")
+        val opened = mutableListOf<CareTask>()
+        val actions = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { TaskScreen(CareState(member = Member("owner", Role.owner), today = list,
+            upcoming = list.copy(view = "upcoming"), plants = listOf(parsePlant(org.json.JSONObject(plantFixture)))), view.value,
+            onOpenTask = { opened.add(it) }, onAction = { _, action, _ -> actions.add(action) }) } }
+        for (selected in listOf("today", "upcoming")) {
+            compose.runOnIdle { view.value = selected }
+            compose.onNodeWithContentDescription("Open Synthetic fern").performClick()
+        }
+        compose.runOnIdle { assertEquals(listOf(task, task), opened); assertTrue(actions.isEmpty()) }
+    }
     @Test fun lateLabelsUseDaysThenWholeMonths() {
         val template = parseTaskList(taskListFixture("today"))
         val days = mutableIntStateOf(1)

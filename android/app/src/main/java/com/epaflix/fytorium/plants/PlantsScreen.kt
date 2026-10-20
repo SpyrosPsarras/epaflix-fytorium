@@ -21,7 +21,8 @@ import org.json.JSONObject
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantsScreen(state: CareState, repository: Repository?, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, initialPlant: String? = null,
     speciesApi: ApiClient? = null, speciesConnected: () -> Boolean = { false }, onCareChanged: () -> Unit = {},
-    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }, initialAdd: Boolean = false) {
+    photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }, initialAdd: Boolean = false,
+    initialTask: CareTask? = null, returnToToday: Boolean = initialTask != null, onTaskAction: (CareTask, String) -> Unit = { _, _ -> }) {
     var page by rememberSaveable { mutableStateOf(if (initialPlant != null) "detail" else if (initialAdd && state.member?.role != Role.sitter) "search" else "list") }
     var id by rememberSaveable { mutableStateOf(initialPlant) }
     var identifyReturn by rememberSaveable { mutableStateOf("search") }
@@ -52,7 +53,7 @@ import org.json.JSONObject
     suspend fun refreshDetail(key: String) { withContext(Dispatchers.IO) { repository?.openPlant(key, full = true) } }
     fun back() {
         repository?.clearPlantErrors()
-        if (page == "list") onBack()
+        if (page == "list" || (page == "detail" && returnToToday)) onBack()
         else if (page in listOf("graveyard", "detail", "search") || id == null) { page = "list"; id = null }
         else page = "detail"
     }
@@ -144,7 +145,8 @@ import org.json.JSONObject
                     val success = withContext(Dispatchers.IO) { repository!!.undoHistory(event) }
                     if (success) scope.launch { refreshDetail(event.plantId) }
                 } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
-                onSpeciesCare = speciesApi?.let { { page = "species-care" } })
+                onSpeciesCare = speciesApi?.let { { page = "species-care" } }, todayTask = initialTask,
+                onTaskAction = { action -> initialTask?.let { state.currentTask("${it.plantId}:${it.key}") }?.let { onTaskAction(it, action) } })
             "species-care" -> PlantColumn {
                 Text("Connect to load species care for this plant.")
                 OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
