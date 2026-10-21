@@ -29,6 +29,38 @@ class MemoryCredentials : CredentialStore {
 @Config(sdk = [35])
 class AuthTest {
     private val pair = """{"access_token":"synthetic-new","refresh_token":"synthetic-next","token_type":"Bearer","expires_in":3600,"device_id":"test"}"""
+    @Test fun phoneLanguagePreservesTheLocaleLanguageTag() {
+        assertEquals("el-GR", phoneLanguage(java.util.Locale("el", "GR")))
+        assertEquals("en-GB", phoneLanguage(java.util.Locale.UK))
+        assertEquals("zh-Hant-TW", phoneLanguage(java.util.Locale.forLanguageTag("zh-Hant-TW")))
+    }
+    @Test fun apiRequestsSendTheCurrentPhoneLanguage() {
+        val original = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale("el", "GR"))
+            MockWebServer().use { server ->
+                server.start()
+                val store = MemoryCredentials()
+                val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
+                for (method in listOf("GET", "POST", "PATCH")) {
+                    server.enqueue(MockResponse().setBody("{}"))
+                    api.request("/api/meta", method = method).close()
+                    assertEquals("el-GR", server.takeRequest().getHeader("Accept-Language"))
+                }
+                api.loginUrl()
+                val state = store.pending!!.state
+                server.enqueue(MockResponse().setBody(pair))
+                assertTrue(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
+                val login = server.takeRequest()
+                assertEquals("/api/app/token", login.path)
+                assertEquals("el-GR", login.getHeader("Accept-Language"))
+                java.util.Locale.setDefault(java.util.Locale.UK)
+                server.enqueue(MockResponse().setBody("{}"))
+                api.request("/api/meta").close()
+                assertEquals("en-GB", server.takeRequest().getHeader("Accept-Language"))
+            }
+        } finally { java.util.Locale.setDefault(original) }
+    }
     @Test fun pkceMatchesRfc7636() {
         assertEquals("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", Pkce.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))
         val first = Pkce.create()

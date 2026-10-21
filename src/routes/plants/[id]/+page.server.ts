@@ -22,5 +22,5 @@ export const load: PageServerLoad = async ({ fetch, params, parent, locals }) =>
   if (!history.ok) error(history.status, 'Could not load care history');
   if (!photos.ok) error(photos.status, 'Could not load photo updates');
   if (!changes.ok) error(changes.status, 'Could not load species history');
-  return { sitter: false as const, weather: await weatherReport(locals.identity!.household.id, params.id), sites, speciesChanges: await changes.json() as PlantSpeciesChange[], tasks: await tasks.json() as PlantSchedule, history: await history.json() as CareEvent[], updates: await photos.json() as PhotoUpdate[], photoToday: photoToday() };
+  return { sitter: false as const, weather: await weatherReport(locals.identity!.household.id, locals.identity!.language, params.id), sites, speciesChanges: await changes.json() as PlantSpeciesChange[], tasks: await tasks.json() as PlantSchedule, history: await history.json() as CareEvent[], updates: await photos.json() as PhotoUpdate[], photoToday: photoToday() };
 };

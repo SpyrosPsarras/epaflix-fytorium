@@ -8,14 +8,14 @@ import { kickNameFetch } from './names';
 import type { Identity } from './auth';
 import type { PlantSpeciesChange } from '$lib/plants';
 
-export async function moveToGraveyard(id: string, household: string) {
-  await getPlant(id, household);
+export async function moveToGraveyard(id: string, household: string, language: Identity['language']) {
+  await getPlant(id, household, language);
   // Keep the first date on retries and serialize with task commands and photo uploads.
   await db().query("UPDATE plants SET status = 'graveyard', graveyard_on = $3 WHERE id = $1 AND household_id = $2 AND status = 'active'", [id, household, calendarDate(now())]);
-  return getPlant(id, household);
+  return getPlant(id, household, language);
 }
 
-export async function restorePlant(id: string, household: string, input: Record<string, unknown>) {
+export async function restorePlant(id: string, household: string, input: Record<string, unknown>, language: Identity['language']) {
   if (!isUuid(id)) error(404, 'Plant not found');
   await withTransaction(async (client) => {
     const result = await client.query('SELECT * FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [id, household]);
@@ -28,16 +28,17 @@ export async function restorePlant(id: string, household: string, input: Record<
     if (!site.rowCount) error(422, 'Choose a site in your household.');
     await client.query("UPDATE plants SET status = 'active', graveyard_on = NULL, site_id = $3 WHERE id = $1 AND household_id = $2", [id, household, siteId]);
   });
-  return getPlant(id, household);
+  return getPlant(id, household, language);
 }
 
-export async function deletePlant(id: string, household: string, input: Record<string, unknown>) {
-  await getPlant(id, household);
+export async function deletePlant(id: string, household: string, input: Record<string, unknown>, language: Identity['language']) {
+  await getPlant(id, household, language);
   let keys: string[] = [];
   await withTransaction(async (client) => {
-    const result = await client.query("SELECT p.id, coalesce(nullif(p.nickname, ''), s.canonical_name) AS display_name FROM plants p JOIN species s ON s.gbif_key = p.gbif_key WHERE p.id = $1 AND p.household_id = $2 FOR UPDATE OF p", [id, household]);
+    const result = await client.query("SELECT p.id, nullif(btrim(p.nickname), '') AS nickname, s.canonical_name, plant_display_name(p.nickname, p.gbif_key, $3) AS display_name FROM plants p JOIN species s ON s.gbif_key = p.gbif_key WHERE p.id = $1 AND p.household_id = $2 FOR UPDATE OF p", [id, household, language]);
     if (!result.rowCount) error(404, 'Plant not found');
-    if (input.confirm_name !== result.rows[0].display_name) error(422, 'Type the plant name to confirm permanent deletion.');
+    const plant = result.rows[0];
+    if (typeof input.confirm_name !== 'string' || ![plant.display_name, plant.nickname, plant.canonical_name].includes(input.confirm_name)) error(422, 'Type the plant name to confirm permanent deletion.');
     const photos = await client.query('SELECT original_key, thumb_key FROM photo_updates WHERE plant_id = $1 AND household_id = $2', [id, household]);
     keys = photos.rows.flatMap(photo => [photo.original_key, photo.thumb_key]);
     await client.query('DELETE FROM photo_updates WHERE plant_id = $1 AND household_id = $2', [id, household]);
@@ -54,7 +55,7 @@ export async function deletePlant(id: string, household: string, input: Record<s
 
 export async function changeSpecies(id: string, identity: Identity, input: Record<string, unknown>) {
   const household = identity.household.id;
-  await getPlant(id, household);
+  await getPlant(id, household, identity.language);
   const species = chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed);
   await withTransaction(async (client) => {
     const result = await client.query('SELECT p.gbif_key, s.scientific_name FROM plants p JOIN species s ON s.gbif_key = p.gbif_key WHERE p.id = $1 AND p.household_id = $2 FOR UPDATE OF p', [id, household]);
@@ -69,11 +70,11 @@ export async function changeSpecies(id: string, identity: Identity, input: Recor
   });
   kickNameFetch();
   // Reads recompute all tasks from the new species profile without rewriting care events or overrides.
-  return getPlant(id, household);
+  return getPlant(id, household, identity.language);
 }
 
 export async function speciesChanges(id: string, household: string): Promise<PlantSpeciesChange[]> {
-  await getPlant(id, household);
+  await getPlant(id, household, 'en');
   const result = await db().query('SELECT id, previous_gbif_key, previous_name, next_gbif_key, next_name, changed_at, by_name FROM plant_species_changes WHERE plant_id = $1 AND household_id = $2 ORDER BY changed_at DESC, id DESC', [id, household]);
   return result.rows.map(row => ({ ...row, changed_on: calendarDate(row.changed_at) }));
 }

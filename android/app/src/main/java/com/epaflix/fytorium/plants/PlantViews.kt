@@ -10,6 +10,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.*
 import org.json.JSONArray
@@ -45,11 +47,20 @@ import org.json.JSONObject
         }
     }
 }
+internal fun CareState.currentTask(key: String?): CareTask? =
+    listOfNotNull(today, upcoming).flatMap { it.sections }.flatMap { it.tasks }
+        .firstOrNull { "${it.plantId}:${it.key}" == key }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantDetailScreen(state: CareState, detail: PlantDetail, onEdit: () -> Unit,
     onCommand: (String, JSONObject) -> Unit, onSpecies: () -> Unit, onUndo: (CareEvent) -> Unit, thumbnails: Thumbnails? = null,
-    enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null) {
+    enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null,
+    todayTask: CareTask? = null, onTaskAction: (String) -> Unit = {}) {
     val plant = detail.plant
+    val task = todayTask?.takeIf { it.plantId == plant.id }?.let { state.currentTask("${it.plantId}:${it.key}") ?: it }
+    val event = task?.let { state.handled["${it.plantId}:${it.key}"] ?: it.completedEvent }
+    val today = state.today?.today ?: state.upcoming?.today
+    val actions = state.member?.let { member -> today?.let { task?.actions(it, member, event) } }.orEmpty()
     val attributes = remember(plant.attributesJson) { JSONObject(plant.attributesJson) }
     val changes = remember(detail.speciesChangesJson) { JSONArray(detail.speciesChangesJson).mapObjects { change ->
         "${change.getString("changed_on")} · Species changed from ${change.getString("previous_name")} to ${change.getString("next_name")} by ${change.getString("by_name")}" }
@@ -79,9 +90,31 @@ import org.json.JSONObject
         })
     LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text(plant.scientificName) }
+        task?.let { task ->
+            item {
+                Column(Modifier.fillMaxWidth().testTag("today-task:${task.plantId}:${task.key}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Heading(task.label)
+                    event?.let { Text(it.label) }
+                    if (!state.offline) OfflineNotice(state)
+                    actions.forEach { action ->
+                        val label = when (action) {
+                            "complete" -> "Mark done"
+                            "snooze" -> "Snooze 2 days"
+                            "skip" -> "Skip"
+                            "repot" -> "Repot with new pot and soil"
+                            else -> "Undo"
+                        }
+                        OutlinedButton(onClick = { if (action == "repot") onCommand("repot-form", JSONObject()) else onTaskAction(action) },
+                            enabled = state.writable && (state.member?.role == Role.sitter || enabled),
+                            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "$label for ${plant.displayName}" }) { Text(label) }
+                    }
+                    if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
+                }
+            }
+        }
         if (state.member?.role == Role.sitter) item {
             Text(attributes.nullable("cultivar").orEmpty())
-            Text("Care tasks are on Today and Upcoming.")
+            if (task == null) Text("Care tasks are on Today and Upcoming.")
         } else {
             item {
                 Thumbnail(plant, thumbnails)
@@ -104,7 +137,8 @@ import org.json.JSONObject
             if (plant.status == "active") item {
                 Button(onClick = { onCommand("handle-all", JSONObject()) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Handle all tasks") }
                 Text("Completes only tasks due or late today. Undo reverses the whole batch.")
-                OutlinedButton(onClick = { onCommand("repot-form", JSONObject()) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Repot with new pot and soil") }
+                if ("repot" !in actions) OutlinedButton(onClick = { onCommand("repot-form", JSONObject()) }, enabled = enabled,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Repot with new pot and soil") }
             }
             item { Heading("Pot and plant attributes") }
             items(options?.labels?.keys?.toList().orEmpty(), key = { "attribute:$it" }) { key ->
@@ -122,8 +156,10 @@ import org.json.JSONObject
                     Text("Starting estimates, not a substitute for checking the plant. Month factors use the northern hemisphere and the anchor date.")
                 }
                 items(detail.tasks.toList(), key = { "basis:${it.first}" }) { (key, task) ->
-                    Heading(taskLabel(task.taskType ?: key, task.customTaskName), MaterialTheme.typography.titleMedium)
-                    if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
+                    Column(Modifier.testTag("basis:$key")) {
+                        Heading(taskLabel(task.taskType ?: key, task.customTaskName), MaterialTheme.typography.titleMedium)
+                        if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
+                    }
                 }
             }
             item { Heading("Care history") }

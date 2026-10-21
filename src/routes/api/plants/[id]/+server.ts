@@ -11,7 +11,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
   const household = locals.identity.household.id;
-  const plant = await getPlant(params.id, household);
+  const plant = await getPlant(params.id, household, locals.identity.language);
   const input = await readPlant(request, household, plant.status === 'graveyard');
   if (input instanceof Response) return input;
   const assignments = plantFields.map((field, index) => field + ' = $' + (index + 3));
@@ -23,18 +23,18 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
     if (failure) return failure;
     throw cause;
   }
-  return json(await getPlant(params.id, household));
+  return json(await getPlant(params.id, household, locals.identity.language));
 };
 
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  await deletePlant(params.id, locals.identity.household.id, await readJsonObject(request));
+  await deletePlant(params.id, locals.identity.household.id, await readJsonObject(request), locals.identity.language);
   return new Response(null, { status: 204 });
 };
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.identity) error(401, 'Login required');
-  const plant = await getPlant(params.id, locals.identity.household.id);
+  const plant = await getPlant(params.id, locals.identity.household.id, locals.identity.language);
   return json(plant);
 };

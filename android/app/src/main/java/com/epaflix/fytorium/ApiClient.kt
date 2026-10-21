@@ -11,6 +11,9 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.util.Locale
+
+fun phoneLanguage(locale: Locale = Locale.getDefault()): String = locale.toLanguageTag()
 
 class ApiClient(private val baseUrl: String, private val store: CredentialStore, private val onSessionLost: () -> Unit) {
     companion object {
@@ -46,7 +49,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
         return true
     }
     private fun exchange(body: JSONObject, refreshing: Boolean = false): Tokens? {
-        val request = Request.Builder().url(baseUrl + "/api/app/token")
+        val request = Request.Builder().url(baseUrl + "/api/app/token").header("Accept-Language", phoneLanguage())
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
         return tokenHttp.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -73,6 +76,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
                 query.forEach { (key, value) -> addQueryParameter(key, value) }
             }.build()
             val builder = Request.Builder().url(url).header("X-App-Version", BuildConfig.VERSION_NAME).header("Accept", "application/json")
+                .header("Accept-Language", phoneLanguage())
             tokens?.let { builder.header("Authorization", "Bearer " + it.access) }
             if (method != "GET") builder.method(method, requestBody ?: body?.toString()?.toRequestBody("application/json".toMediaType())
                 ?: ByteArray(0).toRequestBody(null))

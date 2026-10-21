@@ -16,7 +16,7 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
                      val plants: List<Plant> = emptyList(), val detail: PlantDetail? = null,
                      val offline: Boolean = false, val serverUnavailable: Boolean = false, val lastUpdated: Long? = null, val busy: Boolean = false,
                      val message: String? = null, val updateRequired: Boolean = false,
-                     val handled: Map<String, CareEvent> = emptyMap(), val timezone: String? = null, val saving: Boolean = false) {
+                     val handled: Map<String, CareEvent> = emptyMap(), val saving: Boolean = false) {
     val writable get() = !offline && !serverUnavailable && !saving && !updateRequired && member != null
     private fun updatedTime() = lastUpdated?.let {
         DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(it))
@@ -71,8 +71,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         mutable.value = mutable.value.copy(member = member, today = today?.let { parseTaskList(it.json) },
             upcoming = cache.get(member.id, "upcoming")?.let { parseTaskList(it.json) },
             plants = cache.get(member.id, "plants")?.let { JSONArray(it.json).mapObjects(::parsePlant) } ?: emptyList(),
-            lastUpdated = today?.refreshedAt,
-            timezone = cache.get(member.id, "meta")?.let { JSONObject(it.json).getString("timezone") })
+            lastUpdated = today?.refreshedAt)
     }
     fun wipe() = synchronized(monitor) {
         generation++
@@ -123,12 +122,6 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             updateRequired = mutable.value.updateRequired || (error is ApiFailure && error.status == 426),
             message = if (error is ApiFailure && error.status < 500) error.message else null)
     }
-    // Today owns the loading/error state for this read, not Plants or the shared care gate.
-    fun loadPot(id: String): Plant = synchronized(workLock) {
-        requireSafeId(id)
-        if (!connected()) throw OfflineFailure()
-        parsePlant(JSONObject(read("/api/plants/$id")))
-    }
     private fun refreshSchedules(epoch: Int) = synchronized(workLock) {
         val member = synchronized(monitor) { state.value.member?.takeIf { epoch == generation } } ?: return@synchronized
         try {
@@ -178,18 +171,16 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             detail
         }
     }
-    fun act(task: CareTask, action: String, pot: PotDetails? = null): Boolean = synchronized(workLock) {
+    fun act(task: CareTask, action: String): Boolean = synchronized(workLock) {
         val member = state.value.member ?: return false
         val event = state.value.handled[task.plantId + ":" + task.key] ?: task.completedEvent
         if (action !in task.actions(state.value.today?.today ?: return false, member, event)) return false
         requireSafeId(task.plantId); requireSafeId(task.key)
         val path = when (action) {
             "undo" -> event?.let { if (it.batchId != null) "/api/task-batches/${requireSafeId(it.batchId)}/undo" else "/api/care-events/${requireSafeId(it.id)}/undo" } ?: return false
-            "repot" -> "/api/plants/${task.plantId}/repot"
             else -> "/api/plants/${task.plantId}/tasks/${task.key}/$action"
         }
-        if (action == "repot" && pot == null) return false
-        return write(path, body = if (action == "undo") null else (pot?.json() ?: JSONObject()).put("request_id", requestId(task.plantId + ":" + task.key + ":" + action)), refreshAfter = action == "undo", refreshSchedulesAfter = action == "repot") { result ->
+        return write(path, body = if (action == "undo") null else JSONObject().put("request_id", requestId(task.plantId + ":" + task.key + ":" + action)), refreshAfter = action == "undo") { result ->
             val key = task.plantId + ":" + task.key
             val handled = if (action == "undo") state.value.handled.filterValues { it.id != event?.id && (event?.batchId == null || it.batchId != event.batchId) }
                 else state.value.handled + (key to parseEvent(JSONObject(result).getJSONObject("event")))
@@ -216,6 +207,17 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         patchEvents(json.getJSONArray("events").mapObjects { it }, tasks)
         requestIds.remove("all:$plantId")
         mutable.value = mutable.value.copy(handled = state.value.handled + events.associateBy { it.plantId + ":" + (it.customTaskId ?: it.taskType) })
+    }
+    fun handleType(taskKey: String): Boolean {
+        if (state.value.member?.role !in listOf(Role.owner, Role.family)) return false
+        return write("/api/tasks/${requireSafeId(taskKey)}/complete-all",
+            body = JSONObject().put("request_id", requestId("type:$taskKey")), refreshSchedulesAfter = true) { result ->
+            val events = JSONObject(result).getJSONArray("events")
+            val handled = events.mapObjects(::parseEvent).associateBy { it.plantId + ":" + (it.customTaskId ?: it.taskType) }
+            patchEvents(events.mapObjects { it }, emptyMap())
+            requestIds.remove("type:$taskKey")
+            mutable.value = mutable.value.copy(handled = state.value.handled + handled)
+        }
     }
     fun saveSettings(settings: TaskSettings): Boolean {
         if (state.value.member?.role == Role.sitter) return false

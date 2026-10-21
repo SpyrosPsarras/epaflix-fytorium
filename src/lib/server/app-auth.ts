@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { error } from '@sveltejs/kit';
 import type pg from 'pg';
 import type { Identity } from './auth';
+import { requestLanguage } from '$lib/names';
 import { db, withTransaction } from './db';
 import { now } from './clock';
 import { limitAppTokens } from './app-rate-limit';
@@ -196,6 +197,6 @@ export async function bearerIdentity(request: Request): Promise<Identity | null>
       [row.refresh_hash, time]);
     await recordUse(client, row.device_id, row.last_used_at, time);
     bearerDevices.set(request, row.device_id);
-    return { member: { id: row.member_id, role: row.role }, household: { id: row.household_id, name: row.name } };
+    return { language: requestLanguage(request.headers.get('accept-language')), member: { id: row.member_id, role: row.role }, household: { id: row.household_id, name: row.name } };
   });
 }

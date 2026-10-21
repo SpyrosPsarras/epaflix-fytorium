@@ -5,7 +5,7 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.identity) error(401, 'Login required');
-  return json(await listPhotos(locals.identity.household.id, params.id));
+  return json(await listPhotos(locals.identity.household.id, params.id, locals.identity.language));
 };
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');

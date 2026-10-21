@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as oidc from 'openid-client';
 import type { Cookies } from '@sveltejs/kit';
 import { config } from './config';
+import { requestLanguage } from '$lib/names';
 import { db, withTransaction } from './db';
 import { now } from './clock';
 import { INVITE_COOKIE, inviteHash } from './household';
@@ -12,6 +13,7 @@ const LOGIN_COOKIE = 'fytorium_login';
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
 
 export type Identity = {
+  language: 'en' | 'nb' | 'el';
   member: { id: string; role: 'owner' | 'family' | 'sitter' };
   household: { id: string; name: string };
 };
@@ -148,7 +150,7 @@ export async function identity(cookies: Cookies, request?: Request): Promise<Ide
   );
   const row = result.rows[0];
   if (!row) { cookies.delete(SESSION_COOKIE, cookieOptions(0)); return null; }
-  return { member: { id: row.member_id, role: row.role }, household: { id: row.household_id, name: row.name } };
+  return { language: requestLanguage(request?.headers.get('accept-language') ?? null), member: { id: row.member_id, role: row.role }, household: { id: row.household_id, name: row.name } };
 }
 
 export async function logout(cookies: Cookies) {

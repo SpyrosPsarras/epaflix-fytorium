@@ -48,6 +48,122 @@ class PlantsScreenTest {
         compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Search plants").assertDoesNotExist()
     }
+    @Test fun ownerTappedRepotOffersSkipRepotAndProvenance() = tappedTask(Role.owner)
+    @Test fun sitterTappedRepotOffersSkipWithoutOwnerSections() = tappedTask(Role.sitter)
+
+    private fun tappedTask(role: Role) {
+        val list = parseTaskList(taskListFixture("today", basis = """[{"input":"repotIntervalDays","value":365,"source":"rule","adjustment":"Synthetic repot interval","ruleId":"repot.synthetic@1"}]"""))
+        val task = list.sections.single().tasks.single().copy(taskType = "repot")
+        val state = mutableStateOf(owner.copy(member = Member("member-one", role), today = list))
+        val actions = mutableListOf<String>()
+        val commands = mutableListOf<String>()
+        val dark = mutableStateOf(false)
+        compose.enableAccessibilityChecks()
+        compose.setContent { FytoriumTheme(dark.value) { Surface(Modifier.fillMaxSize()) {
+            PlantDetailScreen(state.value, PlantDetail(plant, emptyList(), emptyMap()), {},
+                { action, _ -> commands.add(action) }, {}, {}, todayTask = task, onTaskAction = { actions.add(it) })
+        } } }
+        val block = hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))
+        compose.onNode(block and hasText("Repot")).assertIsDisplayed()
+        compose.onNode(block and hasText("Skip")).assertHeightIsAtLeast(48.dp).performClick()
+        assertEquals(listOf("skip"), actions)
+        compose.onNode(block and hasText("Based on")).performScrollTo().performClick()
+        compose.onNode(block and hasText("Source: rule · repot.synthetic@1")).performScrollTo().assertIsDisplayed()
+        if (role == Role.sitter) {
+            compose.onNodeWithText("Care tasks are on Today and Upcoming.").assertDoesNotExist()
+            compose.onNodeWithText("Repot with new pot and soil").assertDoesNotExist()
+            for (label in listOf("Edit plant", "Photo updates", "Species and site", "Pot and plant attributes", "Care history", "Handle all tasks"))
+                compose.onNodeWithText(label).assertDoesNotExist()
+            compose.onNodeWithContentDescription("Plant settings").assertDoesNotExist()
+        } else {
+            compose.onNode(block and hasText("Repot with new pot and soil")).performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
+            assertEquals(listOf("repot-form"), commands)
+        }
+        for (night in listOf(false, true)) {
+            compose.runOnIdle { dark.value = night }
+            compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("today-task:${task.plantId}:${task.key}"))
+            compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+            compose.onRoot().captureRoboImage("src/test/screenshots/today-plant-task-${role.name}-${if (night) "dark" else "light"}.png")
+        }
+        compose.runOnIdle { state.value = state.value.copy(handled = mapOf("${task.plantId}:${task.key}" to
+            parseEvent(JSONObject(eventFixture)).copy(kind = "skipped", taskType = "repot"))) }
+        compose.onNode(block and hasText("Skip")).assertDoesNotExist()
+        compose.onNode(block and hasText("Repot with new pot and soil")).assertDoesNotExist()
+        compose.onNode(block and hasText("Skipped")).performScrollTo().assertIsDisplayed()
+        compose.onNode(block and hasText("Undo")).performScrollTo().performClick()
+        assertEquals(listOf("skip", "undo"), actions)
+        if (role != Role.sitter) scroll("Repot with new pot and soil").assertIsDisplayed().performClick()
+        if (role != Role.sitter) assertEquals(listOf("repot-form", "repot-form"), commands)
+    }
+    @Test fun sitterPlantWithoutTappedTaskKeepsTodayAndUpcomingHint() {
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(member = Member("member-one", Role.sitter)),
+            PlantDetail(plant, emptyList(), emptyMap()), {}, { _, _ -> }, {}, {}) } }
+        compose.onNodeWithText("Care tasks are on Today and Upcoming.").assertIsDisplayed()
+    }
+    @Test fun ownerOfflineTaskShowsOnlyOneUnavailableNotice() = offlineTaskNotice(Role.owner)
+    @Test fun sitterOfflineTaskShowsOnlyOneUnavailableNotice() = offlineTaskNotice(Role.sitter)
+
+    private fun offlineTaskNotice(role: Role) {
+        val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
+        MockWebServer().use { server ->
+            val cache = CareCache(db)
+            cache.bind("""{"member":{"id":"member-one","role":"${role.name}"}}""")
+            val repository = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
+            repository.restore()
+            val list = parseTaskList(taskListFixture("today"))
+            val task = list.sections.single().tasks.single()
+            compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(member = Member("member-one", role), today = list, offline = true,
+                detail = PlantDetail(plant, emptyList(), emptyMap())), repository, initialPlant = plant.id, initialTask = task) } }
+            compose.onAllNodesWithText("Actions are unavailable", substring = true).assertCountEquals(1)
+            compose.onNodeWithText("Skip").assertIsNotEnabled()
+        }
+        db.close()
+    }
+    @Test fun ownerRejectedTaskActionShowsMessageOnce() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val state = mutableStateOf(owner.copy(today = list, detail = PlantDetail(plant, emptyList(), emptyMap())))
+        compose.setContent { FytoriumTheme { PlantsScreen(state.value, null, initialPlant = plant.id, initialTask = task,
+            onTaskAction = { _, _ -> state.value = state.value.copy(message = "Synthetic care action rejected") }) } }
+        compose.onNodeWithText("Skip").performClick()
+        compose.onAllNodesWithText("Synthetic care action rejected").assertCountEquals(1)
+    }
+    @Test fun ownerTaskShowsServerUnavailableNotice() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(today = list, serverUnavailable = true,
+            detail = PlantDetail(plant, emptyList(), emptyMap())), null, initialPlant = plant.id, initialTask = task) } }
+        compose.onAllNodesWithText("Fytorium isn't responding.", substring = true).assertCountEquals(1)
+        compose.onAllNodesWithText("Actions are unavailable until Fytorium responds.", substring = true).assertCountEquals(1)
+        compose.onNodeWithText("Skip").assertIsNotEnabled()
+    }
+    @Test fun tappedTaskUsesRefreshedRowsAndDisablesWritesOffline() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val event = parseEvent(JSONObject(eventFixture))
+        val state = mutableStateOf(owner.copy(today = list))
+        compose.setContent { FytoriumTheme { PlantDetailScreen(state.value, PlantDetail(plant, emptyList(), emptyMap()), {},
+            { _, _ -> }, {}, {}, todayTask = task) } }
+        val block = hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))
+        compose.onNode(block and hasText("Skip")).assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(today = list.copy(sections = listOf(TaskSection("water", "Water", listOf(task.copy(completedEvent = event)))))) }
+        compose.onNode(block and hasText("Skip")).assertDoesNotExist()
+        compose.onNode(block and hasText("Done")).assertIsDisplayed()
+        compose.onNode(block and hasText("Undo")).assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(offline = true) }
+        compose.onNode(block and hasText("Undo")).assertIsNotEnabled()
+        compose.runOnIdle { state.value = state.value.copy(offline = false, today = list) }
+        compose.onNode(block and hasText("Skip")).assertIsEnabled()
+        compose.onNode(block and hasText("Undo")).assertDoesNotExist()
+    }
+    @Test fun todayDetailBackCallsTheParentExactlyOnce() {
+        val task = parseTaskList(taskListFixture("today")).sections.single().tasks.single()
+        var backs = 0
+        compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(detail = PlantDetail(plant, emptyList(), emptyMap())), null,
+            initialPlant = plant.id, initialTask = task, onBack = { backs++ }) } }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.runOnIdle { assertEquals(1, backs) }
+    }
     @Test fun listSearchUsesDisplayAndScientificNamesWithoutASiteFilter() {
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme { PlantsList(owner, owner.plants, false, {}, {}, {}, {}) } }
@@ -122,6 +238,22 @@ class PlantsScreenTest {
         compose.onNodeWithText("Pot and plant attributes").assertDoesNotExist()
         compose.onNodeWithContentDescription("Plant settings").assertDoesNotExist()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+    }
+    @Test fun wateringProvenanceOnThePlantPageShowsOverrideAndReset() {
+        val rule = parseTaskList(taskListFixture("today", basis = """[{"input":"wateringIntervalDays","value":7,"source":"rule","adjustment":"Default watering interval","ruleId":"water.default@1"}]"""))
+            .sections.single().tasks.single()
+        val task = mutableStateOf(rule.copy(basedOn = rule.basedOn.map { it.copy(value = 9, source = "override", ruleId = null) }))
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner, PlantDetail(plant, emptyList(), mapOf("water" to task.value)), {}, { _, _ -> }, {}, {}) } }
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("basis:water"))
+        val water = hasAnyAncestor(hasTestTag("basis:water"))
+        compose.onNode(water and hasText("Based on")).performScrollTo().performClick()
+        compose.onNode(water and hasText("wateringIntervalDays")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("9")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("Source: override")).performScrollTo().assertIsDisplayed()
+        compose.runOnIdle { task.value = rule }
+        compose.onNode(water and hasText("Source: rule · water.default@1")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("7")).performScrollTo().assertIsDisplayed()
+        compose.onNode(water and hasText("Source: override")).assertDoesNotExist()
     }
     @Test fun historyUndoAndPermanentDeletionFollowServerFlagAndExactName() {
         val allowed = mutableStateOf(true)

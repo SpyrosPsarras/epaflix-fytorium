@@ -31,7 +31,7 @@ for (const cleanupFails of [false, true]) {
     const bytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#408040' } }).jpeg().toBuffer();
     const form = new FormData();
     form.set('photo', new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }), 'synthetic.jpg');
-    const identity = { household: { id: 'synthetic-household' }, member: { id: 'synthetic-member' } } as Identity;
+    const identity = { language: 'en', household: { id: 'synthetic-household' }, member: { id: 'synthetic-member' } } as Identity;
     await expect(addPhoto(identity, 'synthetic-plant', new Request('http://test/upload', { method: 'POST', body: form }))).rejects.toBe(original);
     expect(faults.removePhotos).toHaveBeenCalledWith(faults.storePhoto.mock.calls.map(([key]) => key));
     expect(log.mock.calls.flat().join(' ')).not.toContain('secret');

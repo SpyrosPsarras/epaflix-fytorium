@@ -10,9 +10,9 @@ import { notificationAttemptLimit, withNotificationLease } from './lease';
 
 async function sendWeatherAlerts() {
   const { rows } = await db().query(`SELECT e.id, e.kind, m.id AS member_id,
-    COALESCE(p.nickname, s.canonical_name) AS plant_name
+    plant_display_name(p.nickname, p.gbif_key, 'en') AS plant_name
     FROM weather_events e JOIN members m ON m.household_id = e.household_id
-    LEFT JOIN plants p ON p.id = e.plant_id LEFT JOIN species s ON s.gbif_key = p.gbif_key
+    LEFT JOIN plants p ON p.id = e.plant_id
     WHERE e.resolved_at IS NULL AND m.weather_alerts_enabled AND m.removed_at IS NULL AND m.role <> 'sitter'
     AND ${availableDeviceSql('m.id', '$1')}
     AND NOT EXISTS (SELECT 1 FROM weather_alert_sends WHERE event_id = e.id AND member_id = m.id
@@ -38,7 +38,7 @@ export async function runPushWorkerOnce() {
       AND (sent_at IS NOT NULL OR claimed_until >= $3 OR attempts >= $4)) ORDER BY m.id`, [localTime, date, at, notificationAttemptLimit]);
   for (const member of rows) {
     try {
-      const identity: Identity = { member: { id: member.id, role: member.role }, household: { id: member.household_id, name: member.name } };
+      const identity: Identity = { language: 'en', member: { id: member.id, role: member.role }, household: { id: member.household_id, name: member.name } };
       const today = await listedTasks(identity, 'today');
       const tasks = Object.values(today.groups).flat().filter(task => !task.completed_event && task.status === 'due' && task.dueOn <= today.today);
       // Only this local day's summary may be claimed, never yesterday's missed reminder.

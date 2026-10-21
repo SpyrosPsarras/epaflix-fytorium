@@ -25,24 +25,23 @@ export function photoToday() {
 }
 const photoSelect = `SELECT u.id, u.plant_id, u.original_key, u.thumb_key, u.note, u.health,
   to_char(u.taken_on, 'YYYY-MM-DD') AS taken_on, u.created_at, u.created_by, u.is_cover,
-  coalesce(nullif(p.nickname, ''), s.canonical_name) AS plant_name
-  FROM photo_updates u JOIN plants p ON p.id = u.plant_id AND p.household_id = u.household_id
-  JOIN species s ON s.gbif_key = p.gbif_key`;
-export async function listPhotos(household: string, plant?: string): Promise<PhotoUpdate[]> {
-  if (plant) await getPlant(plant, household);
-  const result = await db().query(photoSelect + ' WHERE u.household_id = $1 AND ($2::uuid IS NULL OR u.plant_id = $2) ORDER BY u.taken_on DESC, u.created_at DESC, u.id DESC', [household, plant ?? null]);
+  plant_display_name(p.nickname, p.gbif_key, $3) AS plant_name
+  FROM photo_updates u JOIN plants p ON p.id = u.plant_id AND p.household_id = u.household_id`;
+export async function listPhotos(household: string, plant: string | undefined, language: Identity['language']): Promise<PhotoUpdate[]> {
+  if (plant) await getPlant(plant, household, language);
+  const result = await db().query(photoSelect + ' WHERE u.household_id = $1 AND ($2::uuid IS NULL OR u.plant_id = $2) ORDER BY u.taken_on DESC, u.created_at DESC, u.id DESC', [household, plant ?? null, language]);
   return result.rows;
 }
-export async function getPhoto(id: string, household: string): Promise<PhotoUpdate> {
+export async function getPhoto(id: string, household: string, language: Identity['language']): Promise<PhotoUpdate> {
   if (!isUuid(id)) error(404, 'Photo update not found');
-  const result = await db().query(photoSelect + ' WHERE u.id = $1 AND u.household_id = $2', [id, household]);
+  const result = await db().query(photoSelect + ' WHERE u.id = $1 AND u.household_id = $2', [id, household, language]);
   if (!result.rowCount) error(404, 'Photo update not found');
   return result.rows[0];
 }
 
 export async function addPhoto(identity: Identity, plant: string, request: Request) {
   const household = identity.household.id;
-  await getPlant(plant, household);
+  await getPlant(plant, household, identity.language);
   const form = await imageForm(request);
   const file = form.get('photo');
   if (!(file instanceof File) || !file.size) error(422, 'Choose an image.');
@@ -74,11 +73,11 @@ export async function addPhoto(identity: Identity, plant: string, request: Reque
     catch { console.error('Photo upload object cleanup failed.'); }
     throw cause;
   }
-  return getPhoto(id, household);
+  return getPhoto(id, household, identity.language);
 }
 
-export async function deletePhoto(id: string, household: string) {
-  const photo = await getPhoto(id, household);
+export async function deletePhoto(id: string, household: string, language: Identity['language']) {
+  const photo = await getPhoto(id, household, language);
   await withTransaction(async (client) => {
     await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [photo.plant_id, household]);
     // Keep the row on storage failure so the member can retry deletion.
@@ -87,8 +86,8 @@ export async function deletePhoto(id: string, household: string) {
   });
 }
 
-export async function setCover(id: string, household: string) {
-  const photo = await getPhoto(id, household);
+export async function setCover(id: string, household: string, language: Identity['language']) {
+  const photo = await getPhoto(id, household, language);
   await withTransaction(async (client) => {
     // Serialize cover changes with uploads and deletion for this plant.
     await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [photo.plant_id, household]);
@@ -96,5 +95,5 @@ export async function setCover(id: string, household: string) {
     const result = await client.query('UPDATE photo_updates SET is_cover = true WHERE id = $1 AND household_id = $2 RETURNING id', [id, household]);
     if (!result.rowCount) error(404, 'Photo update not found');
   });
-  return getPhoto(id, household);
+  return getPhoto(id, household, language);
 }

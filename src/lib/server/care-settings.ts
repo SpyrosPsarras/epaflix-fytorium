@@ -19,13 +19,13 @@ export async function householdSettings(household: string, database: pg.Pool | p
 }
 
 export async function plantCareSettings(plantId: string, household: string): Promise<PlantCareSettings> {
-  const plant = await getPlant(plantId, household);
+  const plant = await getPlant(plantId, household, 'en');
   const intervals = await db().query('SELECT task_type, interval_days FROM plant_task_intervals WHERE plant_id = $1 AND household_id = $2', [plantId, household]);
   return { misting_enabled: plant.misting_enabled, customIntervals: Object.fromEntries(intervals.rows.map(row => [row.task_type, row.interval_days])) };
 }
 
 export async function savePlantCareSettings(plantId: string, household: string, input: Record<string, unknown>): Promise<PlantCareSettings> {
-  await getPlant(plantId, household);
+  await getPlant(plantId, household, 'en');
   const intervals = input.customIntervals;
   if (!intervals || typeof intervals !== 'object' || Array.isArray(intervals)) error(422, 'customIntervals must be an object keyed by task type.');
   for (const [type, days] of Object.entries(intervals)) {

@@ -13,16 +13,91 @@ import okhttp3.mockwebserver.MockResponse
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class RepositoryTest {
-    @Test fun householdTimezoneIsLoadedFromMetaAndSurvivesOfflineRestore() {
+    @Test fun typeBatchRetriesReuseRequestIdAndKeepEveryRowsUndo() {
         withRepository { repository, server, cache ->
-            enqueueRefresh(server)
-            repository.refresh()
-            assertEquals("Europe/Oslo", repository.state.value.timezone)
-            val restored = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
-            restored.restore()
-            assertEquals("Europe/Oslo", restored.state.value.timezone)
-            restored.wipe()
-            assertNull(restored.state.value.timezone)
+            val events = listOf("plant-one", "plant-two").mapIndexed { index, plant ->
+                org.json.JSONObject(eventFixture).put("id", "batch-event-$index").put("plant_id", plant)
+                    .put("task_type", "clean_leaves").put("batch_id", "batch-one")
+            }
+            fun list(view: String, completed: Boolean = false): String {
+                val json = org.json.JSONObject(taskListFixture(view).replace("water", "clean_leaves"))
+                val rows = json.getJSONArray("sections").getJSONObject(0).getJSONArray("tasks")
+                rows.put(org.json.JSONObject(rows.getJSONObject(0).toString()).put("plant_id", "plant-two"))
+                if (completed) events.forEachIndexed { index, event -> rows.getJSONObject(index).put("completed_event", event) }
+                json.getJSONObject("groups").put("clean_leaves", rows)
+                return json.toString()
+            }
+            fun refreshResponses() {
+                server.enqueue(MockResponse().setBody("""{"member":{"id":"member-one","role":"owner"}}"""))
+                server.enqueue(MockResponse().setBody(list("today")))
+                server.enqueue(MockResponse().setBody(list("upcoming")))
+                server.enqueue(MockResponse().setBody("[]"))
+                server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            }
+            refreshResponses(); repository.refresh()
+            repeat(5) { server.takeRequest() }
+            server.enqueue(MockResponse().setResponseCode(503))
+            assertFalse(repository.handleType("clean_leaves"))
+            val failed = server.takeRequest()
+            refreshResponses(); repository.refresh()
+            repeat(5) { server.takeRequest() }
+            server.enqueue(MockResponse().setBody(org.json.JSONObject().put("batch_id", "batch-one").put("events", org.json.JSONArray(events)).toString()))
+            server.enqueue(MockResponse().setBody(list("today", completed = true)))
+            server.enqueue(MockResponse().setBody(list("upcoming", completed = true)))
+            assertTrue(repository.handleType("clean_leaves"))
+            val success = server.takeRequest()
+            assertEquals("POST", success.method)
+            assertEquals("/api/tasks/clean_leaves/complete-all", success.path)
+            val requestId = org.json.JSONObject(success.body.readUtf8()).getString("request_id")
+            java.util.UUID.fromString(requestId)
+            assertEquals(requestId, org.json.JSONObject(failed.body.readUtf8()).getString("request_id"))
+            assertEquals("/api/tasks?view=today", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
+            assertEquals("/api/tasks?view=upcoming", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
+            val handled = repository.state.value.handled
+            assertEquals(setOf("plant-one:clean_leaves", "plant-two:clean_leaves"), handled.keys)
+            for (row in repository.state.value.today!!.sections.single().tasks) {
+                assertEquals(listOf("undo"), row.actions("2030-06-02", Member("member-one", Role.owner)))
+            }
+            assertTrue(cache.get("member-one", "today")!!.json.contains("batch-event-1"))
+            server.enqueue(MockResponse().setBody(org.json.JSONObject().put("batch_id", "batch-two").put("events", org.json.JSONArray()).toString()))
+            server.enqueue(MockResponse().setBody(list("today", completed = true)))
+            server.enqueue(MockResponse().setBody(list("upcoming", completed = true)))
+            assertTrue(repository.handleType("clean_leaves"))
+            val nextId = org.json.JSONObject(server.takeRequest().body.readUtf8()).getString("request_id")
+            java.util.UUID.fromString(nextId)
+            assertNotEquals(requestId, nextId)
+            repeat(2) { assertNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)) }
+            server.enqueue(MockResponse().setBody("{}"))
+            server.enqueue(MockResponse().setResponseCode(503))
+            val row = repository.state.value.today!!.sections.single().tasks.first()
+            assertTrue(repository.act(row, "undo"))
+            assertEquals("/api/task-batches/batch-one/undo", server.takeRequest().path)
+            assertEquals("/api/me", server.takeRequest().path)
+            assertTrue(repository.state.value.handled.isEmpty())
+            assertTrue(repository.state.value.today!!.sections.single().tasks.all { it.completedEvent == null })
+        }
+    }
+    @Test fun typeBatchSupportsCustomTaskKeysAndRejectsSitterAndOfflineWrites() {
+        withRepository { repository, server, _ ->
+            enqueueRefresh(server, sitter = true); repository.refresh()
+            assertFalse(repository.handleType("clean_leaves"))
+            assertEquals(5, server.requestCount)
+            enqueueRefresh(server); repository.refresh()
+            repeat(10) { server.takeRequest() }
+            repository.connectivityChanged(false)
+            assertFalse(repository.handleType("clean_leaves"))
+            assertEquals(10, server.requestCount)
+            enqueueRefresh(server); repository.refresh()
+            repeat(5) { server.takeRequest() }
+            val customKey = "91000000-0000-4000-8000-000000000001"
+            val event = org.json.JSONObject(eventFixture).put("task_type", org.json.JSONObject.NULL).put("custom_task_id", customKey).put("batch_id", "custom-batch")
+            server.enqueue(MockResponse().setBody(org.json.JSONObject().put("batch_id", "custom-batch").put("events", org.json.JSONArray().put(event)).toString()))
+            server.enqueue(MockResponse().setBody(taskListFixture("today")))
+            server.enqueue(MockResponse().setBody(taskListFixture("upcoming")))
+            assertTrue(repository.handleType(customKey))
+            assertEquals("/api/tasks/$customKey/complete-all", server.takeRequest().path)
+            assertEquals(customKey, repository.state.value.handled["plant-one:$customKey"]!!.customTaskId)
+            repeat(2) { assertNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)) }
         }
     }
     @Test fun logoutAndMemberChangeEraseEveryCachedResource() {

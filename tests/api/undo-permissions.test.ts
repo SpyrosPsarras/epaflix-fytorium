@@ -176,3 +176,31 @@ test('repot ordering, edited pot fields and graveyard state disable undo', async
   expect(graveyardUndo.status).toBe(409);
   expect(await graveyardUndo.json()).toMatchObject({ message: 'Graveyard plants have no tasks. Restore the plant first.' });
 });
+
+test('complete-type admits family but refuses sitters and hides their former household-wide batch undo', async () => {
+  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2030-06-20T12:00:00Z' });
+  owner = await harness.login();
+  expect((await owner.request(`/api/plants/${plant}/restore`, 'POST', {})).status).toBe(200);
+  const family = await invite('undo-type-former-family', 'family');
+  await family.request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: true });
+  const memberId = (await (await family.request('/api/me')).json()).member.id;
+  const response = await family.request('/api/tasks/water/complete-all', 'POST', { request_id: randomUUID() });
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  const event = result.events.find((event: any) => event.plant_id === plant);
+  expect(event).toMatchObject({ by_member: memberId, batch_id: result.batch_id, can_undo: true });
+  await historyFlag(family, event.id, true);
+  await owner.request(`/api/household/members/${memberId}`, 'DELETE');
+  const sitter = await invite('undo-type-former-family', 'sitter');
+  for (const type of ['water', 'nope']) {
+    const denied = await sitter.request(`/api/tasks/${type}/complete-all`, 'POST', { request_id: randomUUID() });
+    expect(denied.status).toBe(403);
+  }
+  await eventInViews(sitter, event.id, false);
+  const denied = await sitter.request(`/api/task-batches/${result.batch_id}/undo`, 'POST');
+  expect(denied.status).toBe(404);
+  expect(await denied.json()).toMatchObject({ message: 'Care action not found' });
+  await historyFlag(owner, event.id, true);
+  expect((await owner.request(`/api/task-batches/${result.batch_id}/undo`, 'POST')).status).toBe(200);
+  await historyFlag(owner, event.id, false);
+});

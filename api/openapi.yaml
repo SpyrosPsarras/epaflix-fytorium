@@ -585,6 +585,64 @@ paths:
               required:
                 - request_id
               additionalProperties: false
+  /api/tasks/{taskType}/complete-all:
+    post:
+      operationId: post_api_tasks__taskType__complete_all
+      summary: POST /api/tasks/{taskType}/complete-all
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batch_id:
+                    type: string
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CareEvent"
+                required:
+                  - batch_id
+                  - events
+                additionalProperties: false
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      parameters:
+        - name: taskType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                request_id:
+                  type: string
+                  pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+              required:
+                - request_id
+              additionalProperties: false
   /api/care-events/{id}/undo:
     post:
       operationId: post_api_care_events__id__undo
@@ -3457,6 +3515,11 @@ components:
     Identity:
       type: object
       properties:
+        language:
+          enum:
+            - en
+            - nb
+            - el
         member:
           type: object
           properties:
@@ -3485,6 +3548,7 @@ components:
             - name
           additionalProperties: false
       required:
+        - language
         - member
         - household
       additionalProperties: false

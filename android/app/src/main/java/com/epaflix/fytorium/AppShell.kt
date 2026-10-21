@@ -1,6 +1,7 @@
 package com.epaflix.fytorium
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -16,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.epaflix.fytorium.feed.*
+import com.epaflix.fytorium.plants.currentTask
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,6 +38,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     fun openFeedSettings() { feedSettings = true; scope.launch(Dispatchers.IO) { feed?.loadLocation() } }
     BackHandler(enabled = feedSettings) { feedSettings = false }
     var feedPlant by rememberSaveable { mutableStateOf<String?>(null) }
+    var todayTaskKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val todayTask = careState?.currentTask(todayTaskKey)
+    val todayScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     var tab by rememberSaveable { mutableStateOf("Today") }
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
@@ -49,7 +54,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     LaunchedEffect(homeRequest) {
         if (homeRequest > 0) {
             tab = "Today"; taskView = "today"; addPlant = false; notifications = false; sites = false; household = null
-            plantaImport = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null
+            plantaImport = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; todayTaskKey = null; journalPlantId = null
         }
     }
     var about by rememberSaveable { mutableStateOf(false) }
@@ -59,14 +64,17 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val member = careState?.member
         val memberChanged = previousMemberId != null && member != null && previousMemberId != member.id
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
-        if (!loggedIn || memberChanged) notifications = false
+        if (!loggedIn || memberChanged) {
+            notifications = false
+            todayScroll.scrollTo(0)
+        }
         if (!loggedIn || memberChanged || member?.role == Role.sitter) {
             addPlant = false
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
             }
             sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null
-            if (!loggedIn || memberChanged || becameSitter) feedPlant = null
+            if (!loggedIn || memberChanged || becameSitter) { feedPlant = null; todayTaskKey = null }
         }
         if (!loggedIn || memberChanged || (member != null && member.role != Role.owner)) plantaImport = false
         if (!loggedIn) { previousMemberId = null; previousRole = null }
@@ -85,7 +93,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired) NavigationBar {
             listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                 "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; journalPlantId = null },
+                NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; todayTaskKey = null; journalPlantId = null },
                     icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
             }
         }
@@ -151,13 +159,13 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
-                    onRefresh = { controller?.refresh() }, onAction = { task, action, pot -> controller?.act(task, action, pot) },
-                    onHandleAll = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
+                if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it }, scrollState = todayScroll,
+                    onOpenTask = { todayTaskKey = "${it.plantId}:${it.key}"; feedPlant = it.plantId; tab = "Plants" },
+                    onRefresh = { controller?.refresh() }, onAction = { task, action -> controller?.act(task, action) },
+                    onHandleType = { controller?.handleType(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
                     onNotifications = { tab = "More"; notifications = true },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
-                    onLoadPot = controller?.let { care -> { id -> withContext(Dispatchers.IO) { care.repository.loadPot(id) } } },
                     feedContent = { seeTasks -> if (feedState != null && feedState.cards.isNotEmpty()) HomeFeed(feedState,
                         onOpen = { href -> when {
                             href == "/#today" -> seeTasks()
@@ -165,8 +173,10 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             else -> openFeedSettings()
                         } }, onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
                         onUndo = { scope.launch(Dispatchers.IO) { if (feed?.undoRain() == true) controller?.refresh() } }) })
-                else key(careState.member?.id, careState.member?.role == Role.sitter, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
-                    onBack = { tab = "Today"; feedPlant = null; journalPlantId = null; addPlant = false }, initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant,
+                else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
+                    onBack = { tab = "Today"; feedPlant = null; todayTaskKey = null; journalPlantId = null; addPlant = false },
+                    initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,
+                    onTaskAction = { task, action -> controller?.act(task, action) },
                     photosApi = sitesApi, photosConnected = sitesConnected,
                     speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() }) }
             }

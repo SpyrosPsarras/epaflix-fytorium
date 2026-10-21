@@ -81,6 +81,22 @@ test('care action integrity rejects foreign plants and rain aliases targeting a 
     }
   }
 });
+test('complete-type migration preserves plant scoping and refuses rollback over retained batches', async () => {
+  const { plants: [plant] } = await setup('indoor', 1);
+  const db = new pg.Client({ connectionString: harness.postgres.getConnectionUri() });
+  await db.connect();
+  try {
+    for (const [action, plantId] of [['complete-type', plant.id], ['complete-all', null], ['rain', plant.id]] as const) {
+      await expect(db.query('INSERT INTO care_actions (request_id, household_id, plant_id, action) VALUES ($1,$2,$3,$4)', [randomUUID(), plant.household_id, plantId, action]))
+        .rejects.toMatchObject({ code: '23514', constraint: 'care_actions_action_plant' });
+    }
+    await db.query('BEGIN');
+    await db.query("INSERT INTO care_actions (request_id, household_id, action) VALUES ($1,$2,'complete-type')", [randomUUID(), plant.household_id]);
+    const rollback = (await readFile('migrations/20261020100000_complete_type.sql', 'utf8')).split('-- migrate:down')[1];
+    await expect(db.query(rollback)).rejects.toMatchObject({ code: '23514', constraint: 'care_actions_action_plant' });
+  } finally { await db.query('ROLLBACK'); await db.end(); }
+});
+
 test('multi-row inserts reject aliases before non-rain targets but accept original rain targets', async () => {
   const { plants: [plant] } = await setup('indoor', 1);
   const target = randomUUID(), alias = randomUUID();
