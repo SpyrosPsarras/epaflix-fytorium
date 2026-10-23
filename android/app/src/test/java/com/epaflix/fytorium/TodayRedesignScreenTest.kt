@@ -203,7 +203,7 @@ class TodayRedesignScreenTest {
         fun rows(type: String, count: Int) = plants.take(count).mapIndexed { index, plant -> template.copy(taskType = type, plantId = plant.id, plantName = plant.displayName,
             siteName = plant.siteName!!, coverPhotoId = plant.coverPhotoId, lateDays = if (index == 0) 46 else if (index == 1) 89 else 0, dueOn = if (index == 0) "2030-04-17" else if (index == 1) "2030-03-05" else "2030-06-02") }
         val water = rows("water", 8)
-        val base = TaskList("2030-06-02", "today", TaskSettings(), mapOf("water" to water), listOf(TaskSection("water", "Water", water), TaskSection("mist", "Mist", emptyList())))
+        val base = TaskList("2030-06-02", "today", TaskSettings(), mapOf("water" to water), listOf(TaskSection("water", "Water", water), TaskSection("remove_dead", "Remove dead flowers and leaves", emptyList())))
         val upcoming = base.copy(view = "upcoming", sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows("fertilize", 3).map { it.copy(dueOn = "2030-06-04", lateDays = 0) })))
         val full = CareState(member = Member("owner", Role.owner), today = base, upcoming = upcoming, plants = plants, lastUpdated = Instant.parse("2030-06-02T10:42:00Z").toEpochMilli())
         val state = mutableStateOf(full)
@@ -237,7 +237,7 @@ class TodayRedesignScreenTest {
         compose.onNode(hasText("Today") and !hasClickAction()).assertIsDisplayed()
         compose.onNodeWithText("Good evening").assertDoesNotExist()
         compose.onNodeWithText("Today's tasks: 8 watering").assertDoesNotExist()
-        compose.onNodeWithText("Mist").assertDoesNotExist()
+        compose.onNodeWithText("Remove dead flowers and leaves").assertDoesNotExist()
         compose.onNodeWithText("46d late").assertIsDisplayed()
         compose.onNodeWithText("2mo late").assertIsDisplayed()
         awaitPhotos()

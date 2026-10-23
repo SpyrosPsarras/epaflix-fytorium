@@ -16,7 +16,7 @@ test.each([
 });
 
 const defaults: [TaskType, number, string][] = [
-  ['water', 7, '2026-05-01'], ['fertilize', 14, '2026-05-15'], ['mist', 3, '2026-05-04'],
+  ['water', 7, '2026-05-01'], ['fertilize', 14, '2026-05-15'],
   ['clean_leaves', 30, '2026-05-31'], ['remove_dead', 14, '2026-05-15'],
   ['cut_back', 365, '2027-03-01'], ['repot', 730, '2028-04-30'],
 ];
@@ -48,24 +48,6 @@ test('fertilizing uses a supplied profile interval and its source', () => {
 });
 
 test.each([
-  [{ household: { misting_enabled: false } }, 'household.misting_enabled', 'Household misting is disabled.'],
-  [{ plant: { misting_enabled: false } }, 'plant.misting_enabled', 'Plant misting is disabled.'],
-  [{ site: { location: 'outdoor', humidity: 'normal' } }, 'site.location', 'Misting is only for indoor plants.'],
-  [{ site: { location: 'indoor', humidity: 'humid' } }, 'site.humidity', 'Misting requires dry or normal site humidity.'],
-  [{ careProfile: { humidityNeed: { value: 'low', source: 'perenual' } } }, 'humidityNeed', 'This humidity need does not call for misting.'],
-] satisfies [Partial<ScheduleInput>, string, string][])('misting is not applicable for %j', (change, field, adjustment) => {
-  expect(schedule({ ...input, ...change }).mist).toMatchObject({ status: 'not_applicable',
-    basedOn: expect.arrayContaining([expect.objectContaining({ input: field, adjustment })]) });
-});
-test.each(['dry', 'normal'] as const)('misting is applicable for medium need in %s humidity with both switches on', humidity => {
-  expect(schedule({ ...input, site: { location: 'indoor', humidity }, household: { misting_enabled: true }, plant: { misting_enabled: true } }).mist).toMatchObject({ status: 'due', dueOn: '2026-05-04' });
-});
-test('high humidity need preserves its source in misting eligibility', () => {
-  expect(schedule({ ...input, careProfile: { humidityNeed: { value: 'high', source: 'perenual' } } }).mist).toMatchObject({ status: 'due',
-    basedOn: expect.arrayContaining([expect.objectContaining({ input: 'humidityNeed', value: 'high', source: 'perenual' })]) });
-});
-
-test.each([
   ['clean_leaves', { site: { location: 'outdoor' } }], ['repot', { pot: { pot_type: 'in_ground' } }],
 ] satisfies [TaskType, Partial<ScheduleInput>][])('%s is not applicable for %j even with an override', (type, change) => {
   expect(schedule({ ...input, ...change, customIntervals: { [type]: 5 } })[type]).toMatchObject({ status: 'not_applicable' });
@@ -88,7 +70,7 @@ test.each([
 });
 
 const overrides: [TaskType, string][] = [
-  ['water', '2026-05-06'], ['fertilize', '2026-05-06'], ['mist', '2026-05-06'], ['clean_leaves', '2026-05-06'],
+  ['water', '2026-05-06'], ['fertilize', '2026-05-06'], ['clean_leaves', '2026-05-06'],
   ['remove_dead', '2026-05-06'], ['cut_back', '2026-05-06'], ['repot', '2026-05-06'],
 ];
 test.each(overrides)('custom interval for %s replaces only its computed interval', (type, dueOn) => {

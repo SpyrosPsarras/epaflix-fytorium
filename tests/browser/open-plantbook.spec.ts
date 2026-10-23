@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { fixturePlant } from '../plant-fixture';
 import { logIn } from './helpers/login';
 
-test('Plantbook care and Based on show provenance, while unmatched species can be retried on a phone', async ({ page }, testInfo) => {
+test('Plantbook care shows provenance and unmatched species can be retried on a phone', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   const key = 100000000 + Math.floor(Math.random() * 700000000);
   await page.request.post('/__test/clock', { data: { action: 'set', at: '2030-06-01T12:00:00Z' } });
@@ -19,20 +19,13 @@ test('Plantbook care and Based on show provenance, while unmatched species can b
       expect(response.status()).toBe(201);
       return response.json();
     }
-    const plant = await add('Testoria sensor ' + key, key);
+    await add('Testoria sensor ' + key, key);
     await page.goto('/species/' + key);
-    const humidity = page.getByRole('article', { name: 'Humidity need', exact: true });
-    await expect(humidity).toContainText('Source: open_plantbook', { timeout: 60000 });
-    await expect(humidity.locator('.value')).toHaveText('low');
-    await expect(humidity).toContainText('Fetch time: 2030-06-01T12:00:00.000Z');
+    const light = page.getByRole('article', { name: 'Light', exact: true });
+    await expect(light).toContainText('Source: open_plantbook', { timeout: 60000 });
+    await expect(light.locator('.value')).toHaveText('part_shade');
+    await expect(light).toContainText('Fetch time: 2030-06-01T12:00:00.000Z');
     await screenshot('open-plantbook-care.png');
-    await page.goto('/plants/' + plant.id);
-    await expect(page.getByText('Mist is not applicable.', { exact: true })).toBeVisible();
-    const basis = page.getByRole('region', { name: 'Based on', exact: true });
-    await basis.getByText('Mist', { exact: true }).click();
-    await expect(basis).toContainText('Source: open_plantbook');
-    await expect(basis).toContainText('humidityNeed');
-    await screenshot('open-plantbook-based-on.png');
     await add('Testoria unmatched ' + (key + 1), key + 1);
     await page.goto('/species/' + (key + 1));
     await expect(page.getByText('Open Plantbook: no match', { exact: true })).toBeVisible({ timeout: 60000 });

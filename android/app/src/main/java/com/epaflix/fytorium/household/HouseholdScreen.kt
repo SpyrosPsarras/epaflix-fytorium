@@ -42,7 +42,6 @@ import kotlinx.coroutines.withContext
         onMember = { m, r, p -> withContext(Dispatchers.IO) { repository.saveMember(m, r, p) } },
         onRemove = { withContext(Dispatchers.IO) { repository.removeMember(it) } },
         onRevoke = { withContext(Dispatchers.IO) { repository.revokeInvite(it) } },
-        onMisting = { withContext(Dispatchers.IO) { repository.saveMisting(it) } },
         onLocation = { withContext(Dispatchers.IO) { repository.saveLocation(it) } },
         onFeed = { withContext(Dispatchers.IO) { repository.saveFeed(it) } },
         onTarget = { scope.launch { withContext(Dispatchers.IO) { repository.selectTarget(it) } } },
@@ -56,7 +55,7 @@ import kotlinx.coroutines.withContext
     onCreateInvite: suspend (String, Set<String>) -> String? = { _, _ -> null }, onShare: (String) -> Unit = {},
     onMember: suspend (HouseholdMember, String, Set<String>) -> Boolean = { _, _, _ -> false },
     onRemove: suspend (String) -> Boolean = { false }, onRevoke: suspend (String) -> Boolean = { false },
-    onMisting: suspend (Boolean) -> Boolean = { false }, onLocation: suspend (Map<String, String>) -> Boolean = { false },
+    onLocation: suspend (Map<String, String>) -> Boolean = { false },
     onFeed: suspend (Map<String, Boolean>) -> Boolean = { false }, onTarget: (TaskTarget) -> Unit = {},
     onTask: suspend (CustomTask) -> Boolean = { false }, onDeleteTask: suspend (CustomTask) -> Boolean = { false }) {
     if (role == Role.sitter || (area == HouseholdArea.Members && role != Role.owner)) return
@@ -97,7 +96,7 @@ import kotlinx.coroutines.withContext
                 memberEditor != null -> MemberForm(memberEditor!!, state.plants, writable) { r, p -> submit { if (onMember(memberEditor!!, r, p)) memberEditor = null } }
                 taskEditor != null -> TaskForm(taskEditor!!, state.errors, writable) { task -> submit { if (onTask(task)) taskEditor = null } }
                 area == HouseholdArea.Settings -> HouseholdSettingsForm(state, role == Role.owner, writable,
-                    onMisting = { submit { onMisting(it) } }, onLocation = { submit { onLocation(it) } }, onFeed = { submit { onFeed(it) } })
+                    onLocation = { submit { onLocation(it) } }, onFeed = { submit { onFeed(it) } })
                 area == HouseholdArea.Members -> {
                     Button(onClick = { onClear(); inviteEditor = true }, enabled = writable) { Text("Create invite") }
                     HouseholdHeading("Household members")

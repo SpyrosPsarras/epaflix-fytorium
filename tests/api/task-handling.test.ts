@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { createApiHarness } from './harness';
@@ -67,10 +67,10 @@ test('complete-all is one atomic, idempotent action for exactly due or late task
   const results = await Promise.all([completeAll(key), completeAll(key)]);
   for (const response of results) expect(response.status).toBe(200);
   const [one, two] = await Promise.all(results.map(r => r.json()));
-  expect(one.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water', 'fertilize', 'mist', 'clean_leaves', 'remove_dead']);
+  expect(one.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water', 'fertilize', 'clean_leaves', 'remove_dead']);
   expect(two.events).toEqual(one.events);
   expect(new Set(one.events.map((event: { batch_id: string }) => event.batch_id))).toEqual(new Set([key]));
-  expect(await tasks()).toMatchObject({ water: { dueOn: '2026-06-12' }, mist: { dueOn: '2026-06-08' }, repot: before.repot, cut_back: before.cut_back });
+  expect(await tasks()).toMatchObject({ water: { dueOn: '2026-06-12' }, repot: before.repot, cut_back: before.cut_back });
   expect((await undo(one.events[0].id)).status).toBe(409);
   const restored = await undoBatch(key);
   expect(restored.status).toBe(200);
@@ -83,7 +83,7 @@ test('complete-all is one atomic, idempotent action for exactly due or late task
 test('a batch failure rolls back all earlier completions and an empty batch remains idempotent', async () => {
   fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   // Inject a write failure, then observe rollback only through HTTP history and schedules.
-  await fixtureDb.query(`CREATE FUNCTION fail_test_batch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.batch_id IS NOT NULL AND NEW.task_type = 'mist' THEN RAISE EXCEPTION 'Synthetic batch failure'; END IF; RETURN NEW; END $$;
+  await fixtureDb.query(`CREATE FUNCTION fail_test_batch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.batch_id IS NOT NULL AND NEW.task_type = 'clean_leaves' THEN RAISE EXCEPTION 'Synthetic batch failure'; END IF; RETURN NEW; END $$;
     CREATE TRIGGER fail_test_batch BEFORE INSERT ON care_events FOR EACH ROW EXECUTE FUNCTION fail_test_batch()`);
   const beforeHistory = await history();
   const beforeTasks = await tasks();
@@ -145,7 +145,6 @@ test('Upcoming shares Today\'s household calendar day, groups 14 days, omits ina
   expect(upcoming.sections[0]).toMatchObject({ key: '2026-06-06', label: '2026-06-06' });
   expect(upcoming.sections.map((section: { key: string }) => section.key)).toEqual(['2026-06-06', '2026-06-18']);
   expect(upcoming.sections[0].tasks).toEqual(today.groups.water);
-  expect(upcoming.groups.mist).toEqual([]);
   expect(upcoming.groups.clean_leaves).toEqual([]);
   expect(upcoming.groups.water.map((row: { plant_id: string }) => row.plant_id)).toEqual([outdoorId]);
   const done = await (await request(`/api/plants/${outdoorId}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
@@ -168,7 +167,7 @@ test('sorting and each location filter apply on the server and all settings vali
     const list = await (await request('/api/tasks?view=today')).json();
     expect(list.settings).toEqual(desired);
     const labels = list.sections.map((section: { label: string }) => section.label);
-    expect(labels).toEqual(sort === 'task' ? ['Water', 'Fertilize', 'Mist', 'Clean leaves', 'Remove dead flowers and leaves', 'Seasonal cut-back', 'Repot'] : sort === 'plant' ? ['A test outdoor plant', 'Test handling plant'] : ['Test handling room', 'Test outdoor handling site']);
+    expect(labels).toEqual(sort === 'task' ? ['Water', 'Fertilize', 'Clean leaves', 'Remove dead flowers and leaves', 'Seasonal cut-back', 'Repot'] : sort === 'plant' ? ['A test outdoor plant', 'Test handling plant'] : ['Test handling room', 'Test outdoor handling site']);
   }
   await request('/api/tasks/settings', 'PUT', { ...baseline, filter: 'indoor' });
   const indoors = await (await request('/api/tasks?view=today')).json();
@@ -194,9 +193,6 @@ test('all new commands validate JSON and request keys, refuse inapplicable care 
   for (const path of commands) {
     for (const request_id of [undefined, 3, 'bad']) expect((await request(path, 'POST', { ...newPot, request_id })).status).toBe(422);
   }
-  await request(`/api/plants/${plantId}/care-settings`, 'PUT', { misting_enabled: false, customIntervals: {} });
-  for (const action of ['snooze', 'skip']) expect((await act(action, 'mist')).status).toBe(422);
-  await request(`/api/plants/${plantId}/care-settings`, 'PUT', { misting_enabled: true, customIntervals: {} });
   const key = randomUUID();
   const snoozed = await (await act('snooze', 'water', key)).json();
   expect((await act('skip', 'water', key)).status).toBe(409);
@@ -277,13 +273,12 @@ test('snooze, skip, bulk and task views use catalogue overrides, including appli
   const id = await addPlant(siteId, 'Test catalogue handling plant');
   await clock('2026-06-05T22:30:00Z');
   const path = `/api/plants/${id}`;
-  const overrides = { wateringIntervalDays: 21, fertilizingIntervalDays: 60, humidityNeed: 'low', pruningMonths: [6] };
+  const overrides = { wateringIntervalDays: 21, fertilizingIntervalDays: 60, pruningMonths: [6] };
   try {
     for (const [field, value] of Object.entries(overrides)) expect((await request('/api/species/910001/care/overrides/' + field, 'PUT', { value })).status).toBe(200);
     const before = await (await request(path + '/tasks')).json();
     expect(before.water).toMatchObject({ intervalDays: 21, dueOn: '2026-06-01' });
     expect(before.water.basedOn).toContainEqual(expect.objectContaining({ input: 'wateringIntervalDays', value: 21, source: 'override' }));
-    expect(before.mist.status).toBe('not_applicable');
     const snoozed = await (await request(path + '/tasks/water/snooze', 'POST', { request_id: randomUUID() })).json();
     expect(snoozed.task).toMatchObject({ intervalDays: 21, dueOn: '2026-06-08' });
     await undo(snoozed.event.id);
@@ -293,7 +288,6 @@ test('snooze, skip, bulk and task views use catalogue overrides, including appli
     for (const view of ['today', 'upcoming']) {
       const list = await (await request('/api/tasks?view=' + view)).json();
       expect(list.groups.water).toContainEqual(expect.objectContaining({ plant_id: id, intervalDays: 21 }));
-      expect(list.groups.mist.map((row: { plant_id: string }) => row.plant_id)).not.toContain(id);
     }
     const handled = await (await request(path + '/tasks/complete-all', 'POST', { request_id: randomUUID() })).json();
     expect(handled.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water', 'cut_back']);
@@ -395,7 +389,7 @@ describe('complete-type', () => {
     const site = await (await request('/api/sites', 'POST', { name: 'Test type garden', location: 'outdoor', light: 'part_sun', humidity: 'normal', draft: false, grow_light: false })).json();
     outdoor = await addPlant(site.id, 'Test type water');
     for (const [id, interval] of [[late, 1], [due, 2], [future, 30], [buried, 1]] as const) {
-      expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { misting_enabled: true, customIntervals: { clean_leaves: interval } })).status).toBe(200);
+      expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { clean_leaves: interval } })).status).toBe(200);
     }
     expect((await request(`/api/plants/${buried}/graveyard`, 'POST')).status).toBe(200);
     await clock('2026-06-08T12:00:00Z');
@@ -584,5 +578,168 @@ describe('complete-type', () => {
     expect((await other.request(`/api/tasks/${custom.id}/complete-all`, 'POST', { request_id: randomUUID() })).status).toBe(404);
     await request(`/api/custom-tasks/${custom.id}`, 'DELETE');
     expect((await completeType(custom.id)).status).toBe(404);
+  });
+});
+
+describe('liquid fertilizing', () => {
+  let id: string;
+  let batchId: string | undefined;
+  const created: { id: string; name: string }[] = [];
+  const plantTasks = (plant = id) => request('/api/plants/' + plant + '/tasks').then(response => response.json());
+  const plantHistory = (plant = id) => request('/api/plants/' + plant + '/history').then(response => response.json());
+  const fertilize = (action = 'complete', request_id = randomUUID()) => request('/api/plants/' + id + '/tasks/fertilize/' + action, 'POST', { request_id });
+  async function create(fertilizer_type = 'liquid') {
+    const name = 'Test liquid handling ' + randomUUID();
+    const plant = await addPlant(siteId, name);
+    created.push({ id: plant, name });
+    const attributes = await (await request('/api/plants/' + plant)).json();
+    expect((await request('/api/plants/' + plant, 'PUT', { ...attributes, fertilizer_type })).status).toBe(200);
+    expect((await request('/api/plants/' + plant + '/care-settings', 'PUT', { customIntervals: { water: 10, fertilize: 1 } })).status).toBe(200);
+    return plant;
+  }
+  beforeEach(async () => {
+    await clock('2026-06-10T12:00:00Z');
+    ({ request } = await harness.login());
+    await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
+    batchId = undefined;
+    id = await create();
+    expect((await request('/api/plants/' + id + '/tasks/water/complete', 'POST', { request_id: randomUUID() })).status).toBe(200);
+    await clock('2026-06-11T12:00:00Z');
+  });
+  afterEach(async () => {
+    if (batchId) expect((await undoBatch(batchId)).status).toBe(200);
+    for (const plant of created.splice(0)) expect((await request('/api/plants/' + plant.id, 'DELETE', { confirm_name: plant.name })).status).toBe(204);
+  });
+
+  test('single Done waters before water is due, restarts its date and retries without duplicating either event', async () => {
+    expect((await plantTasks()).water.dueOn).toBe('2026-06-20');
+    const key = randomUUID();
+    const responses = await Promise.all([fertilize('complete', key), fertilize('complete', key)]);
+    for (const response of responses) expect(response.status).toBe(200);
+    const [one, two] = await Promise.all(responses.map(response => response.json()));
+    expect(two).toEqual(one);
+    const events = await plantHistory();
+    expect(events).toHaveLength(3);
+    const water = events.find((event: { linked_event_id: string }) => event.linked_event_id === one.event.id);
+    expect(water).toMatchObject({ task_type: 'water', kind: 'completed', batch_id: null, occurred_at: one.event.occurred_at, by_member: one.event.by_member });
+    expect(one.event.task_type).toBe('fertilize');
+    expect((await plantTasks()).water.dueOn).toBe('2026-06-21');
+    expect((await undo(one.event.id)).status).toBe(200);
+    expect((await (await fertilize('complete', key)).json()).event.undone_at).not.toBeNull();
+    expect(await plantHistory()).toHaveLength(3);
+  });
+
+  test.each(['sticks', 'slow_release'])('%s completion leaves watering unchanged', async fertilizer_type => {
+    const plant = await (await request('/api/plants/' + id)).json();
+    expect((await request('/api/plants/' + id, 'PUT', { ...plant, fertilizer_type })).status).toBe(200);
+    const before = (await plantTasks()).water;
+    expect((await fertilize()).status).toBe(200);
+    expect(await plantHistory()).toHaveLength(2);
+    expect((await plantTasks()).water).toEqual(before);
+  });
+
+  test.each(['snooze', 'skip'])('%s fertilizing never records water', async action => {
+    const before = (await plantTasks()).water;
+    expect((await fertilize(action)).status).toBe(200);
+    expect(await plantHistory()).toHaveLength(2);
+    expect((await plantTasks()).water).toEqual(before);
+  });
+
+  test('undo fertilize also undoes its added water with the same time and member', async () => {
+    const before = await plantTasks();
+    const done = await (await fertilize()).json();
+    expect((await undo(done.event.id)).status).toBe(200);
+    const events = await plantHistory();
+    const fertilizer = events.find((event: { id: string }) => event.id === done.event.id);
+    const water = events.find((event: { linked_event_id: string }) => event.linked_event_id === done.event.id);
+    expect(fertilizer.undone_at).toEqual(expect.any(String));
+    expect(water).toMatchObject({ undone_at: fertilizer.undone_at, undone_by: fertilizer.undone_by });
+    expect(await plantTasks()).toEqual(before);
+  });
+
+  test('undo water alone leaves fertilize completed and a later fertilize undo still succeeds', async () => {
+    const before = (await plantTasks()).water;
+    const done = await (await fertilize()).json();
+    const water = (await plantHistory()).find((event: { linked_event_id: string }) => event.linked_event_id === done.event.id);
+    expect((await undo(water.id)).status).toBe(200);
+    expect((await plantHistory()).find((event: { id: string }) => event.id === done.event.id).undone_at).toBeNull();
+    expect((await plantTasks()).water).toEqual(before);
+    expect((await plantTasks()).fertilize.dueOn).toBe('2026-06-12');
+    expect((await undo(done.event.id)).status).toBe(200);
+  });
+
+  test('per-plant Handle all adds water when only fertilize is due and batch undo restores both schedules', async () => {
+    const before = await plantTasks();
+    const key = randomUUID();
+    const response = await request('/api/plants/' + id + '/tasks/complete-all', 'POST', { request_id: key });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    batchId = key;
+    expect(result.events.map((event: { task_type: string }) => event.task_type)).toEqual(['fertilize', 'water']);
+    expect(result.events[1]).toMatchObject({ linked_event_id: result.events[0].id, batch_id: key });
+    expect(result.tasks.water.dueOn).toBe('2026-06-21');
+    expect((await (await request('/api/plants/' + id + '/tasks/complete-all', 'POST', { request_id: key })).json()).events).toEqual(result.events);
+    expect((await undoBatch(key)).status).toBe(200);
+    batchId = undefined;
+    expect(await plantTasks()).toEqual(before);
+    const events = (await plantHistory()).filter((event: { batch_id: string }) => event.batch_id === key);
+    expect(events).toHaveLength(2);
+    expect(events.every((event: { undone_at: string }) => event.undone_at !== null)).toBe(true);
+  });
+
+  test('per-plant Handle all with water and fertilize due records water exactly once', async () => {
+    await clock('2026-06-20T12:00:00Z');
+    ({ request } = await harness.login());
+    const response = await request('/api/plants/' + id + '/tasks/complete-all', 'POST', { request_id: randomUUID() });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    batchId = result.events[0].batch_id;
+    expect(result.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water', 'fertilize']);
+    expect(result.tasks.water.dueOn).toBe('2026-06-30');
+    expect((await plantHistory()).filter((event: { task_type: string }) => event.task_type === 'water')).toHaveLength(2);
+  });
+
+  test('Fertilize card Handle all adds one linked water per liquid plant, retries and undoes the whole batch', async () => {
+    const second = await create();
+    const sticks = await create('sticks');
+    await clock('2026-06-12T12:00:00Z');
+    const before = await Promise.all([plantTasks(), plantTasks(second), plantTasks(sticks)]);
+    const key = randomUUID();
+    const response = await completeType('fertilize', key);
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    batchId = result.batch_id;
+    for (const plant of [id, second, sticks]) {
+      const events = result.events.filter((event: { plant_id: string }) => event.plant_id === plant);
+      expect(events.map((event: { task_type: string }) => event.task_type)).toEqual(plant === sticks ? ['fertilize'] : ['fertilize', 'water']);
+      if (plant !== sticks) {
+        expect(events[1]).toMatchObject({ linked_event_id: events[0].id, batch_id: key, occurred_at: events[0].occurred_at });
+        expect((await plantTasks(plant)).water.dueOn).toBe('2026-06-22');
+      }
+    }
+    expect(await (await completeType('fertilize', key)).json()).toEqual(result);
+    expect((await undoBatch(key)).status).toBe(200);
+    batchId = undefined;
+    expect(await Promise.all([plantTasks(), plantTasks(second), plantTasks(sticks)])).toEqual(before);
+    const replay = await (await completeType('fertilize', key)).json();
+    expect(replay.events.every((event: { undone_at: string | null }) => event.undone_at !== null)).toBe(true);
+  });
+
+  test('liquid fertilizing queues a separate completion notice for each event', async () => {
+    const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+    const recipient = await database.query("INSERT INTO members (household_id, issuer, subject, role, completion_notices_enabled) SELECT household_id, issuer, 'synthetic-liquid-notice', 'family', true FROM members WHERE subject = 'synthetic-owner' RETURNING id");
+    try {
+      const result = await (await fertilize()).json();
+      const events = (await plantHistory()).filter((event: { id: string; linked_event_id: string }) => event.id === result.event.id || event.linked_event_id === result.event.id);
+      const notices = await database.query('SELECT event_id FROM completion_notice_sends WHERE event_id = ANY($1::uuid[])', [events.map((event: { id: string }) => event.id)]);
+      expect(notices.rows.map(row => row.event_id).sort()).toEqual(events.map((event: { id: string }) => event.id).sort());
+      expect(notices.rowCount).toBe(2);
+    } finally {
+      try {
+        await database.query('DELETE FROM members WHERE id = $1', [recipient.rows[0].id]);
+      } finally {
+        await database.end();
+      }
+    }
   });
 });

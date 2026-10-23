@@ -86,13 +86,13 @@ class SpeciesCareRepository(private val api: ApiClient, private val key: Long?, 
 // Labels and order mirror src/lib/care.ts. Values, sources and rules are server-owned.
 internal val careLabels = linkedMapOf(
     "wateringIntervalDays" to "Watering interval in days", "fertilizingIntervalDays" to "Fertilizing interval in days",
-    "light" to "Light", "humidityNeed" to "Humidity need", "temperatureRangeC" to "Temperature range in °C",
+    "light" to "Light", "temperatureRangeC" to "Temperature range in °C",
     "soilMoistureRangePercent" to "Soil moisture sensor range in %", "careText" to "Source care text",
     "hardinessC" to "Minimum survival temperature in °C", "hardiness" to "Hardiness zones", "poisonousToPets" to "Poisonous to pets",
     "poisonousToHumans" to "Poisonous to humans", "cycle" to "Lifecycle", "dimensions" to "Size in cm",
     "pruningMonths" to "Pruning months", "pests" to "Common pests", "indoor" to "Indoor")
 internal val careChoices = mapOf("light" to listOf("full_shade", "part_shade", "part_sun", "full_sun"),
-    "humidityNeed" to listOf("low", "medium", "high"), "cycle" to listOf("annual", "biennial", "perennial"),
+    "cycle" to listOf("annual", "biennial", "perennial"),
     "indoor" to listOf("true", "false"), "poisonousToPets" to listOf("true", "false"), "poisonousToHumans" to listOf("true", "false"))
 internal val monthNames = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 internal fun displayCareValue(field: String, value: Any?): String = when (value) {

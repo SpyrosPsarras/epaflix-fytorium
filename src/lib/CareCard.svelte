@@ -10,7 +10,7 @@
   let drafts = $state<Partial<Record<CareName, string>>>({});
   let message = $state('');
   const options: Partial<Record<CareName, string[]>> = {
-    light: ['full_shade', 'part_shade', 'part_sun', 'full_sun'], humidityNeed: ['low', 'medium', 'high'],
+    light: ['full_shade', 'part_shade', 'part_sun', 'full_sun'],
     cycle: ['annual', 'biennial', 'perennial'], indoor: ['true', 'false'], poisonousToPets: ['true', 'false'], poisonousToHumans: ['true', 'false'],
   };
   const examples: Partial<Record<CareName, string>> = {
@@ -34,7 +34,7 @@
     let value: unknown;
     if (method === 'PUT') {
       const draft = drafts[field] ?? '';
-      try { value = ['light', 'humidityNeed', 'cycle'].includes(field) ? draft : JSON.parse(draft); }
+      try { value = ['light', 'cycle'].includes(field) ? draft : JSON.parse(draft); }
       catch { message = 'Enter a valid value. Ranges and lists use the JSON format shown.'; return; }
     }
     const response = await fetch(`/api/species/${gbifKey}/care/overrides/${field}`, { method, headers: { 'content-type': 'application/json' }, body: method === 'PUT' ? JSON.stringify({ value }) : undefined });

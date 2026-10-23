@@ -52,7 +52,7 @@ test('feed query count stays fixed as the collection grows, regardless of Today 
     }
     return Math.min(...counts);
   };
-  expect(await measure()).toBe(16);
+  expect(await measure()).toBe(15);
   const ids: string[] = [];
   try {
     for (let i = 0; i < 25; i++) {
@@ -66,7 +66,7 @@ test('feed query count stays fixed as the collection grows, regardless of Today 
     const home = await (await member.request('/')).text();
     expect(home).toContain('Test feed plant');
     expect(home.split('id="today"')[1].split('</section>')[0]).not.toContain('Test feed plant');
-    expect(await measure()).toBe(16);
+    expect(await measure()).toBe(15);
   } finally {
     for (let i = 0; i < ids.length; i++) await member.request('/api/plants/' + ids[i], 'DELETE', { confirm_name: 'Test scaled feed ' + i });
     await member.request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });

@@ -5,7 +5,6 @@ export type CareFields = {
   wateringIntervalDays: number;
   fertilizingIntervalDays: number;
   light: SiteInput['light'];
-  humidityNeed: 'low' | 'medium' | 'high';
   temperatureRangeC: { min: number; max: number };
   hardiness: { min: number; max: number };
   hardinessC: number;
@@ -23,7 +22,7 @@ export type CareName = keyof CareFields;
 export type CareProfile = Record<CareName, CareField & { fetchedAt: string | null }>;
 export const careLabels: Record<CareName, string> = {
   wateringIntervalDays: 'Watering interval in days', fertilizingIntervalDays: 'Fertilizing interval in days',
-  light: 'Light', humidityNeed: 'Humidity need', temperatureRangeC: 'Temperature range in °C',
+  light: 'Light', temperatureRangeC: 'Temperature range in °C',
   soilMoistureRangePercent: 'Soil moisture sensor range in %', careText: 'Source care text',
   hardinessC: 'Minimum survival temperature in °C', hardiness: 'Hardiness zones', poisonousToPets: 'Poisonous to pets', poisonousToHumans: 'Poisonous to humans',
   cycle: 'Lifecycle', dimensions: 'Size in cm', pruningMonths: 'Pruning months', pests: 'Common pests', indoor: 'Indoor',
@@ -41,7 +40,6 @@ export function validCareValue(field: string, value: unknown): boolean {
     case 'wateringIntervalDays': return number(value, .1, 365);
     case 'fertilizingIntervalDays': return number(value, 1, 730);
     case 'light': return ['full_shade', 'part_shade', 'part_sun', 'full_sun'].includes(String(value)) && typeof value === 'string';
-    case 'humidityNeed': return ['low', 'medium', 'high'].includes(String(value)) && typeof value === 'string';
     case 'temperatureRangeC': return range(-60, 60);
     case 'hardiness': return range(1, 13);
     case 'hardinessC': return number(value, -60, 60);

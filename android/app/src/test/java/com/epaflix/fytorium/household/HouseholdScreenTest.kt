@@ -75,8 +75,6 @@ class HouseholdScreenTest {
         capture("settings")
         compose.onNodeWithText("Save location").performScrollTo()
         capture("location")
-        compose.onNodeWithText("Save household settings").performScrollTo()
-        capture("misting")
         compose.runOnIdle { area.value = HouseholdArea.Tasks; state.value = state.value.copy(target = plant, tasks = listOf(CustomTask("task-one", "Inspect", "14"))) }
         capture("tasks")
         compose.onNodeWithText("Edit task").performScrollTo().performClick()
@@ -109,10 +107,10 @@ class HouseholdScreenTest {
             waitEnabled("Create invite")
             compose.onNodeWithText("Create invite").performClick()
             compose.onNodeWithText("Create invite link").assertIsEnabled()
-            enqueue("{\"misting_enabled\":true}"); enqueue("{\"location\":null}"); enqueue("{\"late_tasks\":true,\"current_weather\":true,\"weather_alerts\":true,\"plant_warnings\":true}")
+            enqueue("{\"location\":null}"); enqueue("{\"late_tasks\":true,\"current_weather\":true,\"weather_alerts\":true,\"plant_warnings\":true}")
             compose.runOnIdle { area.value = HouseholdArea.Settings }
             waitEnabled("Save my feed")
-            compose.onNodeWithText("Save household settings").performScrollTo().assertIsEnabled()
+            compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()
             enqueue("[]"); enqueue("[]"); enqueue("[]")
             compose.runOnIdle { area.value = HouseholdArea.Tasks }
             waitEnabled("Target: ")

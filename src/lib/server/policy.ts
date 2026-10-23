@@ -59,7 +59,6 @@ const policies: Record<string, RoutePolicy> = {
   '/api/household/members': 'owner', '/api/household/members/[id]': 'owner',
   '/api/import/planta': 'owner', '/api/import/planta/[id]': 'owner', '/api/import/planta/commit': 'owner',
   '/api/import/planta/[id]/cover': 'owner', '/api/import/planta/[id]/suggestion': 'owner',
-  '/api/household/settings': { read: 'edit', write: 'owner' },
   '/api/household/location': { read: 'edit', write: 'owner' },
   '/api/app/logout': { action: 'self', projection: 'self' },
   '/api/me': { action: 'self', projection: 'self' }, '/settings/notifications': { action: 'self', projection: 'self' },

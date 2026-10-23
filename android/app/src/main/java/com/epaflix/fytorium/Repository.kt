@@ -180,7 +180,9 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             "undo" -> event?.let { if (it.batchId != null) "/api/task-batches/${requireSafeId(it.batchId)}/undo" else "/api/care-events/${requireSafeId(it.id)}/undo" } ?: return false
             else -> "/api/plants/${task.plantId}/tasks/${task.key}/$action"
         }
-        return write(path, body = if (action == "undo") null else JSONObject().put("request_id", requestId(task.plantId + ":" + task.key + ":" + action)), refreshAfter = action == "undo") { result ->
+        val isFertilize = task.taskType == "fertilize"
+        val completesFertilize = isFertilize && action == "complete"
+        return write(path, body = if (action == "undo") null else JSONObject().put("request_id", requestId(task.plantId + ":" + task.key + ":" + action)), refreshAfter = action == "undo", refreshSchedulesAfter = completesFertilize) { result ->
             val key = task.plantId + ":" + task.key
             val handled = if (action == "undo") state.value.handled.filterValues { it.id != event?.id && (event?.batchId == null || it.batchId != event.batchId) }
                 else state.value.handled + (key to parseEvent(JSONObject(result).getJSONObject("event")))
@@ -194,7 +196,10 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 patchEvents(listOf(undone), JSONObject(result).optJSONObject("task")?.let { mapOf(task.key to it) } ?: emptyMap(), undo = true)
                 requestIds.keys.removeAll { it.startsWith(task.plantId + ":") || it == "all:${task.plantId}" }
             }
-            mutable.value = mutable.value.copy(handled = handled)
+            mutable.value = mutable.value.copy(handled = if (completesFertilize) handled - (task.plantId + ":water") else handled)
+        }.also { success ->
+            if (success && (completesFertilize || (isFertilize && action == "undo")) && state.value.detail?.plant?.id == task.plantId)
+                openPlant(task.plantId, full = state.value.detail?.careSettingsJson != null)
         }
     }
     fun handleAll(plantId: String, plantsScreen: Boolean = false): Boolean = write("/api/plants/${requireSafeId(plantId)}/tasks/complete-all",

@@ -40,6 +40,11 @@
         for (const command of ['complete', 'snooze', 'skip']) delete requestIds[id + ':' + command];
         if (row.completed_event) await invalidateAll();
       } else handled[id] = result;
+      if (row.task_type === 'fertilize' && (action === 'complete' || action === 'undo')) {
+        delete handled[row.plant_id + ':water'];
+        delete restored[row.plant_id + ':water'];
+        await invalidateAll();
+      }
     } catch { message = 'Could not reach Fytorium. Try again.'; }
     finally { busy[id] = false; }
   }

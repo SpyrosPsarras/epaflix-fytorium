@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { logIn } from './helpers/login';
 import { addPlantForSite } from './helpers/plants';
 
-test('cares for several task types, customizes intervals and disables misting on a phone', async ({ page }, testInfo) => {
+test('cares for several task types, customizes intervals on a phone', async ({ page }, testInfo) => {
   const name = 'Test multi-care plant ' + randomUUID();
   const siteName = 'Test multi-care site ' + randomUUID();
   const screenshot = async (file: string) => {
@@ -13,6 +13,7 @@ test('cares for several task types, customizes intervals and disables misting on
   try {
     await page.request.post('/__test/clock', { data: { action: 'set', at: '2026-05-01T12:00:00Z' } });
     await logIn(page, 'synthetic-browser-owner', { name: 'Test browser member' });
+    await page.request.put('/api/tasks/settings', { data: { sort: 'task', filter: 'all', show_completed: false } });
     await page.goto('/sites/new');
     await page.getByLabel('Name', { exact: true }).fill(siteName);
     await page.getByRole('button', { name: 'Save site', exact: true }).click();
@@ -23,7 +24,7 @@ test('cares for several task types, customizes intervals and disables misting on
     await logIn(page, 'synthetic-browser-owner', { name: 'Test browser member' });
     await page.goto('/');
     const row = (type: string) => page.locator(`article[data-task-type="${type}"]`).filter({ has: page.getByRole('link', { name, exact: true }) });
-    for (const type of ['water', 'fertilize', 'mist', 'clean_leaves', 'remove_dead']) await expect(row(type)).toBeVisible();
+    for (const type of ['water', 'fertilize', 'clean_leaves', 'remove_dead']) await expect(row(type)).toBeVisible();
     await screenshot('all-tasks-today.png');
     await row('clean_leaves').getByRole('button', { name: 'Done', exact: true }).click();
     await expect(row('clean_leaves')).toContainText('Next leaf cleaning: 2026-07-05');
@@ -67,22 +68,16 @@ test('cares for several task types, customizes intervals and disables misting on
     await expect(page.getByLabel('Clean leaves interval in days', { exact: true })).toHaveValue('');
     await page.getByRole('link', { name: 'Back to plant', exact: true }).click();
     await expect(page.getByText('Next leaf cleaning: 2026-07-05', { exact: true })).toBeVisible();
-    await page.getByRole('link', { name: 'Plant settings', exact: true }).click();
-    await page.getByLabel('Misting reminders for this plant', { exact: true }).uncheck();
-    await page.getByRole('button', { name: 'Save care settings', exact: true }).click();
-    await expect(page.getByRole('status')).toHaveText('Care settings saved.');
     await page.goto('/');
-    await expect(row('mist')).toHaveCount(0);
-    await expect(row('remove_dead')).toBeVisible();
-    await screenshot('all-tasks-misting-off.png');
-    await page.getByRole('link', { name: 'Household settings', exact: true }).click();
-    await page.getByLabel('Misting reminders for the household', { exact: true }).uncheck();
-    await page.getByRole('button', { name: 'Save household settings', exact: true }).click();
-    await expect(page.getByRole('status')).toHaveText('Household settings saved.');
-    await screenshot('all-tasks-household-settings.png');
-    await page.getByLabel('Misting reminders for the household', { exact: true }).check();
-    await page.getByRole('button', { name: 'Save household settings', exact: true }).click();
-    await expect(page.getByRole('status')).toHaveText('Household settings saved.');
+    await row('fertilize').getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(row('water')).toHaveCount(0);
+    await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
+    await expect(row('water')).toContainText('Due 2026-06-12');
+    await row('water').getByRole('link', { name, exact: true }).click();
+    await expect(page.getByText('Next watering: 2026-06-12', { exact: true })).toBeVisible();
+    const fertilized = page.getByRole('region', { name: 'Care history', exact: true }).getByRole('listitem').filter({ hasText: 'Fertilize' });
+    await fertilized.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(page.getByText('Next watering: 2026-05-01', { exact: true })).toBeVisible();
   } finally {
     await page.request.post('/__test/clock', { data: { action: 'reset' } });
   }

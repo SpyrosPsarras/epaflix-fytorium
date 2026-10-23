@@ -100,6 +100,42 @@ class RepositoryTest {
             repeat(2) { assertNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)) }
         }
     }
+    @Test fun fertilizeDoneReloadsWaterScheduleWithoutManualRefresh() {
+        withRepository { repository, server, cache ->
+            enqueueRefresh(server); repository.refresh()
+            repeat(5) { server.takeRequest() }
+            fun detail(due: String) {
+                server.enqueue(MockResponse().setBody(plantFixture))
+                server.enqueue(MockResponse().setBody("[]"))
+                server.enqueue(MockResponse().setBody("""{"water":{"status":"due","dueOn":"$due","intervalDays":7,"lateDays":0,"basedOn":[]},"customTasks":{}}"""))
+            }
+            detail("2030-06-01"); repository.openPlant("plant-one")
+            repeat(3) { server.takeRequest() }
+            val task = repository.state.value.today!!.sections.single().tasks.single().copy(taskType = "fertilize")
+            val event = org.json.JSONObject(eventFixture).put("task_type", "fertilize")
+            server.enqueue(MockResponse().setBody(org.json.JSONObject().put("event", event)
+                .put("task", org.json.JSONObject().put("status", "due").put("dueOn", "2030-06-16").put("intervalDays", 14).put("lateDays", 0).put("basedOn", org.json.JSONArray())).toString()))
+            detail("2030-06-09")
+            server.enqueue(MockResponse().setBody(taskListFixture("today", "2030-06-09")))
+            server.enqueue(MockResponse().setBody(taskListFixture("upcoming", "2030-06-09")))
+            assertTrue(repository.act(task, "complete"))
+            assertEquals("2030-06-09", repository.state.value.detail!!.tasks["water"]!!.dueOn)
+            assertEquals("/api/plants/plant-one/tasks/fertilize/complete", server.takeRequest().path)
+            assertEquals("/api/plants/plant-one", server.takeRequest().path)
+            assertEquals("/api/plants/plant-one/history", server.takeRequest().path)
+            assertEquals("/api/plants/plant-one/tasks", server.takeRequest().path)
+            assertEquals("/api/tasks?view=today", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
+            assertEquals("/api/tasks?view=upcoming", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(5_000) {
+                    while (repository.state.value.upcoming!!.sections.single().tasks.single().dueOn != "2030-06-09") kotlinx.coroutines.delay(10)
+                }
+            }
+            assertEquals("2030-06-09", repository.state.value.today!!.sections.single().tasks.single().dueOn)
+            assertTrue(cache.get("member-one", "upcoming")!!.json.contains("2030-06-09"))
+            assertEquals("fertilize", repository.state.value.handled["plant-one:fertilize"]!!.taskType)
+        }
+    }
     @Test fun logoutAndMemberChangeEraseEveryCachedResource() {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
         val cache = CareCache(db)
@@ -487,7 +523,7 @@ class RepositoryTest {
     }
 }
 
-val plantFixture = """{"id":"plant-one","display_name":"Synthetic fern","scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida","status":"active","site_name":"Synthetic site","cover_photo_id":null,"pot_type":"plastic","pot_size_cm":14,"soil_type":"all_purpose","site_id":"site-one","nickname":"Synthetic fern","cultivar":null,"birthday":null,"drainage":true,"plant_size":"small","growth_stage":"young","window_distance_cm":null,"grow_light":false,"near_ac":false,"near_heater":false,"fertilizer_type":"liquid","health":null,"household_id":"household-one","gbif_key":910001,"created_at":"2030-06-01T10:00:00Z","attributes_as_of":"2030-06-01","graveyard_on":null,"misting_enabled":true,"rank":"SPECIES"}"""
+val plantFixture = """{"id":"plant-one","display_name":"Synthetic fern","scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida","status":"active","site_name":"Synthetic site","cover_photo_id":null,"pot_type":"plastic","pot_size_cm":14,"soil_type":"all_purpose","site_id":"site-one","nickname":"Synthetic fern","cultivar":null,"birthday":null,"drainage":true,"plant_size":"small","growth_stage":"young","window_distance_cm":null,"grow_light":false,"near_ac":false,"near_heater":false,"fertilizer_type":"liquid","health":null,"household_id":"household-one","gbif_key":910001,"created_at":"2030-06-01T10:00:00Z","attributes_as_of":"2030-06-01","graveyard_on":null,"rank":"SPECIES"}"""
 val eventFixture = """{"id":"event-one","plant_id":"plant-one","task_type":"water","custom_task_id":null,"kind":"completed","occurred_on":"2030-06-02","by_member":"member-one","by_name":"Synthetic member","batch_id":null,"undone_at":null,"can_undo":true}"""
 
 fun taskListFixture(view: String, due: String = "2030-06-01", event: String = "", basis: String = "[]"): String = """{

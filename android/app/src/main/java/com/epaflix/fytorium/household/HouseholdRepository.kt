@@ -20,7 +20,7 @@ data class HouseholdState(val loaded: Boolean = false, val loading: Boolean = fa
     val plants: List<TaskTarget> = emptyList(), val sites: List<TaskTarget> = emptyList(),
     val members: List<HouseholdMember> = emptyList(), val invites: List<HouseholdInvite> = emptyList(),
     val target: TaskTarget? = null, val tasks: List<CustomTask> = emptyList(),
-    val misting: Boolean = true, val location: Map<String, String> = emptyMap(), val feed: Map<String, Boolean> = emptyMap())
+    val location: Map<String, String> = emptyMap(), val feed: Map<String, Boolean> = emptyMap())
 private class HouseholdFailure(val status: Int, val errors: Map<String, String>) : Exception()
 private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
 private fun JSONObject.strings(key: String) = getJSONArray(key).let { list -> (0 until list.length()).map { list.getString(it) } }
@@ -52,10 +52,9 @@ class HouseholdRepository(private val api: ApiClient, private val area: Househol
     private fun load() {
         when (area) {
             HouseholdArea.Settings -> {
-                val settings = JSONObject(request("/api/household/settings"))
                 val location = JSONObject(request("/api/household/location")).optJSONObject("location")
                 val feed = JSONObject(request("/api/feed/settings"))
-                if (allowed()) mutable.value = state.value.copy(loaded = true, blocked = false, misting = settings.getBoolean("misting_enabled"),
+                if (allowed()) mutable.value = state.value.copy(loaded = true, blocked = false,
                     location = listOf("latitude", "longitude", "label").associateWith { if (location == null || location.isNull(it)) "" else location.get(it).toString() },
                     feed = feedLabels.keys.associateWith { feed.getBoolean(it) })
             }
@@ -80,10 +79,6 @@ class HouseholdRepository(private val api: ApiClient, private val area: Househol
         if (allowed()) mutable.value = state.value.copy(plants = plants, members = members, invites = invites, loaded = true, blocked = false)
     }
     @Synchronized fun refresh() = run(false) { load() }
-    @Synchronized fun saveMisting(enabled: Boolean): Boolean {
-        if (role() != Role.owner) return false
-        return command("/api/household/settings", "PUT", JSONObject().put("misting_enabled", enabled))
-    }
     @Synchronized fun saveLocation(fields: Map<String, String>): Boolean {
         if (role() != Role.owner) return false
         val location = if (fields["latitude"].isNullOrBlank() && fields["longitude"].isNullOrBlank()) JSONObject.NULL else JSONObject().apply {

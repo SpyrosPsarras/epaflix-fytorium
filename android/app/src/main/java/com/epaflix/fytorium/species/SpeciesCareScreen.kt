@@ -165,7 +165,7 @@ import org.json.JSONObject
             } },
             confirmButton = { TextButton(onClick = {
                 val value = runCatching {
-                    if (field in listOf("light", "humidityNeed", "cycle")) draft.also { require(it.isNotBlank()) }
+                    if (field in listOf("light", "cycle")) draft.also { require(it.isNotBlank()) }
                     else JSONArray("[$draft]").also { require(it.length() == 1) }.get(0)
                 }.getOrElse { invalid = "Enter a valid value. Ranges and lists use the JSON format shown."; return@TextButton }
                 scope.launch { submitting = true; try { if (onOverride(field, value)) editing = null } finally { submitting = false } }

@@ -54,7 +54,7 @@ A vernacular-name hit needs confirmation unless the whole query matches exactly 
 The effective care values for a species, with a source for each value. Owner overrides take priority over Perenual, Open Plantbook and Fytorium rules.
 
 **Task**:
-A care action for a plant or site. Built-in task types are `water`, `fertilize`, `mist`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Mist, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by type.
+A care action for a plant or site. Built-in task types are `water`, `fertilize`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by type.
 
 **Due date**:
 A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Other interval tasks are first due on added date plus interval. Otherwise tasks are due on the last effective completion date plus the current interval. Seasonal cut-back uses pruning months instead. Reads recompute due dates; no command stores or edits them. Anchors have source `history` in Based on.
@@ -71,17 +71,17 @@ Watering uses the month of the anchor date, not today. The northern-hemisphere t
 **Fertilizing season**:
 March–September. A due date outside it moves to March 1 of the next season. A care-profile `fertilizingIntervalDays` takes priority over defaults. Liquid or unknown fertilizer defaults to twice the current watering interval, `fertilize.every_second_watering@1`. Sticks use 56 days and slow-release uses 90.
 
+**Liquid fertilizer completion**:
+Completing Fertilize with liquid fertilizer also records watering at the same time, even before watering is due. The water schedule restarts from that date. This applies to a single Done, the plant's Handle all and the Fertilize card's Handle all, with water recorded only once per plant per action. Undoing fertilize also undoes the water it added. After a single Done, undoing water alone leaves fertilize in place. Handle all water belongs to its batch, so single-event undo returns 409 and batch undo reverses both. Snooze, skip, sticks and slow-release fertilizer do not add watering. Web and Android refresh the water date without a manual reload. Each completion sends its own notice.
+
 **Pruning month**:
 Care-profile `pruningMonths` contains whole month numbers 1–12, default March. With no completion, cut-back is due on the first day of the next pruning month on or after addition. After completion, it is due in the first pruning month of the next year. Its custom interval replaces that annual anchoring.
 
 **Other care rules**:
-Mist every three days only indoors, with dry or normal site humidity and medium or high care-profile `humidityNeed`, default medium. Clean leaves every 30 days indoors only. Remove dead flowers and leaves every 14 days. Repot every 730 days for pots up to 20 cm or unknown size, and 1095 days above 20 cm; never in-ground plants. Each fallback has a named, versioned rule and reason.
+Clean leaves every 30 days indoors only. Remove dead flowers and leaves every 14 days. Repot every 730 days for pots up to 20 cm or unknown size, and 1095 days above 20 cm; never in-ground plants. Each fallback has a named, versioned rule and reason.
 
 **Custom interval**:
 Whole days from 1–365, stored per plant and task type in the plant's household. It replaces that task's computed interval after factors and clamps, with source `override`. Clearing restores the computed interval. Applicability and fertilizing season still apply. Fertilizing's default follows the current watering interval, including a watering override.
-
-**Misting setting**:
-Both the plant and household have `misting_enabled`, default true. Both must be on for misting to apply. Turning the household switch off preserves each plant's setting. Only owners can edit household settings.
 
 **Care event**:
 A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable built-in or custom task. Exactly one of task_type or custom_task_id identifies its target. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
@@ -143,9 +143,6 @@ Open Plantbook's plant identifier. Its display_pid is matched through GBIF to th
 
 **Match status**:
 `matched` records a pid; `no_match` means no confirmed candidate; `ambiguous` means multiple pids or an uncertain/incomplete match. Owners see failures on the care card and the household-scoped unmatched list and can retry. A retry clears only Plantbook's matching metadata and cache, not overrides.
-
-**Humidity need mapping**:
-`open_plantbook.humidity@1` uses the arithmetic midpoint of a valid 0–100% environmental humidity range. Low is below 40%, medium is 40% to below 60%, high is at least 60%. The effective need controls misting and retains its source in Based on.
 
 **Other Plantbook mappings**:
 `open_plantbook.light@1` uses midpoint lux in 0–100000: below 2000 full_shade, below 5000 part_shade, below 20000 part_sun, otherwise full_sun. `temperature@1` retains an ordered −60 to 60°C range. `survival@1` retains a −60 to 60°C minimum as hardinessC, separate from Perenual hardiness zones. `soil_moisture@1` retains an ordered 0–100% sensor range, not a watering rule. `care_text@1` keeps plain text or recognised care strings, at most 4000 characters; the provider's care extension has no documented schema. These rule names share the open_plantbook prefix. Unknown or invalid values leave fallback fields intact.
@@ -259,7 +256,7 @@ An encrypted push for an open rain or low-temperature weather event, sent only t
 ## Household access
 
 **Role**:
-Owner, family or sitter. Owners alone manage invites, member removal and plant shares, household settings including misting and location, and Planta import. Family can read and edit all other household data, including species names, care values and unmatched species.
+Owner, family or sitter. Owners alone manage invites, member removal and plant shares, household settings including location, and Planta import. Family can read and edit all other household data, including species names, care values and unmatched species.
 
 **Invite**:
 An owner's single-use link admitting a new OIDC identity or reactivating a removed member as family or sitter, with chosen plants for a sitter. It expires after seven days and can be revoked. Reactivation applies the invite's role and shares in the same household; an invite cannot move a member between households or change an active member's role.
@@ -276,7 +273,7 @@ An optional push telling a member that someone else completed a task, off by def
 ## Home feed and warnings
 
 **Home feed**:
-Cards in a horizontal strip above Today put late care and setup problems first. The server computes the feed on read using the batched task list, effective care profiles, sites and weather report. GET /api/feed uses sixteen database queries including session lookup, independent of plant count and Today filters.
+Cards in a horizontal strip above Today put late care and setup problems first. The server computes the feed on read using the batched task list, effective care profiles, sites and weather report. GET /api/feed uses fifteen database queries including session lookup, independent of plant count and Today filters.
 
 **Feed card**:
 One of late_tasks, current_weather, weather_alerts or plant_warnings. Late tasks show a count and every linked plant name. A single late plant is the card's destination; several plants get a Today see-all link. Current weather shows today's cached minimum and maximum with fetch time, or the waiting/unavailable notice when no current data exists, linking to weather settings. Cold alerts link to their plant and retain hardiness source, value and rule IDs. Rain cards link to weather settings and contain batch watering and undo controls; they disappear without active outdoor plants. Home computes schedules once and reuses the batch for the feed and member-filtered Today. Each plant with warnings has one card, linking to that plant. Empty card types disappear. Owner and family members can change their four switches, which default on and persist in Postgres across sessions. Sitters receive only late-care cards for shared active plants through the named sitterView home and feed projections, never weather, rain or plant warnings. Rain batch watering requires edit access and refuses sitters. Switching one off changes only that member's feed, not the warnings or alerts themselves.

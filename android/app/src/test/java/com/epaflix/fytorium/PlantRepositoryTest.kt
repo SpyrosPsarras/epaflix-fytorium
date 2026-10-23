@@ -131,7 +131,7 @@ class PlantRepositoryTest {
         server.enqueue(MockResponse().setBody(plantFixture))
         server.enqueue(MockResponse().setBody("[$eventFixture]"))
         server.enqueue(MockResponse().setBody("""{"customTasks":{}}"""))
-        server.enqueue(MockResponse().setBody("""{"misting_enabled":false,"customIntervals":{"water":12}}"""))
+        server.enqueue(MockResponse().setBody("""{"customIntervals":{"water":12}}"""))
         server.enqueue(MockResponse().setBody("""[{"changed_on":"2030-06-01","previous_name":"Testoria prior","next_name":"Testoria lucida","by_name":"Synthetic member"}]"""))
         val online = repo.openPlant("plant-one", full = true)!!
         assertEquals(14, online.plant.potSizeCm)

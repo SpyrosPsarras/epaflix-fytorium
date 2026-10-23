@@ -47,8 +47,7 @@ import com.epaflix.fytorium.Choice
     Button(onClick = { save(initial.copy(name = name, interval = interval)) }, enabled = enabled) { Text("Save task") }
 }
 @Composable internal fun HouseholdSettingsForm(state: HouseholdState, owner: Boolean, enabled: Boolean,
-    onMisting: (Boolean) -> Unit, onLocation: (Map<String, String>) -> Unit, onFeed: (Map<String, Boolean>) -> Unit) {
-    var misting by remember(state.misting) { mutableStateOf(state.misting) }
+    onLocation: (Map<String, String>) -> Unit, onFeed: (Map<String, Boolean>) -> Unit) {
     var location by remember(state.location) { mutableStateOf(state.location) }
     var feed by remember(state.feed) { mutableStateOf(state.feed) }
     HouseholdHeading("My home feed")
@@ -65,8 +64,4 @@ import com.epaflix.fytorium.Choice
         Text("Leave both coordinates blank to remove the location.")
         Button(onClick = { onLocation(location) }, enabled = enabled) { Text("Save location") }
     } else Text("Only the owner can change it.")
-    HouseholdHeading("Misting")
-    Toggle("Misting reminders for the household", misting, enabled && owner) { misting = it }
-    Text("Turning this off hides misting tasks for every plant. Each plant keeps its own switch.")
-    if (owner) Button(onClick = { onMisting(misting) }, enabled = enabled) { Text("Save household settings") }
 }

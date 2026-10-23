@@ -147,7 +147,7 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
   const plantPage = await (await returning.request('/plants/' + shared + '/__data.json')).json();
   only(pageNode(plantPage.nodes.find((node: any) => node?.data?.[0]?.plant !== undefined)).plant, plantFields);
   const schedule = await (await returning.request('/api/plants/' + shared + '/tasks')).json();
-  only(schedule, ['water', 'fertilize', 'mist', 'clean_leaves', 'remove_dead', 'cut_back', 'repot', 'customTasks']);
+  only(schedule, ['water', 'fertilize', 'clean_leaves', 'remove_dead', 'cut_back', 'repot', 'customTasks']);
   Object.entries(schedule).forEach(([key, value]) => key === 'customTasks' ? Object.values(value as object).forEach(task) : task(value));
   const completion = await (await returning.request(`/api/plants/${shared}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
   only(completion, ['event', 'task']); event(completion.event); task(completion.task);

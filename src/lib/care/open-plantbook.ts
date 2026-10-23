@@ -1,6 +1,5 @@
 import { validCareValue, type CareFields } from '../care';
 
-// open_plantbook.humidity@1: midpoint, low <40%, medium <60%, otherwise high.
 export function mapOpenPlantbook(payload: unknown): Partial<CareFields> {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
   const data = payload as Record<string, unknown>;
@@ -9,11 +8,6 @@ export function mapOpenPlantbook(payload: unknown): Partial<CareFields> {
     const min = data['min_' + name];
     const max = data['max_' + name];
     return typeof min === 'number' && typeof max === 'number' && Number.isFinite(min) && Number.isFinite(max) && min >= lower && max <= upper && min <= max ? { min, max } : null;
-  }
-  const humidity = range('env_humid', 0, 100);
-  if (humidity) {
-    const midpoint = (humidity.min + humidity.max) / 2;
-    fields.humidityNeed = midpoint < 40 ? 'low' : midpoint < 60 ? 'medium' : 'high';
   }
   // open_plantbook.light@1: midpoint bands in lux, not daily light integral.
   const light = range('light_lux', 0, 100000);

@@ -36,7 +36,6 @@ test('adding never waits on Perenual, then the queue changes the schedule and fi
   expect(after.water.basedOn[0]).toMatchObject({ value: 12, source: 'perenual', fetchedAt: '2030-06-01T12:00:00.000Z' });
   const card = await (await request('/api/species/910090/care')).json();
   expect(card.profile.light).toMatchObject({ value: 'part_shade', source: 'perenual' });
-  expect(card.profile.humidityNeed).toMatchObject({ value: 'medium', source: 'rule', fetchedAt: null });
   expect(card.profile.temperatureRangeC).toEqual({ value: null, source: 'unknown', fetchedAt: null });
   expect(card.fetch.status).toBe('complete');
   const today = await (await request('/api/tasks?view=today')).json();
@@ -60,7 +59,7 @@ test('an override survives a source refresh, appears in Based on, and can be rem
 
 test.each([
   ['wateringIntervalDays', 0], ['wateringIntervalDays', '12'], ['wateringIntervalDays', 366],
-  ['fertilizingIntervalDays', -1], ['light', 'bright'], ['humidityNeed', 'wet'],
+  ['fertilizingIntervalDays', -1], ['light', 'bright'],
   ['temperatureRangeC', { min: 30, max: 10 }], ['hardiness', { min: 0, max: 14 }],
   ['poisonousToPets', 1], ['poisonousToHumans', 'false'], ['indoor', null], ['cycle', 'evergreen'],
   ['dimensions', { min: 1, max: 2, unit: 'feet' }], ['pruningMonths', [0, 13]], ['pruningMonths', [3, 3]],
@@ -72,7 +71,7 @@ test.each([
 });
 
 test.each([
-  ['light', 'full_sun'], ['humidityNeed', 'low'], ['temperatureRangeC', { min: 15, max: 25 }],
+  ['light', 'full_sun'], ['temperatureRangeC', { min: 15, max: 25 }],
   ['hardiness', { min: 9, max: 11 }], ['poisonousToPets', false], ['poisonousToHumans', true],
   ['cycle', 'perennial'], ['dimensions', { min: 30, max: 100, unit: 'cm' }], ['pruningMonths', [4, 5]],
   ['pests', ['Scale insects']], ['indoor', true], ['fertilizingIntervalDays', 30],

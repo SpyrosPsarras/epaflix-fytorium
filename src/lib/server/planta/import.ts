@@ -21,7 +21,7 @@ const soils: Record<string, ImportedFields['soil_type']> = {
   allpurposepottingmix: 'all_purpose', allpurposegardensoil: 'all_purpose', pottingsoilanddrainage: 'all_purpose',
   cactussoil: 'cactus', cactuspalmcitrussoil: 'cactus', orchidpottingmix: 'orchid', epiphyticsoil: 'aroid', tropicalsoil: 'aroid',
 };
-const actions = { watering: 'water', fertilizing: 'fertilize', misting: 'mist', cleaning: 'clean_leaves', repotting: 'repot' } as const;
+const actions = { watering: 'water', fertilizing: 'fertilize', cleaning: 'clean_leaves', repotting: 'repot' } as const;
 function text(value: unknown): string | null { return typeof value === 'string' ? value.trim().slice(0, 200) || null : null; }
 function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
   if (typeof raw?.id !== 'string' || !raw.id || raw.id.length > 200) error(502, 'Planta returned an invalid plant ID.');

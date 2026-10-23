@@ -15,12 +15,12 @@ class TodayPresentationTest {
         val list = TaskList("2030-06-02", "today", TaskSettings(), emptyMap(), listOf(
             TaskSection("water", "Water", listOf(row, row.copy(plantId = "two"), row.copy(plantId = "three"), row.copy(completedEvent = event))),
             TaskSection("fertilize", "Fertilize", listOf(row.copy(taskType = "fertilize"))),
-            TaskSection("mist", "Mist", listOf(row.copy(taskType = "mist"), row.copy(taskType = "mist", plantId = "two"))),
+            TaskSection("remove_dead", "Remove dead flowers and leaves", listOf(row.copy(taskType = "remove_dead"), row.copy(taskType = "remove_dead", plantId = "two"))),
             TaskSection("clean_leaves", "Clean leaves", emptyList())))
         val shown = CareState(today = list).todayPresentation()
         assertEquals(listOf(4, 1, 2), shown.sections.map { it.tasks.size })
         assertEquals(event, shown.sections.first().tasks.last().completedEvent)
-        assertEquals(listOf("water", "fertilize", "mist"), shown.sections.map { it.key })
+        assertEquals(listOf("water", "fertilize", "remove_dead"), shown.sections.map { it.key })
         assertTrue(CareState(today = list.copy(sections = emptyList())).todayPresentation().sections.isEmpty())
     }
 
@@ -28,7 +28,7 @@ class TodayPresentationTest {
         val row = parseTaskList(taskListFixture("today")).sections.single().tasks.single()
         val water = listOf(row.copy(plantId = "two"), row.copy(plantId = "one"))
         val list = TaskList("2030-06-02", "today", TaskSettings(sort = "site"),
-            mapOf("fertilize" to listOf(row.copy(taskType = "fertilize")), "mist" to emptyList(), "water" to water),
+            mapOf("fertilize" to listOf(row.copy(taskType = "fertilize")), "remove_dead" to emptyList(), "water" to water),
             listOf(TaskSection("Living room", "Living room", water)))
         val sections = CareState(today = list).todayPresentation().sections
         assertEquals(listOf("Water", "Fertilize"), sections.map { it.label })

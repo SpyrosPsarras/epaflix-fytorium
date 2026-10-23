@@ -37,7 +37,7 @@ test('full delete requires the current name, removes history, intervals and both
   const { plant: survivor } = await add('Test surviving sprout');
   const path = '/api/plants/' + plant.id;
   await owner.request(path + '/tasks/water/complete', 'POST', { request_id: randomUUID() });
-  await owner.request(path + '/care-settings', 'PUT', { misting_enabled: true, customIntervals: { water: 4 } });
+  await owner.request(path + '/care-settings', 'PUT', { customIntervals: { water: 4 } });
   const photos = [await upload(plant.id), await upload(plant.id)];
   const keptPhoto = await upload(survivor.id);
   const keptPlant = await read('/api/plants/' + survivor.id);
@@ -77,11 +77,11 @@ test('an object-delete failure still commits full deletion and logs each cleanup
 test('species changes require a household search and confirmation, keep every care event and recompute from catalogue overrides', async () => {
   const { plant } = await add('Test corrected sprout');
   const path = '/api/plants/' + plant.id;
-  const tasks = ['water', 'fertilize', 'mist', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'];
+  const tasks = ['water', 'fertilize', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'];
   for (const type of tasks) expect((await owner.request(path + '/tasks/' + type + '/complete', 'POST', { request_id: randomUUID() })).status).toBe(200);
   const history = await read(path + '/history');
   const photo = await upload(plant.id);
-  await owner.request(path + '/care-settings', 'PUT', { misting_enabled: true, customIntervals: { clean_leaves: 11 } });
+  await owner.request(path + '/care-settings', 'PUT', { customIntervals: { clean_leaves: 11 } });
   harness.setGbif({ usageKey: 910019, scientificName: 'Testoria correcta Inventor', canonicalName: 'Testoria correcta', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 80 });
   const search = await read('/api/species/search?q=Correctia');
   expect((await owner.request(path + '/species', 'POST', { search_id: search.search_id, gbif_key: 999999, confirmed: true })).status).toBe(422);
@@ -105,9 +105,8 @@ test('species changes require a household search and confirmation, keep every ca
   expect(next.water).toMatchObject({ intervalDays: 20, dueOn: '2026-06-21' });
   expect(next.fertilize.dueOn).toBe('2026-06-26');
   expect(next.cut_back.dueOn).toBe('2027-09-01');
-  expect(next.mist.dueOn).toBe('2026-06-04');
   expect(next.clean_leaves.dueOn).toBe('2026-06-12');
-  expect(await read(path + '/care-settings')).toEqual({ misting_enabled: true, customIntervals: { clean_leaves: 11 } });
+  expect(await read(path + '/care-settings')).toEqual({ customIntervals: { clean_leaves: 11 } });
   expect(await read(path + '/photos')).toContainEqual(expect.objectContaining({ id: photo.id }));
   expect(next.remove_dead.dueOn).toBe('2026-06-15');
   expect(next.repot.dueOn).toBe('2028-05-31');

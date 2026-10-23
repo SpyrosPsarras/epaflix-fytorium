@@ -3,7 +3,6 @@ import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { taskRules } from '$lib/schedule/rules';
 import { taskViewSettings } from './task-view-settings';
-import { householdSettings } from './care-settings';
 import { getCustomTask } from './custom-tasks';
 import { schedule, taskTypes, type TaskType, type ScheduleInput } from '$lib/schedule/engine';
 import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList, type PlantSchedule } from '$lib/tasks';
@@ -32,11 +31,10 @@ export async function history(plantId: string, identity: Identity): Promise<Care
 
 async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[], household: string, today: string, language: Identity['language'], database: Database = db(), taskOnly = false) {
   const plantIds = plants.map(plant => plant.id);
-  const [sites, events, intervals, settings, profiles, custom, weather] = await Promise.all([
+  const [sites, events, intervals, profiles, custom, weather] = await Promise.all([
     database.query('SELECT * FROM sites WHERE id = ANY($1::uuid[]) AND household_id = $2', [plants.map(plant => plant.site_id), household]),
     database.query('SELECT * FROM care_events WHERE plant_id = ANY($1::uuid[]) AND household_id = $2 AND undone_at IS NULL ORDER BY occurred_at DESC, event_order DESC', [plantIds, household]),
     database.query('SELECT plant_id, task_type, interval_days FROM plant_task_intervals WHERE plant_id = ANY($1::uuid[]) AND household_id = $2', [plantIds, household]),
-    householdSettings(household, database),
     effectiveCareProfiles(plants.map(plant => plant.gbif_key), household, database),
     database.query('SELECT * FROM custom_tasks WHERE household_id = $1 AND deleted_at IS NULL AND (plant_id = ANY($2::uuid[]) OR site_id = ANY($3::uuid[])) ORDER BY name, id', [household, plantIds, plants.map(plant => plant.site_id)]),
     taskOnly ? taskWeather(household, database) : weatherReport(household, language),
@@ -64,7 +62,7 @@ async function schedulePlantTasks(plants: Awaited<ReturnType<typeof getPlant>>[]
   const schedules = new Map(plants.map(plant => {
     const applicable = custom.rows.filter(task => task.plant_id === plant.id || task.site_id === plant.site_id);
     const result = schedule({
-      careProfile: profiles.get(plant.gbif_key)!, site: sitesById.get(plant.site_id), pot: plant, plant, household: settings,
+      careProfile: profiles.get(plant.gbif_key)!, site: sitesById.get(plant.site_id), pot: plant, plant,
       history: historyByPlant[plant.id] ?? {}, customIntervals: intervalsByPlant[plant.id] ?? {},
       customTasks: applicable.map(task => ({ id: task.id, intervalDays: task.interval_days, createdOn: calendarDate(task.created_at) })),
       addedOn: calendarDate(plant.created_at), today,
@@ -168,7 +166,7 @@ export async function undo(identity: Identity, eventId: string) {
     const plant = await client.query('SELECT status, pot_type, pot_size_cm, soil_type FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [existing.rows[0].plant_id, household]);
     if (!plant.rowCount) error(404, 'Plant not found');
     await requireUndo(identity, eventId, false, client);
-    const result = await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE id = $3 AND household_id = $4 AND undone_at IS NULL RETURNING *', [now(), identity.member.id, eventId, household]);
+    const result = await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE (id = $3 OR linked_event_id = $3) AND household_id = $4 AND undone_at IS NULL RETURNING *', [now(), identity.member.id, eventId, household]);
     const event = result.rows.find(row => row.id === eventId);
     if (!event) error(409, 'Care event already undone');
     if (event.previous_pot) {
@@ -214,26 +212,37 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
   });
 }
 
-async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, batchId: string | null = null, previousPot: Record<string, unknown> | null = null) {
+async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, { batchId = null, previousPot = null, linkedEventId = null }: { batchId?: string | null; previousPot?: Record<string, unknown> | null; linkedEventId?: string | null } = {}) {
   const member = await client.query('SELECT display_name FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, identity.household.id]);
-  const event = await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
-    [identity.household.id, plantId, taskTypes.includes(taskType as TaskType) ? taskType : null, kind, at, identity.member.id, member.rows[0].display_name, requestId, batchId, previousPot, isUuid(taskType) ? taskType : null]);
+  const event = await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id, linked_event_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id',
+    [identity.household.id, plantId, taskTypes.includes(taskType as TaskType) ? taskType : null, kind, at, identity.member.id, member.rows[0].display_name, requestId, batchId, previousPot, isUuid(taskType) ? taskType : null, linkedEventId]);
   // Fix the recipients at completion time. Turning notices on later must not replay history.
   if (kind === 'completed') await client.query(`INSERT INTO completion_notice_sends (event_id, member_id, attempted_at, claimed_until)
     SELECT $1, m.id, $2, $2::timestamptz - interval '1 millisecond' FROM members m
     JOIN plants p ON p.household_id = m.household_id AND p.id = $3
     WHERE m.completion_notices_enabled AND m.id <> $4 AND ${visiblePlantSql('m.id')}`,
   [event.rows[0].id, at, plantId, identity.member.id]);
+  return event.rows[0].id as string;
+}
+
+async function waterWithLiquidFertilizer(client: pg.PoolClient, identity: Identity, plant: Awaited<ReturnType<typeof getPlant>>, taskType: string, eventId: string, at: Date, { batchId = null }: { batchId?: string | null } = {}) {
+  if (taskType === 'fertilize' && plant.fertilizer_type === 'liquid') await recordEvent(client, identity, plant.id, 'water', 'completed', randomUUID(), at, { batchId, linkedEventId: eventId });
 }
 
 export async function completeAll(identity: Identity, plantId: string, requestId: string) {
   const { events } = await careAction(identity, plantId, requestId, 'complete-all', {}, async (client, [plant], at) => {
     const today = calendarDate(at);
     const tasks = (await schedulePlantTasks([plant], identity.household.id, today, identity.language, client, true)).schedules.get(plantId)!;
+    let watered = false;
+    let fertilizeEventId: string | undefined;
     for (const type of [...taskTypes, ...Object.keys(tasks.customTasks)]) {
       const task = taskIn(tasks, type)!;
-      if (task.status === 'due' && task.dueOn <= today) await recordEvent(client, identity, plantId, type, 'completed', randomUUID(), at, requestId);
+      if (task.status !== 'due' || task.dueOn > today) continue;
+      const eventId = await recordEvent(client, identity, plantId, type, 'completed', randomUUID(), at, { batchId: requestId });
+      if (type === 'water') watered = true;
+      if (type === 'fertilize') fertilizeEventId = eventId;
     }
+    if (!watered && fertilizeEventId) await waterWithLiquidFertilizer(client, identity, plant, 'fertilize', fertilizeEventId, at, { batchId: requestId });
   });
   return { events, tasks: await plantTasks(plantId, identity.household.id, identity.language) };
 }
@@ -250,7 +259,10 @@ export async function completeType(identity: Identity, taskType: string, request
     const { schedules } = await schedulePlantTasks(plants.rows, household, today, identity.language, client, true);
     for (const plant of plants.rows) {
       const task = taskIn(schedules.get(plant.id)!, taskType);
-      if (task?.status === 'due' && task.dueOn <= today) await recordEvent(client, identity, plant.id, taskType, 'completed', randomUUID(), at, requestId);
+      if (task?.status === 'due' && task.dueOn <= today) {
+        const eventId = await recordEvent(client, identity, plant.id, taskType, 'completed', randomUUID(), at, { batchId: requestId });
+        await waterWithLiquidFertilizer(client, identity, plant, taskType, eventId, at, { batchId: requestId });
+      }
     }
   });
   return { batch_id: action.request_id as string, events };
@@ -266,7 +278,7 @@ export async function repot(identity: Identity, plantId: string, input: Record<s
   const { events } = await careAction(identity, plantId, requestId, 'repot', pot, async (client, [plant], at) => {
     const previous = { pot_type: plant.pot_type, pot_size_cm: plant.pot_size_cm, soil_type: plant.soil_type };
     await client.query('UPDATE plants SET pot_type = $1, pot_size_cm = $2, soil_type = $3 WHERE id = $4 AND household_id = $5', [pot.pot_type, pot.pot_size_cm, pot.soil_type, plantId, identity.household.id]);
-    await recordEvent(client, identity, plantId, 'repot', 'completed', requestId, at, null, previous);
+    await recordEvent(client, identity, plantId, 'repot', 'completed', requestId, at, { previousPot: previous });
   });
   return json({ event: events[0], task: (await plantTasks(plantId, identity.household.id, identity.language)).repot });
 }
@@ -280,7 +292,8 @@ export async function complete(identity: Identity, plantId: string, taskType: st
     if (!task) error(404, 'Custom task not found for this plant');
     if (task.status === 'not_applicable') error(422, 'This task is not applicable.');
     if (kind === 'snoozed' && task.dueOn > calendarDate(at)) error(409, 'Only due or late tasks can be snoozed.');
-    await recordEvent(client, identity, plantId, taskType, kind, requestId, at);
+    const eventId = await recordEvent(client, identity, plantId, taskType, kind, requestId, at);
+    if (kind === 'completed') await waterWithLiquidFertilizer(client, identity, plant, taskType, eventId, at);
   });
   const tasks = await plantTasks(plantId, identity.household.id, identity.language);
   return { event: events[0], task: taskIn(tasks, taskType) };
@@ -300,7 +313,7 @@ export async function completeRain(identity: Identity, requestId: string) {
     } else {
       const plants = await client.query("SELECT p.id FROM plants p JOIN sites s ON s.id = p.site_id WHERE p.household_id = $1 AND p.status = 'active' AND s.location = 'outdoor' ORDER BY p.id FOR UPDATE OF p, s", [household]);
       if (!plants.rowCount) error(409, 'No active outdoor plants.');
-      for (const plant of plants.rows) await recordEvent(client, identity, plant.id, 'water', 'completed', randomUUID(), at, batchId);
+      for (const plant of plants.rows) await recordEvent(client, identity, plant.id, 'water', 'completed', randomUUID(), at, { batchId });
     }
     await client.query('UPDATE weather_events SET batch_id = $2 WHERE id = ANY($1::uuid[])', [rain.rows.map(row => row.id), batchId]);
   });
