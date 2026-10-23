@@ -17,7 +17,7 @@ export const hardinessRules = {
 } as const;
 export const rainRule = { thresholdMm: 5, ruleId: 'weather.rain@1' } as const;
 
-export const taskTypes = ['water', 'fertilize', 'mist', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'] as const;
+export const taskTypes = ['water', 'fertilize', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'] as const;
 export type TaskType = typeof taskTypes[number];
 export type FactorInput = { [Group in 'site' | 'pot' | 'plant']: { group: Group; field: keyof ScheduleInput[Group] } }['site' | 'pot' | 'plant'];
 type FactorKeys<T> = T extends boolean ? 'true' | 'false' : T extends string ? T : never;
@@ -33,7 +33,6 @@ type IntervalRule = CareField & { value: number; reason: string };
 const intervalRule = (value: number, ruleId: string, reason: string): IntervalRule => ({ value, source: 'rule', ruleId, reason });
 export const careRuleDefaults = {
   wateringIntervalDays: intervalRule(7, 'water.default@1', 'Weekly watering is the starting estimate when species data is missing.'),
-  humidityNeed: { value: 'medium', source: 'rule', ruleId: 'mist.humidity_need@1' },
   pruningMonths: { value: [3], source: 'rule', ruleId: 'cut_back.pruning_months@1' },
 } satisfies Record<string, CareField>;
 type Anchor = 'added_date' | 'added_plus_interval' | ((input: ScheduleInput, completion: string | undefined) => { dueOn: string; basedOn: BasedOn[] });
@@ -58,19 +57,6 @@ function pruningAnchor(input: ScheduleInput, completion: string | undefined) {
     ruleId: months.length ? supplied.ruleId : careRuleDefaults.pruningMonths.ruleId, fetchedAt: months.length ? supplied.fetchedAt : null, adjustment: 'First pruning month on or after addition; after completion, first pruning month of the next year.' } satisfies BasedOn] };
 }
 
-function mistApplicability(input: ScheduleInput) {
-  const need = input.careProfile.humidityNeed ?? careRuleDefaults.humidityNeed;
-  const conditions: { input: string; value: unknown; source: BasedOn['source']; applies: boolean; reason: string; ruleId?: string; fetchedAt?: string | null }[] = [
-    { input: 'household.misting_enabled', value: input.household?.misting_enabled ?? true, source: 'setting', applies: input.household?.misting_enabled !== false, reason: 'Household misting is disabled.' },
-    { input: 'plant.misting_enabled', value: input.plant.misting_enabled ?? true, source: 'setting', applies: input.plant.misting_enabled !== false, reason: 'Plant misting is disabled.' },
-    { input: 'site.location', value: input.site.location ?? 'not set', source: 'rule', ruleId: 'mist.applicability@1', applies: input.site.location === 'indoor', reason: 'Misting is only for indoor plants.' },
-    { input: 'site.humidity', value: input.site.humidity ?? 'not set', source: 'rule', ruleId: 'mist.applicability@1', applies: input.site.humidity === 'dry' || input.site.humidity === 'normal', reason: 'Misting requires dry or normal site humidity.' },
-    { input: 'humidityNeed', value: need.value, source: need.source, ruleId: need.ruleId, fetchedAt: need.fetchedAt, applies: need.value === 'medium' || need.value === 'high', reason: 'This humidity need does not call for misting.' },
-  ];
-  return { applicable: conditions.every(condition => condition.applies), basedOn: conditions.map(({ applies, reason, ...basis }) => ({
-    ...basis, adjustment: applies ? 'Misting condition met; no interval adjustment.' : reason,
-  })) };
-}
 export const taskRules: Record<TaskType, TaskRules> = {
   water: {
     label: 'Water', action: 'watering', profileField: 'wateringIntervalDays', minDays: 1, maxDays: 60, monthFactors: { values: wateringMonthFactors, ruleId: 'water.month@1', reason: 'Northern-hemisphere winter months stretch watering intervals.' }, anchor: 'added_date',
@@ -102,11 +88,6 @@ export const taskRules: Record<TaskType, TaskRules> = {
       : input.plant.fertilizer_type === 'slow_release'
         ? intervalRule(90, 'fertilize.slow_release@1', 'Slow-release granules supply nutrients for roughly three months.')
         : intervalRule(2 * intervals('water'), 'fertilize.every_second_watering@1', 'Liquid or unknown fertilizer defaults to every second current watering.'),
-  },
-  mist: {
-    label: 'Mist', action: 'misting', minDays: 1, maxDays: 365, factors: [], anchor: 'added_plus_interval',
-    defaultInterval: intervalRule(3, 'mist.default@1', 'Three-day reminders prompt a check of humidity-loving indoor foliage.'),
-    applicability: mistApplicability,
   },
   clean_leaves: {
     label: 'Clean leaves', action: 'leaf cleaning', minDays: 1, maxDays: 365, factors: [], anchor: 'added_plus_interval',

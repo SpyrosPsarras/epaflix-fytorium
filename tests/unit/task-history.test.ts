@@ -3,7 +3,7 @@ import { schedule, type ScheduleInput, type TaskType } from '../../src/lib/sched
 
 const input: ScheduleInput = { careProfile: {}, site: { location: 'indoor', humidity: 'normal' }, pot: {}, plant: {}, history: {}, customIntervals: {}, addedOn: '2026-05-01', today: '2026-05-03' };
 const skips: [TaskType, string][] = [
-  ['water', '2026-05-10'], ['fertilize', '2026-05-17'], ['mist', '2026-05-06'], ['clean_leaves', '2026-06-02'],
+  ['water', '2026-05-10'], ['fertilize', '2026-05-17'], ['clean_leaves', '2026-06-02'],
   ['remove_dead', '2026-05-17'], ['cut_back', '2027-05-03'], ['repot', '2028-05-02'],
 ];
 test.each(skips)('the generic history step snoozes or skips %s without changing its interval', (type, skipDue) => {

@@ -156,16 +156,13 @@ import org.json.JSONObject
 }
 @Composable fun PlantCareSettings(json: String, writable: Boolean, onSave: (JSONObject) -> Unit) {
     val settings = remember(json) { JSONObject(json) }
-    var mist by remember(json) { mutableStateOf(settings.getBoolean("misting_enabled")) }
-    val types = listOf("water", "fertilize", "mist", "clean_leaves", "remove_dead", "cut_back", "repot")
+    val types = listOf("water", "fertilize", "clean_leaves", "remove_dead", "cut_back", "repot")
     val intervals = remember(json) { mutableStateMapOf<String, String>().apply {
         val current = settings.getJSONObject("customIntervals")
         types.forEach { put(it, if (current.isNull(it)) "" else current.optString(it)) }
     } }
     PlantColumn {
         Heading("Care settings", style = MaterialTheme.typography.headlineSmall)
-        Toggle("Misting reminders for this plant", mist, writable) { mist = it }
-        Text("Misting also requires the household switch and suitable indoor humidity.")
         Heading("Custom intervals", style = MaterialTheme.typography.titleLarge)
         Text("Whole days from 1 to 365. Clear to use the computed interval. Season and applicability rules still apply.")
         types.forEach { key ->
@@ -175,7 +172,7 @@ import org.json.JSONObject
         }
         Button(onClick = {
             val custom = JSONObject(); intervals.forEach { (key, value) -> value.toIntOrNull()?.let { custom.put(key, it) } }
-            onSave(JSONObject().put("misting_enabled", mist).put("customIntervals", custom))
+            onSave(JSONObject().put("customIntervals", custom))
         }, enabled = writable && intervals.values.all { it.isBlank() || it.toIntOrNull() in 1..365 }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save care settings") }
     }
 }

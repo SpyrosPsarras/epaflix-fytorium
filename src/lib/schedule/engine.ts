@@ -13,8 +13,7 @@ export type ScheduleInput = {
   careProfile: Record<string, CareField>;
   site: Partial<SiteInput>;
   pot: Partial<Pick<PlantInput, 'pot_type' | 'pot_size_cm' | 'drainage' | 'soil_type'>>;
-  plant: Partial<Pick<PlantInput, 'plant_size' | 'growth_stage' | 'window_distance_cm' | 'grow_light' | 'near_ac' | 'near_heater' | 'fertilizer_type'>> & { misting_enabled?: boolean };
-  household?: { misting_enabled?: boolean };
+  plant: Partial<Pick<PlantInput, 'plant_size' | 'growth_stage' | 'window_distance_cm' | 'grow_light' | 'near_ac' | 'near_heater' | 'fertilizer_type'>>;
   history: Partial<Record<string, TaskHistory>>;
   customTasks?: readonly { id: string; intervalDays: number; createdOn: string }[];
   customIntervals: Partial<Record<TaskType, number>>;

@@ -26,7 +26,7 @@ test('shared scheduling applies weather to built-in watering but not custom task
   expect(result.fertilize).toMatchObject({ intervalDays: 12 });
   expect(result.customTasks.inspect).toMatchObject({ intervalDays: 7, dueOn: '2030-06-04' });
   expect(result.customTasks.inspect.basedOn.filter(row => row.source === 'weather')).toEqual([]);
-  for (const type of ['mist', 'clean_leaves', 'remove_dead', 'cut_back', 'repot'] as const) {
+  for (const type of ['clean_leaves', 'remove_dead', 'cut_back', 'repot'] as const) {
     expect(result[type].basedOn.filter(row => row.input === 'weather')).toEqual([]);
   }
   expect(example).toEqual(before);

@@ -2530,69 +2530,6 @@ paths:
           required: false
           schema:
             type: string
-  /api/household/settings:
-    get:
-      operationId: get_api_household_settings
-      summary: GET /api/household/settings
-      responses:
-        "200":
-          description: JSON response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HouseholdSettings"
-        "426":
-          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UpdateRequired"
-        default:
-          description: Login, authorization, input, conflict, rate-limit or server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      parameters:
-        - name: X-App-Version
-          in: header
-          required: false
-          schema:
-            type: string
-    put:
-      operationId: put_api_household_settings
-      summary: PUT /api/household/settings
-      responses:
-        "200":
-          description: JSON response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HouseholdSettings"
-        "426":
-          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UpdateRequired"
-        default:
-          description: Login, authorization, input, conflict, rate-limit or server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-      parameters:
-        - name: X-App-Version
-          in: header
-          required: false
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/HouseholdSettings"
   /api/household/location:
     get:
       operationId: get_api_household_location
@@ -3933,8 +3870,6 @@ components:
             - type: string
               pattern: ^\d{4}-\d{2}-\d{2}$
             - type: "null"
-        misting_enabled:
-          type: boolean
         cover_photo_id:
           anyOf:
             - type: string
@@ -3973,7 +3908,6 @@ components:
         - created_at
         - attributes_as_of
         - graveyard_on
-        - misting_enabled
         - cover_photo_id
         - rank
         - site_name
@@ -4215,7 +4149,6 @@ components:
             - enum:
                 - water
                 - fertilize
-                - mist
                 - clean_leaves
                 - remove_dead
                 - cut_back
@@ -4257,8 +4190,6 @@ components:
           $ref: "#/components/schemas/Task"
         fertilize:
           $ref: "#/components/schemas/Task"
-        mist:
-          $ref: "#/components/schemas/Task"
         clean_leaves:
           $ref: "#/components/schemas/Task"
         remove_dead:
@@ -4272,7 +4203,7 @@ components:
           additionalProperties:
             $ref: "#/components/schemas/Task"
       anyOf:
-        - required: [water, fertilize, mist, clean_leaves, remove_dead, cut_back, repot, customTasks]
+        - required: [water, fertilize, clean_leaves, remove_dead, cut_back, repot, customTasks]
         - maxProperties: 0
       additionalProperties: false
     TaskSettings:
@@ -4341,6 +4272,12 @@ components:
     CareEvent:
       type: object
       properties:
+        linked_event_id:
+          description: Fertilize completion that added this water completion. Undoing that fertilize also undoes this water event.
+          anyOf:
+            - type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            - type: "null"
         can_undo:
           type: boolean
           description: Whether this member can undo this event now. Use the batch undo endpoint when batch_id is present. Includes role, ownership, batch, plant and repot checks.
@@ -4359,7 +4296,6 @@ components:
             - enum:
                 - water
                 - fertilize
-                - mist
                 - clean_leaves
                 - remove_dead
                 - cut_back
@@ -4578,23 +4514,12 @@ components:
     CareSettings:
       type: object
       properties:
-        misting_enabled:
-          type: boolean
         customIntervals:
           type: object
           additionalProperties:
             type: integer
       required:
-        - misting_enabled
         - customIntervals
-      additionalProperties: false
-    HouseholdSettings:
-      type: object
-      properties:
-        misting_enabled:
-          type: boolean
-      required:
-        - misting_enabled
       additionalProperties: false
     Location:
       type: object
@@ -5326,8 +5251,6 @@ components:
               $ref: "#/components/schemas/CareField"
             light:
               $ref: "#/components/schemas/CareField"
-            humidityNeed:
-              $ref: "#/components/schemas/CareField"
             temperatureRangeC:
               $ref: "#/components/schemas/CareField"
             hardiness:
@@ -5356,7 +5279,6 @@ components:
             - wateringIntervalDays
             - fertilizingIntervalDays
             - light
-            - humidityNeed
             - temperatureRangeC
             - hardiness
             - hardinessC

@@ -139,7 +139,6 @@ class AppShellRestorationTest {
                     "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"late","kind":"late_tasks","href":"/#today","count":1,"plants":[{"id":"plant-one","name":"Synthetic fern"}]}]}"""
                     "/api/weather" -> """{"locationSet":false,"forecastFetchedAt":null,"rain":null,"lastRainBatch":null}"""
                     "/api/household/location" -> """{"location":null}"""
-                    "/api/household/settings" -> """{"misting_enabled":true}"""
                     "/api/feed/settings" -> """{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true}"""
                     "/api/species/unmatched" -> """[{"gbif_key":910002,"canonical_name":"Testoria nebulosa","status":"no_match"}]"""
                     "/api/species/910002/care", "/api/species/910001/care" -> JSONObject(careFixture).put("fetches", org.json.JSONArray()).toString()
@@ -272,8 +271,8 @@ class AppShellRestorationTest {
                     "household-settings" -> {
                         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                         compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
-                        compose.onNodeWithText("Misting reminders for the household").performScrollTo().assertIsNotEnabled()
-                        compose.onNodeWithText("Save household settings").assertDoesNotExist()
+                        compose.onNodeWithText("Latitude").performScrollTo().assertIsNotEnabled()
+                        compose.onNodeWithText("Save location").assertDoesNotExist()
                         compose.onNodeWithText("Create invite").assertDoesNotExist()
                     }
                     "household" -> {

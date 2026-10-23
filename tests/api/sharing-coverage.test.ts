@@ -27,7 +27,6 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/household/members': { GET: ownerOnly(200) },
   '/api/household/members/[id]': { PUT: ownerOnly(404), DELETE: ownerOnly(404) },
   '/api/household/location': { GET: edit(200), PUT: ownerOnly(422) },
-  '/api/household/settings': { GET: edit(200), PUT: ownerOnly(422) },
   '/api/identification': { GET: edit(200), POST: edit(400) },
   '/api/import/planta': { GET: ownerOnly(200), POST: ownerOnly(422) },
   '/api/import/planta/[id]': { PUT: ownerOnly(404) },

@@ -39,19 +39,13 @@ beforeAll(async () => {
   plantId = plant.id;
 });
 
-test('confirmed Plantbook care fills missing fields and changes misting with source and fetch time', async () => {
-  const before = await (await request('/api/plants/' + plantId + '/tasks')).json();
-  expect(before.mist.status).not.toBe('not_applicable');
+test('confirmed Plantbook care fills missing fields with source and fetch time', async () => {
   await tick();
   const care = await card();
   expect(care.openPlantbookMatch).toMatchObject({ status: 'matched', pid: 'testoria_sensor' });
-  expect(care.profile.humidityNeed).toEqual({ value: 'low', source: 'open_plantbook', fetchedAt: '2030-06-01T12:00:00.000Z' });
-  expect(care.profile.light).toMatchObject({ value: 'part_shade', source: 'open_plantbook' });
+  expect(care.profile.light).toEqual({ value: 'part_shade', source: 'open_plantbook', fetchedAt: '2030-06-01T12:00:00.000Z' });
   expect(care.profile.temperatureRangeC).toMatchObject({ value: { min: 15, max: 28 }, source: 'open_plantbook' });
   expect(care.profile.hardinessC).toMatchObject({ value: -5, source: 'open_plantbook' });
-  const after = await (await request('/api/plants/' + plantId + '/tasks')).json();
-  expect(after.mist.status).toBe('not_applicable');
-  expect(after.mist.basedOn).toContainEqual(expect.objectContaining({ input: 'humidityNeed', value: 'low', source: 'open_plantbook', fetchedAt: '2030-06-01T12:00:00.000Z' }));
 });
 
 test('no match is reported on the card and owner list, then retry clears the old pid and matches again', async () => {
@@ -78,7 +72,7 @@ test.each([
   harness.setGbif(match);
   await retry(); await tick();
   expect((await card()).openPlantbookMatch).toMatchObject({ status: expected, pid: null });
-  expect((await card()).profile.humidityNeed.source).toBe('rule');
+  expect((await card()).profile.light.source).toBe('unknown');
   harness.setGbif(exact);
 });
 
@@ -94,16 +88,10 @@ test('Perenual outranks Plantbook per field, an override wins and survives refre
   perenualPresent = true;
   await request('/api/species/910100/care/refresh', 'POST', {}); await tick();
   expect((await card()).profile.light).toMatchObject({ value: 'full_sun', source: 'perenual' });
-  expect((await card()).profile.humidityNeed).toMatchObject({ value: 'low', source: 'open_plantbook' });
   await request('/api/species/910100/care/overrides/light', 'PUT', { value: 'full_shade' });
-  await request('/api/species/910100/care/overrides/humidityNeed', 'PUT', { value: 'high' });
   await request('/api/species/910100/care/refresh', 'POST', {}); await tick();
   expect((await card()).profile.light).toMatchObject({ value: 'full_shade', source: 'override' });
-  const tasks = await (await request('/api/plants/' + plantId + '/tasks')).json();
-  expect(tasks.mist.status).toBe('due');
-  expect(tasks.mist.basedOn).toContainEqual(expect.objectContaining({ input: 'humidityNeed', value: 'high', source: 'override' }));
   await request('/api/species/910100/care/overrides/light', 'DELETE');
-  await request('/api/species/910100/care/overrides/humidityNeed', 'DELETE');
   expect((await card()).profile.light.source).toBe('perenual');
   perenualPresent = false;
 });

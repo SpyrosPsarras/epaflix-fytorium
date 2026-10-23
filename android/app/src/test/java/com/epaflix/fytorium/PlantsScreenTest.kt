@@ -289,7 +289,7 @@ class PlantsScreenTest {
             server.enqueue(MockResponse().setBody(plantFixture).setBodyDelay(2, TimeUnit.SECONDS))
             server.enqueue(MockResponse().setBody("[]"))
             server.enqueue(MockResponse().setBody("""{"customTasks":{}}"""))
-            server.enqueue(MockResponse().setBody("""{"misting_enabled":false,"customIntervals":{}}"""))
+            server.enqueue(MockResponse().setBody("""{"customIntervals":{}}"""))
             server.enqueue(MockResponse().setBody("[]"))
             val worker = thread { repo.openPlant("plant-one", full = true) }
             assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
@@ -320,7 +320,7 @@ class PlantsScreenTest {
                         "/api/plants" -> "[$plantFixture]"
                         "/api/plants/plant-one" -> plantFixture
                         "/api/plants/plant-one/tasks" -> "{\"customTasks\":{}}"
-                        "/api/plants/plant-one/care-settings" -> "{\"misting_enabled\":false,\"customIntervals\":{}}"
+                        "/api/plants/plant-one/care-settings" -> "{\"customIntervals\":{}}"
                         "/api/species/search" -> """{"search_id":"s","candidates":[{"gbif_key":910002,"canonical_name":"Testoria prior","scientific_name":"Testoria prior Inventor","rank":"SPECIES","requires_confirmation":true}]}"""
                         "/api/plants/plant-one/species" -> { writes.incrementAndGet(); plantFixture }
                         else -> "[]"
@@ -391,14 +391,14 @@ class PlantsScreenTest {
             when (screen.value) {
                 "list" -> PlantsList(owner, owner.plants, false, {}, {}, {}, {})
                 "graveyard" -> PlantsList(owner, owner.plants.map { it.copy(status = "graveyard", attributesJson = JSONObject(it.attributesJson).put("graveyard_on", "2030-06-02").toString()) }, true, {}, {}, {}, {})
-                "detail", "delete", "history", "menu" -> PlantDetailScreen(owner, PlantDetail(plant, listOf(parseEvent(JSONObject(eventFixture))), emptyMap(), """{"misting_enabled":true,"customIntervals":{"water":7}}"""), {}, { _, _ -> }, {}, {}, options = syntheticOptions())
+                "detail", "delete", "history", "menu" -> PlantDetailScreen(owner, PlantDetail(plant, listOf(parseEvent(JSONObject(eventFixture))), emptyMap(), """{"customIntervals":{"water":7}}"""), {}, { _, _ -> }, {}, {}, options = syntheticOptions())
                 "search" -> SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(SpeciesCandidate(910001, "Testoria lucida Inventor", "Testoria lucida", "SPECIES", "FUZZY", 92, true, null, null))), {}, { _, _, _ -> })
                 "restore" -> RestoreForm(plant, listOf(PlantSite("site-one", "Synthetic site")), true, {})
                 "repot" -> PlantRepotForm(plant, syntheticOptions(), true, onSave = {})
                 "add" -> PlantForm(null, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
                 "birthday" -> PlantForm(plant.copy(attributesJson = JSONObject(plant.attributesJson).put("birthday", "2030-01-02").toString()), syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
                 "form" -> PlantForm(plant, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
-                "care" -> PlantCareSettings("""{"misting_enabled":true,"customIntervals":{"water":7}}""", true, {})
+                "care" -> PlantCareSettings("""{"customIntervals":{"water":7}}""", true, {})
                 else -> SpeciesNames(Species(910001, "Testoria lucida Inventor", listOf(SpeciesName("name-one", "Synthetic flower", "en", "owner")), false, false), syntheticOptions(), true, { _, _ -> })
             }
         } } } }

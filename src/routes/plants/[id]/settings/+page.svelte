@@ -6,10 +6,8 @@
   import { taskRules } from '$lib/schedule/rules';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
-  let mistingEnabled = $state(true);
   let intervals = $state<Partial<Record<TaskType, number | null>>>({});
   $effect(() => {
-    mistingEnabled = data.careSettings.misting_enabled;
     intervals = { ...data.careSettings.customIntervals };
   });
   let busy = $state(false);
@@ -37,7 +35,7 @@
     try {
       const response = await fetch('/api/plants/' + data.plant.id + '/care-settings', {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ misting_enabled: mistingEnabled, customIntervals: Object.fromEntries(Object.entries(intervals).filter(([, value]) => typeof value === 'number')) }),
+        body: JSON.stringify({ customIntervals: Object.fromEntries(Object.entries(intervals).filter(([, value]) => typeof value === 'number')) }),
       });
       const result = await response.json();
       if (!response.ok) { failure = result.message ?? 'Could not save care settings.'; return; }
@@ -74,8 +72,6 @@
 <section aria-labelledby="care-settings-title">
   <h2 id="care-settings-title">Care settings</h2>
   <form onsubmit={saveCare}>
-    <label class="toggle"><input type="checkbox" bind:checked={mistingEnabled} /> Misting reminders for this plant</label>
-    <p>Misting also requires the household switch and suitable indoor humidity.</p>
     <h3>Custom intervals</h3>
     <p>Whole days from 1 to 365. Leave blank or clear, then save to use the computed interval. Season and applicability rules still apply.</p>
     {#each taskTypes as type}
@@ -98,8 +94,6 @@
   h2 { margin-top: 0; }
   #confirm-name { box-sizing: border-box; width: 100%; font: inherit; padding: .75rem; margin: .5rem 0; }
   .delete-controls { display: flex; flex-wrap: wrap; gap: .5rem; }
-  .toggle { display: flex; gap: .5rem; align-items: center; }
-  .toggle input { width: auto; }
   .interval { margin: 1rem 0; }
   .interval label { display: block; margin-bottom: .4rem; }
   .interval div { display: flex; gap: .5rem; }

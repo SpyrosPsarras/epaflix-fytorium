@@ -41,7 +41,7 @@ data class Plant(val id: String, val displayName: String, val scientificName: St
 data class PlantDetail(val plant: Plant, val history: List<CareEvent>, val tasks: Map<String, CareTask>,
                        val careSettingsJson: String? = null, val speciesChangesJson: String = "[]")
 internal val taskNames = mapOf(
-    "water" to "Water", "fertilize" to "Fertilize", "mist" to "Mist",
+    "water" to "Water", "fertilize" to "Fertilize",
     "clean_leaves" to "Clean leaves", "remove_dead" to "Remove dead flowers and leaves",
     "cut_back" to "Seasonal cut-back", "repot" to "Repot"
 )

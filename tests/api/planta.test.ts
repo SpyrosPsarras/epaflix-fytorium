@@ -22,6 +22,7 @@ test('exchanges a one-time code, pages plants and retains only mapped staging wi
   const output = await response.text();
   const rows = JSON.parse(output);
   expect(rows).toHaveLength(2);
+  for (const row of rows) expect(row.mapped.care).not.toHaveProperty('mist');
   expect(rows[0]).toMatchObject({ planta_plant_id: 'synthetic-planta-20-a', status: 'confirmed', mapped: { nickname: 'Test import lantern', site_name: 'Test import alcove', pot_type: 'terracotta', pot_size_cm: 18, soil_type: 'cactus', care: { water: '2026-06-01T12:00:00.000Z' } }, selected: { gbif_key: 910001 } });
   expect(fake.calls.map(call => call.path)).toEqual(['/v1/auth/authorize', '/v1/addedPlants', '/v1/addedPlants?cursor=synthetic-next']);
   expect(await (await owner.request(endpoint)).json()).toEqual(rows);
@@ -91,12 +92,13 @@ test('requires explicit fuzzy confirmation, accepts an alternative and persists 
   expect(imported).toHaveLength(1);
   expect(imported[0]).toMatchObject({ gbif_key: 910021, nickname: 'Test import lantern', cultivar: 'Invented stripe', site_name: 'Test import alcove', pot_type: 'terracotta', pot_size_cm: 18, soil_type: 'cactus' });
   const history = await (await owner.request('/api/plants/' + imported[0].id + '/history')).json();
-  expect(history).toHaveLength(5);
+  expect(history).toHaveLength(4);
+  expect(history.map((event: { task_type: string }) => event.task_type)).not.toContain('mist');
   expect(history).toContainEqual(expect.objectContaining({ task_type: 'water', kind: 'completed', source: 'planta', occurred_on: '2026-06-01' }));
-  expect((await owner.request('/api/plants/' + imported[0].id + '/care-settings', 'PUT', { misting_enabled: true, customIntervals: { water: 10 } })).status).toBe(200);
+  expect((await owner.request('/api/plants/' + imported[0].id + '/care-settings', 'PUT', { customIntervals: { water: 10 } })).status).toBe(200);
   const tasks = await (await owner.request('/api/plants/' + imported[0].id + '/tasks')).json();
   expect(tasks.water).toMatchObject({ intervalDays: 10, dueOn: '2026-06-11' });
-  expect(tasks).toMatchObject({ fertilize: { dueOn: '2026-06-14' }, mist: { dueOn: '2026-06-05' }, clean_leaves: { dueOn: '2026-06-19' }, repot: { dueOn: '2027-06-01' } });
+  expect(tasks).toMatchObject({ fertilize: { dueOn: '2026-06-14' }, clean_leaves: { dueOn: '2026-06-19' }, repot: { dueOn: '2027-06-01' } });
   expect(tasks.water.basedOn).toContainEqual(expect.objectContaining({ input: 'history.water.lastCompletedOn', value: '2026-06-01' }));
   expect((await (await owner.request('/api/sites')).json())[0]).toMatchObject({ name: 'Test import alcove', imported_conditions_incomplete: true, location: 'indoor', light: 'part_sun', humidity: 'normal' });
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
@@ -129,7 +131,7 @@ test('a fresh fetch updates Planta fields including owner edits, but preserves l
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   expect(await (await owner.request('/api/sites/' + sites[0].id)).json()).toMatchObject({ humidity: 'humid', imported_conditions_incomplete: false });
   const events = await (await owner.request(path + '/history')).json();
-  expect(events).toHaveLength(5);
+  expect(events).toHaveLength(4);
   expect(events).toContainEqual(expect.objectContaining({ source: 'planta', task_type: 'water', occurred_on: '2026-06-04' }));
   expect(await (await owner.request(path + '/tasks')).json()).toMatchObject({ water: { intervalDays: 10, dueOn: '2026-06-14' } });
 });
@@ -381,7 +383,7 @@ test('re-import preserves standalone import undo, local batches, request IDs, sn
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   const plant = (await (await owner.request('/api/plants')).json()).find((plant: { nickname: string }) => plant.nickname === imported.names.custom);
   const path = '/api/plants/' + plant.id;
-  await owner.request(path + '/care-settings', 'PUT', { misting_enabled: true, customIntervals: { water: 10 } });
+  await owner.request(path + '/care-settings', 'PUT', { customIntervals: { water: 10 } });
   const events = await (await owner.request(path + '/history')).json();
   const water = events.find((event: { task_type: string }) => event.task_type === 'water');
   for (const event of events) expect(event).toMatchObject({ kind: 'completed', source: 'planta', batch_id: null, previous_pot: null, request_id: expect.any(String) });
