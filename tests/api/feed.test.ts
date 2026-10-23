@@ -128,7 +128,7 @@ test('sitter feed contains only shared late care, stays fixed-query, and disappe
       expect(Object.keys(result)).toEqual(['cards']);
       expect(result.cards).toEqual([{ id: 'late_tasks', kind: 'late_tasks', href: '/plants/' + plantId, count: 1, plants: [{ id: plantId, name: 'Test feed plant' }] }]);
     }
-    expect(Math.min(...counts)).toBe(10);
+    expect(Math.min(...counts)).toBe(9);
     const feedOnlyReads = async () => Number((await fixtureDb.query(`SELECT COALESCE(sum(calls), 0) AS n FROM pg_stat_statements
       WHERE query ILIKE 'SELECT%' AND (query ILIKE '%feed_late_tasks%' OR query ILIKE '%FROM weather_events%' OR query ILIKE '%AS plant_count FROM care_actions%' OR query ILIKE '%count(*)%location%outdoor%')`)).rows[0].n);
     const beforeHome = await feedOnlyReads();

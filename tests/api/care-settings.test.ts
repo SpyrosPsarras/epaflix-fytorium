@@ -70,6 +70,14 @@ test('validates intervals without partially changing settings', async () => {
   await request(plantSettings(), 'PUT', before);
 });
 
+test('invalid intervals return validation errors before looking up a missing plant', async () => {
+  const path = '/api/plants/00000000-0000-4000-8000-000000000000/care-settings';
+  for (const body of [{}, { customIntervals: { water: 0 } }, { customIntervals: { feed: 5 } }]) {
+    expect((await request(path, 'PUT', body)).status).toBe(422);
+  }
+  expect((await request(path, 'PUT', { customIntervals: {} })).status).toBe(404);
+});
+
 test('settings reads and writes require a session', async () => {
   for (const session of ['', 'fytorium_session=invalid']) {
     expect((await request(plantSettings(), 'GET', undefined, session)).status).toBe(401);

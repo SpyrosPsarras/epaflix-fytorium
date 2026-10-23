@@ -383,7 +383,7 @@ test('re-import preserves standalone import undo, local batches, request IDs, sn
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   const plant = (await (await owner.request('/api/plants')).json()).find((plant: { nickname: string }) => plant.nickname === imported.names.custom);
   const path = '/api/plants/' + plant.id;
-  await owner.request(path + '/care-settings', 'PUT', { customIntervals: { water: 10 } });
+  expect((await owner.request(path + '/care-settings', 'PUT', { customIntervals: { water: 10, clean_leaves: 5 } })).status).toBe(200);
   const events = await (await owner.request(path + '/history')).json();
   const water = events.find((event: { task_type: string }) => event.task_type === 'water');
   for (const event of events) expect(event).toMatchObject({ kind: 'completed', source: 'planta', batch_id: null, previous_pot: null, request_id: expect.any(String) });
@@ -392,7 +392,7 @@ test('re-import preserves standalone import undo, local batches, request IDs, sn
   const batchResponse = await owner.request(path + '/tasks/complete-all', 'POST', { request_id: key });
   expect(batchResponse.status).toBe(200);
   const batch = await batchResponse.json();
-  expect(batch.events.length).toBeGreaterThan(0);
+  expect(batch.events.map((event: { task_type: string }) => event.task_type)).toEqual(['clean_leaves']);
   for (const event of batch.events) expect(event).toMatchObject({ batch_id: key, source: 'fytorium', undone_at: null });
   expect((await owner.request('/api/care-events/' + water.id + '/undo', 'POST')).status).toBe(200);
   const undoneWater = (await (await owner.request(path + '/history')).json()).find((event: { id: string }) => event.id === water.id);
