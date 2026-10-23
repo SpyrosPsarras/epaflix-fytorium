@@ -17,7 +17,10 @@ beforeAll(async () => {
   await request('/api/notifications/settings', 'PUT', { reminder_time: '09:00', reminders_enabled: true, weather_alerts_enabled: false });
   const site = await (await request('/api/sites', 'POST', { name: 'Retry room', location: 'indoor', light: 'part_sun', humidity: 'normal', grow_light: false, draft: false })).json();
   const search = await (await request('/api/species/search?q=Testoria%20lucida')).json();
-  expect((await request('/api/plants', 'POST', { ...fixturePlant, site_id: site.id, search_id: search.search_id, gbif_key: 910001, nickname: 'Retry fern' })).status).toBe(201);
+  const added = await request('/api/plants', 'POST', { ...fixturePlant, site_id: site.id, search_id: search.search_id, gbif_key: 910001, nickname: 'Retry fern' });
+  expect(added.status).toBe(201);
+  const plant = await added.json();
+  expect((await request('/api/plants/' + plant.id + '/care-settings', 'PUT', { customIntervals: { clean_leaves: 3 } })).status).toBe(200);
 });
 afterAll(async () => { await fixtureDb?.end(); });
 
