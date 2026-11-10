@@ -107,13 +107,14 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         }
     }
     fun undoRain(): Boolean {
-        val id = state.value.weather?.lastBatchId ?: return false
+        val weather = state.value.weather
+        val id = weather?.lastBatchId ?: return false
         if (!id.matches(Regex("[A-Za-z0-9_-]+"))) {
             synchronized(monitor) { mutable.value = mutable.value.copy(message = "Rain watering could not be undone. Refresh to try again.") }
             return false
         }
         // The care repository sends the Undo, shows its lists and reports its failures.
-        return write("Rain watering undone.", { if (undoBatch(id)) JSONObject() else null }) { rainRequestId = null }
+        return write(weather.rainUndone, { if (undoBatch(id)) JSONObject() else null }) { rainRequestId = null }
     }
     private fun write(path: String, method: String, body: JSONObject?, message: String? = null, applied: (JSONObject) -> Unit) =
         write(message, { read(path, method, body) }, applied)

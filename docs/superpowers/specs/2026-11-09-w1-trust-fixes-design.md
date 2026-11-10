@@ -122,6 +122,12 @@ Sol scored its W1 items 10. Opus scored S3 9, S11 8, F2 9, F3 9, F12 7 (`council
 - K6 (opus-7). Android and web import screens state K5 in plain words; no screen says a re-fetch replaces the nickname including your edits.
 - K7 (opus-8). An import review card's headline is the name the plant will have after import: the nickname K5 will set (a graveyard plant keeps its current name, because commit skips it), else the selected species' chosen common name, else the canonical name the plant will have after commit (the stored species' name when the species already exists).
 
+## Council round 2 amendment (2026-11-10)
+
+Opus round 2 closed W1-opus-1..8 and found W1-opus-9 (`council-w1-opus-r2.md`).
+
+- K8 (opus-9). A standalone completion that also recorded linked water (liquid fertilize) names both in its filled-check content description: "Fertilize and water done for <plant>, <site>. Double tap to undo both". Every Undo confirmation names what it reversed instead of a bare "Undone": "Undid watering for <plant>", "Undid fertilizing and watering for <plant>", "Undid snooze for <plant>", "Undid watering for 9 plants" (same verbs and counts as the receipts). Android only; on the web the history and row labels already name it.
+
 ## Non-goals
 
 - Today layout (FABs, feed band, row order after actions, title and switch): W2.

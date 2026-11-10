@@ -105,7 +105,7 @@ class FeedRepositoryTest {
         assertTrue(feed.undoRain())
         assertEquals(listOf("batch-one"), undone)
         assertEquals("/api/feed", server.takeRequest().path)
-        assertEquals("Rain watering undone.", feed.state.value.message)
+        assertEquals("Undid watering for 1 outdoor plant", feed.state.value.message)
         assertNull(feed.state.value.weather!!.lastBatchId)
     }
     @Test fun aFailedRainUndoKeepsTheCardAndLeavesItsMessageToToday() = withFeed({ false }) { feed, server, _ ->

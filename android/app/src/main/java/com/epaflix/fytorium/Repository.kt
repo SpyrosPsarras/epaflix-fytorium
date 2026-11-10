@@ -20,6 +20,8 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
                      val openedOccurrence: String? = null) {
     val writable get() = !offline && !serverUnavailable && !updateRequired && member != null
     val rows get() = listOfNotNull(today, upcoming).flatMap { list -> list.groups.values.flatten() + list.sections.flatMap { it.tasks } }
+    // Only the server's lists, or this device's patch of the row until they replace it, know whether the water is still live.
+    fun linkedWater(event: CareEvent) = rows.any { it.completedEvent?.run { linkedEventId == event.id || (id == event.id && linkedEventCount > 0) } == true }
     private fun updatedTime() = lastUpdated?.let {
         DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(it))
     }
@@ -212,6 +214,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 val response = JSONObject(result)
                 val saved = response.getJSONObject("event")
                 val watered = (response.optJSONArray("linked_events")?.length() ?: 0) > 0
+                if (watered) saved.put("linked_events", response.getJSONArray("linked_events"))
                 val next = response.optJSONObject("task")
                 patchEvents(listOf(saved), next?.let { mapOf(task.key to it) } ?: emptyMap(), if (action == "complete") Patch.Complete else Patch.Postpone, task.occurrence)
                 requestIds.remove(request)
@@ -237,14 +240,17 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         clearReceipt(receipt)
         return receipt.undo?.let { undo(it) } ?: false
     }
-    fun undo(event: CareEvent, plantsScreen: Boolean = false, busy: BusyKey = BusyKey.Row(event.id)): Boolean {
+    fun undo(event: CareEvent, plantsScreen: Boolean = false, busy: BusyKey = BusyKey.Row(event.id),
+             watered: (CareState) -> Boolean = { it.linkedWater(event) }): Boolean {
         if (!event.canUndo) return false
         val path = event.batchId?.let { "/api/task-batches/${requireSafeId(it)}/undo" } ?: "/api/care-events/${requireSafeId(event.id)}/undo"
         return withPending(busy) {
             write(path, body = null, plantsScreen = plantsScreen, receipts = true) { result ->
+                val text = if (event.batchId != null) receiptFor(event)?.undone ?: "Undone"
+                    else undoneText(event, plantName(event.plantId), watered(state.value))
                 undone(JSONObject(result))
                 requestIds.keys.removeAll { it.startsWith(event.plantId + ":") || it == "all:${event.plantId}" }
-                mutable.value = mutable.value.copy(receipt = Receipt("Undone", short = true))
+                mutable.value = mutable.value.copy(receipt = Receipt(text, short = true))
             }.also { success -> if (success) {
                 // A batch receipt names one of its plants, so the open page's history shows whether the batch included it.
                 reloadOpenPlant { it.plant.id == event.plantId || (event.batchId != null && it.history.any { past -> past.batchId == event.batchId }) }
@@ -437,7 +443,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             if (action == "repot") requestIds.remove("plant-repot:$id")
         }
     }
-    fun undoHistory(event: CareEvent): Boolean = undo(event, plantsScreen = true, busy = BusyKey.History(event.id))
+    fun undoHistory(event: CareEvent): Boolean =
+        undo(event, plantsScreen = true, busy = BusyKey.History(event.id)) { it.detail?.history.orEmpty().hasLinkedWater(event) }
     fun speciesNameCommand(key: Long, action: String, body: JSONObject = JSONObject()): Boolean {
         if (state.value.member?.role == Role.sitter) return false
         require(key > 0)

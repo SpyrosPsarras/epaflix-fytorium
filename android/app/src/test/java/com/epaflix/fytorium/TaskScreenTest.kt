@@ -230,7 +230,7 @@ class TaskScreenTest {
             row.copy(plantId = "plant-three", plantName = "Third fern"))
         val list = base.today.copy(sections = listOf(TaskSection("water", "Water", rows)))
         val actions = mutableListOf<String>()
-        compose.setContent { TaskTestTheme(dark) { TaskScreen(base.copy(today = list, batches = mapOf("batch-one" to BatchReceipt("Watered 2 plants", "2 plants", 2))), "today",
+        compose.setContent { TaskTestTheme(dark) { TaskScreen(base.copy(today = list, batches = mapOf("batch-one" to BatchReceipt("Watered 2 plants", "2 plants", 2, "Undid watering for 2 plants"))), "today",
             onAction = { task, action -> actions.add("${task.plantId}:$action") }) } }
         compose.onNodeWithText("Undo").assertDoesNotExist()
         compose.onNodeWithContentDescription("Water done for Second fern, Synthetic site. Part of a batch of 2 plants. Double tap to see the batch").assertHasClickAction()
@@ -256,6 +256,28 @@ class TaskScreenTest {
         compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo").assertHasClickAction()
         compose.onNodeWithContentDescription("Fertilize done for Synthetic fern, Synthetic site. Part of a batch of 3 tasks. Double tap to see the batch").assertHasClickAction()
         compose.onNodeWithContentDescription("Clean leaves done for Synthetic fern, Synthetic site. Part of a batch of 4 plants. Double tap to see the batch").assertHasClickAction()
+    }
+    @Test fun aLiquidFertilizeCheckNamesTheLinkedWaterItAlsoUndoes() {
+        val base = state()
+        val row = base.today!!.sections.single().tasks.single().copy(lateDays = 0)
+        val fertilize = org.json.JSONObject(eventFixture).put("id", "event-fert").put("task_type", "fertilize")
+        val water = org.json.JSONObject(eventFixture).put("id", "event-water").put("linked_event_id", "event-fert")
+        fun rows(vararg rows: CareTask) = base.copy(today = base.today.copy(sections = listOf(TaskSection("plant-one", "Synthetic fern", rows.toList()))))
+        val fertilized = row.copy(taskType = "fertilize", completedEvent = parseEvent(fertilize))
+        // The server lists the linked water as its own row.
+        val current = mutableStateOf(rows(fertilized, row.copy(completedEvent = parseEvent(water))))
+        compose.setContent { TaskTestTheme { TaskScreen(current.value, "today") } }
+        val both = "Fertilize and water done for Synthetic fern, Synthetic site. Double tap to undo both"
+        compose.onNodeWithContentDescription(both).assertHasClickAction()
+        compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo").assertHasClickAction()
+        // Before the next refresh lists the water, this device's write response names it.
+        compose.runOnIdle { current.value = rows(row.copy(taskType = "fertilize",
+            completedEvent = parseEvent(org.json.JSONObject(fertilize.toString()).put("linked_events", org.json.JSONArray().put(water))))) }
+        compose.onNodeWithContentDescription(both).assertHasClickAction()
+        // An opened plant page's history still lists water that another device has since undone.
+        compose.runOnIdle { current.value = rows(fertilized).copy(detail = PlantDetail(parsePlant(org.json.JSONObject(plantFixture)),
+            listOf(parseEvent(fertilize), parseEvent(water)), emptyMap())) }
+        compose.onNodeWithContentDescription("Fertilize done for Synthetic fern, Synthetic site. Double tap to undo").assertHasClickAction()
     }
     @Test fun upcomingSnoozedLight() = snoozedUpcoming(false)
     @Test fun upcomingSnoozedDark() = snoozedUpcoming(true)

@@ -18,7 +18,8 @@ data class CareEvent(val id: String, val plantId: String, val taskType: String?,
                      val customTaskName: String?, val kind: String, val occurredOn: String, val byMember: String?,
                      val byName: String, val batchId: String?, val undoneAt: String?, val previousPot: Boolean, val canUndo: Boolean,
                      val batchPlantCount: Int? = null, val batchEventCount: Int? = null,
-                     val batchAction: String? = null, val batchTask: String? = null, val linkedEventId: String? = null) {
+                     val batchAction: String? = null, val batchTask: String? = null, val linkedEventId: String? = null,
+                     val linkedEventCount: Int = 0) {
     val key get() = taskKey(customTaskId, taskType)
     val label get() = if (kind == "completed") "Done" else postponeLabel(kind) ?: "Skipped"
 }
@@ -65,7 +66,7 @@ fun taskLabel(type: String?, custom: String? = null): String = taskNames[type] ?
 
 private val receiptIds = AtomicLong()
 data class Receipt(val text: String, val undo: CareEvent? = null, val short: Boolean = false, val id: Long = receiptIds.incrementAndGet())
-data class BatchReceipt(val text: String, val scope: String, val count: Int)
+data class BatchReceipt(val text: String, val scope: String, val count: Int, val undone: String)
 sealed interface BusyKey {
     data class Row(val occurrence: String) : BusyKey
     data class Card(val taskKey: String) : BusyKey
@@ -83,10 +84,12 @@ private val taskActions = mapOf(
 // Undoing an event also undoes the water linked to it, unless that water was undone on its own.
 fun undoLabel(event: CareEvent, history: List<CareEvent>): String {
     if (event.batchId != null) return "Undo all" + batchReceipt(event, "")?.let { " ${it.count}" }.orEmpty()
-    val watered = history.any { it.linkedEventId == event.id && it.undoneAt == null }
-    return "Undo ${taskActions[event.taskType] ?: event.customTaskName ?: "custom task"}" +
-        if (watered) " and watering" else postponeNouns[event.kind]?.let { " $it" }.orEmpty()
+    return "Undo " + careWork(event.taskType, event.customTaskName, history.hasLinkedWater(event)) + postponeNouns[event.kind]?.let { " $it" }.orEmpty()
 }
+fun List<CareEvent>.hasLinkedWater(event: CareEvent) = any { it.linkedEventId == event.id && it.undoneAt == null }
+private fun careWork(type: String?, custom: String?, watered: Boolean) = (taskActions[type] ?: custom ?: "custom task") + if (watered) " and watering" else ""
+fun undoneText(event: CareEvent, plantName: String, watered: Boolean) =
+    "Undid ${postponeNouns[event.kind] ?: careWork(event.taskType, event.customTaskName, watered)} for $plantName"
 fun doneText(type: String?, custom: String?, subject: String, watered: Boolean = false): String =
     if (watered && type == "fertilize") "Fertilized and watered $subject"
     else taskVerbs[type]?.let { "$it $subject" } ?: "${taskLabel(type, custom)} done for $subject"
@@ -99,11 +102,12 @@ internal fun batchReceipt(action: String?, plantCount: Int?, eventCount: Int?, p
     val plants = plantCount ?: return null
     val events = eventCount ?: return null
     return when (action) {
-        "complete-all" -> countLabel(events, "task").let { BatchReceipt("Handled $it for $plantName", it, events) }
-        "rain" -> countLabel(plants, "outdoor plant").let { BatchReceipt("Watered $it", it, plants) }
+        "complete-all" -> countLabel(events, "task").let { BatchReceipt("Handled $it for $plantName", it, events, "Undid $it for $plantName") }
+        "rain" -> countLabel(plants, "outdoor plant").let { BatchReceipt("Watered $it", it, plants, "Undid watering for $it") }
         // A card completes one task per plant, so any further events are the water linked to liquid fertilizing.
         "complete-type" -> countLabel(plants, "plant").let {
-            BatchReceipt(doneText(task?.takeIf { key -> key in taskNames }, customTaskName, it, watered = events > plants), it, plants)
+            val type = task?.takeIf { key -> key in taskNames }
+            BatchReceipt(doneText(type, customTaskName, it, watered = events > plants), it, plants, "Undid ${careWork(type, customTaskName, events > plants)} for $it")
         }
         else -> null
     }
@@ -115,7 +119,7 @@ internal fun parseEvent(j: JSONObject) = CareEvent(j.getString("id"), j.getStrin
     j.nullable("custom_task_id"), j.nullable("custom_task_name"), j.getString("kind"), j.getString("occurred_on"),
     j.nullable("by_member"), j.optString("by_name"), j.nullable("batch_id"), j.nullable("undone_at"), !j.isNull("previous_pot"), j.getBoolean("can_undo"),
     if (j.isNull("batch_plant_count")) null else j.getInt("batch_plant_count"), if (j.isNull("batch_event_count")) null else j.getInt("batch_event_count"),
-    j.nullable("batch_action"), j.nullable("batch_task"), j.nullable("linked_event_id"))
+    j.nullable("batch_action"), j.nullable("batch_task"), j.nullable("linked_event_id"), j.optJSONArray("linked_events")?.length() ?: 0)
 internal fun parseTask(j: JSONObject) = CareTask(j.getString("status"), j.nullable("dueOn"),
     if (j.isNull("intervalDays")) null else j.getInt("intervalDays"), j.optInt("lateDays"),
     j.getJSONArray("basedOn").mapObjects { b -> Basis(b.getString("input"), b.opt("value").takeUnless { it == JSONObject.NULL },

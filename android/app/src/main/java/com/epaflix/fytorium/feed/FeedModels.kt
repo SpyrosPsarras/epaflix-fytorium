@@ -17,6 +17,7 @@ data class Rain(val plantCount: Int, val precipitationMm: Double, val batchId: S
 data class FeedWeather(val locationSet: Boolean, val forecastFetchedAt: String?, val rain: Rain?, val lastBatchId: String?,
                        val lastBatchPlantCount: Int? = null) {
     val rainReceipt get() = batchReceipt("rain", lastBatchPlantCount, lastBatchPlantCount)?.text
+    val rainUndone get() = batchReceipt("rain", lastBatchPlantCount, lastBatchPlantCount)?.undone
 }
 data class WeatherLocation(val latitude: Double, val longitude: Double, val label: String?) {
     fun json() = JSONObject().put("latitude", latitude).put("longitude", longitude).put("label", label ?: JSONObject.NULL)

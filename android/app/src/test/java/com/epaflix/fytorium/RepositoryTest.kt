@@ -85,7 +85,7 @@ class RepositoryTest {
             assertEquals("/api/task-batches/batch-one/undo", server.takeRequest().path)
             // The undo response carries the lists, so no refresh follows it.
             assertNull(server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS))
-            assertEquals("Undone", repository.state.value.receipt!!.text)
+            assertEquals("Undid leaf cleaning for 2 plants", repository.state.value.receipt!!.text)
             assertTrue(repository.state.value.today!!.sections.single().tasks.all { it.completedEvent == null })
         }
     }
@@ -144,8 +144,11 @@ class RepositoryTest {
             server.enqueue(MockResponse().setBody(taskListFixture("upcoming")))
             assertTrue(repository.handleType("fertilize"))
             assertEquals("Fertilized and watered 2 plants", repository.state.value.receipt!!.text)
-            assertEquals(BatchReceipt("Fertilized and watered 2 plants", "2 plants", 2), repository.state.value.batches.getValue("batch-fertilize"))
+            assertEquals(BatchReceipt("Fertilized and watered 2 plants", "2 plants", 2, "Undid fertilizing and watering for 2 plants"), repository.state.value.batches.getValue("batch-fertilize"))
             repeat(3) { assertNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)) }
+            server.enqueue(MockResponse().setBody(undoResponse(""""batchId":"batch-fertilize"""") { if (it == "today") fertilizeAndWaterToday() else taskListFixture(it) }))
+            assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
+            assertEquals("Undid fertilizing and watering for 2 plants", repository.state.value.receipt!!.text)
         }
     }
     @Test fun aWritePatchesOnlyTheActedRowUntilTheRefreshListsTheLinkedWater() {
@@ -233,18 +236,18 @@ class RepositoryTest {
         val card = event.copy(batchAction = "complete-type", batchTask = "water")
         assertNull(batchReceipt(card, "Synthetic fern"))
         assertNull(batchReceipt(event.copy(batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
-        assertEquals(BatchReceipt("Watered 9 plants", "9 plants", 9), batchReceipt(card.copy(batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
-        assertEquals(BatchReceipt("Watered 1 plant", "1 plant", 1), batchReceipt(card.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
+        assertEquals(BatchReceipt("Watered 9 plants", "9 plants", 9, "Undid watering for 9 plants"), batchReceipt(card.copy(batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
+        assertEquals(BatchReceipt("Watered 1 plant", "1 plant", 1, "Undid watering for 1 plant"), batchReceipt(card.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
         // The water row of a fertilize card batch still names the fertilizing.
-        assertEquals(BatchReceipt("Fertilized and watered 9 plants", "9 plants", 9),
+        assertEquals(BatchReceipt("Fertilized and watered 9 plants", "9 plants", 9, "Undid fertilizing and watering for 9 plants"),
             batchReceipt(card.copy(batchTask = "fertilize", linkedEventId = "event-zero", batchPlantCount = 9, batchEventCount = 18), "Synthetic fern"))
-        assertEquals(BatchReceipt("Fertilized 9 plants", "9 plants", 9), batchReceipt(card.copy(batchTask = "fertilize", batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
-        assertEquals(BatchReceipt("Synthetic misting done for 2 plants", "2 plants", 2),
+        assertEquals(BatchReceipt("Fertilized 9 plants", "9 plants", 9, "Undid fertilizing for 9 plants"), batchReceipt(card.copy(batchTask = "fertilize", batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
+        assertEquals(BatchReceipt("Synthetic misting done for 2 plants", "2 plants", 2, "Undid Synthetic misting for 2 plants"),
             batchReceipt(card.copy(batchTask = "custom-one", batchPlantCount = 2, batchEventCount = 2), "Synthetic fern", "Synthetic misting"))
         val plant = event.copy(batchAction = "complete-all")
-        assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks", 3), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 3), "Synthetic fern"))
-        assertEquals(BatchReceipt("Handled 1 task for Synthetic fern", "1 task", 1), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
-        assertEquals(BatchReceipt("Watered 3 outdoor plants", "3 outdoor plants", 3),
+        assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks", 3, "Undid 3 tasks for Synthetic fern"), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 3), "Synthetic fern"))
+        assertEquals(BatchReceipt("Handled 1 task for Synthetic fern", "1 task", 1, "Undid 1 task for Synthetic fern"), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
+        assertEquals(BatchReceipt("Watered 3 outdoor plants", "3 outdoor plants", 3, "Undid watering for 3 outdoor plants"),
             batchReceipt(event.copy(batchAction = "rain", batchPlantCount = 3, batchEventCount = 3), "Synthetic fern"))
     }
     @Test fun recoveredBatchReceiptKeepsTheServerScopeWhenRowsAreFiltered() {
@@ -257,7 +260,7 @@ class RepositoryTest {
             rows.put(org.json.JSONObject(rows.getJSONObject(0).toString()).put("plant_id", "plant-two").put("plant_name", "Second fern")
                 .put("completed_event", org.json.JSONObject(batch.toString()).put("id", "event-two").put("plant_id", "plant-two")))
             enqueueRefresh(server, today = list.toString()); repository.refresh()
-            assertEquals(BatchReceipt("Watered 9 plants", "9 plants", 9), repository.state.value.batches.getValue("batch-one"))
+            assertEquals(BatchReceipt("Watered 9 plants", "9 plants", 9, "Undid watering for 9 plants"), repository.state.value.batches.getValue("batch-one"))
             val requests = server.requestCount
             assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.first(), "undo"))
             assertEquals(requests, server.requestCount)
@@ -283,6 +286,9 @@ class RepositoryTest {
             val visible = repository.state.value.today!!.sections.single().tasks
             assertTrue(repository.act(visible.last(), "undo"))
             assertEquals("Watered 3 outdoor plants", repository.state.value.receipt!!.text)
+            server.enqueue(MockResponse().setBody(undoResponse(""""batchId":"batch-rain"""") { taskListFixture(it) }))
+            assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
+            assertEquals("Undid watering for 3 outdoor plants", repository.state.value.receipt!!.text)
         }
     }
     @Test fun plantBatchReceiptNamesThePlantAndReportsEmptyAndFailedBatches() {
@@ -298,7 +304,8 @@ class RepositoryTest {
             assertEquals("/api/plants/plant-one/tasks/complete-all", server.takeRequest().path)
             assertEquals("Handled 3 tasks for Synthetic fern", repository.state.value.receipt!!.text)
             assertEquals("batch-plant-one", repository.state.value.receipt!!.undo!!.batchId)
-            assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks", 3), repository.state.value.batches.getValue("batch-plant-one"))
+            assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks", 3, "Undid 3 tasks for Synthetic fern"), repository.state.value.batches.getValue("batch-plant-one"))
+            val handled = repository.state.value.receipt!!
             server.enqueue(MockResponse().setBody(batch("plant-unknown", 1)))
             assertTrue(repository.handleAll("plant-unknown", plantsScreen = true))
             server.takeRequest()
@@ -319,9 +326,14 @@ class RepositoryTest {
             assertNull(repository.state.value.receipt!!.undo)
             server.enqueue(MockResponse().setResponseCode(409).setBody("""{"message":"Graveyard plants have no tasks. Restore the plant first."}"""))
             assertFalse(repository.handleAll("plant-one", plantsScreen = true))
+            server.takeRequest()
             assertEquals("Graveyard plants have no tasks. Restore the plant first.", repository.state.value.receipt!!.text)
             assertNull(repository.state.value.receipt!!.undo)
             assertNull(repository.plantState.value.errors["_form"])
+            server.enqueue(MockResponse().setBody(undoResponse(""""batchId":"batch-plant-one"""") { taskListFixture(it) }))
+            assertTrue(repository.undoReceipt(handled))
+            assertEquals("/api/task-batches/batch-plant-one/undo", server.takeRequest().path)
+            assertEquals("Undid 3 tasks for Synthetic fern", repository.state.value.receipt!!.text)
         }
     }
     @Test fun plantPageCareWriteLeavesThePlantScreenUsableAndQueuesTheNextTap() {
@@ -825,7 +837,7 @@ class RepositoryTest {
             assertTrue(repository.act(done, "undo"))
             assertNull(repository.state.value.today!!.sections.single().tasks.single().completedEvent)
             assertEquals(1, repository.state.value.today!!.sections.single().tasks.single().lateDays)
-            assertEquals("Undone", repository.state.value.receipt!!.text)
+            assertEquals("Undid watering for Synthetic fern", repository.state.value.receipt!!.text)
             val requests = (1..7).map { server.takeRequest() }
             // The undo response's lists replace the cached ones, so no Undo stays in the cache and no refresh follows.
             assertNull(server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS))
@@ -952,6 +964,7 @@ class RepositoryTest {
                     withRows(view, org.json.JSONObject(lateFertilize.toString()).put("task_type", "fertilize"), org.json.JSONObject(lateWater), due = "2030-05-27") })
             repository.refresh()
             assertTrue(repository.undo(parseEvent(fertilize)))
+            assertEquals("Undid fertilizing and watering for Synthetic fern", repository.state.value.receipt!!.text)
             for (list in listOf(repository.state.value.today!!, repository.state.value.upcoming!!)) {
                 val rows = list.sections.flatMap { it.tasks }
                 assertEquals(listOf("fertilize", "water"), rows.map { it.key }.sorted())
@@ -994,10 +1007,12 @@ class RepositoryTest {
             assertTrue(repository.act(today().single(), "snooze"))
             assertTrue(today().isEmpty())
             assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
+            assertEquals("Undid snooze for Synthetic fern", repository.state.value.receipt!!.text)
             assertRestored()
             assertTrue(repository.act(today().single(), "skip"))
             assertTrue(today().isEmpty())
             assertTrue(repository.undoHistory(parseEvent(postponed("skipped"))))
+            assertEquals("Undid skip for Synthetic fern", repository.state.value.receipt!!.text)
             assertRestored()
         }
     }
@@ -1057,6 +1072,7 @@ class RepositoryTest {
             val feed = rainFeed(server, repository)
             assertEquals("batch-rain", feed.state.value.weather!!.lastBatchId)
             assertTrue(feed.undoRain())
+            assertEquals("Undid watering for 2 outdoor plants", feed.state.value.message)
             for (list in listOf(repository.state.value.today!!, repository.state.value.upcoming!!)) assertLate(list.sections.flatMap { it.tasks }, listOf("plant-one", "plant-two"))
             assertShows(repository, restored)
         }
@@ -1375,8 +1391,112 @@ class RepositoryTest {
             }
             assertTrue(repository.undoHistory(event))
             assertNull(repository.state.value.today!!.sections.single().tasks.single().completedEvent)
-            assertEquals("Undone", repository.state.value.receipt!!.text)
+            assertEquals("Undid watering for Synthetic fern", repository.state.value.receipt!!.text)
         }
+    }
+    @Test fun undoingLiquidFertilizeBeforeTheWaterIsListedNamesBothFromTheWriteResponse() {
+        withRepository { repository, server, cache ->
+            val fertilize = org.json.JSONObject(eventFixture).put("task_type", "fertilize")
+            val water = org.json.JSONObject(eventFixture).put("id", "event-water").put("linked_event_id", "event-one").put("can_undo", false)
+            val pending = { view: String -> withRows(view, org.json.JSONObject().put("task_type", "fertilize")) }
+            undoServer(server, pending,
+                "/api/plants/plant-one/tasks/fertilize/complete" to org.json.JSONObject().put("event", fertilize)
+                    .put("linked_events", org.json.JSONArray().put(water)).put("task", org.json.JSONObject(nextWater)).toString(),
+                "/api/care-events/event-one/undo" to undoResponse(""""event":$fertilize,"task":$nextWater""", pending))
+            repository.refresh()
+            fun row() = repository.state.value.today!!.sections.flatMap { it.tasks }.single()
+            // The refresh after each write fails, so only the write response knows about the water.
+            assertTrue(repository.act(row(), "complete"))
+            assertTrue(cache.get("member-one", "today")!!.json.contains("event-water"))
+            assertTrue(repository.act(row(), "undo"))
+            assertEquals("Undid fertilizing and watering for Synthetic fern", repository.state.value.receipt!!.text)
+            assertTrue(repository.act(row(), "complete"))
+            assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
+            assertEquals("Undid fertilizing and watering for Synthetic fern", repository.state.value.receipt!!.text)
+        }
+    }
+    @Test fun historyUndoOfLiquidFertilizeNamesTheLinkedWater() {
+        withRepository { repository, server, _ ->
+            val fertilize = org.json.JSONObject(eventFixture).put("task_type", "fertilize").put("occurred_on", "2030-05-20")
+            val water = org.json.JSONObject(eventFixture).put("id", "event-water").put("linked_event_id", "event-one").put("occurred_on", "2030-05-20")
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = MockResponse().setBody(when (request.requestUrl!!.encodedPath) {
+                    "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
+                    "/api/tasks" -> taskListFixture(request.requestUrl!!.queryParameter("view")!!)
+                    "/api/plants" -> "[$plantFixture]"
+                    "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
+                    "/api/plants/plant-one" -> plantFixture
+                    "/api/plants/plant-one/history" -> "[$fertilize,$water]"
+                    "/api/plants/plant-one/tasks" -> """{"water":$nextWater,"customTasks":{}}"""
+                    "/api/care-events/event-one/undo" -> undoResponse(""""event":$fertilize,"task":$nextWater""") { taskListFixture(it) }
+                    else -> "{}"
+                })
+            }
+            repository.refresh()
+            repository.openPlant("plant-one")
+            assertTrue(repository.undoHistory(repository.state.value.detail!!.history.first()))
+            assertEquals("Undid fertilizing and watering for Synthetic fern", repository.state.value.receipt!!.text)
+        }
+    }
+    private val liquidFertilize = org.json.JSONObject(eventFixture).put("task_type", "fertilize")
+    private val linkedWater = org.json.JSONObject(eventFixture).put("id", "event-water").put("linked_event_id", "event-one")
+    private fun completed(view: String, vararg events: org.json.JSONObject) =
+        withRows(view, *events.map { org.json.JSONObject().put("task_type", it.getString("task_type")).put("completed_event", it) }.toTypedArray())
+    private fun ServedLists.plantPage(vararg history: org.json.JSONObject) {
+        responses["/api/plants/plant-one"] = plantFixture
+        responses["/api/plants/plant-one/history"] = history.joinToString(",", "[", "]")
+        responses["/api/plants/plant-one/tasks"] = """{"water":$nextWater,"customTasks":{}}"""
+    }
+    private fun ServedLists.undoes(event: org.json.JSONObject, vararg left: org.json.JSONObject) {
+        responses["/api/care-events/${event.getString("id")}/undo"] =
+            undoResponse(""""event":$event,"task":$nextWater""") { if (it == "today") completed(it, *left) else taskListFixture(it) }
+    }
+    @Test fun linkedWaterUndoneElsewhereIsNotNamedFromAnOpenedPlantsHistory() {
+        withRepository { repository, server, _ -> ServedLists(server, today = completed("today", liquidFertilize, linkedWater)).use { served ->
+            served.plantPage(liquidFertilize, linkedWater)
+            served.undoes(liquidFertilize)
+            repository.refresh()
+            repository.openPlant("plant-one")
+            served.today = completed("today", liquidFertilize)
+            repository.refresh()
+            val row = repository.state.value.today!!.sections.single().tasks.single()
+            assertFalse(repository.state.value.linkedWater(row.completedEvent!!))
+            assertTrue(repository.act(row, "undo"))
+            assertEquals("Undid fertilizing for Synthetic fern", repository.state.value.receipt!!.text)
+        } }
+    }
+    @Test fun undoingTheLinkedWaterHereStopsNamingItBeforeThePlantHistoryReloads() {
+        withRepository { repository, server, _ -> ServedLists(server, today = completed("today", liquidFertilize, linkedWater)).use { served ->
+            served.plantPage(liquidFertilize, linkedWater)
+            served.undoes(linkedWater, liquidFertilize)
+            served.undoes(liquidFertilize)
+            repository.refresh()
+            repository.openPlant("plant-one")
+            served.responses.remove("/api/plants/plant-one/history")
+            fun row(id: String) = repository.state.value.today!!.sections.single().tasks.single { it.completedEvent?.id == id }
+            assertTrue(repository.act(row("event-water"), "undo"))
+            assertEquals("Undid watering for Synthetic fern", repository.state.value.receipt!!.text)
+            assertNull(repository.state.value.detail!!.history.single { it.id == "event-water" }.undoneAt)
+            assertFalse(repository.state.value.linkedWater(row("event-one").completedEvent!!))
+            assertTrue(repository.act(row("event-one"), "undo"))
+            assertEquals("Undid fertilizing for Synthetic fern", repository.state.value.receipt!!.text)
+        } }
+    }
+    @Test fun aKeptReceiptStopsNamingLinkedWaterOnceServerListsReplaceThePatchedRow() {
+        withRepository { repository, server, _ -> ServedLists(server, today = withRows("today", org.json.JSONObject().put("task_type", "fertilize"))).use { served ->
+            served.responses["/api/plants/plant-one/tasks/fertilize/complete"] = org.json.JSONObject().put("event", liquidFertilize)
+                .put("linked_events", org.json.JSONArray().put(linkedWater)).put("task", org.json.JSONObject(nextWater)).toString()
+            served.undoes(liquidFertilize)
+            repository.refresh()
+            assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.single(), "complete"))
+            val receipt = repository.state.value.receipt!!
+            assertEquals("Fertilized and watered Synthetic fern", receipt.text)
+            // Another device undoes only the linked water before this one refreshes.
+            served.today = completed("today", liquidFertilize)
+            repository.refresh()
+            assertTrue(repository.undoReceipt(receipt))
+            assertEquals("Undid fertilizing for Synthetic fern", repository.state.value.receipt!!.text)
+        } }
     }
     @Test fun aWriteBusiesOnlyItsRowAndQueuesTapsOnOtherRows() {
         withRepository { repository, server, _ ->
