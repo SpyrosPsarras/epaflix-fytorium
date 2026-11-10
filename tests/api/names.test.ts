@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from 'vitest';
 import pg from 'pg';
+import { readFileSync } from 'node:fs';
 import { createApiHarness } from './harness';
 import { fixturePlant } from '../plant-fixture';
 
@@ -327,6 +328,7 @@ test.each([
   try {
     await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910013, 'Syntheticia frigida Inventor', 'Syntheticia frigida', 'SPECIES', CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING");
     await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910013, 'Synthetic coldleaf', 'en', 'owner'), (910013, 'Syntetisk kuldeblad', 'nb', 'owner'), (910013, 'Συνθετικό ψυχρόφυλλο', 'el', 'owner') ON CONFLICT DO NOTHING");
+    await expect.poll(async () => (await database.query("SELECT species_common_name(910013, 'el') AS name")).rows[0].name, { timeout: 15000 }).toBe('Συνθετικό ψυχρόφυλλο');
     const site = await (await request('/api/sites', 'POST', {
       name: 'Synthetic cold site', location: 'outdoor', light: 'part_sun', grow_light: false, humidity: 'normal', draft: false,
     })).json();
@@ -351,25 +353,108 @@ test.each([
   }
 });
 
-test('display names use language before source, then source priority and alphabetical order', async () => {
+test('display names read the chosen common name with supported-language and English fallback before canonical names', async () => {
   const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   try {
     await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910012, 'Syntheticia ordinata Inventor', 'Syntheticia ordinata', 'SPECIES', CURRENT_TIMESTAMP)");
     const display = async (language: string, nickname: string | null = null) =>
       (await database.query('SELECT plant_display_name($1, 910012, $2) AS name', [nickname, language])).rows[0].name;
     expect(await display('el', '  ')).toBe('Syntheticia ordinata');
-    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, 'Latin only', 'la', 'owner')");
+    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, 'Ignored raw name', 'en', 'owner')");
     expect(await display('fr')).toBe('Syntheticia ordinata');
-    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, 'English owner', 'en', 'owner'), (910012, 'Greek GBIF', 'el', 'gbif')");
-    expect(await display('nb')).toBe('English owner');
-    expect(await display('fr')).toBe('English owner');
-    expect(await display('el')).toBe('Greek GBIF');
-    for (const [source, name] of [['wikidata', 'Zulu wiki'], ['nortaxa', 'Zulu north'], ['owner', 'Zulu owner'], ['owner', 'Alpha owner']]) {
-      await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910012, $1, 'el', $2)", [name, source]);
-      expect(await display('el')).toBe(name);
-    }
+    await database.query("INSERT INTO species_common_names (gbif_key, language, name) VALUES (910012, 'en', 'English pick'), (910012, 'el', 'Greek pick') ON CONFLICT (gbif_key, language) DO UPDATE SET name = EXCLUDED.name");
+    expect(await display('nb')).toBe('English pick');
+    expect(await display('fr')).toBe('English pick');
+    expect(await display('el')).toBe('Greek pick');
+    await database.query("UPDATE species_common_names SET name = NULL WHERE gbif_key = 910012 AND language = 'el'");
+    expect(await display('el')).toBe('English pick');
     expect(await display('el', 'Bob')).toBe('Bob');
   } finally {
+    await database.end();
+  }
+});
+
+test('search and cached reference credits use the chosen common name in the requested language after owner changes', async () => {
+  const { cookie } = await harness.login();
+  const get = async (url: string, language: string) => {
+    const response = await fetch(harness.base + url, { headers: { cookie, 'accept-language': language } });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  await request(path + '/photo/credit');
+  const ownerName = await (await request(path + '/names', 'POST', { name: 'Familiar leaf', language: 'el' })).json();
+  for (const query of ['Testoria lucida', 'Familiar leaf']) {
+    const result = await get('/api/species/search?q=' + encodeURIComponent(query), 'el');
+    expect(result.candidates.find((row: { gbif_key: number }) => row.gbif_key === key)).toMatchObject({ common_name: 'Familiar leaf' });
+  }
+  expect(await get(path + '/photo/credit', 'el')).toMatchObject({ common_name: 'Familiar leaf' });
+  expect((await request(path + '/names/' + ownerName.id, 'DELETE')).status).toBe(204);
+  expect(await get(path + '/photo/credit', 'el')).toMatchObject({ common_name: 'Δοκιμόφυτο' });
+});
+
+test('GBIF lists are split into searchable names and a refreshed chosen common name excludes canonical and genus names', async () => {
+  harness.setGbif({ usageKey: 910014, scientificName: 'Splitoria synthetic Inventor', canonicalName: 'Splitoria synthetic', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  harness.setNames('gbif', { results: [{ vernacularName: 'Splitoria, Splitoria synthetic; Familiar snake leaf, Second leaf', language: 'en' }] });
+  harness.setNames('wikidata', { entities: { Q910014: { labels: {}, aliases: {} } } });
+  harness.setNames('nortaxa', []);
+  expect((await add(await search('Splitoria synthetic'), 910014)).status).toBe(201);
+  const splitPath = '/api/species/910014';
+  await expect.poll(async () => (await (await request(splitPath)).json()).name_fetch_needed, { timeout: 15000 }).toBe(false);
+  expect((await (await request(splitPath)).json()).names).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: 'Familiar snake leaf', source: 'gbif' }),
+    expect.objectContaining({ name: 'Second leaf', source: 'gbif' }),
+  ]));
+  expect((await search('Second leaf')).candidates).toContainEqual(expect.objectContaining({ gbif_key: 910014, matched_name: 'Second leaf', common_name: 'Second leaf' }));
+  harness.setNames('gbif', { results: [{ vernacularName: 'Splitoria; Splitoria synthetic; New familiar leaf', language: 'en' }] });
+  expect((await request(splitPath + '/names/refresh', 'POST', {})).status).toBe(202);
+  await expect.poll(async () => (await (await request(splitPath)).json()).name_fetch_needed, { timeout: 15000 }).toBe(false);
+  expect((await search('Splitoria synthetic')).candidates[0]).toMatchObject({ common_name: 'New familiar leaf' });
+});
+
+test('the names worker backfills existing species even without pending source fetches', async () => {
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910015, 'Backfillia synthetic Inventor', 'Backfillia synthetic', 'SPECIES', CURRENT_TIMESTAMP)");
+    await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910015, 'Backfillia', 'en', 'owner'), (910015, 'Existing familiar leaf', 'en', 'gbif')");
+    await harness.restartApp();
+    await expect.poll(async () => (await search('Backfillia synthetic')).candidates[0].common_name, { timeout: 15000 }).toBe('Existing familiar leaf');
+    expect((await database.query('SELECT language, name FROM species_common_names WHERE gbif_key = 910015 ORDER BY language')).rows).toEqual([
+      { language: 'el', name: null }, { language: 'en', name: 'Existing familiar leaf' }, { language: 'nb', name: null },
+    ]);
+  } finally { await database.end(); }
+});
+
+test('the migration splits joined names without duplicating existing parts and rolls the schema back', async () => {
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('CREATE SCHEMA common_name_migration_test');
+    await client.query('SET LOCAL search_path TO common_name_migration_test, public');
+    await client.query(`CREATE TABLE species (gbif_key integer PRIMARY KEY, canonical_name text);
+      CREATE TABLE species_names (gbif_key integer, name text, language text, source text,
+        normalised text GENERATED ALWAYS AS (normalise_species_name(name)) STORED,
+        UNIQUE (gbif_key, normalised, language, source));
+      INSERT INTO species VALUES (1, 'Syntheticia testensis');
+      INSERT INTO species_names (gbif_key, name, language, source) VALUES
+        (1, 'First leaf, Second leaf; ; First leaf', 'en', 'gbif'),
+        (1, 'Second leaf', 'en', 'gbif'), (1, 'Owner keepsake', 'en', 'owner')`);
+    const old = readFileSync('migrations/20261020090000_plant_display_name.sql', 'utf8').split('-- migrate:down')[0];
+    await client.query(old);
+    const [up, down] = readFileSync('migrations/20261109090000_species_common_names.sql', 'utf8').split('-- migrate:down');
+    await client.query(up);
+    expect((await client.query('SELECT name FROM species_names ORDER BY name')).rows).toEqual([
+      { name: 'First leaf' }, { name: 'Owner keepsake' }, { name: 'Second leaf' },
+    ]);
+    expect((await client.query("SELECT plant_display_name(NULL, 1, 'en') AS name")).rows[0].name).toBe('Syntheticia testensis');
+    await client.query("INSERT INTO species_common_names VALUES (1, 'en', 'Chosen leaf')");
+    expect((await client.query("SELECT plant_display_name(NULL, 1, 'nb') AS name")).rows[0].name).toBe('Chosen leaf');
+    await client.query(down);
+    expect((await client.query("SELECT plant_display_name(NULL, 1, 'en') AS name")).rows[0].name).toBe('Owner keepsake');
+    expect((await client.query("SELECT to_regclass('common_name_migration_test.species_common_names') AS table_name")).rows[0].table_name).toBeNull();
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
     await database.end();
   }
 });

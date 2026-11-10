@@ -38,6 +38,86 @@ class TodayNavigationTest {
         compose.onNodeWithText("Edit plant").assertDoesNotExist()
     }
 
+    @Test fun openingEachOccurrenceOfOneTaskSelectsThatOccurrence() {
+        val plant = parsePlant(JSONObject(plantFixture))
+        val list = parseTaskList(taskListFixture("upcoming", "2030-06-09", event = ""","postponed":"skipped""""))
+        val skipped = list.sections.single().tasks.single()
+        val done = skipped.copy(postponed = null, completedEvent = parseEvent(JSONObject(eventFixture)))
+        val upcoming = list.copy(sections = listOf(TaskSection("2030-06-02", "2030-06-02", listOf(done)), TaskSection("2030-06-09", "2030-06-09", listOf(skipped))))
+        val care = CareState(member = Member("member-one", Role.owner), plants = listOf(plant), today = upcoming.copy(view = "today", sections = emptyList()),
+            upcoming = upcoming, detail = PlantDetail(plant, emptyList(), emptyMap()))
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care) } }
+        compose.onNodeWithTag("view-upcoming").performClick()
+        val card = hasAnyAncestor(hasTestTag("today-task:${plant.id}:water"))
+        for ((index, completed) in listOf(1 to false, 0 to true)) {
+            compose.onAllNodesWithContentDescription("Open ${plant.displayName}")[index].performScrollTo().performClick()
+            compose.onNode(card and hasText(if (completed) "Undo" else "Skip")).assertExists()
+            compose.onNode(card and hasText(if (completed) "Skip" else "Undo")).assertDoesNotExist()
+            compose.onNodeWithContentDescription("Back").performClick()
+        }
+    }
+
+    @Test fun theOpenedOccurrenceStaysSelectedAfterItsCompletionAndARestart() = openedOccurrence(completedHere = true)
+    @Test fun anOccurrenceCompletedElsewhereLeavesThePlantPageWithoutItsTask() = openedOccurrence(completedHere = false)
+
+    private fun openedOccurrence(completedHere: Boolean) {
+        val plant = parsePlant(JSONObject(plantFixture))
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val care = mutableStateOf(CareState(member = Member("member-one", Role.owner), plants = listOf(plant), today = list,
+            upcoming = list.copy(view = "upcoming"), detail = PlantDetail(plant, emptyList(), emptyMap())))
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
+        compose.onNodeWithContentDescription("Open ${plant.displayName}").performClick()
+        val block = hasAnyAncestor(hasTestTag("today-task:${plant.id}:water"))
+        compose.onNode(block and hasText("Skip")).assertIsDisplayed()
+        val event = parseEvent(JSONObject(eventFixture)).let { if (completedHere) it else it.copy(id = "event-other", byMember = "member-two") }
+        val done = list.copy(sections = listOf(TaskSection("water", "Water", listOf(task.copy(completedEvent = event)))))
+        // The server's rows arrive in the same state as the repository's moved selection, with no patched rows drawn in between.
+        compose.runOnIdle { care.value = care.value.copy(today = done, upcoming = done.copy(view = "upcoming"),
+            openedOccurrence = if (completedHere) event.id else task.occurrence) }
+        if (completedHere) {
+            compose.onNode(block and hasText("Undo")).assertIsDisplayed()
+            // A restarted process keeps the server's rows and the saved selection, but not the repository's.
+            compose.runOnIdle { care.value = care.value.copy(openedOccurrence = null) }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.onNode(block and hasText("Undo")).assertIsDisplayed()
+        } else {
+            compose.onNodeWithTag("today-task:${plant.id}:water").assertDoesNotExist()
+            compose.onNodeWithText(plant.displayName).assertIsDisplayed()
+        }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
+        compose.onNode(hasContentDescription("Done for ${plant.displayName}", substring = true)).assertIsDisplayed()
+    }
+
+    @Test fun aRestartedProcessHandsTheOpenedOccurrenceToItsNewRepository() {
+        val plant = parsePlant(JSONObject(plantFixture))
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val care = CareState(member = Member("member-one", Role.owner), plants = listOf(plant), today = list,
+            upcoming = list.copy(view = "upcoming"), detail = PlantDetail(plant, emptyList(), emptyMap()))
+        val database = androidx.room.Room.inMemoryDatabaseBuilder(org.robolectric.RuntimeEnvironment.getApplication(), CareDatabase::class.java)
+            .allowMainThreadQueries().build()
+        fun controller(): CareController {
+            val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
+            val client = ApiClient("http://127.0.0.1:9", credentials) {}
+            return CareController(org.robolectric.RuntimeEnvironment.getApplication(), credentials, Repository(client, CareCache(database), { false }), client)
+        }
+        val before = controller()
+        val after = controller()
+        val current = mutableStateOf(before)
+        try {
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care, controller = current.value) } }
+            compose.onNodeWithContentDescription("Open ${plant.displayName}").performClick()
+            compose.runOnIdle { assertEquals(task.occurrence, before.repository.state.value.openedOccurrence) }
+            compose.runOnIdle { current.value = after }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.runOnIdle { assertEquals(task.occurrence, after.repository.state.value.openedOccurrence) }
+        } finally { before.close(); after.close(); database.close() }
+    }
+
     @Test fun ownerTaskSurvivesRestorationAndBackReturnsToToday() = navigate("today", Role.owner, restore = true)
     @Test fun sitterTaskSurvivesRestorationAndBackReturnsToToday() = navigate("today", Role.sitter, restore = true)
     @Test fun systemBackFromTodayTaskKeepsTodayScroll() = navigate("today", Role.owner, systemBack = true)

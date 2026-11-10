@@ -36,7 +36,7 @@ test('starts due on the household added date, completes with a member and recomp
   expect(result.task).toMatchObject({ dueOn: '2026-11-02', intervalDays: 8, lateDays: 0 });
   expect(await tasks()).toMatchObject({ water: result.task });
   expect(await history()).toEqual([expect.objectContaining({ id: result.event.id, kind: 'completed', task_type: 'water', occurred_at: '2026-10-24T22:30:00.000Z', occurred_on: '2026-10-25', by_name: 'Test member', undone_at: null })]);
-  expect(await (await request('/api/tasks?view=today')).json()).toMatchObject({ today: '2026-10-25', groups: { water: [] } });
+  expect(await (await request('/api/tasks?view=today')).json()).toMatchObject({ today: '2026-10-25', groups: { water: [expect.objectContaining({ plant_id: plantId, completed_event: expect.objectContaining({ id: result.event.id }) })] } });
 });
 
 test('clock advancement makes it late, and undo restores both the previous completion and added-date state', async () => {

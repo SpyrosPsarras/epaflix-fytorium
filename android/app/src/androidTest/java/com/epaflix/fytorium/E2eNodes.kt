@@ -37,7 +37,7 @@ private fun ComposeContentTestRule.stateDump(): String {
         "${it.plantId}:${it.key}[completed=${it.completedEvent != null},late=${it.lateDays},due=${it.dueOn},water=${it.basedOn.firstOrNull { b -> b.input == "wateringIntervalDays" }?.let { b -> "${b.source}/${b.value as? Number}" }}]"
     }
     return "tab=$tab, view=$views, controls=$controls, loggedIn=${app.session.state.value.loggedIn}, connected=${app.care.connected()}, " +
-        "care[member=${care.member != null},busy=${care.busy},offline=${care.offline},serverUnavailable=${care.serverUnavailable},messagePresent=${care.message != null},today=${care.today?.today},showCompleted=${care.today?.settings?.showCompleted},plants=${care.plants.size},detail=${care.detail?.plant?.id}/${care.detail?.plant?.status},handled=${care.handled.size},tasks=$tasks], " +
+        "care[member=${care.member != null},busy=${care.busy},offline=${care.offline},serverUnavailable=${care.serverUnavailable},messagePresent=${care.message != null},today=${care.today?.today},showCompleted=${care.today?.settings?.showCompleted},plants=${care.plants.size},detail=${care.detail?.plant?.id}/${care.detail?.plant?.status},tasks=$tasks], " +
         "plants[refreshing=${plants.refreshing},saving=${plants.saving},errorFields=${plants.errors.keys}], " +
         "feed[refreshing=${feed.refreshing},saving=${feed.saving},cards=${feed.cards.take(12).map { it.kind }},rainBatch=${feed.weather?.lastBatchId != null}]"
 }

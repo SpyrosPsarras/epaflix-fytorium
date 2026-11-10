@@ -76,7 +76,7 @@ class FeedRepositoryTest {
     }
     @Test fun malformedBatchIdShowsErrorWithoutRequestOrCrash() = withFeed { feed, server, _ ->
         server.enqueue(MockResponse().setBody(feedFixture))
-        server.enqueue(MockResponse().setBody(org.json.JSONObject(weatherFixture).put("lastRainBatch", org.json.JSONObject().put("id", "../bad")).toString()))
+        server.enqueue(MockResponse().setBody(org.json.JSONObject(weatherFixture).put("lastRainBatch", org.json.JSONObject().put("id", "../bad").put("plantCount", 1)).toString()))
         feed.refresh(Member("synthetic-member", Role.owner))
         assertFalse(feed.undoRain())
         assertEquals("Rain watering could not be undone. Refresh to try again.", feed.state.value.message)
@@ -96,7 +96,8 @@ class FeedRepositoryTest {
         server.enqueue(MockResponse().setBody(feedFixture))
         server.enqueue(MockResponse().setBody(org.json.JSONObject(weatherFixture).put("rain", org.json.JSONObject("""{"plantCount":1,"precipitationMm":6,"batchId":"batch-one"}""")).put("lastRainBatch", org.json.JSONObject("""{"id":"batch-one","plantCount":1}""")).toString()))
         assertTrue(feed.water())
-        assertEquals("Marked 1 outdoor plants watered.", feed.state.value.message)
+        assertNull(feed.state.value.message)
+        assertEquals("Watered 1 outdoor plant", feed.state.value.weather!!.rainReceipt)
         assertEquals("batch-one", feed.state.value.weather!!.lastBatchId)
         repeat(3) { server.takeRequest() }
         server.enqueue(MockResponse().setBody("{}"))
@@ -105,6 +106,26 @@ class FeedRepositoryTest {
         assertEquals("/api/task-batches/batch-one/undo", server.takeRequest().path)
         assertEquals("Rain watering undone.", feed.state.value.message)
         assertNull(feed.state.value.weather!!.lastBatchId)
+    }
+    @Test fun rainReceiptMatchesOnTheActingDeviceAfterRecoveryAndOnToday() = withFeed { feed, server, _ ->
+        load(feed, server)
+        server.enqueue(MockResponse().setBody("""{"plantCount":3,"batchId":"batch-one","undoneAt":null}"""))
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertTrue(feed.water())
+        val acting = feed.state.value.weather!!
+        assertEquals("batch-one", acting.rain!!.batchId)
+        assertEquals("Watered 3 outdoor plants", acting.rainReceipt)
+        val recovered = parseWeather(org.json.JSONObject(weatherFixture).put("rain", org.json.JSONObject("""{"plantCount":4,"precipitationMm":6,"batchId":"batch-one"}"""))
+            .put("lastRainBatch", org.json.JSONObject("""{"id":"batch-one","plantCount":3}""")))
+        assertEquals(acting.rainReceipt, recovered.rainReceipt)
+        val today = parseEvent(org.json.JSONObject(eventFixture).put("batch_id", "batch-one").put("batch_action", "rain")
+            .put("batch_plant_count", 3).put("batch_event_count", 3))
+        assertEquals(acting.rainReceipt, batchReceipt(today, "Synthetic fern")!!.text)
+        feed.wipe(); load(feed, server)
+        server.enqueue(MockResponse().setBody("""{"plantCount":3,"batchId":"batch-two","undoneAt":"2030-06-02T10:00:00Z"}"""))
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertTrue(feed.water())
+        assertNull("A replay of an undone batch must not show it as watered", feed.state.value.weather!!.rainReceipt)
     }
     @Test fun offlineFeedIsReadOnlyAndSettingsDoNotQueue() = withFeed { feed, server, online ->
         load(feed, server)

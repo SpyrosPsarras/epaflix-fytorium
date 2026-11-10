@@ -67,8 +67,10 @@ class PlantaScreenTest {
         compose.runOnIdle { assertEquals(row.id, skipped) }
     }
     @Test fun reviewInstructionsExplainReadyAndUnmatchedPlants() {
-        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row.copy(status = "confirmed", selectedName = candidate.canonicalName))))
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row.copy(status = "confirmed", selectedName = candidate.canonicalName,
+            selectedKey = candidate.key, selectedCommonName = "Synthetic cloudleaf"))))
         compose.setContent { FytoriumTheme { PlantaScreen(state.value) } }
+        compose.onNodeWithText("Synthetic cloudleaf").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Plants marked Needs review need one tap: choose the matching species or skip. Everything else is ready.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Ready to import").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Change species or skip").performScrollTo().assertIsEnabled()
@@ -127,6 +129,7 @@ class PlantaScreenTest {
                 compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Reference photo of Testoria nebulosa", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
                 val after = pill.fetchSemanticsNode().boundsInRoot
                 println("A11 photo credit choice bounds: before=$before after=$after")
+                compose.onAllNodesWithText("Synthetic cloudleaf", useUnmergedTree = true).assertCountEquals(0)
                 assertEquals(before, after)
             } finally { creditReady.countDown() }
         }

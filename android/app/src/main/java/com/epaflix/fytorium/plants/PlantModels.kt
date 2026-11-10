@@ -13,7 +13,7 @@ data class PlantsRequestState(val online: Boolean = true, val refreshing: Boolea
 // Match acceptance belongs to the server, including partial names and all languages.
 data class SpeciesCandidate(val key: Long, val scientificName: String, val canonicalName: String, val rank: String,
     val matchType: String?, val confidence: Int?, val requiresConfirmation: Boolean, val matchedName: String?, val matchedLanguage: String?,
-    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList())
+    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null)
 data class SpeciesSearch(val id: String, val candidates: List<SpeciesCandidate>)
 fun parseSpeciesSearch(json: String): SpeciesSearch {
     val j = JSONObject(json)
@@ -22,7 +22,8 @@ fun parseSpeciesSearch(json: String): SpeciesSearch {
             it.nullable("match_type"), if (it.isNull("confidence")) null else it.getInt("confidence"),
             it.getBoolean("requires_confirmation"), it.nullable("matched_name"), it.nullable("matched_language"),
             if (it.isNull("score")) null else it.getDouble("score"), it.nullable("identification_name"),
-            it.optJSONArray("common_names")?.let { names -> (0 until names.length()).map { n -> names.getString(n) } }.orEmpty())
+            it.optJSONArray("common_names")?.let { names -> (0 until names.length()).map { n -> names.getString(n) } }.orEmpty(),
+            it.nullable("common_name"))
     })
 }
 data class PlantOptions(val choices: Map<String, List<String>>, val labels: Map<String, String>, val numbers: List<String>,

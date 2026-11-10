@@ -10,7 +10,9 @@ import { photoThumbnail, storePhotoPair } from '../photos';
 import { downloadCover } from './cover';
 import { saveSpecies } from '../species';
 import { kickNameFetch } from '../names';
-import { staging, storedStaging, type StoredImportStaging } from './import';
+import { dueDates } from '../tasks';
+import type { TaskType } from '$lib/schedule/engine';
+import { importNickname, staging, storedStaging, type StoredImportStaging } from './import';
 
 export async function commitImport(identity: Identity) {
   const household = identity.household.id;
@@ -59,20 +61,23 @@ export async function commitImport(identity: Identity) {
             VALUES ($1,$2,'indoor','part_sun',false,'normal',false,true) RETURNING id`, [household, fields.site_name]);
           siteId = added.rows[0].id;
         }
-        await saveSpecies(client, row.selected, true);
-        // A new fetch replaces the Planta-sourced fields, including owner edits. Other fields stay local.
+        const species = await saveSpecies(client, row.selected, true);
+        // A missing Planta nickname must not erase an owner correction.
         const plant = await client.query(`INSERT INTO plants (household_id, planta_plant_id, gbif_key, site_id, nickname, cultivar, pot_type, pot_size_cm, soil_type, attributes_as_of, created_at)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
           ON CONFLICT (household_id, planta_plant_id) DO UPDATE SET gbif_key = EXCLUDED.gbif_key, site_id = EXCLUDED.site_id,
-            nickname = EXCLUDED.nickname, cultivar = EXCLUDED.cultivar, pot_type = EXCLUDED.pot_type, pot_size_cm = EXCLUDED.pot_size_cm, soil_type = EXCLUDED.soil_type
+            nickname = coalesce(EXCLUDED.nickname, plants.nickname), cultivar = EXCLUDED.cultivar, pot_type = EXCLUDED.pot_type, pot_size_cm = EXCLUDED.pot_size_cm, soil_type = EXCLUDED.soil_type
           RETURNING id, planta_cover_imported`,
-          [household, row.planta_plant_id, row.selected.gbif_key, siteId, fields.nickname, fields.cultivar, fields.pot_type, fields.pot_size_cm, fields.soil_type, now().toISOString().slice(0, 10), now()]);
+          [household, row.planta_plant_id, row.selected.gbif_key, siteId, importNickname(fields, row.selected, species), fields.cultivar, fields.pot_type, fields.pot_size_cm, fields.soil_type, now().toISOString().slice(0, 10), now()]);
         const plantId = plant.rows[0].id;
+        // Like any completion, an imported one keeps its task's due date from just before it.
+        const due = await dueDates(client, identity, plantId);
         for (const [task, date] of Object.entries(fields.care)) {
-          await client.query(`INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, source)
-            VALUES ($1,$2,$3,'completed',CASE WHEN length($4::text) = 10 THEN $4::date::timestamp AT TIME ZONE $7 ELSE $4::timestamptz END,$5,'Planta import',$6,NULL,'planta')
-            ON CONFLICT (household_id, plant_id, task_type) WHERE source = 'planta' DO UPDATE SET occurred_at = EXCLUDED.occurred_at`,
-            [household, plantId, task, date, identity.member.id, randomUUID(), config().householdTimezone]);
+          await client.query(`INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, source, due_on)
+            VALUES ($1,$2,$3,'completed',CASE WHEN length($4::text) = 10 THEN $4::date::timestamp AT TIME ZONE $7 ELSE $4::timestamptz END,$5,'Planta import',$6,NULL,'planta',$8)
+            ON CONFLICT (household_id, plant_id, task_type) WHERE source = 'planta' DO UPDATE SET occurred_at = EXCLUDED.occurred_at, due_on = EXCLUDED.due_on
+            WHERE care_events.occurred_at <> EXCLUDED.occurred_at`,
+            [household, plantId, task, date, identity.member.id, randomUUID(), config().householdTimezone, due[task as TaskType]]);
         }
         if (original && thumb && !plant.rows[0].planta_cover_imported) {
           const photoId = randomUUID();
@@ -95,5 +100,5 @@ export async function commitImport(identity: Identity) {
     }
   }
   kickNameFetch();
-  return staging(household);
+  return staging(household, identity.language);
 }

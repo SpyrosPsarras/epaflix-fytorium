@@ -34,10 +34,10 @@ class TodayPresentationTest {
         assertEquals(listOf("Water", "Fertilize"), sections.map { it.label })
         assertEquals(listOf("two", "one"), sections.first().tasks.map { it.plantId })
     }
-    @Test fun backgroundReadsDoNotDisableTaskActionsButAWritingRequestDoes() {
+    @Test fun backgroundReadsAndAWritingRowDoNotDisableOtherTaskActions() {
         val state = CareState(member = Member("one", Role.owner), busy = true)
         assertTrue(state.writable)
-        assertFalse(state.copy(saving = true).writable)
+        assertTrue(state.copy(pending = setOf(BusyKey.Row("plant-one:water:2030-06-01"))).writable)
         assertFalse(state.copy(offline = true).writable)
         assertFalse(state.copy(serverUnavailable = true).writable)
         assertFalse(state.copy(updateRequired = true).writable)
@@ -63,7 +63,7 @@ class TodayPresentationTest {
             task.copy(plantId = "next", plantName = "Synthetic palm", dueOn = "2030-06-05"), task.copy(plantId = "no-date", dueOn = null))
         val state = CareState(upcoming = upcoming.copy(sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows))))
         assertEquals("Next: Water Synthetic palm · Wednesday, 5 June", state.todayPresentation().nextTask)
-        assertEquals("Next: Water Synthetic fern · Thursday, 6 June",
-            state.copy(handled = mapOf("next:water" to event)).todayPresentation().nextTask)
+        val done = state.upcoming!!.copy(sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows.map { if (it.plantId == "next") it.copy(completedEvent = event) else it })))
+        assertEquals("Next: Water Synthetic fern · Thursday, 6 June", state.copy(upcoming = done).todayPresentation().nextTask)
     }
 }

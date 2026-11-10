@@ -113,7 +113,7 @@ import kotlinx.coroutines.withContext
                                     Icon(Icons.Filled.CheckCircle, "Ready to import", tint = readyColor, modifier = Modifier.size(48.dp).testTag("import-ready:${row.id}"))
                                     Text("Ready to import", style = MaterialTheme.typography.headlineSmall, color = readyColor)
                                 }
-                                row.selectedKey?.let { ReferencePhoto(imageApi, it, row.selectedName.orEmpty(), showName = true, displayPhoto = false) }
+                                row.selectedKey?.let { ReferencePhoto(imageApi, it, row.selectedName.orEmpty(), showName = true, displayPhoto = false, commonName = row.selectedCommonName) }
                                     ?: Text(row.selectedName.orEmpty(), style = MaterialTheme.typography.bodySmall)
                             }
                             AuthenticatedThumbnail(imageApi, if (row.hasCover) "/api/import/planta/${row.id}/cover" else null,
@@ -207,7 +207,7 @@ import kotlinx.coroutines.withContext
         border = BorderStroke(if (suggested) 2.dp else 1.dp, if (suggested) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "This is ${candidate.canonicalName}" }) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ReferencePhoto(imageApi, candidate.key, candidate.canonicalName, showName = true, size = 240.dp)
+            ReferencePhoto(imageApi, candidate.key, candidate.canonicalName, showName = true, size = 240.dp, commonName = candidate.commonName)
             val colours = ButtonDefaults.buttonColors()
             Surface(color = if (enabled) colours.containerColor else colours.disabledContainerColor,
                 contentColor = if (enabled) colours.contentColor else colours.disabledContentColor, shape = MaterialTheme.shapes.extraLarge) {

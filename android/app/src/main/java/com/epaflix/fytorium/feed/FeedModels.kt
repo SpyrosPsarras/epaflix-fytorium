@@ -2,6 +2,7 @@ package com.epaflix.fytorium.feed
 
 import com.epaflix.fytorium.Member
 import com.epaflix.fytorium.Role
+import com.epaflix.fytorium.batchReceipt
 import com.epaflix.fytorium.mapObjects
 import com.epaflix.fytorium.nullable
 import org.json.JSONObject
@@ -13,7 +14,10 @@ data class FeedLink(val id: String, val name: String)
 data class FeedCard(val id: String, val kind: String, val href: String, val title: String, val lines: List<String>,
                     val rain: Boolean = false, val plants: List<FeedLink> = emptyList(), val warnings: List<FeedWarning> = emptyList())
 data class Rain(val plantCount: Int, val precipitationMm: Double, val batchId: String?)
-data class FeedWeather(val locationSet: Boolean, val forecastFetchedAt: String?, val rain: Rain?, val lastBatchId: String?)
+data class FeedWeather(val locationSet: Boolean, val forecastFetchedAt: String?, val rain: Rain?, val lastBatchId: String?,
+                       val lastBatchPlantCount: Int? = null) {
+    val rainReceipt get() = batchReceipt("rain", lastBatchPlantCount, lastBatchPlantCount)?.text
+}
 data class WeatherLocation(val latitude: Double, val longitude: Double, val label: String?) {
     fun json() = JSONObject().put("latitude", latitude).put("longitude", longitude).put("label", label ?: JSONObject.NULL)
 }
@@ -82,4 +86,4 @@ internal fun parseFeedCard(j: JSONObject): FeedCard? {
 }
 internal fun parseWeather(j: JSONObject) = FeedWeather(j.getBoolean("locationSet"), j.nullable("forecastFetchedAt"),
     j.optJSONObject("rain")?.let { Rain(it.getInt("plantCount"), it.getDouble("precipitationMm"), it.nullable("batchId")) },
-    j.optJSONObject("lastRainBatch")?.getString("id"))
+    j.optJSONObject("lastRainBatch")?.getString("id"), j.optJSONObject("lastRainBatch")?.getInt("plantCount"))

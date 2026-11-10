@@ -3,7 +3,10 @@ import { error, isHttpError } from '@sveltejs/kit';
 import type { Identity } from '../auth';
 import { db, withTransaction } from '../db';
 import { now, calendarDate } from '../clock';
-import { chosenSpecies, recordSpeciesSearch, searchSpecies } from '../species';
+import { chosenSpecies, recordSpeciesSearch, searchSpecies, withCommonNames } from '../species';
+import { squash } from '../common-name';
+import type { Candidate } from '$lib/plants';
+import type { CommonNameLanguage } from '$lib/names';
 import { isUuid } from '../plants';
 import type { ImportedFields, ImportStaging, ImportSuggestion } from '$lib/import';
 import { PlantaClient } from './client';
@@ -23,6 +26,12 @@ const soils: Record<string, ImportedFields['soil_type']> = {
 };
 const actions = { watering: 'water', fertilizing: 'fertilize', cleaning: 'clean_leaves', repotting: 'repot' } as const;
 function text(value: unknown): string | null { return typeof value === 'string' ? value.trim().slice(0, 200) || null : null; }
+export function importNickname(fields: ImportedFields, ...species: Pick<Candidate, 'scientific_name' | 'canonical_name'>[]): string | null {
+  if (fields.custom_name) return fields.custom_name;
+  const localized = fields.localized_name ?? fields.nickname;
+  return localized && ![fields.scientific_name, ...species.flatMap(item => [item.scientific_name, item.canonical_name])]
+    .some(name => name && squash(name) === squash(localized)) ? localized : null;
+}
 function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
   if (typeof raw?.id !== 'string' || !raw.id || raw.id.length > 200) error(502, 'Planta returned an invalid plant ID.');
   const pot = raw.environment?.pot;
@@ -40,8 +49,11 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
     if (!validDay || !Number.isFinite(date.getTime()) || (dateOnly ? day > calendarDate(now()) : date.getTime() > now().getTime())) error(422, 'Planta supplied an invalid or future last care date.');
     care[task] = dateOnly ? day : date.toISOString();
   }
+  const localized = text(raw.names?.localizedName);
+  const scientific = text(raw.names?.scientific);
+  const custom = text(raw.names?.custom);
   return { id: raw.id, mapped: {
-    nickname: text(raw.names?.custom), cultivar: text(raw.names?.variety), scientific_name: text(raw.names?.scientific) ?? text(raw.names?.localizedName) ?? '',
+    nickname: null, custom_name: custom, localized_name: localized, cultivar: text(raw.names?.variety), scientific_name: scientific ?? localized ?? '',
     site_name: text(raw.site?.name) ?? 'Imported plants',
     pot_type: Object.hasOwn(pots, potType) ? pots[potType] : 'other', soil_type: Object.hasOwn(soils, soilType) ? soils[soilType] : 'other',
     pot_size_cm: Number.isInteger(pot?.size) && pot.size > 0 && pot.size <= 2147483647 ? pot.size : null,
@@ -53,21 +65,23 @@ export async function storedStaging(household: string): Promise<StoredImportStag
   const result = await db().query('SELECT id, planta_plant_id, mapped, candidates, selected, status, plant_id, cover_error, suggestion, identified_at FROM import_staging WHERE household_id = $1 ORDER BY planta_plant_id', [household]);
   return result.rows;
 }
-export async function staging(household: string): Promise<ImportStaging[]> {
+export async function staging(household: string, language: CommonNameLanguage): Promise<ImportStaging[]> {
   const rows = await storedStaging(household);
+  const named = await withCommonNames(rows.flatMap(row => [...row.candidates, ...(row.selected ? [row.selected] : [])]), language);
   const canCommit = !rows.some(row => row.status === 'review') && rows.some(row => row.status === 'confirmed');
   const covers = await db().query('SELECT planta_plant_id FROM plants WHERE household_id = $1 AND planta_cover_imported', [household]);
   const importedCovers = new Set(covers.rows.map(row => row.planta_plant_id));
   return rows.map(row => {
     const { suggestion, identified_at, ...publicRow } = row;
-    const { cover_url, ...mapped } = row.mapped;
+    const { cover_url, custom_name, localized_name, ...mapped } = row.mapped;
     const coverStatus: ImportStaging['cover_status'] = importedCovers.has(row.planta_plant_id) ? 'imported'
       : row.cover_error ? 'failed' : !cover_url ? 'none' : ['skipped', 'committed'].includes(row.status) ? 'skipped' : 'pending';
-    return { ...publicRow, mapped: { ...mapped, has_cover: Boolean(cover_url) },
+    return { ...publicRow, candidates: row.candidates.map(named), selected: row.selected ? named(row.selected) : null,
+      mapped: { ...mapped, has_cover: Boolean(cover_url) },
       can_commit: canCommit, can_review: row.status !== 'committed', cover_status: coverStatus };
   });
 }
-export async function stageImport(code: string, household: string) {
+export async function stageImport(code: string, household: string, language: CommonNameLanguage) {
   const api = new PlantaClient();
   let plants: ReturnType<typeof mapPlant>[];
   try {
@@ -80,14 +94,15 @@ export async function stageImport(code: string, household: string) {
     let selected: ImportStaging['selected'] = null;
     if (plant.mapped.scientific_name) {
       try {
-        const search = await searchSpecies(plant.mapped.scientific_name, household);
+        const search = await searchSpecies(plant.mapped.scientific_name, household, language);
         candidates = search.candidates;
         const exact = candidates.find(candidate => !candidate.requires_confirmation);
         if (exact) selected = chosenSpecies(search.search_id, exact.gbif_key, household, false);
       }
       catch (cause) { if (!isHttpError(cause) || ![422, 503].includes(cause.status)) throw cause; }
     }
-    mappedRows.push({ ...plant, candidates, selected });
+    plant.mapped.nickname = importNickname(plant.mapped, ...(selected ? [selected] : []));
+    mappedRows.push({ id: plant.id, mapped: plant.mapped, candidates, selected });
   }
   await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
@@ -100,10 +115,10 @@ export async function stageImport(code: string, household: string) {
         [household, plant.id, JSON.stringify(plant.mapped), JSON.stringify(plant.candidates), plant.selected ? JSON.stringify(plant.selected) : null, plant.selected ? 'confirmed' : 'review']);
     }
   });
-  return staging(household);
+  return staging(household, language);
 }
 
-export async function reviewImport(id: string, household: string, input: Record<string, unknown>) {
+export async function reviewImport(id: string, household: string, input: Record<string, unknown>, language: CommonNameLanguage) {
   if (!isUuid(id)) error(404, 'Import plant not found');
   await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [household]);
@@ -123,5 +138,5 @@ export async function reviewImport(id: string, household: string, input: Record<
     }
     await client.query('UPDATE import_staging SET selected = $1, status = $2 WHERE id = $3 AND household_id = $4', [selected ? JSON.stringify(selected) : null, status, id, household]);
   });
-  return (await staging(household)).find(row => row.id === id)!;
+  return (await staging(household, language)).find(row => row.id === id)!;
 }

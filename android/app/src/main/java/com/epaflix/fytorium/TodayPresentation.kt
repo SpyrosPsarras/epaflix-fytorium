@@ -20,7 +20,7 @@ fun CareState.todayPresentation(): TodayPresentation {
         else -> "Nothing to do today"
     }
     val next = upcoming?.sections.orEmpty().flatMap { it.tasks }
-        .filter { it.dueOn != null && (handled[it.plantId + ":" + it.key] ?: it.completedEvent) == null }
+        .filter { it.dueOn != null && it.completedEvent == null }
         .minByOrNull { it.dueOn!! }
     return TodayPresentation(sections, emptyTitle, next?.let { "Next: ${it.label} ${it.plantName} · ${taskDate(it.dueOn!!)}" })
 }

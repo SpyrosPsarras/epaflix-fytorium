@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from 'vitest';
 import sharp from 'sharp';
+import pg from 'pg';
 import { createApiHarness } from './harness';
 import { createImageHost } from './planta-images';
 
@@ -17,6 +18,7 @@ test('serves a sanitised reference thumbnail and attribution from one persistent
   harness.setGbifOccurrences(910701, occurrence(images.url));
   const credit = await owner.request(path(910701) + '/credit');
   expect(credit.status).toBe(200);
+  expect(credit.headers.get('cache-control')).toBe('no-store');
   expect(await credit.json()).toEqual({ common_name: null, photo: { creator: 'Synthetic photographer', license: 'CC BY 4.0', source_url: 'https://example.org/synthetic-observation' } });
   const response = await owner.request(path(910701));
   expect(response.status).toBe(200);
@@ -77,22 +79,19 @@ test('temporarily caches GBIF outages and image failures, then recovers after on
   }
 });
 
-test('retries failed common names after one hour even when the photo succeeds', async () => {
+test('a names outage does not expire an unstored reference photo after one hour', async () => {
   const key = 910708;
   await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-13T12:00:00Z' });
   harness.setGbifOccurrences(key, occurrence(images.url));
   harness.setNames('gbif', {}, 503);
+  const before = harness.occurrenceRequests.length;
   const first = await (await owner.request(path(key) + '/credit')).json();
   expect(first).toMatchObject({ common_name: null, photo: { license: 'CC BY 4.0' } });
-  expect(harness.nameCalls('gbif', key)).toBe(1);
-  harness.setNames('gbif', { results: [{ vernacularName: 'Synthetic retryleaf', language: 'eng' }] });
   await harness.restartApp();
-  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-13T12:59:59Z' });
-  expect(await (await owner.request(path(key) + '/credit')).json()).toEqual(first);
-  expect(harness.nameCalls('gbif', key)).toBe(1);
   await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-13T13:00:00Z' });
-  expect(await (await owner.request(path(key) + '/credit')).json()).toMatchObject({ common_name: 'Synthetic retryleaf', photo: { license: 'CC BY 4.0' } });
-  expect(harness.nameCalls('gbif', key)).toBe(2);
+  expect(await (await owner.request(path(key) + '/credit')).json()).toEqual(first);
+  expect(harness.occurrenceRequests).toHaveLength(before + 1);
+  expect(harness.nameCalls('gbif', key)).toBe(0);
   harness.setNames('gbif', { results: [] });
 });
 
@@ -107,14 +106,55 @@ test('refuses invalid keys before querying GBIF and refuses private image hosts'
   expect((await owner.request(path(910703))).status).toBe(404);
 });
 
-test('vernacular names share the persistent photo cache even when no photo exists', async () => {
-  harness.setNames('gbif', { results: [{ vernacularName: 'Synthetic lantern', language: 'eng' }, { vernacularName: 'Δοκιμαστικό φυτό', language: 'ell' }] });
-  expect(await (await owner.request(path(910705) + '/credit')).json()).toEqual({ photo: null, common_name: 'Synthetic lantern' });
-  harness.setNames('gbif', { results: [] });
+test('stored common names follow the requested language independently of the photo cache', async () => {
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  const get = async (language: string) => (await fetch(harness.base + path(910705) + '/credit', { headers: { cookie: owner.cookie, 'accept-language': language } })).json();
+  try {
+    expect(await get('en')).toEqual({ photo: null, common_name: null });
+    await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910705, 'Syntheticia reference Inventor', 'Syntheticia reference', 'SPECIES', CURRENT_TIMESTAMP)");
+    await database.query("INSERT INTO species_common_names VALUES (910705, 'en', 'Synthetic lantern'), (910705, 'el', 'Δοκιμαστικό φυτό'), (910705, 'nb', NULL)");
+    expect(await get('en')).toEqual({ photo: null, common_name: 'Synthetic lantern' });
+    expect(await get('el')).toEqual({ photo: null, common_name: 'Δοκιμαστικό φυτό' });
+    expect(await get('nb')).toEqual({ photo: null, common_name: 'Synthetic lantern' });
+    await harness.restartApp();
+    await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-13T13:00:00Z' });
+    expect(await get('el')).toEqual({ photo: null, common_name: 'Δοκιμαστικό φυτό' });
+    expect(harness.nameCalls('gbif', 910705)).toBe(0);
+  } finally { await database.end(); }
+});
+
+test('unstored species credits have no common name in any request language', async () => {
+  const key = 910709;
+  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-14T12:00:00Z' });
+  harness.setGbifSpecies(key, { key, canonicalName: 'Coleus synthetic', scientificName: 'Coleus synthetic Inventor', kingdom: 'Plantae', rank: 'SPECIES' });
+  harness.setNames('gbif', { results: [
+    { vernacularName: 'Coleus; Coleus synthetic; painted nettle, Painted-nettle', language: 'en' },
+    { vernacularName: 'Norsk blad', language: 'nb' },
+  ] });
+  const get = async (language: string) => {
+    const response = await fetch(harness.base + path(key) + '/credit', { headers: { cookie: owner.cookie, 'accept-language': language } });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  expect(await get('en')).toMatchObject({ common_name: null });
+  expect(await get('nb-NO')).toMatchObject({ common_name: null });
+  expect(await get('el')).toMatchObject({ common_name: null });
   await harness.restartApp();
-  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-11T12:00:00Z' });
-  expect(await (await owner.request(path(910705) + '/credit')).json()).toEqual({ photo: null, common_name: 'Synthetic lantern' });
-  expect(harness.nameCalls('gbif', 910705)).toBe(1);
+  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-14T12:00:00Z' });
+  expect(await get('en')).toMatchObject({ common_name: null });
+  expect(harness.nameCalls('gbif', key)).toBe(0);
+  harness.setNames('gbif', { results: [] });
+});
+
+test('available GBIF taxonomy does not give an unstored species a common name', async () => {
+  const key = 910710;
+  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-07-15T12:00:00Z' });
+  harness.setNames('gbif', { results: [{ vernacularName: 'Coleus; Coleus synthetic; Painted nettle', language: 'en' }] });
+  expect(await (await owner.request(path(key) + '/credit')).json()).toMatchObject({ common_name: null });
+  harness.setGbifSpecies(key, { key, canonicalName: 'Coleus synthetic', kingdom: 'Plantae', rank: 'SPECIES' });
+  await owner.request('/__test/clock', 'POST', { action: 'advance', milliseconds: 3600000 });
+  expect(await (await owner.request(path(key) + '/credit')).json()).toMatchObject({ common_name: null });
+  harness.setNames('gbif', { results: [] });
 });
 
 test('species photo reads follow species search permissions', async () => {

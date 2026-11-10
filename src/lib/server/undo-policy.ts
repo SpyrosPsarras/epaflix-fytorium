@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type pg from 'pg';
 import type { Identity } from './auth';
+import type { CareEvent } from '$lib/tasks';
 import { db } from './db';
 import { isUuid } from './plants';
 
@@ -13,12 +14,12 @@ type UndoEvent = {
 };
 type UndoAction = {
   request_id: string; plant_id: string | null; batch_id: string | null;
-  action: string; by_member: string; undone_at: Date | null; payload: Pot;
+  action: string; by_member: string; undone_at: Date | null; payload: Pot & { task_type?: string };
 };
 type UndoPlant = Pot & { id: string; status: string; shared: boolean };
 type UndoContext = {
   identity: Identity; events: Map<string, UndoEvent>; actions: Map<string, UndoAction>;
-  plants: Map<string, UndoPlant>; batchPlants: Map<string, Set<string>>; latestRepots: Map<string, string>;
+  plants: Map<string, UndoPlant>; batchPlants: Map<string, Set<string>>; batchEventCounts: Map<string, number>; latestRepots: Map<string, string>;
 };
 
 // Commands load this context again while holding their plant and action locks.
@@ -27,10 +28,14 @@ async function undoContext(identity: Identity, events: UndoEvent[], batchIds: st
   const requestIds = [...new Set([...batchIds, ...events.map(event => event.request_id)])];
   const [actions, batchEvents] = await Promise.all([
     database.query<UndoAction>('SELECT * FROM care_actions WHERE request_id = ANY($1::uuid[]) AND household_id = $2', [requestIds, household]),
-    database.query<{ batch_id: string; plant_id: string }>('SELECT DISTINCT batch_id, plant_id FROM care_events WHERE batch_id = ANY($1::uuid[]) AND household_id = $2', [batchIds, household]),
+    database.query<{ batch_id: string; plant_id: string }>('SELECT batch_id, plant_id FROM care_events WHERE batch_id = ANY($1::uuid[]) AND household_id = $2', [batchIds, household]),
   ]);
   const batchPlants = new Map(batchIds.map(id => [id, new Set<string>()]));
-  for (const event of batchEvents.rows) batchPlants.get(event.batch_id)!.add(event.plant_id);
+  const batchEventCounts = new Map(batchIds.map(id => [id, 0]));
+  for (const event of batchEvents.rows) {
+    batchPlants.get(event.batch_id)!.add(event.plant_id);
+    batchEventCounts.set(event.batch_id, batchEventCounts.get(event.batch_id)! + 1);
+  }
   for (const action of actions.rows) if (action.plant_id) batchPlants.get(action.request_id)?.add(action.plant_id);
   const plantIds = [...new Set([...events.map(event => event.plant_id), ...[...batchPlants.values()].flatMap(ids => [...ids])])];
   const [plants, repots] = await Promise.all([
@@ -43,7 +48,7 @@ async function undoContext(identity: Identity, events: UndoEvent[], batchIds: st
       WHERE plant_id = ANY($1::uuid[]) AND household_id = $2 AND previous_pot IS NOT NULL AND undone_at IS NULL GROUP BY plant_id`, [plantIds, household]),
   ]);
   return { identity, events: new Map(events.map(event => [event.id, event])), actions: new Map(actions.rows.map(action => [action.request_id, action])),
-    plants: new Map(plants.rows.map(plant => [plant.id, plant])), batchPlants, latestRepots: new Map(repots.rows.map(event => [event.plant_id, event.event_order])) };
+    plants: new Map(plants.rows.map(plant => [plant.id, plant])), batchPlants, batchEventCounts, latestRepots: new Map(repots.rows.map(event => [event.plant_id, event.event_order])) };
 }
 
 // One pure rule supplies both can_undo and the endpoint's status and message.
@@ -96,7 +101,15 @@ export async function withUndoFlags<T extends UndoEvent>(identity: Identity, eve
   const batchIds = [...new Set(events.flatMap(event => event.batch_id ? [event.batch_id] : []))];
   const context = await undoContext(identity, events, batchIds, database);
   const batches = new Map(batchIds.map(id => [id, undoDenialFrom(context, id, true) === null]));
-  return events.map(event => ({ ...event, can_undo: event.batch_id ? batches.get(event.batch_id)! : undoDenialFrom(context, event.id) === null }));
+  return events.map(event => {
+    const batch = event.batch_id ? context.actions.get(event.batch_id)! : null;
+    return { ...event,
+      ...(batch ? { batch_plant_count: context.batchPlants.get(event.batch_id!)!.size,
+        batch_event_count: context.batchEventCounts.get(event.batch_id!)!,
+        batch_action: batch.action as CareEvent['batch_action'],
+        batch_task: batch.action === 'complete-type' ? batch.payload.task_type! : null } : {}),
+      can_undo: event.batch_id ? batches.get(event.batch_id)! : undoDenialFrom(context, event.id) === null };
+  });
 }
 
 export async function withUndoFlag<T extends UndoEvent>(identity: Identity, event: T, database: Database = db()) {

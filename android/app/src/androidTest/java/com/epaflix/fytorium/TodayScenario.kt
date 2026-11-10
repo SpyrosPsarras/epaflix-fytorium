@@ -63,7 +63,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             val night = compose.activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
             night == if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
         }
-        compose.waitForState("A15 care settled before $name capture", 30_000) { !app.repository.state.value.busy && !app.repository.state.value.saving }
+        compose.waitForState("A15 care settled before $name capture", 30_000) { !app.repository.state.value.busy && app.repository.state.value.pending.isEmpty() }
         compose.waitForIdle(); device.waitForIdle()
         val bars = androidx.core.view.WindowCompat.getInsetsController(compose.activity.window, compose.activity.window.decorView)
         assertEquals(!dark, bars.isAppearanceLightStatusBars)
@@ -86,7 +86,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val progress = SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
         fun loadingThumbnails() = compose.onAllNodes(SemanticsMatcher.expectValue(ThumbnailLoading, true), useUnmergedTree = true)
             .fetchSemanticsNodes().filter { !it.boundsInRoot.isEmpty }
-        fun settled() = !app.repository.state.value.busy && !app.repository.state.value.saving &&
+        fun settled() = !app.repository.state.value.busy && app.repository.state.value.pending.isEmpty() &&
             compose.onAllNodes(progress).fetchSemanticsNodes().isEmpty() && loadingThumbnails().isEmpty()
         compose.waitForState("A15 spinner-free and visible thumbnails settled before $name capture", 30_000, details = {
             "progressNodes=${compose.onAllNodes(progress).fetchSemanticsNodes().map { "${it.boundsInRoot}/${it.config[SemanticsProperties.ProgressBarRangeInfo]}" }}, " +
@@ -178,7 +178,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.onNode(block and hasText("Skip")).performScrollTo().assertIsEnabled().performClick()
         compose.waitForNode(block and hasText("Skipped")).assertIsDisplayed()
         compose.onNode(block and hasText("Skip")).assertDoesNotExist()
-        compose.waitForState("Tapped task care action settled") { !app.repository.state.value.saving }
+        compose.waitForState("Tapped task care action settled") { app.repository.state.value.pending.isEmpty() }
         compose.onNode(block and hasText("Undo")).performScrollTo().assertIsEnabled().performClick()
         compose.waitForNode(block and hasText("Skip")).assertIsDisplayed()
         val skipped = rows("/api/plants/${tapped.plantId}/history").filter { it.optString("task_type") == "water" && it.optString("kind") == "skipped" }

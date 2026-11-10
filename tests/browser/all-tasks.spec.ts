@@ -32,10 +32,23 @@ test('cares for several task types, customizes intervals on a phone', async ({ p
     // Completing a second task for this plant must not overwrite the first task's Undo state.
     await row('remove_dead').getByRole('button', { name: 'Done', exact: true }).click();
     await expect(row('clean_leaves').getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
+    // A plant link tapped while Undo is still saving must open the plant, not lose the tap to the list reload.
+    let saveUndo = () => {};
+    let openPlant = () => {};
+    const undoHeld = new Promise<void>(resolve => { saveUndo = resolve; });
+    const plantHeld = new Promise<void>(resolve => { openPlant = resolve; });
+    const plantData = (url: URL) => url.pathname.startsWith('/plants/') && url.pathname.endsWith('/__data.json');
+    await page.route('**/api/care-events/*/undo', async route => { await undoHeld; await route.continue(); });
+    await page.route(plantData, async route => { await plantHeld; await route.continue(); });
     await row('remove_dead').getByRole('button', { name: 'Undo', exact: true }).click();
-    await screenshot('all-tasks-clean-done.png');
     await row('clean_leaves').getByRole('link', { name, exact: true }).click();
+    saveUndo();
+    await expect(row('remove_dead').getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+    await screenshot('all-tasks-clean-done.png');
+    openPlant();
     await expect(page.getByText('Next leaf cleaning: 2026-07-05', { exact: true })).toBeVisible();
+    await page.unroute('**/api/care-events/*/undo');
+    await page.unroute(plantData);
     await page.getByRole('link', { name: 'Plant settings', exact: true }).click();
     await page.getByLabel('Clean leaves interval in days', { exact: true }).fill('5');
     await page.getByRole('button', { name: 'Save care settings', exact: true }).click();
@@ -70,9 +83,11 @@ test('cares for several task types, customizes intervals on a phone', async ({ p
     await expect(page.getByText('Next leaf cleaning: 2026-07-05', { exact: true })).toBeVisible();
     await page.goto('/');
     await row('fertilize').getByRole('button', { name: 'Done', exact: true }).click();
-    await expect(row('water')).toHaveCount(0);
+    // Liquid fertilizing also waters, and the server lists that water as your own completion.
+    await expect(row('water').getByRole('status')).toContainText('Next watering: 2026-06-12');
+    await expect(row('water').getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
-    await expect(row('water')).toContainText('Due 2026-06-12');
+    await expect(row('water').getByRole('status')).toContainText('Next watering: 2026-06-12');
     await row('water').getByRole('link', { name, exact: true }).click();
     await expect(page.getByText('Next watering: 2026-06-12', { exact: true })).toBeVisible();
     const fertilized = page.getByRole('region', { name: 'Care history', exact: true }).getByRole('listitem').filter({ hasText: 'Fertilize' });

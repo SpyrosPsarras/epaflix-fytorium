@@ -86,11 +86,9 @@ import org.json.JSONObject
                 loadOptions()
                 if (options != null) { result = null; selection = null; page = when (action) { "repot-form" -> "repot"; "restore" -> "restore"; else -> "change-species" } }
             }
+            "handle-all" -> scope.launch { if (withContext(Dispatchers.IO) { repository?.handleAll(key, plantsScreen = true) } == true) refreshDetail(key) }
             else -> run(save = true) {
-                val success = withContext(Dispatchers.IO) {
-                    if (action == "handle-all") repository!!.handleAll(key, plantsScreen = true)
-                    else repository!!.plantCommand(key, if (action == "restore-save") "restore" else action, body)
-                }
+                val success = withContext(Dispatchers.IO) { repository!!.plantCommand(key, if (action == "restore-save") "restore" else action, body) }
                 if (success) {
                     if (action == "delete") { id = null; page = "list" }
                     else scope.launch { refreshDetail(key); page = "detail" }
@@ -121,72 +119,76 @@ import org.json.JSONObject
         "change-species" -> "Change species"; "care" -> "Care settings"; "repot" -> "Repot plant"
         "restore" -> "Restore plant"; "species-care" -> "Species care"; else -> "Species names"
     }
-    Column(Modifier.fillMaxSize()) {
-        if (page != "detail" || detail == null) TopAppBar(title = { Heading(title) }, navigationIcon = {
-            IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
-        })
-        if (reading || saving || request.refreshing || request.saving) LinearProgressIndicator(Modifier.fillMaxWidth())
-        PlantNotice(request, state.updateRequired)
-        if (request.blocked) OutlinedButton(onClick = { run {
-            withContext(Dispatchers.IO) { repository?.refreshPlants() }
-            loadOptions()
-            id?.let { refreshDetail(it) }
-        } }, enabled = !saving && !reading, modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)) { Text("Refresh plants") }
-        when (page) {
-            "list", "graveyard" -> PlantsList(state, if (page == "graveyard") graveyard else state.plants, page == "graveyard",
-                onPlant = { id = it; page = "detail" },
-                onAdd = { repository?.clearPlantErrors(); id = null; selection = null; result = null; run { loadOptions(); if (options != null) page = "search" } },
-                onGraveyard = { page = "graveyard"; run { graveyard = withContext(Dispatchers.IO) { repository!!.graveyard() } } },
-                onRefresh = { run { withContext(Dispatchers.IO) { repository!!.refreshPlants() }; if (page == "graveyard") graveyard = withContext(Dispatchers.IO) { repository!!.graveyard() }; loadOptions() } }, thumbnails = thumbnails, enabled = enabled)
-            "detail" -> if (detail == null) PlantColumn { Text("No cached details yet. Connect to load this plant.") } else PlantDetailScreen(state, detail,
-                onEdit = { repository?.clearPlantErrors(); run { loadOptions(); if (options != null) page = "form" } }, onCommand = ::command,
-                onSpecies = { run { loadOptions(); species = withContext(Dispatchers.IO) { repository!!.species(JSONObject(detail.plant.attributesJson).getLong("gbif_key")) }; if (species != null) page = "names" } },
-                onUndo = { event -> run(save = true) {
-                    val success = withContext(Dispatchers.IO) { repository!!.undoHistory(event) }
-                    if (success) scope.launch { refreshDetail(event.plantId) }
-                } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
-                onSpeciesCare = speciesApi?.let { { page = "species-care" } }, todayTask = initialTask,
-                onTaskAction = { action -> initialTask?.let { state.currentTask("${it.plantId}:${it.key}") }?.let { onTaskAction(it, action) } })
-            "species-care" -> PlantColumn {
-                Text("Connect to load species care for this plant.")
-                OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
-            }
-            "search", "change-species" -> Column(Modifier.weight(1f)) {
-                if (photosApi != null && state.member?.role != Role.sitter) OutlinedButton(onClick = { identifyReturn = page; page = "identify" },
-                    enabled = photosConnected() && !state.updateRequired && !saving, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Identify from photos") }
-                if (page == "change-species") Text("${detail?.plant?.displayName} is currently ${detail?.plant?.scientificName}. Care history, photos and custom intervals will stay. The schedule will use the new species.", Modifier.padding(16.dp))
-                if (page == "change-species" && selection != null) {
-                    Text("Chosen species: ${species?.scientificName.orEmpty()}", Modifier.padding(16.dp))
-                    Button(onClick = { command("species", JSONObject(selection!!)) }, enabled = enabled, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Save species") }
-                    TextButton(onClick = { selection = null }) { Text("Choose another species") }
-                } else SpeciesPicker(enabled, result, onSearch = { query -> run { result = withContext(Dispatchers.IO) { repository!!.searchSpecies(query) } } }, onSelect = { candidate, searchId, confirmed ->
-                    selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
-                    if (page == "change-species") species = Species(candidate.key, candidate.scientificName, emptyList(), false, false)
-                    else page = "form"
-                }, imageApi = speciesApi)
-            }
-            "form" -> options?.let { choices -> PlantForm(if (id == null) null else detail?.plant, choices, sites, enabled, errors = request.errors) { input ->
-                selection?.takeIf { id == null }?.let { json ->
-                    val chosen = JSONObject(json)
-                    listOf("gbif_key", "search_id", "confirmed").forEach { input.put(it, chosen.get(it)) }
+    val snackbar = remember { SnackbarHostState() }
+    ReceiptSnackbar(state.receipt, snackbar, onUndo = { receipt ->
+        scope.launch { if (withContext(Dispatchers.IO) { repository?.undoReceipt(receipt) } == true) id?.let { refreshDetail(it) } }
+    }, onDone = { repository?.clearReceipt(it) })
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            if (page != "detail" || detail == null) TopAppBar(title = { Heading(title) }, navigationIcon = {
+                IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+            })
+            if (reading || saving || request.refreshing || request.saving) LinearProgressIndicator(Modifier.fillMaxWidth())
+            PlantNotice(request, state.updateRequired)
+            if (request.blocked) OutlinedButton(onClick = { run {
+                withContext(Dispatchers.IO) { repository?.refreshPlants() }
+                loadOptions()
+                id?.let { refreshDetail(it) }
+            } }, enabled = !saving && !reading, modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)) { Text("Refresh plants") }
+            when (page) {
+                "list", "graveyard" -> PlantsList(state, if (page == "graveyard") graveyard else state.plants, page == "graveyard",
+                    onPlant = { id = it; page = "detail" },
+                    onAdd = { repository?.clearPlantErrors(); id = null; selection = null; result = null; run { loadOptions(); if (options != null) page = "search" } },
+                    onGraveyard = { page = "graveyard"; run { graveyard = withContext(Dispatchers.IO) { repository!!.graveyard() } } },
+                    onRefresh = { run { withContext(Dispatchers.IO) { repository!!.refreshPlants() }; if (page == "graveyard") graveyard = withContext(Dispatchers.IO) { repository!!.graveyard() }; loadOptions() } }, thumbnails = thumbnails, enabled = enabled)
+                "detail" -> if (detail == null) PlantColumn { Text("No cached details yet. Connect to load this plant.") } else PlantDetailScreen(state, detail,
+                    onEdit = { repository?.clearPlantErrors(); run { loadOptions(); if (options != null) page = "form" } }, onCommand = ::command,
+                    onSpecies = { run { loadOptions(); species = withContext(Dispatchers.IO) { repository!!.species(JSONObject(detail.plant.attributesJson).getLong("gbif_key")) }; if (species != null) page = "names" } },
+                    onUndo = { event -> scope.launch { if (withContext(Dispatchers.IO) { repository?.undoHistory(event) } == true) refreshDetail(event.plantId) } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
+                    onSpeciesCare = speciesApi?.let { { page = "species-care" } }, todayTask = initialTask,
+                    onTaskAction = { action -> initialTask?.let { state.currentTask(it.occurrence) }?.let { onTaskAction(it, action) } })
+                "species-care" -> PlantColumn {
+                    Text("Connect to load species care for this plant.")
+                    OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
                 }
-                run(save = true) {
-                    val previousId = id
-                    val saved = withContext(Dispatchers.IO) { repository!!.savePlant(id, input) }
-                    if (saved != null) {
-                        id = saved.id; selection = null
-                        scope.launch { if (previousId == saved.id) refreshDetail(saved.id); page = "detail" }
+                "search", "change-species" -> Column(Modifier.weight(1f)) {
+                    if (photosApi != null && state.member?.role != Role.sitter) OutlinedButton(onClick = { identifyReturn = page; page = "identify" },
+                        enabled = photosConnected() && !state.updateRequired && !saving, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Identify from photos") }
+                    if (page == "change-species") Text("${detail?.plant?.displayName} is currently ${detail?.plant?.scientificName}. Care history, photos and custom intervals will stay. The schedule will use the new species.", Modifier.padding(16.dp))
+                    if (page == "change-species" && selection != null) {
+                        Text("Chosen species: ${species?.scientificName.orEmpty()}", Modifier.padding(16.dp))
+                        Button(onClick = { command("species", JSONObject(selection!!)) }, enabled = enabled, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Save species") }
+                        TextButton(onClick = { selection = null }) { Text("Choose another species") }
+                    } else SpeciesPicker(enabled, result, onSearch = { query -> run { result = withContext(Dispatchers.IO) { repository!!.searchSpecies(query) } } }, onSelect = { candidate, searchId, confirmed ->
+                        selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
+                        if (page == "change-species") species = Species(candidate.key, candidate.scientificName, emptyList(), false, false)
+                        else page = "form"
+                    }, imageApi = speciesApi)
+                }
+                "form" -> options?.let { choices -> PlantForm(if (id == null) null else detail?.plant, choices, sites, enabled, errors = request.errors) { input ->
+                    selection?.takeIf { id == null }?.let { json ->
+                        val chosen = JSONObject(json)
+                        listOf("gbif_key", "search_id", "confirmed").forEach { input.put(it, chosen.get(it)) }
                     }
-                }
-            } }
-            "care" -> detail?.careSettingsJson?.let { PlantCareSettings(it, enabled) { command("care-settings", it) } }
-            "restore" -> detail?.let { RestoreForm(it.plant, sites, enabled) { command("restore-save", it) } }
-            "repot" -> detail?.let { d -> options?.let { PlantRepotForm(d.plant, it, enabled, errors = request.errors) { command("repot", it) } } }
-            "names" -> species?.let { s -> options?.let { choices -> SpeciesNames(s, choices, enabled) { action, body -> run(save = true) {
-                val success = withContext(Dispatchers.IO) { repository!!.speciesNameCommand(s.key, action, body) }
-                if (success) scope.launch { species = withContext(Dispatchers.IO) { repository!!.species(s.key) } }
-            } } } }
+                    run(save = true) {
+                        val previousId = id
+                        val saved = withContext(Dispatchers.IO) { repository!!.savePlant(id, input) }
+                        if (saved != null) {
+                            id = saved.id; selection = null
+                            scope.launch { if (previousId == saved.id) refreshDetail(saved.id); page = "detail" }
+                        }
+                    }
+                } }
+                "care" -> detail?.careSettingsJson?.let { PlantCareSettings(it, enabled) { command("care-settings", it) } }
+                "restore" -> detail?.let { RestoreForm(it.plant, sites, enabled) { command("restore-save", it) } }
+                "repot" -> detail?.let { d -> options?.let { PlantRepotForm(d.plant, it, enabled, errors = request.errors) { command("repot", it) } } }
+                "names" -> species?.let { s -> options?.let { choices -> SpeciesNames(s, choices, enabled) { action, body -> run(save = true) {
+                    val success = withContext(Dispatchers.IO) { repository!!.speciesNameCommand(s.key, action, body) }
+                    if (success) scope.launch { species = withContext(Dispatchers.IO) { repository!!.species(s.key) } }
+                } } } }
+            }
         }
+        SnackbarHost(snackbar, Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
     }
 }
 

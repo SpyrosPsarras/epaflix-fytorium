@@ -28,7 +28,7 @@ data class ImportRow(val id: String, val name: String, val scientificName: Strin
     val cultivar: String?, val pot: String, val size: String, val soil: String, val care: Map<String, String>,
     val status: String, val coverStatus: String, val coverError: String?, val plantId: String?,
     val candidates: List<SpeciesCandidate>, val selectedName: String?, val canCommit: Boolean, val canReview: Boolean,
-    val hasCover: Boolean = false, val selectedKey: Long? = null)
+    val hasCover: Boolean = false, val selectedKey: Long? = null, val selectedCommonName: String? = null)
 data class ImportSuggestion(val suggestedKey: Long?, val candidates: List<SpeciesCandidate>, val genus: SpeciesCandidate?)
 data class PlantaState(val rows: List<ImportRow> = emptyList(), val loaded: Boolean = false,
     val loading: Boolean = false, val saving: Boolean = false, val blocked: Boolean = false,
@@ -44,7 +44,8 @@ private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
         mapped.getString("pot_type"), mapped.nullable("pot_size_cm") ?: "unknown", mapped.getString("soil_type"),
         care.keys().asSequence().associateWith { care.getString(it) }, row.getString("status"), row.getString("cover_status"),
         row.nullable("cover_error"), row.nullable("plant_id"), candidates, row.optJSONObject("selected")?.getString("canonical_name"),
-        row.getBoolean("can_commit"), row.getBoolean("can_review"), mapped.optBoolean("has_cover"), row.optJSONObject("selected")?.getLong("gbif_key"))
+        row.getBoolean("can_commit"), row.getBoolean("can_review"), mapped.optBoolean("has_cover"), row.optJSONObject("selected")?.getLong("gbif_key"),
+        row.optJSONObject("selected")?.nullable("common_name"))
 }
 
 // The server owns staging. No code, token, review or search receipt is persisted here.

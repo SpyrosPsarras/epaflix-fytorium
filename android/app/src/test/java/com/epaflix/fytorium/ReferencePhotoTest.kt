@@ -24,7 +24,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class ReferencePhotoTest {
     @get:Rule val compose = createComposeRule()
-    @Test fun referenceLoadsThroughAuthenticatedApiAndShowsCredit() {
+    @Test fun referenceLoadsThroughAuthenticatedApiAndShowsCreditButNotItsOwnName() {
         MockWebServer().use { server ->
             server.start()
             val image = java.io.ByteArrayOutputStream().apply {
@@ -36,7 +36,7 @@ class ReferencePhotoTest {
             compose.setContent { FytoriumTheme { ReferencePhoto(api, 910701, "Testoria lucida", showName = true) } }
             compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Reference photo of Testoria lucida").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("CC BY 4.0 · Photo: Synthetic photographer").assertIsDisplayed()
-            compose.onNodeWithText("Synthetic lantern").assertIsDisplayed()
+            compose.onNodeWithText("Synthetic lantern").assertDoesNotExist()
             compose.onNodeWithText("Testoria lucida").assertIsDisplayed()
             for (path in listOf("/api/species/910701/photo/credit", "/api/species/910701/photo")) {
                 val request = server.takeRequest()
@@ -68,6 +68,18 @@ class ReferencePhotoTest {
             credit.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
             assertEquals(1, layouts.size)
             assertFalse(layouts.single().hasVisualOverflow)
+        }
+    }
+    @Test fun searchCommonNameHeadlinesTheTileWhenTheCreditHasNone() {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setBody("""{"photo":null,"common_name":"Synthetic photo name"}"""))
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            compose.setContent { FytoriumTheme { ReferencePhoto(api, 910701, "Testoria lucida", showName = true, commonName = "Synthetic lantern") } }
+            compose.waitUntil(5_000) { server.requestCount == 1 }
+            compose.onNodeWithText("Synthetic lantern").assertIsDisplayed()
+            compose.onNodeWithText("Testoria lucida").assertIsDisplayed()
+            compose.onNodeWithText("Synthetic photo name").assertDoesNotExist()
         }
     }
     @Test fun failedCoverShowsPlaceholder() {

@@ -6,5 +6,5 @@ import type { RequestHandler } from './$types';
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
   const identity = requireOwner(locals.identity);
   checkOrigin(request);
-  return json(await reviewImport(params.id, identity.household.id, await readJsonObject(request)));
+  return json(await reviewImport(params.id, identity.household.id, await readJsonObject(request), identity.language));
 };

@@ -55,13 +55,14 @@ class PlantsScreenTest {
         val list = parseTaskList(taskListFixture("today", basis = """[{"input":"repotIntervalDays","value":365,"source":"rule","adjustment":"Synthetic repot interval","ruleId":"repot.synthetic@1"}]"""))
         val task = list.sections.single().tasks.single().copy(taskType = "repot")
         val state = mutableStateOf(owner.copy(member = Member("member-one", role), today = list))
+        val opened = mutableStateOf(task)
         val actions = mutableListOf<String>()
         val commands = mutableListOf<String>()
         val dark = mutableStateOf(false)
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme(dark.value) { Surface(Modifier.fillMaxSize()) {
             PlantDetailScreen(state.value, PlantDetail(plant, emptyList(), emptyMap()), {},
-                { action, _ -> commands.add(action) }, {}, {}, todayTask = task, onTaskAction = { actions.add(it) })
+                { action, _ -> commands.add(action) }, {}, {}, todayTask = opened.value, onTaskAction = { actions.add(it) })
         } } }
         val block = hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))
         compose.onNode(block and hasText("Repot")).assertIsDisplayed()
@@ -85,13 +86,16 @@ class PlantsScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/today-plant-task-${role.name}-${if (night) "dark" else "light"}.png")
         }
-        compose.runOnIdle { state.value = state.value.copy(handled = mapOf("${task.plantId}:${task.key}" to
-            parseEvent(JSONObject(eventFixture)).copy(kind = "skipped", taskType = "repot"))) }
-        compose.onNode(block and hasText("Skip")).assertDoesNotExist()
-        compose.onNode(block and hasText("Repot with new pot and soil")).assertDoesNotExist()
+        // The skip moves the opened occurrence to the postponed row; its Undo lives in the receipt, not on the page.
+        val next = task.copy(dueOn = "2030-06-09", lateDays = 0, postponed = "skipped")
+        compose.runOnIdle { state.value = state.value.copy(today = list.copy(sections = emptyList()),
+            upcoming = list.copy(view = "upcoming", sections = listOf(TaskSection("2030-06-09", "2030-06-09", listOf(next)))))
+            opened.value = next }
         compose.onNode(block and hasText("Skipped")).performScrollTo().assertIsDisplayed()
-        compose.onNode(block and hasText("Undo")).performScrollTo().performClick()
-        assertEquals(listOf("skip", "undo"), actions)
+        compose.onNode(block and hasText("Undo")).assertDoesNotExist()
+        compose.onNode(block and hasText("Snooze 2 days")).assertDoesNotExist()
+        compose.onNode(block and hasText("Mark done")).performScrollTo().performClick()
+        assertEquals(listOf("skip", "complete"), actions)
         if (role != Role.sitter) scroll("Repot with new pot and soil").assertIsDisplayed().performClick()
         if (role != Role.sitter) assertEquals(listOf("repot-form", "repot-form"), commands)
     }
@@ -142,17 +146,21 @@ class PlantsScreenTest {
         val task = list.sections.single().tasks.single()
         val event = parseEvent(JSONObject(eventFixture))
         val state = mutableStateOf(owner.copy(today = list))
+        val opened = mutableStateOf(task)
         compose.setContent { FytoriumTheme { PlantDetailScreen(state.value, PlantDetail(plant, emptyList(), emptyMap()), {},
-            { _, _ -> }, {}, {}, todayTask = task) } }
+            { _, _ -> }, {}, {}, todayTask = opened.value) } }
         val block = hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))
         compose.onNode(block and hasText("Skip")).assertIsEnabled()
-        compose.runOnIdle { state.value = state.value.copy(today = list.copy(sections = listOf(TaskSection("water", "Water", listOf(task.copy(completedEvent = event)))))) }
+        // Completing the opened occurrence on this device moves it to its completion row.
+        compose.runOnIdle { state.value = state.value.copy(today = list.copy(sections = listOf(TaskSection("water", "Water", listOf(task.copy(completedEvent = event))))))
+            opened.value = task.copy(completedEvent = event) }
         compose.onNode(block and hasText("Skip")).assertDoesNotExist()
         compose.onNode(block and hasText("Done")).assertIsDisplayed()
         compose.onNode(block and hasText("Undo")).assertIsEnabled()
         compose.runOnIdle { state.value = state.value.copy(offline = true) }
         compose.onNode(block and hasText("Undo")).assertIsNotEnabled()
-        compose.runOnIdle { state.value = state.value.copy(offline = false, today = list) }
+        // Undo moves it back to the pending occurrence.
+        compose.runOnIdle { state.value = state.value.copy(offline = false, today = list); opened.value = task }
         compose.onNode(block and hasText("Skip")).assertIsEnabled()
         compose.onNode(block and hasText("Undo")).assertDoesNotExist()
     }
@@ -183,6 +191,59 @@ class PlantsScreenTest {
         assertFalse(accepted)
         scroll("Confirm Testoria lucida").performClick()
         assertTrue(accepted)
+    }
+    @Test fun searchCardsHeadlineTheCommonNameAndOnlyFuzzyMatchesShowCloseness() {
+        val fuzzy = SpeciesCandidate(910001, "Testoria lucida Inventor", "Testoria lucida", "SPECIES", "FUZZY", 92, true, "Δοκιμή", "el", commonName = "Synthetic lantern")
+        val stored = SpeciesCandidate(910002, "Testoria nebulosa Inventor", "Testoria nebulosa", "SPECIES", null, null, false, "Synthetic cloud", "en")
+        val exact = SpeciesCandidate(910003, "Testoria aurea Inventor", "Testoria aurea", "SPECIES", "EXACT", 99, false, null, null, commonName = "Synthetic gold")
+        compose.enableAccessibilityChecks()
+        compose.setContent { FytoriumTheme { SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(fuzzy, stored, exact)), {}, { _, _, _ -> }) } }
+        compose.onNode(hasText("Synthetic lantern") and isHeading()).assertIsDisplayed()
+        scroll("Testoria lucida").assertExists()
+        scroll("Close match, 92%").assertExists()
+        compose.onNode(hasText("Testoria nebulosa") and isHeading()).performScrollTo().assertExists()
+        compose.onNode(hasText("Synthetic gold") and isHeading()).performScrollTo().assertExists()
+        compose.onAllNodes(hasText("Close match", substring = true)).assertCountEquals(1)
+        for (gone in listOf("Matched", "Stored species", "confidence", "EXACT", "SPECIES")) compose.onAllNodes(hasText(gone, substring = true)).assertCountEquals(0)
+        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+    }
+    @Test fun plantPageShowsTheCareReceiptWithUndo() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val receipt = Receipt("Skipped Synthetic fern until Tue 4 Jun", parseEvent(JSONObject(eventFixture).put("kind", "skipped")))
+        compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(today = list, receipt = receipt, detail = PlantDetail(plant, emptyList(), emptyMap())), null,
+            initialPlant = plant.id, initialTask = task) } }
+        compose.onNodeWithText("Skipped Synthetic fern until Tue 4 Jun").assertIsDisplayed()
+        compose.onNode(hasText("Undo") and hasClickAction() and !hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))).assertIsDisplayed()
+    }
+    @Test fun plantPageCareWriteBusiesOnlyItsOwnControl() {
+        val list = parseTaskList(taskListFixture("today"))
+        val task = list.sections.single().tasks.single()
+        val history = listOf(parseEvent(JSONObject(eventFixture).put("task_type", "fertilize")),
+            parseEvent(JSONObject(eventFixture).put("id", "event-two").put("task_type", "fertilize").put("occurred_on", "2030-05-20")))
+        val state = mutableStateOf(owner.copy(today = list, pending = setOf(BusyKey.HandleAll("plant-one")), detail = PlantDetail(plant, history, emptyMap())))
+        compose.setContent { FytoriumTheme { PlantsScreen(state.value, null, initialPlant = plant.id, initialTask = task) } }
+        val block = hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))
+        fun undo(id: String = "event-one"): SemanticsNodeInteraction {
+            compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("undo:$id"))
+            return compose.onNodeWithTag("undo:$id")
+        }
+        fun skip(): SemanticsNodeInteraction {
+            compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("today-task:${task.plantId}:${task.key}"))
+            return compose.onNode(block and hasText("Skip"))
+        }
+        scroll("Handle all tasks").assertIsNotEnabled()
+        skip().assertIsEnabled()
+        undo().assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(pending = setOf(BusyKey.Row(task.occurrence))) }
+        skip().assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Saving Water for Synthetic fern").assertExists()
+        scroll("Handle all tasks").assertIsEnabled()
+        undo().assertIsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(pending = setOf(BusyKey.History("event-one"))) }
+        undo().assertIsNotEnabled()
+        undo("event-two").assertIsEnabled()
+        skip().assertIsEnabled()
     }
     @Test fun confirmationBoundsStayFixedThroughDelayedPhotoCreditAndEqualSearchResults() {
         val creditReady = java.util.concurrent.CountDownLatch(1)
@@ -392,7 +453,7 @@ class PlantsScreenTest {
                 "list" -> PlantsList(owner, owner.plants, false, {}, {}, {}, {})
                 "graveyard" -> PlantsList(owner, owner.plants.map { it.copy(status = "graveyard", attributesJson = JSONObject(it.attributesJson).put("graveyard_on", "2030-06-02").toString()) }, true, {}, {}, {}, {})
                 "detail", "delete", "history", "menu" -> PlantDetailScreen(owner, PlantDetail(plant, listOf(parseEvent(JSONObject(eventFixture))), emptyMap(), """{"customIntervals":{"water":7}}"""), {}, { _, _ -> }, {}, {}, options = syntheticOptions())
-                "search" -> SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(SpeciesCandidate(910001, "Testoria lucida Inventor", "Testoria lucida", "SPECIES", "FUZZY", 92, true, null, null))), {}, { _, _, _ -> })
+                "search" -> SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(SpeciesCandidate(910001, "Testoria lucida Inventor", "Testoria lucida", "SPECIES", "FUZZY", 92, true, null, null, commonName = "Synthetic lantern"))), {}, { _, _, _ -> })
                 "restore" -> RestoreForm(plant, listOf(PlantSite("site-one", "Synthetic site")), true, {})
                 "repot" -> PlantRepotForm(plant, syntheticOptions(), true, onSave = {})
                 "add" -> PlantForm(null, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})

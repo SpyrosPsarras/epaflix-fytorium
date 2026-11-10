@@ -95,6 +95,9 @@ test('requires explicit fuzzy confirmation, accepts an alternative and persists 
   expect(history).toHaveLength(4);
   expect(history.map((event: { task_type: string }) => event.task_type)).not.toContain('mist');
   expect(history).toContainEqual(expect.objectContaining({ task_type: 'water', kind: 'completed', source: 'planta', occurred_on: '2026-06-01' }));
+  // Like any completion, an imported one keeps its task's due date at import. Planta reports this watering on 1 June, before the 10 June due date.
+  expect(Object.fromEntries(history.map((event: { task_type: string; due_on: string }) => [event.task_type, event.due_on])))
+    .toEqual({ water: '2026-06-10', fertilize: '2026-06-24', clean_leaves: '2026-07-10', repot: '2028-06-09' });
   expect((await owner.request('/api/plants/' + imported[0].id + '/care-settings', 'PUT', { customIntervals: { water: 10 } })).status).toBe(200);
   const tasks = await (await owner.request('/api/plants/' + imported[0].id + '/tasks')).json();
   expect(tasks.water).toMatchObject({ intervalDays: 10, dueOn: '2026-06-11' });
@@ -119,6 +122,8 @@ test('a fresh fetch updates Planta fields including owner edits, but preserves l
   const search = await (await owner.request('/api/species/search?q=Testoria%20altera')).json();
   expect((await owner.request(endpoint + '/' + rows[0].id, 'PUT', { search_id: search.search_id, gbif_key: 910021 })).status).toBe(200);
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
+  // The 1 June watering made 11 June the due date, so the early watering Planta now reports on 4 June completed that occurrence.
+  expect(await (await owner.request(path + '/history')).json()).toContainEqual(expect.objectContaining({ task_type: 'water', occurred_on: '2026-06-04', due_on: '2026-06-11' }));
   expect(await (await owner.request('/api/plants')).json()).toHaveLength(1);
   expect(await (await owner.request(path)).json()).toMatchObject({ id: plant.id, nickname: 'Test renamed by Planta', pot_size_cm: 22, growth_stage: 'mature', health: 'good', near_heater: true });
   const sites = await (await owner.request('/api/sites')).json();
@@ -132,7 +137,8 @@ test('a fresh fetch updates Planta fields including owner edits, but preserves l
   expect(await (await owner.request('/api/sites/' + sites[0].id)).json()).toMatchObject({ humidity: 'humid', imported_conditions_incomplete: false });
   const events = await (await owner.request(path + '/history')).json();
   expect(events).toHaveLength(4);
-  expect(events).toContainEqual(expect.objectContaining({ source: 'planta', task_type: 'water', occurred_on: '2026-06-04' }));
+  // A fetch with the same date keeps the stored due date.
+  expect(events).toContainEqual(expect.objectContaining({ source: 'planta', task_type: 'water', occurred_on: '2026-06-04', due_on: '2026-06-11' }));
   expect(await (await owner.request(path + '/tasks')).json()).toMatchObject({ water: { intervalDays: 10, dueOn: '2026-06-14' } });
 });
 
@@ -402,7 +408,8 @@ test('re-import preserves standalone import undo, local batches, request IDs, sn
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   const repeated = await (await owner.request(path + '/history')).json();
   expect(repeated).toHaveLength(events.length + batch.events.length);
-  expect(repeated).toContainEqual(expect.objectContaining({ ...undoneWater, occurred_at: '2026-06-09T12:00:00.000Z', occurred_on: '2026-06-09' }));
+  expect(undoneWater.due_on).toBe('2026-06-10');
+  expect(repeated).toContainEqual(expect.objectContaining({ ...undoneWater, occurred_at: '2026-06-09T12:00:00.000Z', occurred_on: '2026-06-09', due_on: '2026-06-10' }));
   for (const event of events.filter((event: { id: string }) => event.id !== water.id)) expect(repeated).toContainEqual(event);
   for (const event of batch.events) expect(repeated).toContainEqual({ ...event, custom_task_name: null });
   expect((await (await owner.request(path + '/tasks/complete-all', 'POST', { request_id: key })).json()).events).toEqual(batch.events);
@@ -539,11 +546,27 @@ test('photo suggestions persist once per staging row, reset on fetch and validat
   expect(responses.map(response => response.status)).toEqual([200, 200]);
   const suggestion = await responses[0].json();
   expect(await responses[1].json()).toEqual(suggestion);
-  expect(suggestion).toMatchObject({ suggested_gbif_key: 910802, candidates: [{ gbif_key: 910802 }], genus: { gbif_key: 910800, rank: 'GENUS' } });
+  expect(suggestion).toMatchObject({ suggested_gbif_key: 910802, candidates: [{ gbif_key: 910802, common_name: null }], genus: { gbif_key: 910800, rank: 'GENUS', common_name: null } });
   expect(harness.identificationRequests).toHaveLength(before + 1);
   expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 49 });
   await harness.restartApp();
   expect(await (await owner.request(path, 'POST', {})).json()).toEqual(suggestion);
+  expect(harness.identificationRequests).toHaveLength(before + 1);
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await database.query(`INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES
+      (910802, 'Trialia picta Inventor', 'Trialia picta', 'SPECIES', CURRENT_TIMESTAMP),
+      (910800, 'Trialia Inventor', 'Trialia', 'GENUS', CURRENT_TIMESTAMP)`);
+  } finally { await database.end(); }
+  for (const [key, language, name] of [[910802, 'en', 'English picture plant'], [910802, 'el', 'Greek picture plant'], [910800, 'en', 'English picture genus'], [910800, 'el', 'Greek picture genus']]) {
+    expect((await owner.request(`/api/species/${key}/names`, 'POST', { language, name })).status).toBe(201);
+  }
+  for (const language of ['el', 'en', 'el']) {
+    const response = await fetch(harness.base + path, { method: 'POST', headers: { cookie: owner.cookie, origin: harness.base, 'accept-language': language } });
+    expect(response.status).toBe(200);
+    const prefix = language === 'el' ? 'Greek' : 'English';
+    expect(await response.json()).toMatchObject({ candidates: [{ gbif_key: 910802, common_name: prefix + ' picture plant' }], genus: { gbif_key: 910800, common_name: prefix + ' picture genus' } });
+  }
   expect(harness.identificationRequests).toHaveLength(before + 1);
   expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910802 })).status).toBe(422);
   expect((await owner.request(`${endpoint}/${rows[0].id}`, 'PUT', { gbif_key: 910802, confirmed: true })).status).toBe(200);
@@ -623,6 +646,98 @@ test('a claimed suggestion without a result is a successful empty pending respon
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ suggested_gbif_key: null, candidates: [], genus: null });
   expect(harness.identificationRequests).toHaveLength(before);
+});
+
+test.each([
+  ['Custom plant', 'Localized plant', 'Testoria lucida', 'Custom plant'],
+  ['Testoria lucida', 'Localized plant', 'Testoria lucida', 'Testoria lucida'],
+  ['', 'Localized plant', 'Testoria lucida', 'Localized plant'],
+  ['', ' TÉSTORIA-lucida ', 'Testoria lucida', null],
+  ['', ' TÉSTORIA-lucida ', 'Testoria lucida Inventor', null],
+])('imports nickname %s with localized name %s and scientific name %s', async (custom, localizedName, scientific, expected) => {
+  harness.setGbif({ usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  const plant = syntheticPlant('synthetic-nickname-' + scientific + custom + localizedName, custom!);
+  Object.assign(plant.names, { localizedName, scientific });
+  fake.setPlants([plant]);
+  const response = await owner.request(endpoint, 'POST', { code: fake.code });
+  expect(response.status).toBe(200);
+  expect((await response.json())[0].mapped.nickname).toBe(expected);
+});
+
+test('re-fetch preserves an owner nickname when Planta has no vernacular nickname and replaces it when supplied', async () => {
+  harness.setGbif({ usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  const imported = syntheticPlant('synthetic-preserved-nickname');
+  fake.setPlants([imported]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  const initial = await (await owner.request(endpoint + '/commit', 'POST', {})).json();
+  const path = '/api/plants/' + initial[0].plant_id;
+  const plant = await (await owner.request(path)).json();
+  expect((await owner.request(path, 'PUT', { ...plant, nickname: 'Owner correction' })).status).toBe(200);
+  imported.names.custom = '';
+  Object.assign(imported.names, { localizedName: 'TÉSTORIA-lucida' });
+  imported.environment.pot.size = 29;
+  fake.setPlants([imported]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
+  expect(await (await owner.request(path)).json()).toMatchObject({ nickname: 'Owner correction', pot_size_cm: 29 });
+  Object.assign(imported.names, { localizedName: 'Planta familiar leaf' });
+  fake.setPlants([imported]);
+  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
+  expect(await (await owner.request(path)).json()).toMatchObject({ nickname: 'Planta familiar leaf' });
+});
+
+test.each([
+  ['', 'TÉSTORIA-lucida', null],
+  ['', 'Testoria lucida Inventor', null],
+  ['Testoria lucida', 'TÉSTORIA-lucida', 'Testoria lucida'],
+  ['', 'Familiar imported leaf', 'Familiar imported leaf'],
+])('commit checks localizedName against the manually selected species while preserving custom names', async (custom, localizedName, expected) => {
+  harness.setGbif({ usageKey: 910890, scientificName: 'Trialia uncertain Inventor', canonicalName: 'Trialia uncertain', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 80 });
+  const plant = syntheticPlant('synthetic-final-nickname-' + randomUUID(), custom);
+  Object.assign(plant.names, { localizedName, scientific: 'Trialia unresolved' });
+  fake.setPlants([plant]);
+  const staged = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect(staged[0].status).toBe('review');
+  const search = await (await owner.request('/api/species/search?q=Testoria%20lucida')).json();
+  const reviewed = await owner.request(endpoint + '/' + staged[0].id, 'PUT', { search_id: search.search_id, gbif_key: 910001, confirmed: true });
+  expect(reviewed.status).toBe(200);
+  const committed = await owner.request(endpoint + '/commit', 'POST', {});
+  expect(committed.status).toBe(200);
+  const [row] = await committed.json();
+  expect(await (await owner.request('/api/plants/' + row.plant_id)).json()).toMatchObject({ gbif_key: 910001, nickname: expected });
+});
+
+test('Planta staging candidates and selections use the current request language, including retained reviews', async () => {
+  const localized = async (method = 'GET', body?: unknown) => {
+    const response = await fetch(harness.base + endpoint, { method, headers: { cookie: owner.cookie, origin: harness.base, 'accept-language': 'el', 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  for (const [language, name] of [['en', 'English staged leaf'], ['el', 'Greek staged leaf']]) {
+    expect((await owner.request('/api/species/910001/names', 'POST', { language, name })).status).toBe(201);
+  }
+  const plant = syntheticPlant('synthetic-staging-language');
+  plant.names.scientific = 'Testoria lucida';
+  fake.setPlants([plant]);
+  const [fetched] = await localized('POST', { code: fake.code });
+  expect(fetched.candidates).toContainEqual(expect.objectContaining({ gbif_key: 910001, common_name: 'Greek staged leaf' }));
+  expect(fetched.selected).toMatchObject({ gbif_key: 910001, common_name: 'Greek staged leaf' });
+  const [english] = await (await owner.request(endpoint)).json();
+  expect(english.selected.common_name).toBe('English staged leaf');
+  const page = await (await fetch(harness.base + '/import/__data.json', { headers: { cookie: owner.cookie, 'accept-language': 'el' } })).text();
+  expect(page).toContain('Greek staged leaf');
+  expect(page).not.toContain('English staged leaf');
+  await harness.restartApp();
+  await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-06-10T12:00:00Z' });
+  const [retained] = await localized();
+  expect(retained.selected.common_name).toBe('Greek staged leaf');
+  const reviewed = await fetch(harness.base + endpoint + '/' + retained.id, { method: 'PUT', headers: { cookie: owner.cookie, origin: harness.base, 'accept-language': 'el', 'content-type': 'application/json' }, body: JSON.stringify({ gbif_key: 910001, confirmed: true }) });
+  expect(reviewed.status).toBe(200);
+  expect((await reviewed.json()).selected.common_name).toBe('Greek staged leaf');
+  const committed = await fetch(harness.base + endpoint + '/commit', { method: 'POST', headers: { cookie: owner.cookie, origin: harness.base, 'accept-language': 'el', 'content-type': 'application/json' }, body: '{}' });
+  expect(committed.status).toBe(200);
+  expect((await committed.json())[0].selected.common_name).toBe('Greek staged leaf');
 });
 
 function importPlant(id: string) {

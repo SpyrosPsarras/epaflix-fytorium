@@ -99,7 +99,11 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         val id = synchronized(monitor) { rainRequestId ?: java.util.UUID.randomUUID().toString().also { rainRequestId = it } }
         write("/api/weather/rain/water", "POST", JSONObject().put("request_id", id)) { result ->
             rainRequestId = null
-            mutable.value = mutable.value.copy(message = "Marked ${result.getInt("plantCount")} outdoor plants watered.")
+            val batch = result.getString("batchId")
+            // The card shows the receipt from the same fields a refresh or another device reads.
+            if (result.isNull("undoneAt")) mutable.value = mutable.value.copy(weather = mutable.value.weather?.let {
+                it.copy(rain = it.rain?.copy(batchId = batch), lastBatchId = batch, lastBatchPlantCount = result.getInt("plantCount"))
+            })
         }
     }
     fun undoRain(): Boolean {

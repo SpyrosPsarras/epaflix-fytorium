@@ -1,6 +1,8 @@
 export const nameLanguages = { en: 'English', nb: 'Norwegian', el: 'Greek', la: 'Latin' } as const;
 export type NameLanguage = keyof typeof nameLanguages;
-export function requestLanguage(header: string | null): 'en' | 'nb' | 'el' {
+export const commonNameLanguages = ['en', 'nb', 'el'] as const;
+export type CommonNameLanguage = typeof commonNameLanguages[number];
+export function requestLanguage(header: string | null): CommonNameLanguage {
   const preferences = (header?.split(',') ?? []).map(entry => {
     const [tag, ...parameters] = entry.trim().toLowerCase().split(';');
     const quality = parameters.map(parameter => parameter.trim()).find(parameter => parameter.startsWith('q='));

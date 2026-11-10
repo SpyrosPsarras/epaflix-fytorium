@@ -30,8 +30,10 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
 
 @Composable internal fun TaskRow(task: CareTask, state: CareState, today: String, photo: Bitmap?,
     onAction: (String) -> Unit, showType: Boolean = false, photoLoading: Boolean = false, onOpen: () -> Unit = {}) {
-    val event = state.handled[task.plantId + ":" + task.key] ?: task.completedEvent
+    val event = task.completedEvent
     val actions = state.member?.let { task.actions(today, it, event) }.orEmpty()
+    val busy = BusyKey.Row(task.occurrence) in state.pending
+    val enabled = state.writable && !busy
     Column(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClickLabel = "Open ${task.plantName}", onClick = onOpen)
@@ -42,26 +44,40 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
                     Text(task.plantName, style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val subtitle = if (showType) listOf(task.label, task.siteName).filter { it.isNotBlank() }.joinToString(" · ") else task.siteName
                     if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (showType && event == null) task.postponedLabel?.let {
+                        Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
-            if ("snooze" in actions) IconButton(onClick = { onAction("snooze") }, enabled = state.writable, modifier = Modifier.size(48.dp)) {
+            if ("snooze" in actions) IconButton(onClick = { onAction("snooze") }, enabled = enabled, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.NotificationsPaused, contentDescription = "Snooze 2 days", tint = MaterialTheme.colorScheme.primary)
             }
-            if (event != null) {
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Check, contentDescription = "${event.label} for ${task.plantName}", tint = MaterialTheme.colorScheme.onPrimary) }
+            if (busy) {
+                Box(Modifier.size(48.dp).semantics { contentDescription = "Saving ${task.label} for ${task.plantAndSite}" }, contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
+            } else if (event != null) {
+                val check = @Composable { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary) } }
+                val done = "${event.label} for ${task.plantAndSite}"
+                if ("undo" in actions) {
+                    val description = done + if (event.batchId == null) ". Double tap to undo" else ". Part of ${state.batches[event.batchId]?.scope ?: "a"} batch"
+                    Surface(onClick = { onAction("undo") }, enabled = enabled, shape = CircleShape, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = description }, content = check)
+                } else Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(48.dp).semantics { contentDescription = done }, content = check)
             } else if ("complete" in actions) {
-                IconButton(onClick = { onAction("complete") }, enabled = state.writable,
-                    modifier = Modifier.size(48.dp).border(2.dp, if (state.writable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
-                        .semantics { contentDescription = "Mark ${task.label} for ${task.plantName} done" }) {
+                IconButton(onClick = { onAction("complete") }, enabled = enabled,
+                    modifier = Modifier.size(48.dp).border(2.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
+                        .semantics { contentDescription = "Mark ${task.label} done for ${task.plantAndSite}" }) {
                     // An unfilled circle is the completion affordance, not a second checkbox.
                 }
             }
         }
-        if ("undo" in actions) TextButton(onClick = { onAction("undo") }, enabled = state.writable,
-            modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp).padding(end = 12.dp)) { Text("Undo") }
     }
+}
+
+@Composable internal fun ButtonProgress(visible: Boolean) {
+    if (visible) CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp)
 }
 
 @Composable private fun TaskPhoto(task: CareTask, bitmap: Bitmap?, pending: Boolean, loading: Boolean) {

@@ -47,9 +47,7 @@ import org.json.JSONObject
         }
     }
 }
-internal fun CareState.currentTask(key: String?): CareTask? =
-    listOfNotNull(today, upcoming).flatMap { it.sections }.flatMap { it.tasks }
-        .firstOrNull { "${it.plantId}:${it.key}" == key }
+internal fun CareState.currentTask(occurrence: String?): CareTask? = rows.firstOrNull { it.occurrence == occurrence }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantDetailScreen(state: CareState, detail: PlantDetail, onEdit: () -> Unit,
@@ -57,8 +55,8 @@ internal fun CareState.currentTask(key: String?): CareTask? =
     enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null,
     todayTask: CareTask? = null, onTaskAction: (String) -> Unit = {}) {
     val plant = detail.plant
-    val task = todayTask?.takeIf { it.plantId == plant.id }?.let { state.currentTask("${it.plantId}:${it.key}") ?: it }
-    val event = task?.let { state.handled["${it.plantId}:${it.key}"] ?: it.completedEvent }
+    val task = todayTask?.takeIf { it.plantId == plant.id }?.let { state.currentTask(it.occurrence) ?: it }
+    val event = task?.completedEvent
     val today = state.today?.today ?: state.upcoming?.today
     val actions = state.member?.let { member -> today?.let { task?.actions(it, member, event) } }.orEmpty()
     val attributes = remember(plant.attributesJson) { JSONObject(plant.attributesJson) }
@@ -93,8 +91,10 @@ internal fun CareState.currentTask(key: String?): CareTask? =
         task?.let { task ->
             item {
                 Column(Modifier.fillMaxWidth().testTag("today-task:${task.plantId}:${task.key}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val acting = BusyKey.Row(task.occurrence) in state.pending
                     Heading(task.label)
-                    event?.let { Text(it.label) }
+                    (event?.label ?: task.postponedLabel)?.let { Text(it) }
+                    if (acting) CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = "Saving ${task.label} for ${plant.displayName}" }, strokeWidth = 2.dp)
                     if (!state.offline) OfflineNotice(state)
                     actions.forEach { action ->
                         val label = when (action) {
@@ -105,7 +105,7 @@ internal fun CareState.currentTask(key: String?): CareTask? =
                             else -> "Undo"
                         }
                         OutlinedButton(onClick = { if (action == "repot") onCommand("repot-form", JSONObject()) else onTaskAction(action) },
-                            enabled = state.writable && (state.member?.role == Role.sitter || enabled),
+                            enabled = state.writable && !acting && (state.member?.role == Role.sitter || enabled),
                             modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "$label for ${plant.displayName}" }) { Text(label) }
                     }
                     if (task.basedOn.isNotEmpty()) Provenance(task.basedOn)
@@ -135,7 +135,11 @@ internal fun CareState.currentTask(key: String?): CareTask? =
                 listOf("nickname", "cultivar", "birthday", "health").forEach { key -> Text("${key.replaceFirstChar { it.uppercase() }}: ${attributes.nullable(key)?.replace('_', ' ') ?: "Not set"}") }
             }
             if (plant.status == "active") item {
-                Button(onClick = { onCommand("handle-all", JSONObject()) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Handle all tasks") }
+                val handling = BusyKey.HandleAll(plant.id) in state.pending
+                Button(onClick = { onCommand("handle-all", JSONObject()) }, enabled = enabled && !handling, modifier = Modifier.heightIn(min = 48.dp)) {
+                    ButtonProgress(handling)
+                    Text("Handle all tasks")
+                }
                 Text("Completes only tasks due or late today. Undo reverses the whole batch.")
                 if ("repot" !in actions) OutlinedButton(onClick = { onCommand("repot-form", JSONObject()) }, enabled = enabled,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("Repot with new pot and soil") }
@@ -169,7 +173,11 @@ internal fun CareState.currentTask(key: String?): CareTask? =
                 Text("${event.occurredOn} · ${taskLabel(event.taskType, event.customTaskName)}")
                 Text("${event.label} by ${event.byName}" + if (event.undoneAt != null) " · Undone" else "")
                 if (event.batchId != null) Text("Part of a care batch. Undo reverses the whole batch.")
-                if (event.canUndo) OutlinedButton(onClick = { onUndo(event) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp).testTag("undo:${event.id}")) { Text("Undo") }
+                val undoing = BusyKey.History(event.id) in state.pending
+                if (event.canUndo) OutlinedButton(onClick = { onUndo(event) }, enabled = enabled && !undoing, modifier = Modifier.heightIn(min = 48.dp).testTag("undo:${event.id}")) {
+                    ButtonProgress(undoing)
+                    Text("Undo")
+                }
             }
         }
     }

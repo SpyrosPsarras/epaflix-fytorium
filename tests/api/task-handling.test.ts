@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { createApiHarness } from './harness';
 import { fixturePlant } from '../plant-fixture';
@@ -39,19 +40,20 @@ test('snooze and skip record history, are idempotent and undo restores the exact
   const snoozed = await act('snooze', 'water', key);
   expect(snoozed.status).toBe(200);
   const result = await snoozed.json();
-  expect(result).toMatchObject({ event: { kind: 'snoozed', occurred_on: '2026-05-03' }, task: { dueOn: '2026-05-05', intervalDays: 7 } });
+  expect(result).toMatchObject({ event: { kind: 'snoozed', occurred_on: '2026-05-03' }, task: { dueOn: '2026-05-05', intervalDays: 7, postponed: 'snoozed' } });
   expect((await (await act('snooze', 'water', key)).json()).event.id).toBe(result.event.id);
   const skipped = await act('skip');
   expect(skipped.status).toBe(200);
   const skip = await skipped.json();
-  expect(skip).toMatchObject({ event: { kind: 'skipped' }, task: { dueOn: '2026-05-10', intervalDays: 7 } });
+  expect(skip).toMatchObject({ event: { kind: 'skipped' }, task: { dueOn: '2026-05-10', intervalDays: 7, postponed: 'skipped' } });
   expect((await (await undo(skip.event.id)).json()).task.dueOn).toBe('2026-05-05');
   expect((await (await undo(result.event.id)).json()).task).toEqual(before.water);
   expect(await history()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'snoozed', undone_at: expect.any(String) }), expect.objectContaining({ kind: 'skipped', undone_at: expect.any(String) })]));
   // Equal-clock commands are ordered by the server, not by random event UUIDs.
   const second = await (await act('snooze')).json();
   const done = await (await act('complete')).json();
-  expect(done.task.dueOn).toBe('2026-05-10');
+  expect(done.task).toMatchObject({ dueOn: '2026-05-10', postponed: null });
+  expect(done.linked_events).toEqual([]);
   expect((await (await undo(done.event.id)).json()).task.dueOn).toBe('2026-05-05');
   await undo(second.event.id);
 });
@@ -69,6 +71,10 @@ test('complete-all is one atomic, idempotent action for exactly due or late task
   const [one, two] = await Promise.all(results.map(r => r.json()));
   expect(one.events.map((event: { task_type: string }) => event.task_type)).toEqual(['water', 'fertilize', 'clean_leaves', 'remove_dead']);
   expect(two.events).toEqual(one.events);
+  for (const event of one.events) expect(event).toMatchObject({ batch_plant_count: 1, batch_event_count: 4, batch_action: 'complete-all', batch_task: null, linked_event_id: null });
+  for (const event of (await history()).filter((event: { batch_id: string }) => event.batch_id === key)) {
+    expect(event).toMatchObject({ batch_plant_count: 1, batch_event_count: 4, batch_action: 'complete-all', batch_task: null, linked_event_id: null });
+  }
   expect(new Set(one.events.map((event: { batch_id: string }) => event.batch_id))).toEqual(new Set([key]));
   expect(await tasks()).toMatchObject({ water: { dueOn: '2026-06-12' }, repot: before.repot, cut_back: before.cut_back });
   expect((await undo(one.events[0].id)).status).toBe(409);
@@ -104,9 +110,10 @@ test('a batch failure rolls back all earlier completions and an empty batch rema
 const repot = (pot: Record<string, unknown>, request_id = randomUUID()) => request(`/api/plants/${plantId}/repot`, 'POST', { ...pot, request_id });
 const newPot = { pot_type: 'terracotta', pot_size_cm: 24, soil_type: 'aroid' };
 
-test('repot validates the pot, records completion, resets its schedule, and undo restores previous pot data', async () => {
+test('repot validates the pot, records completion at its due date, resets its schedule, and undo restores previous pot data', async () => {
   const originalPlant = await (await request(`/api/plants/${plantId}`)).json();
   const originalTasks = await tasks();
+  expect(originalTasks.repot.status).toBe('due');
   for (const bad of [{ pot_type: 'bag' }, { soil_type: 'peat' }, { pot_size_cm: 0 }, { pot_size_cm: 1.5 }, { pot_size_cm: '24' }, { pot_size_cm: 2147483648 }]) {
     expect((await repot({ ...newPot, ...bad })).status).toBe(422);
   }
@@ -114,7 +121,7 @@ test('repot validates the pot, records completion, resets its schedule, and undo
   const response = await repot(newPot, key);
   expect(response.status).toBe(200);
   const result = await response.json();
-  expect(result).toMatchObject({ event: { task_type: 'repot', kind: 'completed', previous_pot: { pot_type: 'plastic', pot_size_cm: null, soil_type: 'all_purpose' } }, task: { dueOn: '2029-06-04', intervalDays: 1095 } });
+  expect(result).toMatchObject({ event: { task_type: 'repot', kind: 'completed', due_on: originalTasks.repot.dueOn, previous_pot: { pot_type: 'plastic', pot_size_cm: null, soil_type: 'all_purpose' } }, task: { dueOn: '2029-06-04', intervalDays: 1095 } });
   expect(await (await request(`/api/plants/${plantId}`)).json()).toMatchObject(newPot);
   expect((await (await repot(newPot, key)).json()).event.id).toBe(result.event.id);
   expect((await repot({ ...newPot, soil_type: 'cactus' }, key)).status).toBe(409);
@@ -151,7 +158,7 @@ test('Upcoming shares Today\'s household calendar day, groups 14 days, omits ina
   const completed = await (await request('/api/tasks?view=today')).json();
   expect(completed.groups.water).toEqual([expect.objectContaining({ plant_id: outdoorId, completed_event: expect.objectContaining({ id: done.event.id }) })]);
   await request('/api/tasks/settings', 'PUT', { ...settings, show_completed: false });
-  expect((await (await request('/api/tasks?view=today')).json()).groups.water).toEqual([]);
+  expect((await (await request('/api/tasks?view=today')).json()).groups.water).toEqual(completed.groups.water);
   await undo(done.event.id);
   await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
   const bulk = await (await request(`/api/plants/${outdoorId}/tasks/complete-all`, 'POST', { request_id: randomUUID() })).json();
@@ -256,14 +263,16 @@ test('multiple repots undo newest first without losing later pot data or undoing
   expect(await (await request(`/api/plants/${plantId}`)).json()).toEqual(original);
 });
 
-test('today shows completed repotting even when the new pot makes repotting inapplicable, while Upcoming never includes inapplicable tasks', async () => {
+test('Today and Upcoming show completed repotting even when the new pot makes repotting inapplicable, while Upcoming never lists an inapplicable task as pending', async () => {
   const result = await (await repot({ pot_type: 'in_ground', pot_size_cm: null, soil_type: 'other' })).json();
   expect(result.task.status).toBe('not_applicable');
   await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: true });
   const today = await (await request('/api/tasks?view=today')).json();
   expect(today.groups.repot).toContainEqual(expect.objectContaining({ plant_id: plantId, completed_event: expect.objectContaining({ id: result.event.id }) }));
   const upcoming = await (await request('/api/tasks?view=upcoming')).json();
-  expect(upcoming.groups.repot).toEqual([]);
+  expect(upcoming.groups.repot).toEqual([expect.objectContaining({ plant_id: plantId, status: 'not_applicable', completed_event: expect.objectContaining({ id: result.event.id }) })]);
+  expect(upcoming.sections.find((section: { tasks: { completed_event?: { id: string } }[] }) => section.tasks.some(row => row.completed_event?.id === result.event.id)).key)
+    .toBe(result.event.due_on);
   await undo(result.event.id);
   await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
 });
@@ -567,7 +576,7 @@ describe('complete-type', () => {
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.events.map((event: { plant_id: string }) => event.plant_id).sort()).toEqual(ids);
-    for (const event of result.events) expect(event).toMatchObject({ task_type: null, custom_task_id: custom.id, batch_id: result.batch_id, can_undo: true });
+    for (const event of result.events) expect(event).toMatchObject({ task_type: null, custom_task_id: custom.id, batch_id: result.batch_id, batch_action: 'complete-type', batch_task: custom.id, linked_event_id: null, can_undo: true });
     expect((await undoBatch(result.batch_id)).status).toBe(200);
     const other = await harness.login('synthetic-handling-other');
     const key = randomUUID();
@@ -612,7 +621,8 @@ describe('liquid fertilizing', () => {
   });
 
   test('single Done waters before water is due, restarts its date and retries without duplicating either event', async () => {
-    expect((await plantTasks()).water.dueOn).toBe('2026-06-20');
+    const before = await plantTasks();
+    expect(before.water.dueOn).toBe('2026-06-20');
     const key = randomUUID();
     const responses = await Promise.all([fertilize('complete', key), fertilize('complete', key)]);
     for (const response of responses) expect(response.status).toBe(200);
@@ -623,6 +633,8 @@ describe('liquid fertilizing', () => {
     const water = events.find((event: { linked_event_id: string }) => event.linked_event_id === one.event.id);
     expect(water).toMatchObject({ task_type: 'water', kind: 'completed', batch_id: null, occurred_at: one.event.occurred_at, by_member: one.event.by_member });
     expect(one.event.task_type).toBe('fertilize');
+    expect(one.linked_events).toEqual([expect.objectContaining({ id: water.id, task_type: 'water', linked_event_id: one.event.id, occurred_at: one.event.occurred_at, can_undo: true })]);
+    expect([one.event.due_on, water.due_on]).toEqual([before.fertilize.dueOn, '2026-06-20']);
     expect((await plantTasks()).water.dueOn).toBe('2026-06-21');
     expect((await undo(one.event.id)).status).toBe(200);
     expect((await (await fertilize('complete', key)).json()).event.undone_at).not.toBeNull();
@@ -633,7 +645,9 @@ describe('liquid fertilizing', () => {
     const plant = await (await request('/api/plants/' + id)).json();
     expect((await request('/api/plants/' + id, 'PUT', { ...plant, fertilizer_type })).status).toBe(200);
     const before = (await plantTasks()).water;
-    expect((await fertilize()).status).toBe(200);
+    const response = await fertilize();
+    expect(response.status).toBe(200);
+    expect((await response.json()).linked_events).toEqual([]);
     expect(await plantHistory()).toHaveLength(2);
     expect((await plantTasks()).water).toEqual(before);
   });
@@ -677,6 +691,7 @@ describe('liquid fertilizing', () => {
     batchId = key;
     expect(result.events.map((event: { task_type: string }) => event.task_type)).toEqual(['fertilize', 'water']);
     expect(result.events[1]).toMatchObject({ linked_event_id: result.events[0].id, batch_id: key });
+    expect(result.events.map((event: { due_on: string }) => event.due_on)).toEqual([before.fertilize.dueOn, before.water.dueOn]);
     expect(result.tasks.water.dueOn).toBe('2026-06-21');
     expect((await (await request('/api/plants/' + id + '/tasks/complete-all', 'POST', { request_id: key })).json()).events).toEqual(result.events);
     expect((await undoBatch(key)).status).toBe(200);
@@ -709,8 +724,34 @@ describe('liquid fertilizing', () => {
     expect(response.status).toBe(200);
     const result = await response.json();
     batchId = result.batch_id;
-    for (const plant of [id, second, sticks]) {
+    const counts = { batch_plant_count: new Set(result.events.map((event: { plant_id: string }) => event.plant_id)).size, batch_event_count: result.events.length };
+    expect(counts.batch_plant_count).toBeGreaterThan(1);
+    const receipt = { ...counts, batch_action: 'complete-type', batch_task: 'fertilize' };
+    for (const event of result.events) expect(event).toMatchObject(receipt);
+    const familyInvite = await (await request('/api/household/invites', 'POST', { role: 'family' })).json();
+    const family = await harness.login('synthetic-batch-count-sitter', {}, familyInvite.link.split('/').at(-1));
+    expect((await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: true })).status).toBe(200);
+    expect((await family.request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: true })).status).toBe(200);
+    const memberId = (await (await family.request('/api/me')).json()).member.id;
+    expect((await request('/api/household/members/' + memberId, 'DELETE')).status).toBe(204);
+    const invite = await (await request('/api/household/invites', 'POST', { role: 'sitter', plant_ids: [id] })).json();
+    const sitter = await harness.login('synthetic-batch-count-sitter', {}, invite.link.split('/').at(-1));
+    for (const view of ['today', 'upcoming']) {
+      const list = await (await sitter.request('/api/tasks?view=' + view)).json();
+      const completed = list.groups.fertilize.filter((row: { completed_event?: { batch_id: string } }) => row.completed_event?.batch_id === key);
+      expect(completed).toHaveLength(1);
+      expect(completed[0].completed_event).toMatchObject({ ...receipt, linked_event_id: null });
+      expect(list.groups.water.find((row: { plant_id: string }) => row.plant_id === id).completed_event)
+        .toMatchObject({ ...receipt, linked_event_id: completed[0].completed_event.id });
+      const ownerList = await (await request('/api/tasks?view=' + view)).json();
+      for (const row of ownerList.groups.fertilize.filter((row: { completed_event?: { batch_id: string } }) => row.completed_event?.batch_id === key)) {
+        expect(row.completed_event).toMatchObject({ ...receipt, linked_event_id: null });
+      }
+    }
+    for (const [index, plant] of [id, second, sticks].entries()) {
       const events = result.events.filter((event: { plant_id: string }) => event.plant_id === plant);
+      expect(events.map((event: { due_on: string }) => event.due_on)).toEqual([before[index].fertilize.dueOn, ...plant === sticks ? [] : [before[index].water.dueOn]]);
+      for (const event of (await plantHistory(plant)).filter((event: { batch_id: string }) => event.batch_id === key)) expect(event).toMatchObject(receipt);
       expect(events.map((event: { task_type: string }) => event.task_type)).toEqual(plant === sticks ? ['fertilize'] : ['fertilize', 'water']);
       if (plant !== sticks) {
         expect(events[1]).toMatchObject({ linked_event_id: events[0].id, batch_id: key, occurred_at: events[0].occurred_at });
@@ -723,6 +764,7 @@ describe('liquid fertilizing', () => {
     expect(await Promise.all([plantTasks(), plantTasks(second), plantTasks(sticks)])).toEqual(before);
     const replay = await (await completeType('fertilize', key)).json();
     expect(replay.events.every((event: { undone_at: string | null }) => event.undone_at !== null)).toBe(true);
+    for (const event of replay.events) expect(event).toMatchObject(receipt);
   });
 
   test('liquid fertilizing queues a separate completion notice for each event', async () => {
@@ -740,6 +782,246 @@ describe('liquid fertilizing', () => {
       } finally {
         await database.end();
       }
+    }
+  });
+});
+
+test('a skip after today\'s completion keeps the completion and the skipped occurrence as separate rows, and completing that occurrence lists both completions at their own due dates', async () => {
+  await clock('2026-07-01T09:00:00Z');
+  ({ request } = await harness.login());
+  const name = 'Test skipped after done plant';
+  const id = await addPlant(siteId, name);
+  const invite = await (await request('/api/household/invites', 'POST', { role: 'family' })).json();
+  const family = await harness.login('synthetic-skip-after-done', {}, invite.link.split('/').at(-1));
+  const water = async (member: typeof request, view: string) => (await (await member('/api/tasks?view=' + view)).json()).sections
+    .flatMap((section: { key: string; tasks: { plant_id: string; task_type: string }[] }) => section.tasks
+      .filter(row => row.plant_id === id && row.task_type === 'water').map(row => ({ section: section.key, ...row })));
+  try {
+    const done = await (await request(`/api/plants/${id}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
+    const skip = await (await family.request(`/api/plants/${id}/tasks/water/skip`, 'POST', { request_id: randomUUID() })).json();
+    expect(skip.task.postponed).toBe('skipped');
+    const skipped = { section: skip.task.dueOn, dueOn: skip.task.dueOn, postponed: 'skipped' };
+    expect(await water(family.request, 'upcoming')).toEqual([expect.objectContaining(skipped)]);
+    const retained = { completed_event: expect.objectContaining({ id: done.event.id }), postponed: null };
+    expect(await water(request, 'today')).toEqual([expect.objectContaining({ section: 'water', ...retained })]);
+    const upcoming = await water(request, 'upcoming');
+    expect(upcoming).toEqual([expect.objectContaining({ section: '2026-07-01', ...retained }), expect.objectContaining(skipped)]);
+    expect(upcoming[1]).not.toHaveProperty('completed_event');
+    const again = await (await request(`/api/plants/${id}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
+    const both = (sections: string[]) => [done, again].map(({ event }, index) => expect.objectContaining({ section: sections[index], completed_event: expect.objectContaining({ id: event.id }), postponed: null }));
+    expect(await water(request, 'today')).toEqual(both(['water', 'water']));
+    expect(await water(request, 'upcoming')).toEqual(both(['2026-07-01', skip.task.dueOn]));
+    expect((await undo(again.event.id)).status).toBe(200);
+    expect(await water(request, 'upcoming')).toEqual([expect.objectContaining({ section: '2026-07-01', ...retained }), expect.objectContaining(skipped)]);
+  } finally {
+    await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
+    const memberId = (await (await family.request('/api/me')).json()).member.id;
+    expect((await request('/api/household/members/' + memberId, 'DELETE')).status).toBe(204);
+    expect((await request('/api/plants/' + id, 'DELETE', { confirm_name: name })).status).toBe(204);
+  }
+});
+
+describe('Today and Upcoming list every completion the member made today', () => {
+  const off = { sort: 'task', filter: 'all', show_completed: false };
+  const on = { ...off, show_completed: true };
+  const created: { id: string; name: string }[] = [];
+  const joined: Awaited<ReturnType<typeof harness.login>>[] = [];
+  type Row = { plant_id: string; task_type: string | null; custom_task_id?: string | null; completed_event?: { id: string } };
+  const rows = async (member: typeof request, view: string, ids: string[], type = 'water'): Promise<{ section: string; plant: string; done: string | null }[]> => (await (await member('/api/tasks?view=' + view)).json()).sections
+    .flatMap((section: { key: string; tasks: Row[] }) => section.tasks.filter(row => ids.includes(row.plant_id) && (row.custom_task_id ?? row.task_type) === type)
+      .map(row => ({ section: section.key, plant: row.plant_id, done: row.completed_event?.id ?? null })));
+  const complete = async (member: typeof request, id: string, type = 'water') => {
+    const response = await member(`/api/plants/${id}/tasks/${type}/complete`, 'POST', { request_id: randomUUID() });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  async function start(at: string) {
+    await clock(at);
+    ({ request } = await harness.login());
+    expect((await request('/api/tasks/settings', 'PUT', off)).status).toBe(200);
+  }
+  async function plant(name: string) {
+    const id = await addPlant(siteId, name);
+    created.push({ id, name });
+    return id;
+  }
+  async function join(role: 'family' | 'sitter', subject: string, plant_ids?: string[]) {
+    const invite = await (await request('/api/household/invites', 'POST', { role, plant_ids })).json();
+    const member = await harness.login(subject, {}, invite.link.split('/').at(-1));
+    joined.push(member);
+    return member;
+  }
+  afterEach(async () => {
+    await request('/api/tasks/settings', 'PUT', off);
+    for (const member of joined.splice(0)) {
+      const memberId = (await (await member.request('/api/me')).json()).member.id;
+      expect((await request('/api/household/members/' + memberId, 'DELETE')).status).toBe(204);
+    }
+    for (const plant of created.splice(0)) expect((await request('/api/plants/' + plant.id, 'DELETE', { confirm_name: plant.name })).status).toBe(204);
+  });
+
+  test('lists your own completions with Show completed off, others\' only with it on, and drops undone ones', async () => {
+    await start('2026-08-03T09:00:00Z');
+    const mine = await plant('Test listing mine');
+    const theirs = await plant('Test listing theirs');
+    const family = await join('family', 'synthetic-listing-family');
+    const done = await complete(request, mine);
+    const other = await complete(family.request, theirs);
+    expect(await rows(request, 'today', [mine, theirs])).toEqual([{ section: 'water', plant: mine, done: done.event.id }]);
+    expect(await rows(request, 'upcoming', [mine, theirs])).toEqual([
+      { section: '2026-08-03', plant: mine, done: done.event.id }, { section: other.task.dueOn, plant: theirs, done: null }]);
+    expect(await rows(family.request, 'today', [mine, theirs])).toEqual([{ section: 'water', plant: theirs, done: other.event.id }]);
+    expect((await request('/api/tasks/settings', 'PUT', on)).status).toBe(200);
+    expect(await rows(request, 'today', [mine, theirs])).toEqual([
+      { section: 'water', plant: mine, done: done.event.id }, { section: 'water', plant: theirs, done: other.event.id }]);
+    expect(await rows(request, 'upcoming', [mine, theirs])).toEqual([
+      { section: '2026-08-03', plant: mine, done: done.event.id }, { section: '2026-08-03', plant: theirs, done: other.event.id }]);
+    expect((await undo(done.event.id)).status).toBe(200);
+    expect((await family.request(`/api/care-events/${other.event.id}/undo`, 'POST')).status).toBe(200);
+    expect(await rows(request, 'today', [mine, theirs])).toEqual([{ section: 'water', plant: mine, done: null }, { section: 'water', plant: theirs, done: null }]);
+    expect(await rows(family.request, 'today', [mine, theirs])).toEqual([{ section: 'water', plant: mine, done: null }, { section: 'water', plant: theirs, done: null }]);
+  });
+
+  test('a completed row stays at the due date of the occurrence it completed', async () => {
+    await start('2026-08-10T09:00:00Z');
+    const late = await plant('Test listing 3 late');
+    const early = await plant('Test listing 2 early');
+    const before = await complete(request, early);
+    await start('2026-08-12T09:00:00Z');
+    expect((await request('/api/tasks/settings', 'PUT', on)).status).toBe(200);
+    const due = await plant('Test listing 1 due');
+    const ids = [late, early, due];
+    expect(await rows(request, 'today', ids)).toEqual([{ section: 'water', plant: late, done: null }, { section: 'water', plant: due, done: null }]);
+    const lateDone = await complete(request, late);
+    const earlyDone = await complete(request, early);
+    expect(await rows(request, 'today', ids)).toEqual([
+      { section: 'water', plant: late, done: lateDone.event.id }, { section: 'water', plant: due, done: null }, { section: 'water', plant: early, done: earlyDone.event.id }]);
+    expect(await rows(request, 'upcoming', ids)).toEqual([
+      { section: '2026-08-12', plant: late, done: lateDone.event.id }, { section: '2026-08-12', plant: due, done: null },
+      { section: before.task.dueOn, plant: early, done: earlyDone.event.id }]);
+  });
+
+  test('lists batch completions and the water linked to liquid fertilizing for the member who made them', async () => {
+    await start('2026-08-20T09:00:00Z');
+    const id = await plant('Test listing batches');
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { water: 10, fertilize: 1 } })).status).toBe(200);
+    const custom = await (await request('/api/custom-tasks', 'POST', { plant_id: id, name: 'Test listing inspect', interval_days: 1 })).json();
+    const watered = await complete(request, id);
+    await start('2026-08-21T09:00:00Z');
+    const family = await join('family', 'synthetic-listing-batch-family');
+    const card = await (await completeType(custom.id)).json();
+    const plantBatch = await (await request(`/api/plants/${id}/tasks/complete-all`, 'POST', { request_id: randomUUID() })).json();
+    const fertilized = plantBatch.events.find((event: { task_type: string }) => event.task_type === 'fertilize');
+    const linked = plantBatch.events.find((event: { linked_event_id: string | null }) => event.linked_event_id === fertilized.id);
+    expect(linked).toMatchObject({ task_type: 'water', batch_id: fertilized.batch_id });
+    const expected = (view: string) => [
+      [custom.id, [{ section: view === 'today' ? custom.id : '2026-08-21', plant: id, done: card.events[0].id }]],
+      ['fertilize', [{ section: view === 'today' ? 'fertilize' : '2026-08-21', plant: id, done: fertilized.id }]],
+      ['water', [{ section: view === 'today' ? 'water' : watered.task.dueOn, plant: id, done: linked.id }]],
+    ] as const;
+    for (const view of ['today', 'upcoming']) {
+      for (const [type, listed] of expected(view)) {
+        expect(await rows(request, view, [id], type)).toEqual(listed);
+        expect((await rows(family.request, view, [id], type)).filter(row => row.done)).toEqual([]);
+      }
+    }
+    expect((await family.request('/api/tasks/settings', 'PUT', on)).status).toBe(200);
+    for (const view of ['today', 'upcoming']) for (const [type, listed] of expected(view)) expect(await rows(family.request, view, [id], type)).toEqual(listed);
+    expect((await undoBatch(card.batch_id)).status).toBe(200);
+    expect((await undoBatch(fertilized.batch_id)).status).toBe(200);
+    for (const type of [custom.id, 'fertilize', 'water']) expect((await rows(request, 'today', [id], type)).filter(row => row.done)).toEqual([]);
+  });
+
+  test('lists a sitter\'s own completions on shared plants but not other members\'', async () => {
+    await start('2026-08-24T09:00:00Z');
+    const shared = await plant('Test listing shared 1');
+    const sharedToo = await plant('Test listing shared 2');
+    const sitter = await join('sitter', 'synthetic-listing-sitter', [shared, sharedToo]);
+    const own = await complete(sitter.request, shared);
+    const owners = await complete(request, sharedToo);
+    expect(await rows(sitter.request, 'today', [shared, sharedToo])).toEqual([{ section: 'water', plant: shared, done: own.event.id }]);
+    expect(await rows(sitter.request, 'upcoming', [shared, sharedToo])).toEqual([
+      { section: '2026-08-24', plant: shared, done: own.event.id }, { section: owners.task.dueOn, plant: sharedToo, done: null }]);
+    const list = await (await sitter.request('/api/tasks?view=today')).json();
+    expect(list.groups.water.find((row: Row) => row.plant_id === shared).completed_event).toMatchObject({ id: own.event.id, can_undo: true });
+    expect((await sitter.request(`/api/care-events/${own.event.id}/undo`, 'POST')).status).toBe(200);
+    expect(await rows(sitter.request, 'today', [shared, sharedToo])).toEqual([{ section: 'water', plant: shared, done: null }]);
+  });
+
+  async function wateredEarly(name: string) {
+    await start('2026-09-01T09:00:00Z');
+    const id = await plant(name);
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { water: 7 } })).status).toBe(200);
+    await complete(request, id);
+    await start('2026-09-03T09:00:00Z');
+    return id;
+  }
+
+  test('a completion keeps the due date it completed after the skip before it is undone', async () => {
+    const id = await wateredEarly('Test listing skip undone');
+    const skip = await (await request(`/api/plants/${id}/tasks/water/skip`, 'POST', { request_id: randomUUID() })).json();
+    expect(skip.task.dueOn).toBe('2026-09-10');
+    const done = await complete(request, id);
+    const stays = [{ section: '2026-09-10', plant: id, done: done.event.id }];
+    expect(await rows(request, 'upcoming', [id])).toEqual(stays);
+    expect((await undo(skip.event.id)).status).toBe(200);
+    expect(await rows(request, 'upcoming', [id])).toEqual(stays);
+    expect(await rows(request, 'today', [id])).toEqual([{ section: 'water', plant: id, done: done.event.id }]);
+    expect([skip.event.due_on, done.event.due_on]).toEqual(['2026-09-08', '2026-09-10']);
+  });
+
+  test('a completion keeps the due date it completed after its interval changes', async () => {
+    const id = await wateredEarly('Test listing interval changed');
+    const done = await complete(request, id);
+    const stays = [{ section: '2026-09-08', plant: id, done: done.event.id }];
+    expect(await rows(request, 'upcoming', [id])).toEqual(stays);
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { water: 10 } })).status).toBe(200);
+    expect(await rows(request, 'upcoming', [id])).toEqual(stays);
+    expect(done.event.due_on).toBe('2026-09-08');
+  });
+
+  test('a completion recorded before due dates were stored sits at its occurrence date', async () => {
+    const id = await wateredEarly('Test listing without due date');
+    const done = await complete(request, id);
+    const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+    try { expect((await database.query('UPDATE care_events SET due_on = NULL WHERE id = $1', [done.event.id])).rowCount).toBe(1); }
+    finally { await database.end(); }
+    expect(await rows(request, 'upcoming', [id])).toEqual([{ section: '2026-09-03', plant: id, done: done.event.id }]);
+  });
+
+  test('a completion stays listed after its task stops applying to the plant', async () => {
+    await start('2026-09-10T09:00:00Z');
+    const id = await plant('Test listing moved outdoors');
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { clean_leaves: 1 } })).status).toBe(200);
+    await start('2026-09-11T09:00:00Z');
+    const done = await complete(request, id, 'clean_leaves');
+    const garden = await (await request('/api/sites', 'POST', { name: 'Test listing garden', location: 'outdoor', light: 'part_sun', humidity: 'normal', draft: false, grow_light: false })).json();
+    const attributes = await (await request('/api/plants/' + id)).json();
+    expect((await request('/api/plants/' + id, 'PUT', { ...attributes, site_id: garden.id })).status).toBe(200);
+    expect((await (await request(`/api/plants/${id}/tasks`)).json()).clean_leaves.status).toBe('not_applicable');
+    expect(await rows(request, 'today', [id], 'clean_leaves')).toEqual([{ section: 'clean_leaves', plant: id, done: done.event.id }]);
+    expect(await rows(request, 'upcoming', [id], 'clean_leaves')).toEqual([{ section: '2026-09-11', plant: id, done: done.event.id }]);
+  });
+
+  test('the due date migration adds an empty column for existing events and rolls back', async () => {
+    const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+    const client = await database.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('CREATE SCHEMA due_on_migration_test');
+      await client.query('SET LOCAL search_path TO due_on_migration_test, public');
+      await client.query('CREATE TABLE care_events (id integer PRIMARY KEY); INSERT INTO care_events VALUES (1)');
+      const [up, down] = readFileSync('migrations/20261109100000_care_event_due_on.sql', 'utf8').split('-- migrate:down');
+      await client.query(up);
+      await client.query("INSERT INTO care_events VALUES (2, '2026-09-08')");
+      expect((await client.query('SELECT id, due_on::text FROM care_events ORDER BY id')).rows).toEqual([{ id: 1, due_on: null }, { id: 2, due_on: '2026-09-08' }]);
+      await client.query(down);
+      expect((await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'due_on_migration_test' AND table_name = 'care_events'")).rows)
+        .toEqual([{ column_name: 'id' }]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await database.end();
     }
   });
 });
