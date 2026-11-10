@@ -23,7 +23,7 @@ test('Plantbook care shows provenance and unmatched species can be retried on a 
     await page.goto('/species/' + key);
     const light = page.getByRole('article', { name: 'Light', exact: true });
     await expect(light).toContainText('Source: open_plantbook', { timeout: 60000 });
-    await expect(light.locator('.value')).toHaveText('part_shade');
+    await expect(light.locator('.value')).toHaveText('part shade');
     await expect(light).toContainText('Fetch time: 2030-06-01T12:00:00.000Z');
     await screenshot('open-plantbook-care.png');
     await add('Testoria unmatched ' + (key + 1), key + 1);
