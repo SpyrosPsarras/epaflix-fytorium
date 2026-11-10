@@ -52,10 +52,10 @@ class TodayRedesignScreenTest {
         for (tip in listOf("Check the soil before watering.", "Empty standing water from saucers.", "Turn pots for more even light.",
             "Check leaf undersides for pests.", "Use clean tools when pruning.")) compose.onNodeWithText(tip).assertDoesNotExist()
         compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
-        compose.onNodeWithContentDescription("My notifications").assertIsDisplayed()
+        compose.onNodeWithContentDescription("My notifications").assertDoesNotExist()
         compose.onNodeWithTag("view-today").assertIsSelected()
         compose.onNodeWithTag("view-upcoming").performClick().assertIsSelected()
-        assertTitle("Upcoming")
+        assertTitle("Today")
     }
     @Test fun cardHandlingRequiresADuePendingTaskAndAnEditingRole() {
         val list = parseTaskList(taskListFixture("today"))
@@ -252,31 +252,41 @@ class TodayRedesignScreenTest {
         compose.runOnIdle { view.value = "today" }
         compose.runOnIdle { state.value = full.copy(today = base.copy(sections = emptyList(), groups = emptyMap())) }
         compose.onNodeWithText("Nothing to do today", substring = false).assertExists()
-        compose.onNodeWithText("Next: Fertilize Fern · Tuesday, 4 June").assertIsDisplayed()
+        compose.onNodeWithText("Next: Fertilize Fern · Tuesday 4 Jun").assertIsDisplayed()
         capture("empty-day")
+        compose.runOnIdle { state.value = full.copy(today = base.copy(settings = TaskSettings(filter = "indoor"), sections = emptyList(), groups = emptyMap())) }
+        compose.onNodeWithText("No indoor tasks today").assertIsDisplayed()
+        compose.onNodeWithText("Indoor").assertIsDisplayed()
+        compose.onNodeWithText("Show all").assertIsDisplayed()
+        capture("filtered-empty-day")
         compose.runOnIdle { state.value = state.value.copy(plants = emptyList(), upcoming = null) }
         compose.onNodeWithText("Add your first plant").assertIsDisplayed()
         compose.onNodeWithTag("view-today").assertDoesNotExist()
         compose.onNodeWithTag("view-upcoming").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Task view").assertDoesNotExist()
         capture("no-plants")
         compose.onNodeWithText("Add plant").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithText("Import from Planta").performClick()
         assertEquals(1, adds); assertEquals(1, imports)
         compose.runOnIdle { state.value = full.copy(today = mixed, offline = true) }
-        compose.onNodeWithText(state.value.offlineBanner()).assertExists()
+        compose.onNodeWithText(state.value.todayBanner()!!).assertExists()
         compose.onAllNodes(hasContentDescription("Mark Water done for Fern, Living room") or hasContentDescription("Mark Fertilize done for Fern, Living room"))
             .assertCountEquals(2).assertAll(isNotEnabled())
         compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
         capture("offline")
+        compose.runOnIdle { state.value = full.copy(member = Member("family", Role.family), today = mixed) }
+        compose.onNodeWithContentDescription("Task view").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add plant").assertIsEnabled()
+        compose.onNodeWithContentDescription("Handle all Water tasks").assertIsEnabled()
+        capture("family")
         compose.runOnIdle { state.value = full.copy(member = Member("sitter", Role.sitter), today = mixed.copy(sections = mixed.sections.map { group -> group.copy(tasks = group.tasks.map { it.copy(siteName = "", basedOn = emptyList(), coverPhotoId = null) }) })) }
-        compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Task view").assertDoesNotExist()
         compose.onNodeWithContentDescription("Add plant").assertDoesNotExist()
         compose.onNodeWithText("Living room").assertDoesNotExist()
         capture("sitter")
         compose.runOnIdle { state.value = full.copy(today = mixed, busy = true) }
         compose.onNodeWithContentDescription("Add plant").assertIsEnabled().performClick()
-        compose.onNodeWithContentDescription("My notifications").assertIsEnabled()
+        compose.onNodeWithContentDescription("Search plants").assertIsEnabled()
         assertEquals(2, adds)
         disk.wipe()
     }

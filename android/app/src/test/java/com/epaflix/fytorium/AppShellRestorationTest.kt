@@ -136,7 +136,7 @@ class AppShellRestorationTest {
                     "/api/tasks?view=upcoming" -> taskListFixture("upcoming")
                     "/api/plants" -> "[$plantFixture]"
                     "/api/meta" -> """{"today":"2030-06-01","timezone":"Europe/Oslo"}"""
-                    "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"late","kind":"late_tasks","href":"/#today","count":1,"plants":[{"id":"plant-one","name":"Synthetic fern"}]}]}"""
+                    "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"plant-one","kind":"plant_warnings","href":"/plants/plant-one","plantName":"Synthetic fern","warnings":[{"kind":"no_drainage","reason":"Synthetic reason.","inputs":[]}]}]}"""
                     "/api/weather" -> """{"locationSet":false,"forecastFetchedAt":null,"rain":null,"lastRainBatch":null}"""
                     "/api/household/location" -> """{"location":null}"""
                     "/api/feed/settings" -> """{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true}"""
@@ -193,7 +193,7 @@ class AppShellRestorationTest {
                     }
                 }
                 "photo-form" -> {
-                    compose.onNodeWithText("Synthetic fern").performScrollTo().performClick()
+                    compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
                     compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("View all updates"))
                     compose.onNodeWithText("View all updates").performClick()
                     compose.onNodeWithText("Add a photo update").performClick()
@@ -234,7 +234,7 @@ class AppShellRestorationTest {
                     compose.onNodeWithText("Feed and weather settings").performClick()
                 }
                 else -> {
-                    compose.onNodeWithText("Synthetic fern").performScrollTo().performClick()
+                    compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
                     if (route == "plant-species") {
                         compose.onNodeWithContentDescription("Plant settings").performClick()
                         compose.onNodeWithText("Species care").performClick()

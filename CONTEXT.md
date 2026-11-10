@@ -201,7 +201,7 @@ A skipped care event that moves a task's due date to the action's household cale
 **Upcoming**:
 Care tasks grouped by household calendar day for fourteen days including today, with overdue tasks in today's group. Not-applicable tasks are excluded; today's due and late tasks agree with Today.
 
-**Task view settings**:
+**Task view**:
 A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show others' completed tasks. Today and Upcoming always list the completions the member made today, with Undo where allowed, even when the task no longer applies; Show others' completed tasks adds those of other members. The choice belongs to the member across sessions, not the device.
 
 **Handle all tasks**:
@@ -282,7 +282,7 @@ An optional push telling a member that someone else completed a task, off by def
 ## Home feed and warnings
 
 **Home feed**:
-Cards in a horizontal strip above Today put late care and setup problems first. The server computes the feed on read using the batched task list, effective care profiles, sites and weather report. GET /api/feed uses fifteen database queries including session lookup, independent of plant count and Today filters.
+Cards in a horizontal strip above Today put late care and setup problems first. Android's Today strip leaves out the late-care card, because the task list below already shows late tasks, and puts the newest rain card first. The server computes the feed on read using the batched task list, effective care profiles, sites and weather report. GET /api/feed uses fifteen database queries including session lookup, independent of plant count and Today filters.
 
 **Feed card**:
 One of late_tasks, current_weather, weather_alerts or plant_warnings. Late tasks show a count and every linked plant name. A single late plant is the card's destination; several plants get a Today see-all link. Current weather shows today's cached minimum and maximum with fetch time, or the waiting/unavailable notice when no current data exists, linking to weather settings. Cold alerts link to their plant and retain hardiness source, value and rule IDs. Rain cards link to weather settings and contain batch watering and undo controls; they disappear without active outdoor plants. Home computes schedules once and reuses the batch for the feed and member-filtered Today. Each plant with warnings has one card, linking to that plant. Empty card types disappear. Owner and family members can change their four switches, which default on and persist in Postgres across sessions. Sitters receive only late-care cards for shared active plants through the named sitterView home and feed projections, never weather, rain or plant warnings. Rain batch watering requires edit access and refuses sitters. Switching one off changes only that member's feed, not the warnings or alerts themselves.

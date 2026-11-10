@@ -54,4 +54,65 @@ class FeedRefreshTest {
             assertTrue("A slow feed dropped the next task refresh", nextTodayRead.await(2, TimeUnit.SECONDS))
         } finally { releaseFeed.countDown(); controller.close(); server.shutdown(); db.close() }
     }
+    private fun await(message: String, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (!condition() && System.nanoTime() < deadline) Thread.sleep(10)
+        assertTrue(message, condition())
+    }
+    @Test fun aPlantPageHistoryUndoRefreshesTheFeed() {
+        val server = MockWebServer()
+        val feedReads = java.util.concurrent.atomic.AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = when {
+                    request.path == "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
+                    request.path!!.startsWith("/api/tasks?") -> taskListFixture(if (request.path!!.contains("view=upcoming")) "upcoming" else "today")
+                    request.path == "/api/plants" -> "[]"
+                    request.path == "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
+                    request.path == "/api/feed" -> { feedReads.incrementAndGet(); feedFixture }
+                    request.path == "/api/weather" -> weatherFixture
+                    request.path == "/api/care-events/event-one/undo" ->
+                        """{"event":$eventFixture,"today":${taskListFixture("today")},"upcoming":${taskListFixture("upcoming")}}"""
+                    else -> return MockResponse().setResponseCode(404)
+                }
+                return MockResponse().setBody(body)
+            }
+        }
+        server.start()
+        val context = RuntimeEnvironment.getApplication()
+        val db = Room.inMemoryDatabaseBuilder(context, CareDatabase::class.java).allowMainThreadQueries().build()
+        val store = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
+        val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
+        val repository = Repository(api, CareCache(db), { true })
+        val feed = FeedRepository(api, { true })
+        val controller = CareController(context, store, repository, api, feed)
+        try {
+            await("The first feed read finishes") { feed.state.value.loaded && !feed.state.value.refreshing && !repository.state.value.busy }
+            val before = feedReads.get()
+            assertTrue("The history Undo succeeds", repository.undoHistory(parseEvent(org.json.JSONObject(eventFixture))))
+            await("The history Undo refreshes the feed") { feedReads.get() > before && !feed.state.value.refreshing }
+        } finally { controller.close(); server.shutdown(); db.close() }
+    }
+    @Test fun onlyAPullShowsTheRefreshSpinner() {
+        val server = MockWebServer()
+        server.start()
+        val context = RuntimeEnvironment.getApplication()
+        val db = Room.inMemoryDatabaseBuilder(context, CareDatabase::class.java).allowMainThreadQueries().build()
+        ServedLists(server, hold = { it.path == "/api/me" }).use { lists ->
+            val store = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
+            val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
+            val repository = Repository(api, CareCache(db), { true })
+            val controller = CareController(context, store, repository, api)
+            try {
+                lists.await { "/api/me" in lists.paths }
+                assertTrue(repository.state.value.busy)
+                assertFalse("A background refresh must not show the spinner", controller.pulling.value)
+                controller.refresh(pulled = true)
+                assertTrue(controller.pulling.value)
+                lists.release()
+                await("The spinner ends with the refresh that serves the pull") { !controller.pulling.value }
+                await("The refresh finishes") { !repository.state.value.busy }
+            } finally { lists.release(); controller.close(); server.shutdown(); db.close() }
+        }
+    }
 }

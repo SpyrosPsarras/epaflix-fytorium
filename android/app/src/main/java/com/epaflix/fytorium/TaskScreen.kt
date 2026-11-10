@@ -16,10 +16,15 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.shape.CircleShape
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -27,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.WarningAmber
 import android.graphics.Bitmap
@@ -43,14 +47,14 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String) -> Unit = { _, _ -> },
-                           onHandleType: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
+                           onHandleType: (String) -> Unit = {}, onSettings: suspend (TaskSettings) -> Boolean = { true }, refreshing: Boolean = false,
                            onUndoReceipt: (Receipt) -> Unit = {}, onReceiptDone: (Receipt) -> Unit = {},
                            thumbnails: Thumbnails? = null,
-                           onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
+                           onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
                            deviceOnline: Boolean = true, onOpenTask: (CareTask) -> Unit = {}, scrollState: ScrollState = rememberScrollState(),
                            thumbnailLoader: suspend (String) -> Bitmap? = { id -> withContext(Dispatchers.IO) {
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
-                           } }, feedContent: @Composable (() -> Unit) -> Unit = {}) {
+                           } }, feedContent: @Composable () -> Unit = {}) {
     val photoIds = remember(state.today, state.upcoming) {
         listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
     }
@@ -82,71 +86,76 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     }
     val pullState = rememberPullToRefreshState()
     // Zero-duration device animations can leave the refresh indicator at its shown offset.
-    LaunchedEffect(state.busy) { if (!state.busy) pullState.snapTo(0f) }
-    val taskAnchor = remember { BringIntoViewRequester() }
+    LaunchedEffect(refreshing) { if (!refreshing) pullState.snapTo(0f) }
     val scope = rememberCoroutineScope()
     val list = if (view == "upcoming") state.upcoming else state.today
-    var settingsOpen by remember { mutableStateOf(false) }
-    if (settingsOpen && list != null) ModalBottomSheet(onDismissRequest = { settingsOpen = false }) {
-        ViewSettings(list.settings, state.writable) { onSettings(it); settingsOpen = false }
-    }
+    val editor = state.member?.role in listOf(Role.owner, Role.family)
     val presentation = state.todayPresentation()
     val noPlants = state.today != null && state.plants.isEmpty()
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
-    val showFab = state.member?.role in listOf(Role.owner, Role.family)
-    val canAdd = state.member?.role in listOf(Role.owner, Role.family) && deviceOnline && !state.updateRequired
+    val canAdd = editor && deviceOnline && state.writable
+    fun saveView(settings: TaskSettings) { scope.launch { onSettings(settings) } }
+    var settingsOpen by remember { mutableStateOf(false) }
+    if (settingsOpen && list != null) ModalBottomSheet(onDismissRequest = { settingsOpen = false }) {
+        ViewSettings(list.settings, state.writable, state.message, onSettings)
+    }
     val snackbar = remember { SnackbarHostState() }
+    val blocked = when {
+        !deviceOnline || state.offline -> "Adding a plant needs a connection."
+        state.serverUnavailable -> "Adding a plant needs Fytorium to respond. Pull down to try again."
+        else -> "Update Fytorium to add plants."
+    }
+    fun adding(action: () -> Unit): () -> Unit = { if (canAdd) action() else scope.launch { snackbar.showSnackbar(blocked) } }
+    val addingLook = Modifier.semantics { if (!canAdd) { disabled(); stateDescription = blocked } }
+    val blockedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    var receiptHeight by remember { mutableIntStateOf(0) }
     ReceiptSnackbar(state.receipt, snackbar, onUndoReceipt, onReceiptDone)
-    Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
-        CenterAlignedTopAppBar(title = { Text(if (view == "upcoming") "Upcoming" else "Today") }, navigationIcon = {
+    Scaffold(snackbarHost = { SnackbarHost(snackbar, Modifier.onSizeChanged { receiptHeight = it.height }) }, topBar = {
+        CenterAlignedTopAppBar(title = { Text("Today") }, navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
         }, actions = {
-            IconButton(onClick = onNotifications) { Icon(Icons.Outlined.Notifications, contentDescription = "My notifications") }
+            if (editor && list != null && !noPlants) IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Default.Tune, contentDescription = "Task view") }
+            if (editor) IconButton(onClick = adding(onAddPlant), modifier = addingLook) {
+                Icon(Icons.Default.Add, contentDescription = "Add plant", tint = if (canAdd) LocalContentColor.current else blockedColor)
+            }
         })
-    }, floatingActionButton = {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showFab && list != null && !noPlants) SmallFloatingActionButton(onClick = { settingsOpen = true },
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Default.Tune, contentDescription = "Task view settings")
-            }
-            if (state.member?.role in listOf(Role.owner, Role.family)) FloatingActionButton(onClick = { if (canAdd) onAddPlant() },
-                modifier = Modifier.size(64.dp).semantics { if (!canAdd) disabled() }) {
-                Icon(Icons.Default.Add, contentDescription = "Add plant")
-            }
-        }
     }) { padding ->
-        PullToRefreshBox(isRefreshing = state.busy, state = pullState, onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()), indicator = {
-                if (state.busy || pullState.distanceFraction > 0f) PullToRefreshDefaults.Indicator(
-                    modifier = Modifier.align(Alignment.TopCenter), state = pullState, isRefreshing = state.busy,
+        // The viewport ends above the receipt while one shows, so no row scrolls under it.
+        val receiptSpace = with(LocalDensity.current) { receiptHeight.toDp() }
+        PullToRefreshBox(isRefreshing = refreshing, state = pullState, onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding(), bottom = receiptSpace), indicator = {
+                if (refreshing || pullState.distanceFraction > 0f) PullToRefreshDefaults.Indicator(
+                    modifier = Modifier.align(Alignment.TopCenter), state = pullState, isRefreshing = refreshing,
                     containerColor = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }) {
             Column(Modifier.fillMaxSize().testTag("task-list").verticalScroll(scrollState)
-                .padding(start = 16.dp, end = 16.dp, bottom = (if (showFab) 88.dp else 16.dp) + padding.calculateBottomPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (view == "today") feedContent { scope.launch { taskAnchor.bringIntoView() } }
-                if (!noPlants) SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf("today" to "Today", "upcoming" to "Upcoming").forEachIndexed { index, (key, label) ->
-                        SegmentedButton(selected = view == key, onClick = { onView(key) }, shape = SegmentedButtonDefaults.itemShape(index, 2),
-                            modifier = Modifier.testTag("view-$key")) { Text(label) }
-                    }
-                }
-                if (view == "upcoming" && !noPlants) Text("Next 14 calendar days, including today", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OfflineNotice(state)
-                if (sections.isEmpty()) Column(Modifier.fillMaxWidth().bringIntoViewRequester(taskAnchor).padding(vertical = 32.dp),
+                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp + padding.calculateBottomPadding()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (view == "today") feedContent()
+                if (!noPlants) ViewToggle(view, onView)
+                if (!noPlants) list?.settings?.let { settings -> ActiveView(settings, editor, state.writable) { saveView(TaskSettings()) } }
+                TodayNotice(state)
+                if (sections.isEmpty()) Column(Modifier.fillMaxWidth().padding(vertical = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Icon(Icons.Outlined.Eco, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
-                    val title = if (view == "upcoming" && state.plants.isNotEmpty() && list != null) "No upcoming tasks" else presentation.emptyTitle
+                    val filter = list?.takeIf { state.plants.isNotEmpty() }?.hidingFilter()
+                    val title = if (view == "upcoming" && state.plants.isNotEmpty() && list != null) "No upcoming " + filter?.let { "$it " }.orEmpty() + "tasks" else presentation.emptyTitle
                     Text(title, style = MaterialTheme.typography.headlineSmall)
+                    presentation.emptyHint?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
                     if (view == "today" && state.plants.isNotEmpty()) presentation.nextTask?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
-                    if (state.today != null && state.plants.isEmpty() && state.member?.role in listOf(Role.owner, Role.family)) {
-                        Button(onClick = onAddPlant, enabled = canAdd, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add plant") }
-                        if (state.member?.role == Role.owner) TextButton(onClick = onImport, enabled = canAdd, modifier = Modifier.heightIn(min = 48.dp)) { Text("Import from Planta") }
+                    if (filter != null && editor) TextButton(onClick = { list?.let { saveView(it.settings.copy(filter = "all")) } }, enabled = state.writable,
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text("Show all") }
+                    if (state.today != null && state.plants.isEmpty() && editor) {
+                        Button(onClick = adding(onAddPlant), modifier = addingLook.heightIn(min = 48.dp), colors = if (canAdd) ButtonDefaults.buttonColors()
+                            else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f), contentColor = blockedColor)) { Text("Add plant") }
+                        if (state.member?.role == Role.owner) TextButton(onClick = adding(onImport), modifier = addingLook.heightIn(min = 48.dp),
+                            colors = if (canAdd) ButtonDefaults.textButtonColors() else ButtonDefaults.textButtonColors(contentColor = blockedColor)) { Text("Import from Planta") }
                     }
                 }
-                sections.forEachIndexed { index, section ->
-                    Card(Modifier.fillMaxWidth().then(if (index == 0) Modifier.bringIntoViewRequester(taskAnchor) else Modifier),
+                sections.forEach { section ->
+                    Card(Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) taskDate(section.key) else section.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                        Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) dayLabel(section.key, list!!.today) else section.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp).semantics { heading() })
                         section.tasks.forEach { task ->
                             key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
@@ -154,7 +163,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                                 onOpen = { onOpenTask(task) }, showType = view == "upcoming",
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
-                        if (view == "today" && state.member?.role in listOf(Role.owner, Role.family) && section.tasks.any { task ->
+                        if (view == "today" && editor && section.tasks.any { task ->
                             task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today && task.completedEvent == null
                         }) {
                             val handling = BusyKey.Card(section.key) in state.pending
@@ -191,35 +200,98 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 }
 
 @Composable fun OfflineNotice(state: CareState) {
-    if (state.offline || state.serverUnavailable) {
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Outlined.WarningAmber, contentDescription = "Warning", tint = MaterialTheme.colorScheme.tertiary)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (state.offline) state.offlineBanner() else state.serverBanner(), style = MaterialTheme.typography.titleSmall)
-                    Text(if (state.offline) "Actions are unavailable offline. Reconnect and refresh to make changes."
-                        else "Actions are unavailable until Fytorium responds. Refresh to try again.")
-                }
-            }
+    if (state.offline || state.serverUnavailable) WarningNotice {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (state.offline) state.offlineBanner() else state.serverBanner(), style = MaterialTheme.typography.titleSmall)
+            Text(if (state.offline) "Actions are unavailable offline. Reconnect and refresh to make changes."
+                else "Actions are unavailable until Fytorium responds. Refresh to try again.")
         }
     } else state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 }
 
-@Composable private fun ViewSettings(settings: TaskSettings, enabled: Boolean, save: (TaskSettings) -> Unit) {
-    var sort by remember(settings) { mutableStateOf(settings.sort) }
-    var filter by remember(settings) { mutableStateOf(settings.filter) }
-    var completed by remember(settings) { mutableStateOf(settings.showCompleted) }
+@Composable private fun TodayNotice(state: CareState) {
+    val banner = state.todayBanner()
+    if (banner != null) WarningNotice { Text(banner, style = MaterialTheme.typography.bodyMedium) }
+    else state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+}
+
+@Composable private fun WarningNotice(content: @Composable () -> Unit) {
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
+        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(Icons.Outlined.WarningAmber, contentDescription = "Warning", tint = MaterialTheme.colorScheme.tertiary)
+            content()
+        }
+    }
+}
+
+@Composable private fun ViewToggle(view: String, onView: (String) -> Unit) {
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(4.dp).selectableGroup()) {
+            listOf("today" to "Today", "upcoming" to "Upcoming").forEach { (key, label) ->
+                val selected = view == key
+                Surface(selected = selected, onClick = { onView(key) }, shape = CircleShape,
+                    color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("view-$key").semantics { role = SemanticsRole.Tab }) {
+                    Box(contentAlignment = Alignment.Center) { Text(label, style = MaterialTheme.typography.labelLarge) }
+                }
+            }
+        }
+    }
+}
+
+private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
+    settings.filterLabel(),
+    mapOf("plant" to "Sorted by plant", "site" to "Sorted by site")[settings.sort],
+    "Showing others' completed".takeIf { settings.showCompleted })
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun ActiveView(settings: TaskSettings, canReset: Boolean, enabled: Boolean, reset: () -> Unit) {
+    val labels = activeViewLabels(settings)
+    if (labels.isEmpty()) return
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        labels.forEach { label ->
+            Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.align(Alignment.CenterVertically)) {
+                Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+            }
+        }
+        if (canReset) TextButton(onClick = reset, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp).align(Alignment.CenterVertically)) { Text("Reset") }
+    }
+}
+
+@Composable private fun ViewSettings(settings: TaskSettings, enabled: Boolean, failure: String?, save: suspend (TaskSettings) -> Boolean) {
+    var choice by remember(settings) { mutableStateOf(settings) }
+    var saving by remember { mutableStateOf(false) }
+    var saved by remember { mutableStateOf<Boolean?>(null) }
+    val scope = rememberCoroutineScope()
+    fun pick(next: TaskSettings) {
+        if (next == choice) return
+        val previous = choice
+        choice = next; saving = true; saved = null
+        scope.launch {
+            val ok = save(next)
+            saving = false; saved = ok
+            if (!ok) choice = previous
+        }
+    }
+    val active = enabled && !saving
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Task view settings", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-        Choice("Sort tasks", sort, listOf("task" to "Task type", "plant" to "Plant", "site" to "Site"), enabled) { sort = it }
-        Choice("Filter", filter, listOf("all" to "All", "indoor" to "Indoor", "outdoor" to "Outdoor"), enabled) { filter = it }
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = completed, enabled = enabled,
-            role = SemanticsRole.Checkbox, onValueChange = { completed = it }), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(completed, onCheckedChange = null, enabled = enabled)
+        Text("Task view", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+        Choice("Sort tasks", choice.sort, listOf("task" to "Task type", "plant" to "Plant", "site" to "Site"), active) { pick(choice.copy(sort = it)) }
+        Choice("Filter", choice.filter, listOf("all" to "All", "indoor" to "Indoor", "outdoor" to "Outdoor"), active) { pick(choice.copy(filter = it)) }
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = choice.showCompleted, enabled = active,
+            role = SemanticsRole.Checkbox, onValueChange = { pick(choice.copy(showCompleted = it)) }), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(choice.showCompleted, onCheckedChange = null, enabled = active)
             Text("Show others' completed tasks")
         }
-        Button(onClick = { save(TaskSettings(sort, filter, completed)) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save task view") }
+        Box(Modifier.fillMaxWidth().heightIn(min = 24.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
+            when {
+                saving -> Text("Saving…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                saved == true -> Text("Saved", color = MaterialTheme.colorScheme.primary)
+                saved == false -> Text(failure ?: "Could not save. Try again.", color = MaterialTheme.colorScheme.error)
+            }
+        }
     }
 }
 

@@ -46,6 +46,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     LaunchedEffect(controller) { if (careState?.openedOccurrence == null) controller?.open(todayTaskKey) }
     val todayTask = careState?.currentTask(openedKey)
     val todayScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
+    val upcomingScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     var tab by rememberSaveable { mutableStateOf("Today") }
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
@@ -71,7 +72,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
         if (!loggedIn || memberChanged) {
             notifications = false
-            todayScroll.scrollTo(0)
+            todayScroll.scrollTo(0); upcomingScroll.scrollTo(0)
         }
         if (!loggedIn || memberChanged || member?.role == Role.sitter) {
             addPlant = false
@@ -164,20 +165,19 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && careState != null && tab in listOf("Today", "Plants")) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it }, scrollState = todayScroll,
+                if (tab == "Today") TaskScreen(careState, taskView, onView = { taskView = it },
+                    scrollState = if (taskView == "upcoming") upcomingScroll else todayScroll,
                     onOpenTask = { openTask(it.occurrence); feedPlant = it.plantId; tab = "Plants" },
-                    onRefresh = { controller?.refresh() }, onAction = { task, action -> controller?.act(task, action) },
-                    onHandleType = { controller?.handleType(it) }, onSettings = { controller?.settings(it) }, thumbnails = thumbnails,
+                    onRefresh = { controller?.refresh(pulled = true) }, refreshing = controller?.pulling?.collectAsState()?.value == true,
+                    onAction = { task, action -> controller?.act(task, action) },
+                    onHandleType = { controller?.handleType(it) }, onSettings = { controller?.settings(it) == true }, thumbnails = thumbnails,
                     onUndoReceipt = { controller?.undoReceipt(it) }, onReceiptDone = { controller?.clearReceipt(it) },
-                    onNotifications = { tab = "More"; notifications = true },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
-                    feedContent = { seeTasks -> if (feedState != null && feedState.cards.isNotEmpty()) HomeFeed(feedState,
-                        onOpen = { href -> when {
-                            href == "/#today" -> seeTasks()
-                            href.startsWith("/plants/") -> { feedPlant = href.removePrefix("/plants/"); tab = "Plants" }
-                            else -> openFeedSettings()
-                        } }, onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
+                    feedContent = { if (feedState != null && feedState.todayCards().isNotEmpty()) HomeFeed(feedState, careState.today?.today,
+                        connectionNotice = !careState.offline && !careState.serverUnavailable,
+                        onOpen = { href -> if (href.startsWith("/plants/")) { feedPlant = href.removePrefix("/plants/"); tab = "Plants" } else openFeedSettings() },
+                        onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
                         onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } }) })
                 else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
                     onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false },

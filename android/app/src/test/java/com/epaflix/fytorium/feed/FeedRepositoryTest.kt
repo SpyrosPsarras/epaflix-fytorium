@@ -48,7 +48,7 @@ class FeedRepositoryTest {
         server.enqueue(MockResponse().setBody(json.toString())); server.enqueue(MockResponse().setBody(weatherFixture))
         feed.refresh(Member("synthetic-member", Role.owner))
         assertEquals(5, feed.state.value.cards.size)
-        assertEquals(listOf("Too dark"), feed.state.value.cards.last().warnings.map { it.title })
+        assertEquals(listOf("too_dark"), feed.state.value.cards.last().warnings.map { it.kind })
         assertTrue(org.robolectric.shadows.ShadowLog.getLogsForTag("Fytorium").any { it.msg == "FEED_UNKNOWN_KIND" })
     }
     @Test fun validatedNetworkFailuresAreServerErrorsAndKeepLoadedCards() = withFeed { feed, server, online ->
@@ -70,7 +70,7 @@ class FeedRepositoryTest {
         assertEquals("6", rainAmount(6.0)); assertEquals("6.25", rainAmount(6.25))
         assertEquals("0", rainAmount(0.0)); assertEquals("0.001", rainAmount(0.001))
         val rain = org.json.JSONObject(feedFixture).getJSONArray("cards").getJSONObject(3)
-        assertEquals("Rain: 6 mm on 2030-06-01.", parseFeedCard(rain)!!.lines.single())
+        assertEquals("Rain: 6 mm on 2030-06-01.", parseFeedCard(rain)!!.why.single())
         rain.getJSONObject("event").put("kind", "future_event")
         assertNull(parseFeedCard(rain))
     }
@@ -218,8 +218,8 @@ class FeedRepositoryTest {
             server.enqueue(MockResponse().setBody(weatherFixture))
             feed.refresh(Member("synthetic-owner", Role.owner))
             assertEquals(listOf("late", "current", "cold", "rain", "warnings"), feed.state.value.cards.map { it.id })
-            assertEquals("Synthetic outdoor fern", feed.state.value.cards[2].title)
-            assertTrue(feed.state.value.cards[2].lines.first().contains("below 6"))
+            assertEquals("bring Synthetic outdoor fern inside", feed.state.value.cards[2].text)
+            assertTrue(feed.state.value.cards[2].why.first().contains("below 6"))
             assertEquals("/api/feed", server.takeRequest().path)
             assertEquals("/api/weather", server.takeRequest().path)
             server.enqueue(MockResponse().setBody("""{"cards":[{"id":"late","kind":"late_tasks","href":"/#today","count":2,"plants":[]}]}"""))

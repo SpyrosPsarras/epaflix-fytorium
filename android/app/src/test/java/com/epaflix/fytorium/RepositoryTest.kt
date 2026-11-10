@@ -10,6 +10,7 @@ import org.robolectric.annotation.Config
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.MockResponse
 import com.epaflix.fytorium.plants.currentTask
+import kotlinx.coroutines.launch
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -1077,6 +1078,24 @@ class RepositoryTest {
             assertShows(repository, restored)
         }
     }
+    @Test fun taskViewSavesAndRainUndoLeaveTheFeedRefreshToTheirCallers() {
+        withRepository { repository, server, _ ->
+            val restored = { view: String -> late(view, "plant-one", "plant-two") }
+            undoServer(server, { view -> rainRows(view) }, "/api/tasks/settings" to "{}",
+                "/api/task-batches/batch-rain/undo" to undoResponse(""""batchId":"batch-rain","undoneAt":"2030-06-02T10:00:00Z"""", restored),
+                "/api/care-events/event-one/undo" to undoResponse(""""event":$eventFixture,"task":$lateWater""") { late(it, "plant-one") })
+            repository.refresh()
+            val changes = java.util.concurrent.atomic.AtomicInteger()
+            val collector = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined).launch { repository.careChanged.collect { changes.incrementAndGet() } }
+            try {
+                assertTrue(repository.saveSettings(TaskSettings(sort = "plant")))
+                assertTrue(repository.undoBatch("batch-rain"))
+                assertEquals(0, changes.get())
+                assertTrue(repository.undoHistory(parseEvent(org.json.JSONObject(eventFixture))))
+                assertEquals("Other care writes still ask for a fresh feed", 1, changes.get())
+            } finally { collector.cancel() }
+        }
+    }
     @Test fun rainUndoShowsItsListsWhileTheFeedRefreshIsHeld() {
         withRepository { repository, server, _ ->
             val restored = { view: String -> late(view, "plant-one", "plant-two") }
@@ -1203,6 +1222,7 @@ class RepositoryTest {
             val repository = Repository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, CareCache(db), { false })
             repository.refresh()
             assertEquals("Offline, not updated yet", repository.state.value.offlineBanner())
+            assertEquals("Offline. Changes need a connection.", repository.state.value.todayBanner())
             assertTrue(repository.state.value.offline)
             assertFalse(repository.state.value.serverUnavailable)
             assertEquals(0, server.requestCount)
@@ -1221,6 +1241,7 @@ class RepositoryTest {
                 assertEquals(before, repository.state.value.today)
                 assertEquals(timestamp, repository.state.value.lastUpdated)
                 assertTrue(repository.state.value.serverBanner().startsWith("Fytorium isn't responding. Showing data from "))
+                assertTrue(repository.state.value.todayBanner()!!.startsWith("Fytorium isn't responding. Showing tasks from "))
                 val calls = server.requestCount
                 assertFalse(repository.act(before!!.sections.single().tasks.single(), "complete"))
                 assertEquals(calls, server.requestCount)
@@ -1235,6 +1256,7 @@ class RepositoryTest {
         withRepository { repository, server, _ ->
             server.enqueue(MockResponse().setResponseCode(500)); repository.refresh()
             assertEquals("Fytorium isn't responding. Not updated yet", repository.state.value.serverBanner())
+            assertEquals("Fytorium isn't responding. Pull down to try again.", repository.state.value.todayBanner())
             assertFalse(repository.state.value.offline)
             assertTrue(repository.state.value.serverUnavailable)
         }

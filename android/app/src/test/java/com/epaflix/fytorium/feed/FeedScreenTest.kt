@@ -20,7 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-@OptIn(ExperimentalTestApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalMaterial3Api::class, com.github.takahirom.roborazzi.ExperimentalRoborazziApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
 class FeedScreenTest {
@@ -66,9 +66,9 @@ class FeedScreenTest {
             val care = mutableStateOf(CareState(member = member, offline = true))
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed) } }
             compose.onNodeWithTag("feed-rain").performScrollTo()
-            compose.onNodeWithText("Mark 1 outdoor plants watered").assertIsEnabled()
+            compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsEnabled()
             compose.runOnIdle { care.value = CareState(member = member, serverUnavailable = true) }
-            compose.onNodeWithText("Mark 1 outdoor plants watered").assertIsEnabled()
+            compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsEnabled()
             server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("""{"location":{"latitude":0.5,"longitude":0.5}}"""))
             compose.onNodeWithText("More").performClick()
             compose.onNodeWithText("Feed and weather settings").performScrollTo().performClick()
@@ -88,9 +88,9 @@ class FeedScreenTest {
             if (settings) FeedSettingsScreen(current.value) else HomeFeed(current.value)
         } }
         compose.onNodeWithTag("feed-rain").performScrollTo()
-        compose.onNodeWithText("Mark 1 outdoor plants watered").assertIsEnabled()
-        compose.onNodeWithText("Undo rain watering").assertIsEnabled()
-        compose.onNodeWithText("It rained: 6 mm today or yesterday.").assertExists()
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsEnabled()
+        compose.onNodeWithContentDescription("Undo rain watering").assertIsEnabled()
+        compose.onNodeWithText("Rain on Sat 1 Jun, 6 mm").assertExists()
         compose.runOnIdle { settings = true }
         compose.onAllNodes(isToggleable()).assertCountEquals(4)
         repeat(4) { compose.onAllNodes(isToggleable())[it].assertIsEnabled() }
@@ -102,6 +102,82 @@ class FeedScreenTest {
         compose.runOnIdle { current.value = current.value.copy(saving = true) }
         compose.onNodeWithText("Latitude").assertIsNotEnabled()
         compose.onNodeWithText("Save my feed").assertIsNotEnabled()
+    }
+    @Test fun lateTasksAreLeftToTheListBelow() {
+        val current = mutableStateOf(state())
+        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01") } }
+        compose.onNodeWithTag("feed-late").assertDoesNotExist()
+        compose.onNode(hasText("late", substring = true)).assertDoesNotExist()
+        compose.onNodeWithTag("feed-cold").assertExists()
+        compose.runOnIdle { current.value = state(Role.sitter) }
+        compose.onAllNodes(hasAnyAncestor(hasTestTag("feed-strip"))).assertCountEquals(0)
+        compose.onNode(hasText("late", substring = true)).assertDoesNotExist()
+    }
+    @Test fun cardsUsePlainWordsAndKeepTheDetailsBehindWhy() {
+        compose.setContent { Screen(false) { HomeFeed(state(), today = "2030-06-01") } }
+        compose.onNodeWithText("Too dark for Synthetic outdoor fern").assertExists()
+        compose.onNodeWithText("Frost today: bring Synthetic outdoor fern inside").assertExists()
+        compose.onNodeWithText("Today: low 0 °C, high 30 °C").assertExists()
+        for (technical in listOf("warning.effective_light@1", "effectiveLight", "Hardiness source", "hardiness.pot_offset@1", "Open-Meteo", "Warning inputs", "2030-06-07"))
+            compose.onNode(hasText(technical, substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-warnings-too_dark"))).performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNode(hasText("warning.effective_light@1", substring = true)).assertIsDisplayed()
+        compose.onNodeWithText("The site is too dark for this plant.").assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNode(hasText("warning.effective_light@1", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-cold"))).performScrollTo().performClick()
+        compose.onNode(hasText("hardiness.pot_offset@1", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("2030-06-07", substring = true)).assertIsDisplayed()
+    }
+    @Test fun theRainCardComesFirstWithItsCountedReceipt() {
+        val current = mutableStateOf(state())
+        var waters = 0
+        var undos = 0
+        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01", onWater = { waters++ }, onUndo = { undos++ }) } }
+        val order = listOf("feed-rain", "feed-cold", "feed-current", "feed-warnings-too_dark")
+            .map { compose.onNodeWithTag(it).fetchSemanticsNode().positionInRoot.x }
+        assertEquals(order.sorted(), order)
+        compose.onNodeWithTag("feed-rain").assert(hasText("Rain today, 6 mm")).assertIsDisplayed()
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        assertEquals(1, waters)
+        compose.runOnIdle { current.value = current.value.copy(weather = current.value.weather!!.copy(lastBatchId = "batch-one", lastBatchPlantCount = 1,
+            rain = current.value.weather!!.rain!!.copy(batchId = "batch-one"))) }
+        compose.onNodeWithText("Watered 1 outdoor plant").assertIsDisplayed()
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Undo rain watering").assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        assertEquals(1, undos)
+    }
+    @Test fun aNewRainOffersWateringWhileTheOlderBatchStaysUndoable() {
+        val both = state().let { it.copy(weather = it.weather!!.copy(lastBatchId = "batch-old", lastBatchPlantCount = 2)) }
+        var waters = 0
+        var undos = 0
+        compose.setContent { Screen(false) { HomeFeed(both, today = "2030-06-01", onWater = { waters++ }, onUndo = { undos++ }) } }
+        val card = compose.onNodeWithTag("feed-rain").fetchSemanticsNode().boundsInRoot
+        assertTrue("The rain card stays compact: ${card.height}", card.height <= 112f)
+        assertEquals("The rain card keeps the strip's height", compose.onNodeWithTag("feed-cold").fetchSemanticsNode().size.height.toFloat(), card.height, 1f)
+        val receipt = compose.onNode(hasText("Watered 2 outdoor plants") and hasAnyAncestor(hasTestTag("feed-rain")), useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("The older batch's receipt lies inside the card", receipt.left >= card.left && receipt.right <= card.right && receipt.bottom <= card.bottom)
+        for (action in listOf(hasText("Mark 1 outdoor plant watered"), hasContentDescription("Undo rain watering"))) {
+            val button = compose.onNode(action and hasAnyAncestor(hasTestTag("feed-rain"))).assertExists().assertIsDisplayed().assertIsEnabled().assertHeightIsAtLeast(48.dp)
+            val bounds = button.fetchSemanticsNode().boundsInRoot
+            assertTrue("$action lies inside the card", bounds.left >= card.left && bounds.right <= card.right && bounds.bottom <= card.bottom)
+            button.performClick()
+        }
+        compose.runOnIdle { assertEquals(1, waters); assertEquals(1, undos) }
+    }
+    @Test fun theFeedLeavesConnectionNoticesToTodaysBanner() {
+        val current = mutableStateOf(state().copy(offline = true))
+        val notice = mutableStateOf(false)
+        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01", connectionNotice = notice.value) } }
+        compose.onNode(hasText("offline", substring = true, ignoreCase = true)).assertDoesNotExist()
+        compose.runOnIdle { current.value = state().copy(unavailable = true) }
+        compose.onNode(hasText("isn't responding", substring = true)).assertDoesNotExist()
+        compose.runOnIdle { notice.value = true }
+        compose.onNodeWithText("Fytorium isn't responding. Showing last loaded cards. Refresh to try again.").assertIsDisplayed()
+        compose.runOnIdle { current.value = state().copy(offline = true) }
+        compose.onNodeWithText("Feed is offline. Showing last loaded cards. Actions are unavailable offline.").assertIsDisplayed()
+        compose.runOnIdle { notice.value = false; current.value = state().copy(message = "Synthetic feed failure") }
+        compose.onNodeWithText("Synthetic feed failure").assertIsDisplayed()
     }
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
@@ -116,36 +192,43 @@ class FeedScreenTest {
             if (settings) {
                 assertEquals(if (dark) DarkColors.background else LightColors.background, MaterialTheme.colorScheme.background)
                 FeedSettingsScreen(current.value, onSaveFeed = { saved = it })
-            } else HomeFeed(current.value, onOpen = { opened = it }, onWater = { waters++ })
+            } else HomeFeed(current.value, today = "2030-06-01", onOpen = { opened = it }, onWater = { waters++ })
         } }
         fun capture(name: String) {
             compose.mainClock.advanceTimeBy(1000)
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/$name-${if (dark) "dark" else "light"}.png")
         }
-        compose.onNodeWithText("2 tasks are late").assertHasClickAction().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("2 tasks are late").assertDoesNotExist()
+        compose.onNodeWithTag("feed-cold").assertHasClickAction().assertHeightIsAtLeast(48.dp)
         capture("feed-home")
         compose.onNodeWithTag("feed-cold").performScrollTo()
-        compose.onNode(hasText("Low temperature", substring = true)).assertIsDisplayed()
-        compose.onNode(hasText("Synthetic outdoor fern") and hasAnyAncestor(hasTestTag("feed-cold"))).performClick()
+        compose.onNodeWithText("Frost today: bring Synthetic outdoor fern inside").assertIsDisplayed()
+        compose.onNodeWithTag("feed-cold").performClick()
         assertEquals("/plants/fern", opened)
         capture("feed-cold")
         compose.onNodeWithTag("feed-rain").performScrollTo()
-        compose.onNodeWithText("Mark 1 outdoor plants watered").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
         assertEquals(1, waters)
         capture("feed-rain")
         compose.runOnIdle { current.value = current.value.copy(weather = current.value.weather!!.copy(lastBatchId = "batch-one", lastBatchPlantCount = 1, rain = current.value.weather!!.rain!!.copy(batchId = "batch-one"))) }
         compose.onNodeWithText("Watered 1 outdoor plant").assertIsDisplayed()
-        compose.onNodeWithText("Undo rain watering").assertHasClickAction().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithContentDescription("Undo rain watering").assertHasClickAction().assertHeightIsAtLeast(48.dp)
         capture("feed-rain-watered")
         compose.runOnIdle { current.value = current.value.copy(offline = true) }
-        compose.onNodeWithText("Undo rain watering").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Undo rain watering").assertIsNotEnabled()
         capture("feed-offline")
+        compose.runOnIdle { current.value = state().let { it.copy(weather = it.weather!!.copy(lastBatchId = "batch-old", lastBatchPlantCount = 2)) } }
+        compose.onNodeWithText("Watered 2 outdoor plants").assertIsDisplayed()
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsDisplayed()
+        capture("feed-rain-both")
         compose.runOnIdle { current.value = state() }
-        compose.onNodeWithTag("feed-warnings").performScrollTo()
-        compose.onNodeWithText("Warning inputs").performClick()
+        compose.onNodeWithTag("feed-warnings-too_dark").performScrollTo()
+        compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-warnings-too_dark"))).performClick()
         compose.onNode(hasText("warning.effective_light@1", substring = true)).assertIsDisplayed()
-        capture("feed-warnings")
+        compose.mainClock.advanceTimeBy(1000)
+        com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/feed-warnings-${if (dark) "dark" else "light"}.png")
+        compose.onNodeWithText("Close").performClick()
         compose.runOnIdle { settings = true }
         compose.onNodeWithText("Feed settings").performScrollTo().assertIsDisplayed()
         capture("feed-settings")
@@ -164,7 +247,7 @@ class FeedScreenTest {
         compose.onNodeWithText("Save my feed").assertDoesNotExist()
         compose.runOnIdle { settings = false }
         compose.onNodeWithTag("feed-cold").assertDoesNotExist()
-        compose.onNodeWithTag("feed-warnings").assertDoesNotExist()
+        compose.onNodeWithTag("feed-warnings-too_dark").assertDoesNotExist()
         capture("feed-sitter")
         compose.runOnIdle { current.value = FeedState(member = Member("synthetic-member", Role.owner), offline = true) }
         compose.onNodeWithText("Actions are unavailable offline.").assertIsDisplayed()

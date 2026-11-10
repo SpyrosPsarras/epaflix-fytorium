@@ -2,11 +2,15 @@ package com.epaflix.fytorium
 
 import java.io.IOException
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,6 +31,12 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
     }
     fun offlineBanner(): String = updatedTime()?.let { "Offline, last updated $it" } ?: "Offline, not updated yet"
     fun serverBanner(): String = "Fytorium isn't responding. " + (updatedTime()?.let { "Showing data from $it" } ?: "Not updated yet")
+    private fun updatedDay() = lastUpdated?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
+        ?.takeIf { it != LocalDate.now() }?.let { shortDate(it.toString()) + " " }.orEmpty()
+    fun todayBanner(): String? {
+        val shown = updatedTime()?.let { "Showing tasks from ${updatedDay()}$it. " }.orEmpty()
+        return if (offline) "Offline. ${shown}Changes need a connection." else if (serverUnavailable) "Fytorium isn't responding. ${shown}Pull down to try again." else null
+    }
 }
 private class ApiFailure(val status: Int, message: String, val errors: Map<String, String> = emptyMap()) : Exception(message)
 private class OfflineFailure : IOException("Offline")
@@ -42,6 +52,9 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     private fun requestId(key: String) = synchronized(monitor) { requestIds.getOrPut(key) { UUID.randomUUID().toString() } }
     private val mutable = MutableStateFlow(CareState())
     val state = mutable.asStateFlow()
+    private val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    // Feed cards read the same plants and care, so each successful write asks for a fresh feed.
+    val careChanged = changes.asSharedFlow()
     private val plantMutable = MutableStateFlow(PlantsRequestState(online = connected()))
     val plantState = plantMutable.asStateFlow()
     fun clearPlantErrors() = synchronized(monitor) { plantMutable.value = plantMutable.value.copy(errors = emptyMap()) }
@@ -261,7 +274,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     }
     // The feed's rain card has only its batch id, and undoes it through the same write as every other Undo.
     fun undoBatch(batchId: String): Boolean =
-        write("/api/task-batches/${requireSafeId(batchId)}/undo", body = null, receipts = true) { undone(JSONObject(it)) }
+        write("/api/task-batches/${requireSafeId(batchId)}/undo", body = null, receipts = true, notifiesFeed = false) { undone(JSONObject(it)) }
             .also { success -> if (success) reloadOpenPlant { it.history.any { past -> past.batchId == batchId } } }
     // An undo's response carries the member's lists, so every row it reversed shows its earlier state at once.
     private fun undone(response: JSONObject) {
@@ -306,7 +319,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     }
     fun saveSettings(settings: TaskSettings): Boolean {
         if (state.value.member?.role == Role.sitter) return false
-        return write("/api/tasks/settings", "PUT", settings.json(), refreshAfter = true) {}
+        return write("/api/tasks/settings", "PUT", settings.json(), refreshAfter = true, notifiesFeed = false) {}
     }
     private enum class Patch { Complete, Postpone }
     // Until the next refresh replaces the lists, a write's response patches only the rows it acted on.
@@ -343,7 +356,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         mutable.value = mutable.value.copy(openedOccurrence = mutable.value.openedOccurrence?.let { patched[it] ?: it })
     }
     private fun write(path: String, method: String = "POST", body: JSONObject?, refreshAfter: Boolean = false, plantsScreen: Boolean = false,
-                      refreshSchedulesAfter: Boolean = false, receipts: Boolean = false, applied: (String) -> Unit): Boolean = synchronized(workLock) {
+                      refreshSchedulesAfter: Boolean = false, receipts: Boolean = false, notifiesFeed: Boolean = true, applied: (String) -> Unit): Boolean = synchronized(workLock) {
         val epoch = synchronized(monitor) {
             val allowed = if (plantsScreen) plantMutable.value.enabled(state.value.member, state.value.updateRequired) else state.value.writable
             if (!allowed || !connected()) {
@@ -367,6 +380,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             return false
         }
         finally { synchronized(monitor) { if (epoch == generation && plantsScreen && !receipts) plantMutable.value = plantMutable.value.copy(saving = false) } }
+        if (notifiesFeed) changes.tryEmit(Unit)
         if (refreshSchedulesAfter || (refreshAfter && plantsScreen)) background.launch { refreshSchedules(epoch) }
         if (refreshAfter) {
             if (plantsScreen) {

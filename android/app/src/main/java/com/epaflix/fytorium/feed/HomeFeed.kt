@@ -5,55 +5,82 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.Role
+import com.epaflix.fytorium.countLabel
 
-@Composable fun HomeFeed(state: FeedState, onOpen: (String) -> Unit = {},
+// The task list below already shows late tasks with their late pills, and late tasks were the only cards sitters had.
+internal fun FeedState.todayCards() = if (member?.role == Role.sitter) emptyList() else cards.filter { it.kind != "late_tasks" }
+
+@Composable fun HomeFeed(state: FeedState, today: String? = null, connectionNotice: Boolean = true, onOpen: (String) -> Unit = {},
                          onWater: () -> Unit = {}, onUndo: () -> Unit = {}) {
-    FeedNotice(state)
-    val cards = state.cards.filter { state.member?.role != Role.sitter || it.kind == "late_tasks" }
+    FeedNotice(state, connectionNotice)
+    val cards = state.todayCards()
     val latestRain = cards.lastOrNull { it.rain }?.id
-    // Match HomeFeed.svelte's three groups; retain server order within each group.
-    val ordered = cards.filter { it.kind in listOf("late_tasks", "current_weather") } +
-        cards.filter { it.kind == "weather_alerts" } + cards.filter { it.kind == "plant_warnings" }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    val ordered = cards.sortedBy { when { it.id == latestRain -> 0; it.rain -> 1; it.kind == "weather_alerts" -> 2; it.kind == "current_weather" -> 3; else -> 4 } }
+    var why by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
+    // Every card takes the tallest card's height, so a short card leaves no empty band above the toggle.
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).height(IntrinsicSize.Min).testTag("feed-strip"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ordered.forEach { card ->
-            Card(Modifier.width(280.dp).testTag("feed-${card.id}"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onOpen(card.href) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text(card.title, style = MaterialTheme.typography.titleMedium)
-                    }
-                    card.lines.take(2).forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                    card.plants.take(1).forEach { plant -> TextButton(onClick = { onOpen("/plants/${plant.id}") }, modifier = Modifier.heightIn(min = 48.dp)) { Text(plant.name) } }
-                    if (card.id == latestRain && state.weather != null) {
-                        state.weather.rain?.let { rain ->
-                            Text("It rained: ${rainAmount(rain.precipitationMm)} mm today or yesterday.")
-                            if (rain.batchId != null) state.weather.rainReceipt?.let { Text(it) }
-                            else OutlinedButton(onClick = onWater, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Mark ${rain.plantCount} outdoor plants watered") }
+            val title = card.headline(today)
+            when {
+                card.kind == "plant_warnings" -> card.warnings.forEach { warning ->
+                    StripCard("feed-${card.id}-${warning.kind}", warning.text, { onOpen(card.href) },
+                        onWhy = { why = warning.text to listOf(warning.reason) + warning.inputs })
+                }
+                card.id == latestRain -> {
+                    val weather = state.weather
+                    val rain = weather?.rain
+                    val undoable = weather?.lastBatchId != null
+                    val waterable = rain != null && rain.batchId == null
+                    StripCard("feed-${card.id}", title, { onOpen(card.href) }, detail = weather?.rainReceipt?.takeIf { undoable && waterable }) {
+                        when {
+                            waterable -> TextButton(onClick = onWater, enabled = state.writable, modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp)) {
+                                Text("Mark ${countLabel(rain.plantCount, "outdoor plant")} watered")
+                            }
+                            undoable -> Text(weather?.rainReceipt.orEmpty(), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(start = 12.dp))
+                            weather != null -> Text("Rain watering is no longer available.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 12.dp))
                         }
-                        if (state.weather.lastBatchId != null) OutlinedButton(onClick = onUndo, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Undo rain watering") }
-                        if (state.weather.rain == null && state.weather.lastBatchId == null) Text("Rain watering is no longer available for this report.")
-                    }
-                    card.warnings.take(1).forEach { warning ->
-                        Text(warning.title, style = MaterialTheme.typography.titleSmall)
-                        Text(warning.reason)
-                        var expanded by remember(card.id, warning.title) { mutableStateOf(false) }
-                        TextButton(onClick = { expanded = !expanded }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Warning inputs") }
-                        if (expanded) warning.inputs.forEach { Text(it) }
+                        if (undoable) TextButton(onClick = onUndo, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Undo rain watering" }) { Text("Undo") }
                     }
                 }
+                card.rain || card.why.isEmpty() -> StripCard("feed-${card.id}", title, { onOpen(card.href) })
+                else -> StripCard("feed-${card.id}", title, { onOpen(card.href) }, onWhy = { why = title to card.why })
+            }
+        }
+    }
+    why?.let { (title, lines) ->
+        AlertDialog(onDismissRequest = { why = null }, confirmButton = { TextButton(onClick = { why = null }) { Text("Close") } },
+            title = { Text(title) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { lines.forEach { Text(it) } } })
+    }
+}
+
+@Composable private fun StripCard(tag: String, title: String, onOpen: () -> Unit, onWhy: (() -> Unit)? = null, detail: String? = null,
+                                  action: @Composable RowScope.() -> Unit = {}) {
+    Card(onClick = onOpen, modifier = Modifier.width(248.dp).fillMaxHeight().testTag(tag),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Column(Modifier.fillMaxHeight().padding(top = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp))
+            detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp)) }
+            Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                action()
+                if (onWhy != null) TextButton(onClick = onWhy, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Why: $title" }) { Text("Why?") }
             }
         }
     }
 }
 
-@Composable internal fun FeedNotice(state: FeedState) {
+@Composable internal fun FeedNotice(state: FeedState, connectionNotice: Boolean = true) {
     val message = when {
-        state.offline -> if (state.loaded) "Feed is offline. Showing last loaded cards. Actions are unavailable offline." else "Actions are unavailable offline."
-        state.unavailable -> "Fytorium isn't responding. Showing last loaded cards. Refresh to try again."
+        state.offline -> if (!connectionNotice) null else if (state.loaded) "Feed is offline. Showing last loaded cards. Actions are unavailable offline." else "Actions are unavailable offline."
+        state.unavailable -> if (connectionNotice) "Fytorium isn't responding. Showing last loaded cards. Refresh to try again." else null
         else -> state.message
     }
     message?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }

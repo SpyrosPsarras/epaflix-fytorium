@@ -43,13 +43,15 @@ class ScreenTest {
     }
     @Test fun deviceConnectivityUpdatesAddWithoutATaskRefresh() {
         val online = mutableStateOf(true)
-        val care = CareState(member = Member("member-one", Role.owner), busy = true, serverUnavailable = true)
-        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care, deviceOnline = online.value) } }
+        val care = mutableStateOf(CareState(member = Member("member-one", Role.owner), busy = true))
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value, deviceOnline = online.value) } }
         compose.onNodeWithContentDescription("Add plant").assertIsEnabled()
         compose.runOnIdle { online.value = false }
         compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
         compose.runOnIdle { online.value = true }
         compose.onNodeWithContentDescription("Add plant").assertIsEnabled()
+        compose.runOnIdle { care.value = care.value.copy(serverUnavailable = true) }
+        compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
     }
     @Test fun moreKeepsSitesAndFeedSettingsIndependentOfCareFailures() {
         val feed = com.epaflix.fytorium.feed.FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}, { true })

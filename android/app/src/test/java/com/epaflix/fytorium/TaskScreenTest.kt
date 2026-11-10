@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
@@ -31,7 +32,7 @@ class TaskScreenTest {
         return CareState(Member("member-one", if (sitter) Role.sitter else Role.owner), today = list.copy(view = "today"),
             upcoming = list.copy(view = "upcoming"), plants = listOf(parsePlant(org.json.JSONObject(plantFixture))), offline = offline, lastUpdated = java.time.Instant.parse("2030-06-02T10:42:00Z").toEpochMilli())
     }
-    @Test fun scrolledCompletionTargetCannotBeInterceptedByAddFab() {
+    @Test fun noControlCoversARowAndTheListEndsWithNormalPadding() {
         val base = state()
         val rows = base.today!!.sections.single().tasks.single().let { row -> (0..7).map { row.copy(plantId = "plant-$it", plantName = "Fern $it") } }
         val list = base.today.copy(sections = listOf(TaskSection("water", "Water", rows)))
@@ -40,11 +41,14 @@ class TaskScreenTest {
         compose.setContent { TaskTestTheme { TaskScreen(base.copy(today = list), "today", onAddPlant = { added++ },
             onAction = { task, action -> if (action == "complete") completed = task.plantId }) } }
         compose.onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, 100_000f) }
-        val fab = compose.onNodeWithContentDescription("Add plant").fetchSemanticsNode().boundsInRoot
         val viewport = compose.onNodeWithTag("task-list").fetchSemanticsNode().boundsInRoot
-        val last = compose.onNodeWithTag("task:plant-7:water").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        assertTrue("The list viewport must continue behind the FAB", viewport.bottom > fab.bottom)
-        assertTrue("The last row must scroll fully above the FAB", last.bottom < fab.top)
+        val covering = compose.onAllNodes(hasClickAction() and !hasAnyAncestor(hasTestTag("task-list"))).fetchSemanticsNodes()
+            .filter { it.boundsInRoot.overlaps(viewport) }.map { it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription) }
+        assertTrue("No control outside the list may sit over its rows: $covering", covering.isEmpty())
+        compose.onNodeWithTag("task:plant-7:water").assertIsDisplayed()
+        val handleAll = compose.onNodeWithContentDescription("Handle all Water tasks").fetchSemanticsNode().boundsInRoot
+        assertTrue("The list ends with normal padding, not room for a floating button: ${viewport.bottom - handleAll.bottom}",
+            viewport.bottom - handleAll.bottom in 0f..40f)
         compose.onNodeWithContentDescription("Mark Water done for Fern 7, Synthetic site")
             .performTouchInput { click() }
         compose.runOnIdle { assertEquals("plant-7", completed); assertEquals(0, added) }
@@ -65,11 +69,12 @@ class TaskScreenTest {
         compose.onNodeWithContentDescription("Snooze 2 days").assertHeightIsAtLeast(48.dp).assertHasClickAction()
         capture("tasks-today")
         compose.runOnIdle { current.value = state("upcoming"); view.value = "upcoming" }
-        compose.onNodeWithText("Next 14 calendar days, including today").assertIsDisplayed()
+        compose.onNode(hasText("Today") and isHeading()).assertIsDisplayed()
+        compose.onNode(hasText("Next 14 calendar days", substring = true)).assertDoesNotExist()
         capture("upcoming")
         compose.runOnIdle { current.value = state(offline = true); view.value = "today" }
-        compose.onNodeWithText(current.value.offlineBanner()).assertIsDisplayed()
-        compose.onNodeWithText("Actions are unavailable offline. Reconnect and refresh to make changes.").assertIsDisplayed()
+        compose.onNodeWithText(current.value.todayBanner()!!).assertIsDisplayed()
+        compose.onNode(hasText("Actions are unavailable offline", substring = true)).assertDoesNotExist()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
         capture("offline")
     }
@@ -97,7 +102,7 @@ class TaskScreenTest {
             event(own)
             compose.onNodeWithText("Undo").assertDoesNotExist()
             compose.onNodeWithContentDescription("Water done for Synthetic fern. Double tap to undo").assertHasClickAction().assertHeightIsAtLeast(48.dp)
-            compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Task view").assertDoesNotExist()
             compose.onNode(hasText("Synthetic site", substring = true)).assertDoesNotExist()
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/sitter-$screen-${if (dark) "dark" else "light"}.png")
@@ -110,7 +115,7 @@ class TaskScreenTest {
         compose.enableAccessibilityChecks()
         val list = state(sitter = true)
         compose.setContent { TaskTestTheme { TaskScreen(list, "today") } }
-        compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Task view").assertDoesNotExist()
         compose.onNodeWithText("Based on").assertDoesNotExist()
         compose.onNodeWithText("Repot with new pot and soil").assertDoesNotExist()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern").assertHasClickAction()
@@ -120,28 +125,31 @@ class TaskScreenTest {
         compose.enableAccessibilityChecks()
         val view = mutableStateOf("today")
         var saved: TaskSettings? = null
-        compose.setContent { TaskTestTheme { TaskScreen(state(), view.value, onView = { view.value = it }, onSettings = { saved = it }) } }
+        compose.setContent { TaskTestTheme { TaskScreen(state(), view.value, onView = { view.value = it }, onSettings = { saved = it; true }) } }
         compose.onNodeWithText("Fytorium").assertDoesNotExist()
         compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
-        compose.onNodeWithContentDescription("My notifications").assertIsDisplayed()
+        compose.onNodeWithContentDescription("My notifications").assertDoesNotExist()
         compose.onNodeWithTag("view-today").assertIsSelected()
         compose.onNodeWithTag("view-upcoming").assertIsNotSelected().performClick().assertIsSelected()
         compose.onNodeWithTag("view-today").assertIsNotSelected()
         compose.onNodeWithText("Refresh").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Task view settings").performClick()
-        compose.onNodeWithText("Task view settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Task view").performClick()
+        compose.onNode(hasText("Task view") and isHeading()).assertIsDisplayed()
         compose.onNodeWithText("Sort tasks: Task type").performClick()
         compose.onNodeWithText("Plant", useUnmergedTree = false).performClick()
         compose.onNodeWithText("Sort tasks: Plant").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(TaskSettings("plant", "all", false), saved) }
         compose.onNodeWithText("Filter: All").performClick()
         compose.onNodeWithText("Outdoor").performClick()
         compose.onNodeWithText("Filter: Outdoor").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(TaskSettings("plant", "outdoor", false), saved) }
         compose.onNodeWithText("Show others' completed tasks").assertIsOff().assertHasClickAction().performClick().assertIsOn()
         compose.onAllNodes(isToggleable()).assertCountEquals(1)
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
-        compose.onNodeWithText("Save task view").performClick()
+        compose.onNodeWithText("Save task view").assertDoesNotExist()
         compose.runOnIdle { assertEquals(TaskSettings("plant", "outdoor", true), saved) }
-        compose.onNodeWithText("Show others' completed tasks").assertDoesNotExist()
+        compose.onNodeWithText("Saved").assertIsDisplayed()
+        compose.onNodeWithText("Show others' completed tasks").assertIsDisplayed()
     }
     @Test fun rowsOpenWithoutInlineActionsAndUndoFollowsTheServer() {
         val current = mutableStateOf(state())
@@ -349,13 +357,13 @@ class TaskScreenTest {
     @Test fun offlineAndServerBannersBeforeAndAfterRefreshDisableActions() {
         val current = mutableStateOf(state(offline = true).copy(lastUpdated = null))
         compose.setContent { TaskTestTheme { TaskScreen(current.value, "today") } }
-        compose.onNodeWithText("Offline, not updated yet").assertIsDisplayed()
+        compose.onNodeWithText("Offline. Changes need a connection.").assertIsDisplayed()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
         compose.runOnIdle { current.value = state(offline = true) }
-        compose.onNodeWithText(current.value.offlineBanner()).assertIsDisplayed()
+        compose.onNodeWithText(current.value.todayBanner()!!).assertIsDisplayed()
         for (time in listOf(null, state().lastUpdated)) {
             compose.runOnIdle { current.value = state().copy(serverUnavailable = true, lastUpdated = time) }
-            compose.onNodeWithText(current.value.serverBanner()).assertIsDisplayed()
+            compose.onNodeWithText(current.value.todayBanner()!!).assertIsDisplayed()
             compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
             compose.onNode(hasText("Offline", substring = true)).assertDoesNotExist()
         }

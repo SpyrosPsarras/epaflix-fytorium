@@ -42,15 +42,25 @@ class TodayPresentationTest {
         assertFalse(state.copy(serverUnavailable = true).writable)
         assertFalse(state.copy(updateRequired = true).writable)
     }
+    @Test fun aBannerForTasksFromAnEarlierDayNamesTheDay() {
+        val updated = java.time.LocalDateTime.of(2030, 6, 2, 8, 12).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val state = CareState(lastUpdated = updated)
+        assertEquals("Offline. Showing tasks from Sun 2 Jun 08:12. Changes need a connection.", state.copy(offline = true).todayBanner())
+        assertEquals("Fytorium isn't responding. Showing tasks from Sun 2 Jun 08:12. Pull down to try again.", state.copy(serverUnavailable = true).todayBanner())
+        assertNull(state.todayBanner())
+    }
     @Test fun emptyDayUsesNextServerTaskAndNoPlantsHasItsOwnState() {
         val empty = parseTaskList(taskListFixture("today")).copy(sections = emptyList())
         val plant = parsePlant(org.json.JSONObject(plantFixture))
         val upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04"))
         val state = CareState(member = Member("one", Role.owner), today = empty, upcoming = upcoming, plants = listOf(plant))
         assertEquals("Nothing to do today", state.todayPresentation().emptyTitle)
-        assertEquals("Next: Water Synthetic fern · Tuesday, 4 June", state.todayPresentation().nextTask)
+        assertEquals("Next: Water Synthetic fern · Tuesday 4 Jun", state.todayPresentation().nextTask)
         assertEquals("Add your first plant", state.copy(plants = emptyList()).todayPresentation().emptyTitle)
-        assertEquals("No shared plants yet", state.copy(plants = emptyList(), member = Member("s", Role.sitter)).todayPresentation().emptyTitle)
+        assertEquals("Nothing is shared with you yet", state.copy(plants = emptyList(), member = Member("s", Role.sitter)).todayPresentation().emptyTitle)
+        assertEquals("Ask the household owner to share plants.", state.copy(plants = emptyList(), member = Member("s", Role.sitter)).todayPresentation().emptyHint)
+        assertNull(state.copy(plants = emptyList()).todayPresentation().emptyHint)
+        assertEquals("No outdoor tasks today", state.copy(today = empty.copy(settings = TaskSettings(filter = "outdoor"))).todayPresentation().emptyTitle)
         assertEquals("Loading tasks…", CareState(busy = true).todayPresentation().emptyTitle)
         assertEquals("Connect to load your tasks", CareState(offline = true).todayPresentation().emptyTitle)
         assertNull(state.copy(upcoming = empty).todayPresentation().nextTask)
@@ -62,8 +72,8 @@ class TodayPresentationTest {
         val rows = listOf(task.copy(plantId = "later", dueOn = "2030-06-06"), task.copy(completedEvent = event),
             task.copy(plantId = "next", plantName = "Synthetic palm", dueOn = "2030-06-05"), task.copy(plantId = "no-date", dueOn = null))
         val state = CareState(upcoming = upcoming.copy(sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows))))
-        assertEquals("Next: Water Synthetic palm · Wednesday, 5 June", state.todayPresentation().nextTask)
+        assertEquals("Next: Water Synthetic palm · Wednesday 5 Jun", state.todayPresentation().nextTask)
         val done = state.upcoming!!.copy(sections = listOf(TaskSection("2030-06-04", "2030-06-04", rows.map { if (it.plantId == "next") it.copy(completedEvent = event) else it })))
-        assertEquals("Next: Water Synthetic fern · Thursday, 6 June", state.copy(upcoming = done).todayPresentation().nextTask)
+        assertEquals("Next: Water Synthetic fern · Thursday 6 Jun", state.copy(upcoming = done).todayPresentation().nextTask)
     }
 }

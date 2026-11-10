@@ -7,6 +7,8 @@ import android.net.NetworkCapabilities
 import androidx.work.*
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -16,8 +18,11 @@ class CareController(context: Context, private val store: CredentialStore, val r
     private val work = WorkManager.getInstance(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
-    private val _online = kotlinx.coroutines.flow.MutableStateFlow(connected())
-    val online: kotlinx.coroutines.flow.StateFlow<Boolean> = _online
+    private val _online = MutableStateFlow(connected())
+    val online: StateFlow<Boolean> = _online
+    private val _pulling = MutableStateFlow(false)
+    // Only a pull shows the spinner, until the refresh that serves it ends.
+    val pulling: StateFlow<Boolean> = _pulling
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onLost(network: Network) { _online.value = false; api.networkLost(); repository.connectivityChanged(false); feed?.connectivityChanged(false) }
         override fun onAvailable(network: Network) { refresh() }
@@ -31,6 +36,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
     }
     init {
         network.registerDefaultNetworkCallback(callback)
+        if (feed != null) scope.launch { repository.careChanged.collect { feed.refresh(repository.state.value.member) } }
         scope.launch {
             store.tokensState.map { it != null }.distinctUntilChanged().collect { loggedIn ->
                 if (loggedIn) {
@@ -42,20 +48,24 @@ class CareController(context: Context, private val store: CredentialStore, val r
         }
     }
     fun connected(): Boolean = network.getNetworkCapabilities(network.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
-    @Synchronized fun refresh() {
-        if (store.tokens == null || refreshJob?.isActive == true) return
-        refreshJob = scope.launch { repository.refresh() }
+    @Synchronized fun refresh(pulled: Boolean = false) {
+        if (store.tokens == null) return
+        if (pulled) _pulling.value = true
+        if (refreshJob?.isActive == true) return
+        val job = scope.launch { repository.refresh() }
+        refreshJob = job
         // Feed reads must not extend the task refresh's single-flight window.
-        refreshJob?.invokeOnCompletion { error ->
+        job.invokeOnCompletion { error ->
+            synchronized(this) { if (refreshJob === job) _pulling.value = false }
             if (error == null && store.tokens != null) scope.launch { feed?.refresh(repository.state.value.member) }
         }
     }
-    fun act(task: CareTask, action: String) { scope.launch { if (repository.act(task, action)) feed?.refresh(repository.state.value.member) } }
+    fun act(task: CareTask, action: String) { scope.launch { repository.act(task, action) } }
     fun open(occurrence: String?) = repository.open(occurrence)
     fun clearReceipt(receipt: Receipt) = repository.clearReceipt(receipt)
-    fun undoReceipt(receipt: Receipt) { scope.launch { if (repository.undoReceipt(receipt)) feed?.refresh(repository.state.value.member) } }
-    fun handleType(taskKey: String) { scope.launch { if (repository.handleType(taskKey)) feed?.refresh(repository.state.value.member) } }
-    fun settings(settings: TaskSettings) { scope.launch { repository.saveSettings(settings) } }
+    fun undoReceipt(receipt: Receipt) { scope.launch { repository.undoReceipt(receipt) } }
+    fun handleType(taskKey: String) { scope.launch { repository.handleType(taskKey) } }
+    suspend fun settings(settings: TaskSettings): Boolean = withContext(Dispatchers.IO) { repository.saveSettings(settings) }
     fun cancelRefresh() { work.cancelUniqueWork(WORK_NAME); work.cancelUniqueWork(com.epaflix.fytorium.notifications.PushRefresh.NAME) }
     fun close() { network.unregisterNetworkCallback(callback); scope.cancel() }
     companion object {
