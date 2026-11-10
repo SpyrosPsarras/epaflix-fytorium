@@ -31,6 +31,14 @@ export function batchScope(event: CareEvent, plantName: string, customTaskName: 
   return { text, count: plants };
 }
 
+const postponedUndo = { completed: '', snoozed: ' snooze', skipped: ' skip' };
+// Undoing an event also undoes the water linked to it, unless that water was undone on its own.
+export function undoLabel(event: CareEvent, history: CareEvent[]) {
+  if (event.batch_id) return 'Undo all ' + batchScope(event, '', null).count;
+  const watered = history.some(other => other.linked_event_id === event.id && !other.undone_at);
+  return 'Undo ' + taskPresentation(event).action + (watered ? ' and watering' : postponedUndo[event.kind]);
+}
+
 export type ListedTask = ScheduledTask & { plant_id: string; plant_name: string; site_name: string; cover_photo_id?: string | null; task_type: TaskType | null; custom_task_id?: string | null; custom_task_name?: string | null; completed_event?: CareEvent };
 export type TaskViewSettings = { sort: 'task' | 'plant' | 'site'; filter: 'all' | 'indoor' | 'outdoor'; show_completed: boolean };
 export type TaskList = { today: string; view: 'today' | 'upcoming'; settings: TaskViewSettings; groups: Record<string, ListedTask[]>; sections: { key: string; label: string; tasks: ListedTask[] }[] };

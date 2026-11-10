@@ -58,9 +58,10 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
                 }
             } else if (event != null) {
                 val check = @Composable { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary) } }
-                val done = "${event.label} for ${task.plantAndSite}"
+                val done = "${task.label} done for ${task.plantAndSite}"
                 if ("undo" in actions) {
-                    val description = done + if (event.batchId == null) ". Double tap to undo" else ". Part of ${state.batches[event.batchId]?.scope ?: "a"} batch"
+                    val description = done + if (event.batchId == null) ". Double tap to undo"
+                        else ". Part of a batch" + state.batches[event.batchId]?.let { " of ${it.scope}" }.orEmpty() + ". Double tap to see the batch"
                     Surface(onClick = { onAction("undo") }, enabled = enabled, shape = CircleShape, color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(48.dp).semantics { contentDescription = description }, content = check)
                 } else Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary,

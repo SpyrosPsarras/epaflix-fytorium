@@ -178,7 +178,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             href.startsWith("/plants/") -> { feedPlant = href.removePrefix("/plants/"); tab = "Plants" }
                             else -> openFeedSettings()
                         } }, onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
-                        onUndo = { scope.launch(Dispatchers.IO) { if (feed?.undoRain() == true) controller?.refresh() } }) })
+                        onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } }) })
                 else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
                     onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false },
                     initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,

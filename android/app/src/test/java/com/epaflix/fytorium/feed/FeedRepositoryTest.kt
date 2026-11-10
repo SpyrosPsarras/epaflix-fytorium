@@ -12,11 +12,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class FeedRepositoryTest {
-    private fun withFeed(test: (FeedRepository, MockWebServer, (Boolean) -> Unit) -> Unit) {
+    private fun withFeed(undoBatch: (String) -> Boolean = { false }, test: (FeedRepository, MockWebServer, (Boolean) -> Unit) -> Unit) {
         val server = MockWebServer(); server.start()
         var online = true
         val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
-        val feed = FeedRepository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, { online })
+        val feed = FeedRepository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, { online }, undoBatch)
         try { test(feed, server) { online = it } } finally { server.shutdown() }
     }
     private fun load(feed: FeedRepository, server: MockWebServer, role: Role = Role.owner) {
@@ -82,7 +82,8 @@ class FeedRepositoryTest {
         assertEquals("Rain watering could not be undone. Refresh to try again.", feed.state.value.message)
         assertEquals(2, server.requestCount)
     }
-    @Test fun rainRetryKeepsRequestIdAndOnlyNotReadyReasonOffersMomentRetry() = withFeed { feed, server, _ ->
+    private val undone = mutableListOf<String>()
+    @Test fun rainRetryKeepsRequestIdAndOnlyNotReadyReasonOffersMomentRetry() = withFeed({ undone += it; true }) { feed, server, _ ->
         load(feed, server)
         server.takeRequest(); server.takeRequest()
         for ((code, reason) in listOf(409 to "rain_report_not_ready", 409 to "no_outdoor_plants", 422 to "rain_report_not_ready")) {
@@ -100,12 +101,22 @@ class FeedRepositoryTest {
         assertEquals("Watered 1 outdoor plant", feed.state.value.weather!!.rainReceipt)
         assertEquals("batch-one", feed.state.value.weather!!.lastBatchId)
         repeat(3) { server.takeRequest() }
-        server.enqueue(MockResponse().setBody("{}"))
         server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
         assertTrue(feed.undoRain())
-        assertEquals("/api/task-batches/batch-one/undo", server.takeRequest().path)
+        assertEquals(listOf("batch-one"), undone)
+        assertEquals("/api/feed", server.takeRequest().path)
         assertEquals("Rain watering undone.", feed.state.value.message)
         assertNull(feed.state.value.weather!!.lastBatchId)
+    }
+    @Test fun aFailedRainUndoKeepsTheCardAndLeavesItsMessageToToday() = withFeed({ false }) { feed, server, _ ->
+        server.enqueue(MockResponse().setBody(feedFixture))
+        server.enqueue(MockResponse().setBody(org.json.JSONObject(weatherFixture).put("lastRainBatch", org.json.JSONObject("""{"id":"batch-one","plantCount":1}""")).toString()))
+        feed.refresh(Member("synthetic-member", Role.owner))
+        assertFalse(feed.undoRain())
+        assertNull(feed.state.value.message)
+        assertFalse(feed.state.value.saving)
+        assertEquals("batch-one", feed.state.value.weather!!.lastBatchId)
+        assertEquals(2, server.requestCount)
     }
     @Test fun rainReceiptMatchesOnTheActingDeviceAfterRecoveryAndOnToday() = withFeed { feed, server, _ ->
         load(feed, server)

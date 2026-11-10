@@ -150,11 +150,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             if (!connected()) throw OfflineFailure()
             val today = read("/api/tasks", query = mapOf("view" to "today"))
             val upcoming = read("/api/tasks", query = mapOf("view" to "upcoming"))
-            parseTaskList(today); parseTaskList(upcoming)
-            synchronized(monitor) { if (epoch == generation) {
-                cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming), clock())
-                loadCached()
-            } }
+            synchronized(monitor) { if (epoch == generation) saveLists(member, today, upcoming) }
         } catch (error: Exception) {
             synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(message = error.message ?: "Could not refresh care tasks. Try again.") }
         }
@@ -222,11 +218,12 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 val text = if (action == "complete") doneText(task.taskType, task.customTaskName, task.plantName, watered = watered)
                     else (if (action == "snooze") "Snoozed " else "Skipped ") + task.plantName + next?.nullable("dueOn")?.let { " until " + shortDate(it) }.orEmpty()
                 mutable.value = mutable.value.copy(receipt = Receipt(text, parseEvent(saved)))
-            }.also { success ->
-                if (success && completesFertilize && state.value.detail?.plant?.id == task.plantId)
-                    openPlant(task.plantId, full = state.value.detail?.careSettingsJson != null)
-            }
+            }.also { success -> if (success) reloadOpenPlant { it.plant.id == task.plantId } }
         } }
+    }
+    // The open plant page's history and schedule show the write as soon as it succeeds.
+    private fun reloadOpenPlant(affected: (PlantDetail) -> Boolean) {
+        state.value.detail?.takeIf(affected)?.let { openPlant(it.plant.id, full = it.careSettingsJson != null) }
     }
     // The plant page's occurrence lives here so a write moves it with the rows it patches, before any refresh can replace them.
     fun open(occurrence: String?) = synchronized(monitor) { mutable.value = mutable.value.copy(openedOccurrence = occurrence) }
@@ -241,21 +238,38 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         return receipt.undo?.let { undo(it) } ?: false
     }
     fun undo(event: CareEvent, plantsScreen: Boolean = false, busy: BusyKey = BusyKey.Row(event.id)): Boolean {
-        val key = event.key
         if (!event.canUndo) return false
         val path = event.batchId?.let { "/api/task-batches/${requireSafeId(it)}/undo" } ?: "/api/care-events/${requireSafeId(event.id)}/undo"
         return withPending(busy) {
-            write(path, body = null, refreshAfter = plantsScreen, plantsScreen = plantsScreen, refreshSchedulesAfter = true, receipts = true) { result ->
-                val undone = JSONObject().put("id", event.id).put("plant_id", event.plantId).put("task_type", event.taskType ?: JSONObject.NULL)
-                    .put("custom_task_id", event.customTaskId ?: JSONObject.NULL).put("batch_id", event.batchId ?: JSONObject.NULL).put("kind", event.kind)
-                patchEvents(listOf(undone), JSONObject(result).optJSONObject("task")?.let { mapOf(key to it) } ?: emptyMap(), Patch.Undo)
+            write(path, body = null, plantsScreen = plantsScreen, receipts = true) { result ->
+                undone(JSONObject(result))
                 requestIds.keys.removeAll { it.startsWith(event.plantId + ":") || it == "all:${event.plantId}" }
                 mutable.value = mutable.value.copy(receipt = Receipt("Undone", short = true))
-            }.also { success ->
-                if (success && event.taskType == "fertilize" && state.value.detail?.plant?.id == event.plantId)
-                    openPlant(event.plantId, full = state.value.detail?.careSettingsJson != null)
-            }
+            }.also { success -> if (success) {
+                // A batch receipt names one of its plants, so the open page's history shows whether the batch included it.
+                reloadOpenPlant { it.plant.id == event.plantId || (event.batchId != null && it.history.any { past -> past.batchId == event.batchId }) }
+                // Undoing a repot restores the earlier pot, which the plant list shows.
+                if (plantsScreen) refreshPlants()
+            } }
         }
+    }
+    // The feed's rain card has only its batch id, and undoes it through the same write as every other Undo.
+    fun undoBatch(batchId: String): Boolean =
+        write("/api/task-batches/${requireSafeId(batchId)}/undo", body = null, receipts = true) { undone(JSONObject(it)) }
+            .also { success -> if (success) reloadOpenPlant { it.history.any { past -> past.batchId == batchId } } }
+    // An undo's response carries the member's lists, so every row it reversed shows its earlier state at once.
+    private fun undone(response: JSONObject) {
+        val member = state.value.member ?: return
+        val opened = state.value.rows.firstOrNull { it.occurrence == state.value.openedOccurrence }
+        saveLists(member, response.getJSONObject("today").toString(), response.getJSONObject("upcoming").toString())
+        // The restored row has a new occurrence, so the plant page follows that plant's pending task.
+        if (opened != null && state.value.rows.none { it.occurrence == opened.occurrence }) mutable.value = mutable.value.copy(openedOccurrence =
+            state.value.rows.firstOrNull { it.plantId == opened.plantId && it.key == opened.key && it.completedEvent == null }?.occurrence ?: opened.occurrence)
+    }
+    private fun saveLists(member: Member, today: String, upcoming: String) {
+        parseTaskList(today); parseTaskList(upcoming)
+        cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming), clock())
+        loadCached()
     }
     fun handleAll(plantId: String, plantsScreen: Boolean = false): Boolean = withPending(BusyKey.HandleAll(plantId)) {
         write("/api/plants/${requireSafeId(plantId)}/tasks/complete-all", body = JSONObject().put("request_id", requestId("all:$plantId")),
@@ -288,27 +302,20 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         if (state.value.member?.role == Role.sitter) return false
         return write("/api/tasks/settings", "PUT", settings.json(), refreshAfter = true) {}
     }
-    private enum class Patch { Complete, Postpone, Undo }
+    private enum class Patch { Complete, Postpone }
     // Until the next refresh replaces the lists, a write's response patches only the rows it acted on.
     private fun patchEvents(events: List<JSONObject>, tasks: Map<String, JSONObject>, mode: Patch = Patch.Complete, acting: String? = null) {
         val member = state.value.member ?: return
         val patched = mutableMapOf<String, String>()
         fun JSONObject.pendingFor(event: JSONObject) = completedEventId() == null &&
             getString("plant_id") == event.getString("plant_id") && taskKey() == event.taskKey()
-        fun JSONObject.target(): JSONObject? = when {
-            mode == Patch.Undo -> events.single().takeIf { undone ->
-                completedEventId()?.let { it == undone.getString("id") } ?: (pendingFor(undone) && nullable("postponed") == undone.getString("kind"))
-            }
-            acting != null -> events.single().takeIf { occurrence() == acting }
-            else -> events.firstOrNull { pendingFor(it) }
-        }
+        fun JSONObject.target(): JSONObject? = if (acting != null) events.single().takeIf { occurrence() == acting } else events.firstOrNull { pendingFor(it) }
         val snapshots = listOf("today", "upcoming").mapNotNull { view ->
             val row = cache.get(member.id, view) ?: return@mapNotNull null
             val json = JSONObject(row.json)
             fun patch(rows: JSONArray) = JSONArray(rows.mapObjects { it }.filter { task ->
                 val before = task.occurrence()
                 val event = task.target()
-                if (mode == Patch.Undo) task.optJSONObject("completed_event")?.let { current -> if (events.any { it.undoes(current) }) task.remove("completed_event") }
                 if (event != null) {
                     tasks[task.taskKey()]?.let { next -> listOf("status", "dueOn", "intervalDays", "lateDays", "basedOn", "postponed").forEach { field ->
                         if (next.has(field)) task.put(field, next.get(field)) else task.remove(field)
@@ -446,8 +453,3 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
 internal fun JSONObject.taskKey(): String = taskKey(nullable("custom_task_id"), nullable("task_type"))
 private fun JSONObject.completedEventId(): String? = optJSONObject("completed_event")?.getString("id")
 private fun JSONObject.occurrence(): String = completedEventId() ?: taskOccurrence(getString("plant_id"), taskKey(), nullable("dueOn"), nullable("postponed"))
-private fun JSONObject.undoes(current: JSONObject): Boolean {
-    val id = getString("id")
-    val batch = nullable("batch_id")
-    return current.getString("id") == id || current.nullable("linked_event_id") == id || (batch != null && current.nullable("batch_id") == batch)
-}

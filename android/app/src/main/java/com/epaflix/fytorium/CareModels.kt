@@ -23,7 +23,9 @@ data class CareEvent(val id: String, val plantId: String, val taskType: String?,
     val label get() = if (kind == "completed") "Done" else postponeLabel(kind) ?: "Skipped"
 }
 internal fun taskKey(customTaskId: String?, taskType: String?) = customTaskId ?: taskType ?: error("Missing task identity")
-internal fun postponeLabel(kind: String?) = when (kind) { "snoozed" -> "Snoozed"; "skipped" -> "Skipped"; else -> null }
+private val postponeLabels = mapOf("snoozed" to "Snoozed", "skipped" to "Skipped")
+private val postponeNouns = mapOf("snoozed" to "snooze", "skipped" to "skip")
+internal fun postponeLabel(kind: String?) = postponeLabels[kind]
 internal fun taskOccurrence(plantId: String, key: String?, dueOn: String?, postponed: String?) = "$plantId:$key:$dueOn:$postponed"
 data class CareTask(val status: String, val dueOn: String?, val intervalDays: Int?, val lateDays: Int,
                     val basedOn: List<Basis>, val taskType: String?, val customTaskId: String?, val customTaskName: String?,
@@ -63,7 +65,7 @@ fun taskLabel(type: String?, custom: String? = null): String = taskNames[type] ?
 
 private val receiptIds = AtomicLong()
 data class Receipt(val text: String, val undo: CareEvent? = null, val short: Boolean = false, val id: Long = receiptIds.incrementAndGet())
-data class BatchReceipt(val text: String, val scope: String)
+data class BatchReceipt(val text: String, val scope: String, val count: Int)
 sealed interface BusyKey {
     data class Row(val occurrence: String) : BusyKey
     data class Card(val taskKey: String) : BusyKey
@@ -74,6 +76,17 @@ internal val taskVerbs = mapOf(
     "water" to "Watered", "fertilize" to "Fertilized", "clean_leaves" to "Cleaned leaves of",
     "remove_dead" to "Removed dead flowers and leaves from", "cut_back" to "Cut back", "repot" to "Repotted"
 )
+private val taskActions = mapOf(
+    "water" to "watering", "fertilize" to "fertilizing", "clean_leaves" to "leaf cleaning",
+    "remove_dead" to "removing dead flowers and leaves", "cut_back" to "seasonal cut-back", "repot" to "repotting"
+)
+// Undoing an event also undoes the water linked to it, unless that water was undone on its own.
+fun undoLabel(event: CareEvent, history: List<CareEvent>): String {
+    if (event.batchId != null) return "Undo all" + batchReceipt(event, "")?.let { " ${it.count}" }.orEmpty()
+    val watered = history.any { it.linkedEventId == event.id && it.undoneAt == null }
+    return "Undo ${taskActions[event.taskType] ?: event.customTaskName ?: "custom task"}" +
+        if (watered) " and watering" else postponeNouns[event.kind]?.let { " $it" }.orEmpty()
+}
 fun doneText(type: String?, custom: String?, subject: String, watered: Boolean = false): String =
     if (watered && type == "fertilize") "Fertilized and watered $subject"
     else taskVerbs[type]?.let { "$it $subject" } ?: "${taskLabel(type, custom)} done for $subject"
@@ -86,11 +99,11 @@ internal fun batchReceipt(action: String?, plantCount: Int?, eventCount: Int?, p
     val plants = plantCount ?: return null
     val events = eventCount ?: return null
     return when (action) {
-        "complete-all" -> countLabel(events, "task").let { BatchReceipt("Handled $it for $plantName", it) }
-        "rain" -> countLabel(plants, "outdoor plant").let { BatchReceipt("Watered $it", it) }
+        "complete-all" -> countLabel(events, "task").let { BatchReceipt("Handled $it for $plantName", it, events) }
+        "rain" -> countLabel(plants, "outdoor plant").let { BatchReceipt("Watered $it", it, plants) }
         // A card completes one task per plant, so any further events are the water linked to liquid fertilizing.
         "complete-type" -> countLabel(plants, "plant").let {
-            BatchReceipt(doneText(task?.takeIf { key -> key in taskNames }, customTaskName, it, watered = events > plants), it)
+            BatchReceipt(doneText(task?.takeIf { key -> key in taskNames }, customTaskName, it, watered = events > plants), it, plants)
         }
         else -> null
     }

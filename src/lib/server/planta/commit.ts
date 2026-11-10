@@ -12,7 +12,7 @@ import { saveSpecies } from '../species';
 import { kickNameFetch } from '../names';
 import { dueDates } from '../tasks';
 import type { TaskType } from '$lib/schedule/engine';
-import { importNickname, staging, storedStaging, type StoredImportStaging } from './import';
+import { importNickname, namesAfterImport, staging, storedStaging, type PlantaNames, type StoredImportStaging } from './import';
 
 export async function commitImport(identity: Identity) {
   const household = identity.household.id;
@@ -47,7 +47,7 @@ export async function commitImport(identity: Identity) {
         const unreviewed = await client.query("SELECT id FROM import_staging WHERE household_id = $1 AND status = 'review' LIMIT 1", [household]);
         if (unreviewed.rowCount) error(422, 'Confirm a species or skip every plant before importing.');
         // Share the care/lifecycle plant lock. Re-import never changes a graveyard plant.
-        const existing = await client.query('SELECT id, status FROM plants WHERE household_id = $1 AND planta_plant_id = $2 FOR UPDATE', [household, row.planta_plant_id]);
+        const existing = await client.query<PlantaNames & { id: string; status: string }>('SELECT id, status, nickname, planta_name FROM plants WHERE household_id = $1 AND planta_plant_id = $2 FOR UPDATE', [household, row.planta_plant_id]);
         if (existing.rows[0]?.status === 'graveyard') {
           await client.query("UPDATE import_staging SET status = 'skipped', plant_id = $1 WHERE id = $2 AND household_id = $3", [existing.rows[0].id, row.id, household]);
           return;
@@ -62,13 +62,15 @@ export async function commitImport(identity: Identity) {
           siteId = added.rows[0].id;
         }
         const species = await saveSpecies(client, row.selected, true);
-        // A missing Planta nickname must not erase an owner correction.
-        const plant = await client.query(`INSERT INTO plants (household_id, planta_plant_id, gbif_key, site_id, nickname, cultivar, pot_type, pot_size_cm, soil_type, attributes_as_of, created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        const names = namesAfterImport(importNickname(fields, row.selected, species), existing.rows[0]);
+        const plant = await client.query(`INSERT INTO plants (household_id, planta_plant_id, gbif_key, site_id, nickname, cultivar, pot_type, pot_size_cm, soil_type, attributes_as_of, created_at, planta_name)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
           ON CONFLICT (household_id, planta_plant_id) DO UPDATE SET gbif_key = EXCLUDED.gbif_key, site_id = EXCLUDED.site_id,
-            nickname = coalesce(EXCLUDED.nickname, plants.nickname), cultivar = EXCLUDED.cultivar, pot_type = EXCLUDED.pot_type, pot_size_cm = EXCLUDED.pot_size_cm, soil_type = EXCLUDED.soil_type
+            nickname = EXCLUDED.nickname, cultivar = EXCLUDED.cultivar, pot_type = EXCLUDED.pot_type, pot_size_cm = EXCLUDED.pot_size_cm, soil_type = EXCLUDED.soil_type,
+            planta_name = EXCLUDED.planta_name
           RETURNING id, planta_cover_imported`,
-          [household, row.planta_plant_id, row.selected.gbif_key, siteId, importNickname(fields, row.selected, species), fields.cultivar, fields.pot_type, fields.pot_size_cm, fields.soil_type, now().toISOString().slice(0, 10), now()]);
+          [household, row.planta_plant_id, row.selected.gbif_key, siteId, names.nickname, fields.cultivar, fields.pot_type, fields.pot_size_cm, fields.soil_type,
+            now().toISOString().slice(0, 10), now(), names.planta_name]);
         const plantId = plant.rows[0].id;
         // Like any completion, an imported one keeps its task's due date from just before it.
         const due = await dueDates(client, identity, plantId);

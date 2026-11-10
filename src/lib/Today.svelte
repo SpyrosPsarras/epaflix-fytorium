@@ -20,8 +20,7 @@
   function reload(settled: Promise<void> | null = null): Promise<void> {
     const pending = navigating.complete;
     if (!pending || pending === settled) return invalidateAll();
-    void pending.catch(() => {}).then(() => reload(pending));
-    return Promise.resolve();
+    return pending.catch(() => {}).then(() => reload(pending));
   }
   function actionFor(row: ListedTask) {
     return row.completed_event ? { event: row.completed_event, task: row } : results[occurrence(row)];

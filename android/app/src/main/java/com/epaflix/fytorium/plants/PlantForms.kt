@@ -134,12 +134,13 @@ import org.json.JSONObject
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
                         Column(Modifier.weight(1f)) {
-                            Heading(candidate.commonName ?: candidate.canonicalName, style = MaterialTheme.typography.titleMedium)
+                            Heading(candidate.headline, style = MaterialTheme.typography.titleMedium)
                             if (candidate.commonName != null) Text(candidate.canonicalName)
+                            candidate.matchNote?.let { Text(it) }
                             if (candidate.matchType == "FUZZY" && candidate.confidence != null) Text("Close match, ${candidate.confidence}%")
                             OutlinedButton(onClick = {
                                 if (candidate.requiresConfirmation) selected = candidate else onSelect(candidate, result.id, false)
-                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.canonicalName) }
+                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.headline) }
                         }
                     }
                 }

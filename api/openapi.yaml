@@ -656,7 +656,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaskAction"
+                $ref: "#/components/schemas/TaskUndo"
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -4471,6 +4471,25 @@ components:
         - events
         - tasks
       additionalProperties: false
+    TaskUndo:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/CareEvent"
+        task:
+          $ref: "#/components/schemas/Task"
+        today:
+          description: The member's Today list after the undo, as GET /api/tasks?view=today returns it.
+          $ref: "#/components/schemas/TaskList"
+        upcoming:
+          description: The member's Upcoming list after the undo, as GET /api/tasks?view=upcoming returns it.
+          $ref: "#/components/schemas/TaskList"
+      required:
+        - event
+        - task
+        - today
+        - upcoming
+      additionalProperties: false
     BatchUndo:
       type: object
       properties:
@@ -4480,9 +4499,17 @@ components:
         undoneAt:
           type: string
           pattern: ^\d{4}-\d{2}-\d{2}T
+        today:
+          description: The member's Today list after the undo, as GET /api/tasks?view=today returns it.
+          $ref: "#/components/schemas/TaskList"
+        upcoming:
+          description: The member's Upcoming list after the undo, as GET /api/tasks?view=upcoming returns it.
+          $ref: "#/components/schemas/TaskList"
       required:
         - batchId
         - undoneAt
+        - today
+        - upcoming
       additionalProperties: false
     RainAction:
       type: object
@@ -5478,9 +5505,17 @@ components:
             - type: string
               pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
             - type: "null"
+        display_name:
+          type: string
+          description: >-
+            The name the plant will have after import: the nickname import will set (a re-fetch keeps the plant's
+            current nickname unless Planta's name changed since the last import), else the selected species' common
+            name, else the canonical name the plant will have (the stored species' name when the species already
+            exists), else Planta's scientific name. A graveyard plant keeps its current name, because import skips it.
       required:
         - id
         - planta_plant_id
+        - display_name
         - can_commit
         - can_review
         - cover_status

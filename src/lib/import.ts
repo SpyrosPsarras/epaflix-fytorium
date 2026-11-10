@@ -8,6 +8,6 @@ export type ImportedFields = {
 export type ImportSuggestion = { suggested_gbif_key: number | null; candidates: Candidate[]; genus: Candidate | null };
 export type ImportStaging = {
   id: string; planta_plant_id: string; mapped: Omit<ImportedFields, 'cover_url' | 'custom_name' | 'localized_name'> & { has_cover: boolean }; cover_error: string | null; candidates: Candidate[]; selected: Candidate | null;
-  status: 'review' | 'confirmed' | 'skipped' | 'committed'; plant_id: string | null;
+  status: 'review' | 'confirmed' | 'skipped' | 'committed'; plant_id: string | null; display_name: string;
   can_commit: boolean; can_review: boolean; cover_status: 'none' | 'pending' | 'imported' | 'failed' | 'skipped';
 };

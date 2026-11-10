@@ -207,6 +207,60 @@ class PlantsScreenTest {
         for (gone in listOf("Matched", "Stored species", "confidence", "EXACT", "SPECIES")) compose.onAllNodes(hasText(gone, substring = true)).assertCountEquals(0)
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
+    @Test fun aSearchCardSaysWhichOtherNameMatchedAndChoosesByItsHeadline() {
+        val alias = SpeciesCandidate(910004, "Testoria ovata Inventor", "Testoria ovata", "SPECIES", null, null, false, "Synthetic rubberleaf", "en", commonName = "Synthetic jade")
+        val spelled = SpeciesCandidate(910005, "Testoria fasciata Inventor", "Testoria fasciata", "SPECIES", null, null, false, "synthetic-snake LEAF", "en", commonName = "Synthetic snake leaf")
+        val latin = SpeciesCandidate(910006, "Testoria aurea Inventor", "Testoria aurea", "SPECIES", null, null, false, "TESTORIA aurea", "en")
+        var chosen: SpeciesCandidate? = null
+        compose.enableAccessibilityChecks()
+        compose.setContent { FytoriumTheme { SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(alias, spelled, latin)), {}, { candidate, _, _ -> chosen = candidate }) } }
+        scroll("Matches \u201cSynthetic rubberleaf\u201d").assertExists()
+        compose.onAllNodes(hasText("Matches", substring = true)).assertCountEquals(1)
+        scroll("Choose Synthetic jade").assertHasClickAction()
+        scroll("Choose Testoria aurea").assertHasClickAction()
+        scroll("Choose Synthetic snake leaf").performClick()
+        compose.runOnIdle { assertEquals(spelled, chosen) }
+        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+    }
+    @Test fun historyUndoNamesWhatItReversesAndUndoneBatchesLoseTheirHint() {
+        fun event(id: String, vararg fields: Pair<String, Any>) = parseEvent(JSONObject(eventFixture).put("id", id).apply { fields.forEach { (key, value) -> put(key, value) } })
+        val batch = arrayOf("batch_id" to "batch-one", "batch_plant_count" to 1, "batch_event_count" to 3, "batch_action" to "complete-all", "batch_task" to JSONObject.NULL)
+        val history = listOf(event("single"), event("snoozed", "task_type" to "fertilize", "kind" to "snoozed"), event("batched", *batch),
+            event("undone", *batch, "undone_at" to "2030-06-02T10:05:00Z", "can_undo" to false))
+        compose.enableAccessibilityChecks()
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner, PlantDetail(plant, history, emptyMap()), {}, { _, _ -> }, {}, {}, options = syntheticOptions()) } }
+        // Scrolled to the last entry, all four history entries are composed.
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Done by Synthetic member \u00b7 Undone"))
+        compose.onAllNodes(hasText("Part of a care batch. Undo reverses the whole batch.")).assertCountEquals(1)
+        for ((id, label) in listOf("single" to "Undo watering", "snoozed" to "Undo fertilizing snooze", "batched" to "Undo all 3")) {
+            compose.onNodeWithTag("undo:$id").assert(hasText(label))
+        }
+        compose.onNodeWithTag("undo:undone").assertDoesNotExist()
+        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+    }
+    @Test fun historyUndoNamesWhatEachKindOfEventReverses() {
+        fun event(id: String, vararg fields: Pair<String, Any>) = parseEvent(JSONObject(eventFixture).put("id", id).apply { fields.forEach { (key, value) -> put(key, value) } })
+        fun batch(action: String, plants: Int, events: Int) = arrayOf<Pair<String, Any>>("batch_id" to "batch-$action", "batch_action" to action, "batch_plant_count" to plants, "batch_event_count" to events)
+        val custom = arrayOf<Pair<String, Any>>("task_type" to JSONObject.NULL, "custom_task_id" to "custom-one")
+        val labels = listOf(
+            event("skipped", "task_type" to "repot", "kind" to "skipped") to "Undo repotting skip",
+            event("custom", *custom, "custom_task_name" to "Synthetic misting") to "Undo Synthetic misting",
+            event("nameless", *custom) to "Undo custom task",
+            event("liquid", "task_type" to "fertilize") to "Undo fertilizing and watering",
+            event("linked", "linked_event_id" to "liquid") to "Undo watering",
+            event("alone", "task_type" to "fertilize") to "Undo fertilizing",
+            event("card", "task_type" to "fertilize", *batch("complete-type", 2, 4), "batch_task" to "fertilize") to "Undo all 2",
+            event("rain", *batch("rain", 5, 5)) to "Undo all 5",
+            event("handled", *batch("complete-all", 1, 3)) to "Undo all 3",
+            event("uncounted", "batch_id" to "batch-old") to "Undo all",
+        )
+        val undoneWater = event("dried", "linked_event_id" to "alone", "undone_at" to "2030-06-02T10:05:00Z", "can_undo" to false)
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner, PlantDetail(plant, labels.map { it.first } + undoneWater, emptyMap()), {}, { _, _ -> }, {}, {}, options = syntheticOptions()) } }
+        for ((event, label) in labels) {
+            compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("undo:${event.id}"))
+            compose.onNodeWithTag("undo:${event.id}").assert(hasText(label))
+        }
+    }
     @Test fun plantPageShowsTheCareReceiptWithUndo() {
         val list = parseTaskList(taskListFixture("today"))
         val task = list.sections.single().tasks.single()
@@ -323,10 +377,10 @@ class PlantsScreenTest {
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme { PlantDetailScreen(owner, PlantDetail(plant, listOf(parseEvent(JSONObject(eventFixture)).copy(canUndo = allowed.value)), emptyMap()), {},
             { action, body -> if (action == "delete") deleted = body.getString("confirm_name") }, {}, { undone = true }, options = syntheticOptions()) } }
-        scroll("Undo").performClick()
+        scroll("Undo watering").performClick()
         assertTrue(undone)
         compose.runOnIdle { allowed.value = false }
-        compose.onNodeWithText("Undo").assertDoesNotExist()
+        compose.onNodeWithText("Undo watering").assertDoesNotExist()
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
@@ -483,7 +537,7 @@ class PlantsScreenTest {
             if (name == "delete") compose.onNodeWithText("Cancel deletion").performClick()
             if (name == "birthday") compose.onNodeWithText("Cancel").performClick()
             if (name == "search") {
-                scroll("Choose Testoria lucida").performClick()
+                scroll("Choose Synthetic lantern").performClick()
                 compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
                 compose.onRoot().captureRoboImage("src/test/screenshots/native-plants-confirm-${if (dark) "dark" else "light"}.png")
             }

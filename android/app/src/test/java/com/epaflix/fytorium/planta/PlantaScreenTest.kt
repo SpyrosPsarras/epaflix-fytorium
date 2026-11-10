@@ -59,6 +59,18 @@ class PlantaScreenTest {
             }
         }
     }
+    @Test fun theIntroSaysARenameInFytoriumStaysUntilTheNameInPlantaChanges() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true)) } }
+        compose.onNodeWithText("A new fetch replaces this review and updates Planta-sourced species, cultivar, site, pot and soil, including your edits. " +
+            "A name you give a plant in Fytorium stays until its name in Planta changes. Local settings stay. Covers are downloaded only once.").assertIsDisplayed()
+        compose.onAllNodes(hasText("nickname", substring = true, ignoreCase = true)).assertCountEquals(0)
+    }
+    @Test fun aTileSaysWhichOtherNameMatchedAndIsNamedByItsHeadline() {
+        val matched = candidate.copy(matchedName = "Synthetic misty leaf", commonName = "Synthetic cloudleaf")
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(candidates = listOf(matched))))) } }
+        compose.onNodeWithContentDescription("This is Synthetic cloudleaf").performScrollTo().assertIsEnabled()
+            .assert(hasText("Matches \u201cSynthetic misty leaf\u201d"))
+    }
     @Test fun reviewSkipIsAvailableWithoutExpandingControls() {
         var skipped: String? = null
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row)), onSkip = { skipped = it }) } }

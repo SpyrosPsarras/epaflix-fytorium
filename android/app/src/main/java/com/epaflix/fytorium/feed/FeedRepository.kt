@@ -11,7 +11,7 @@ import org.json.JSONObject
 private class FeedFailure(val status: Int, val reason: String?, message: String) : Exception(message)
 
 // Memory only. Session changes discard the feed, settings and any in-flight result.
-class FeedRepository(private val api: ApiClient, private val connected: () -> Boolean) {
+class FeedRepository(private val api: ApiClient, private val connected: () -> Boolean, private val undoBatch: (String) -> Boolean = { false }) {
     private val monitor = Any()
     private val workLock = Any()
     private var generation = 0
@@ -112,16 +112,19 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             synchronized(monitor) { mutable.value = mutable.value.copy(message = "Rain watering could not be undone. Refresh to try again.") }
             return false
         }
-        return write("/api/task-batches/$id/undo", "POST", null, "Rain watering undone.") { rainRequestId = null }
+        // The care repository sends the Undo, shows its lists and reports its failures.
+        return write("Rain watering undone.", { if (undoBatch(id)) JSONObject() else null }) { rainRequestId = null }
     }
-    private fun write(path: String, method: String, body: JSONObject?, message: String? = null, applied: (JSONObject) -> Unit): Boolean = synchronized(workLock) write@ {
+    private fun write(path: String, method: String, body: JSONObject?, message: String? = null, applied: (JSONObject) -> Unit) =
+        write(message, { read(path, method, body) }, applied)
+    private fun write(message: String?, send: () -> JSONObject?, applied: (JSONObject) -> Unit): Boolean = synchronized(workLock) write@ {
         val epoch = synchronized(monitor) {
             if (!state.value.writable || !connected()) { if (!connected()) connectivityChanged(false); return@write false }
             mutable.value = mutable.value.copy(saving = true, message = null)
             generation
         }
         try {
-            val result = read(path, method, body)
+            val result = send() ?: return@write false
             synchronized(monitor) {
                 if (epoch != generation) return@write false
                 applied(result)

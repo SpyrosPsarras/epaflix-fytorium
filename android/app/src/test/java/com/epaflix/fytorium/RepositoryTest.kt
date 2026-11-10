@@ -80,11 +80,11 @@ class RepositoryTest {
             val batchReceipt = repository.state.value.receipt!!
             assertEquals("Cleaned leaves of 2 plants", batchReceipt.text)
             assertEquals("batch-one", batchReceipt.undo!!.batchId)
-            server.enqueue(MockResponse().setBody("{}"))
-            server.enqueue(MockResponse().setResponseCode(503))
+            server.enqueue(MockResponse().setBody(undoResponse(""""batchId":"batch-one","undoneAt":"2030-06-02T10:00:00Z"""") { list(it) }))
             assertTrue(repository.undoReceipt(batchReceipt))
             assertEquals("/api/task-batches/batch-one/undo", server.takeRequest().path)
-            assertEquals("/api/tasks?view=today", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
+            // The undo response carries the lists, so no refresh follows it.
+            assertNull(server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS))
             assertEquals("Undone", repository.state.value.receipt!!.text)
             assertTrue(repository.state.value.today!!.sections.single().tasks.all { it.completedEvent == null })
         }
@@ -144,7 +144,7 @@ class RepositoryTest {
             server.enqueue(MockResponse().setBody(taskListFixture("upcoming")))
             assertTrue(repository.handleType("fertilize"))
             assertEquals("Fertilized and watered 2 plants", repository.state.value.receipt!!.text)
-            assertEquals(BatchReceipt("Fertilized and watered 2 plants", "2 plants"), repository.state.value.batches.getValue("batch-fertilize"))
+            assertEquals(BatchReceipt("Fertilized and watered 2 plants", "2 plants", 2), repository.state.value.batches.getValue("batch-fertilize"))
             repeat(3) { assertNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)) }
         }
     }
@@ -233,18 +233,18 @@ class RepositoryTest {
         val card = event.copy(batchAction = "complete-type", batchTask = "water")
         assertNull(batchReceipt(card, "Synthetic fern"))
         assertNull(batchReceipt(event.copy(batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
-        assertEquals(BatchReceipt("Watered 9 plants", "9 plants"), batchReceipt(card.copy(batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
-        assertEquals(BatchReceipt("Watered 1 plant", "1 plant"), batchReceipt(card.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
+        assertEquals(BatchReceipt("Watered 9 plants", "9 plants", 9), batchReceipt(card.copy(batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
+        assertEquals(BatchReceipt("Watered 1 plant", "1 plant", 1), batchReceipt(card.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
         // The water row of a fertilize card batch still names the fertilizing.
-        assertEquals(BatchReceipt("Fertilized and watered 9 plants", "9 plants"),
+        assertEquals(BatchReceipt("Fertilized and watered 9 plants", "9 plants", 9),
             batchReceipt(card.copy(batchTask = "fertilize", linkedEventId = "event-zero", batchPlantCount = 9, batchEventCount = 18), "Synthetic fern"))
-        assertEquals(BatchReceipt("Fertilized 9 plants", "9 plants"), batchReceipt(card.copy(batchTask = "fertilize", batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
-        assertEquals(BatchReceipt("Synthetic misting done for 2 plants", "2 plants"),
+        assertEquals(BatchReceipt("Fertilized 9 plants", "9 plants", 9), batchReceipt(card.copy(batchTask = "fertilize", batchPlantCount = 9, batchEventCount = 9), "Synthetic fern"))
+        assertEquals(BatchReceipt("Synthetic misting done for 2 plants", "2 plants", 2),
             batchReceipt(card.copy(batchTask = "custom-one", batchPlantCount = 2, batchEventCount = 2), "Synthetic fern", "Synthetic misting"))
         val plant = event.copy(batchAction = "complete-all")
-        assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks"), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 3), "Synthetic fern"))
-        assertEquals(BatchReceipt("Handled 1 task for Synthetic fern", "1 task"), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
-        assertEquals(BatchReceipt("Watered 3 outdoor plants", "3 outdoor plants"),
+        assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks", 3), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 3), "Synthetic fern"))
+        assertEquals(BatchReceipt("Handled 1 task for Synthetic fern", "1 task", 1), batchReceipt(plant.copy(batchPlantCount = 1, batchEventCount = 1), "Synthetic fern"))
+        assertEquals(BatchReceipt("Watered 3 outdoor plants", "3 outdoor plants", 3),
             batchReceipt(event.copy(batchAction = "rain", batchPlantCount = 3, batchEventCount = 3), "Synthetic fern"))
     }
     @Test fun recoveredBatchReceiptKeepsTheServerScopeWhenRowsAreFiltered() {
@@ -257,7 +257,7 @@ class RepositoryTest {
             rows.put(org.json.JSONObject(rows.getJSONObject(0).toString()).put("plant_id", "plant-two").put("plant_name", "Second fern")
                 .put("completed_event", org.json.JSONObject(batch.toString()).put("id", "event-two").put("plant_id", "plant-two")))
             enqueueRefresh(server, today = list.toString()); repository.refresh()
-            assertEquals(BatchReceipt("Watered 9 plants", "9 plants"), repository.state.value.batches.getValue("batch-one"))
+            assertEquals(BatchReceipt("Watered 9 plants", "9 plants", 9), repository.state.value.batches.getValue("batch-one"))
             val requests = server.requestCount
             assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.first(), "undo"))
             assertEquals(requests, server.requestCount)
@@ -298,7 +298,7 @@ class RepositoryTest {
             assertEquals("/api/plants/plant-one/tasks/complete-all", server.takeRequest().path)
             assertEquals("Handled 3 tasks for Synthetic fern", repository.state.value.receipt!!.text)
             assertEquals("batch-plant-one", repository.state.value.receipt!!.undo!!.batchId)
-            assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks"), repository.state.value.batches.getValue("batch-plant-one"))
+            assertEquals(BatchReceipt("Handled 3 tasks for Synthetic fern", "3 tasks", 3), repository.state.value.batches.getValue("batch-plant-one"))
             server.enqueue(MockResponse().setBody(batch("plant-unknown", 1)))
             assertTrue(repository.handleAll("plant-unknown", plantsScreen = true))
             server.takeRequest()
@@ -331,7 +331,7 @@ class RepositoryTest {
             HeldServer(server, held = { it.requestUrl!!.encodedPath == handleAll }) { request ->
                 when (request.requestUrl!!.encodedPath) {
                     handleAll -> MockResponse().setBody("""{"batch_id":"batch-empty","tasks":{},"events":[]}""")
-                    "/api/care-events/event-one/undo" -> MockResponse().setBody("""{"event":$eventFixture,"task":$nextWater}""")
+                    "/api/care-events/event-one/undo" -> MockResponse().setBody(undoResponse(""""event":$eventFixture,"task":$nextWater""") { taskListFixture(it) })
                     "/api/tasks" -> MockResponse().setBody(taskListFixture(request.requestUrl!!.queryParameter("view")!!))
                     "/api/plants" -> MockResponse().setBody("[$plantFixture]")
                     else -> MockResponse().setResponseCode(404)
@@ -348,8 +348,7 @@ class RepositoryTest {
                 held.release()
                 assertTrue(all.get(5, java.util.concurrent.TimeUnit.SECONDS))
                 assertTrue(undo.get(5, java.util.concurrent.TimeUnit.SECONDS))
-                assertEquals("/api/care-events/event-one/undo", held.paths[1])
-                held.await { "/api/tasks?view=upcoming" in held.paths }
+                assertEquals(listOf("/api/care-events/event-one/undo", "/api/plants"), held.paths.drop(1))
             }
         }
     }
@@ -425,12 +424,12 @@ class RepositoryTest {
             val restarted = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
             restarted.restore()
             check(restarted.state.value)
-            served.responses["/api/care-events/event-two/undo"] = """{"event":$second,"task":{"status":"due","dueOn":"2030-06-09","intervalDays":7,"lateDays":0,"basedOn":[],"postponed":"skipped"}}"""
-            served.upcoming = upcoming(""","postponed":"skipped"""")
+            served.responses["/api/care-events/event-two/undo"] = undoResponse(""""event":$second,"task":{"status":"due","dueOn":"2030-06-09","intervalDays":7,"lateDays":0,"basedOn":[],"postponed":"skipped"}""") { view ->
+                if (view == "today") emptyToday() else upcoming(""","postponed":"skipped"""") }
             assertTrue(repository.act(repository.state.value.upcoming!!.sections.flatMap { it.tasks }.last(), "undo"))
             assertEquals("/api/care-events/event-two/undo", served.paths.last { it.startsWith("/api/care-events/") })
             assertEquals(listOf("event-one", null), repository.state.value.upcoming!!.sections.flatMap { it.tasks }.map { it.completedEvent?.id })
-            served.await { served.paths.count { it == "/api/tasks?view=upcoming" } == 4 }
+            assertEquals(3, served.paths.count { it == "/api/tasks?view=upcoming" })
         } }
     }
     @Test fun aCompletionUndoneElsewhereDisappearsOnRefreshAndRestart() {
@@ -541,23 +540,20 @@ class RepositoryTest {
         } }
     }
     @Test fun theOpenedOccurrenceFollowsThisDevicesDoneAndUndo() {
-        val holding = java.util.concurrent.atomic.AtomicBoolean(false)
-        withRepository { repository, server, _ -> ServedLists(server, hold = { holding.get() && it.requestUrl!!.encodedPath == "/api/tasks" }).use { served ->
+        withRepository { repository, server, _ -> ServedLists(server).use { served ->
             repository.refresh()
             val opened = repository.state.value.today!!.sections.single().tasks.single()
             repository.open(opened.occurrence)
             served.responses["/api/plants/plant-one/tasks/water/complete"] = """{"event":$eventFixture,"linked_events":[],"task":$nextWater}"""
-            served.responses["/api/care-events/event-one/undo"] = """{"event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}}"""
+            served.responses["/api/care-events/event-one/undo"] = undoResponse(""""event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}""") { taskListFixture(it) }
             assertTrue(repository.act(opened, "complete"))
             val done = repository.state.value.openedTask()!!
             assertEquals("event-one", done.completedEvent!!.id)
-            holding.set(true)
             assertTrue(repository.act(done, "undo"))
             val pending = repository.state.value.openedTask()!!
             assertNull(pending.completedEvent)
             assertEquals(opened.occurrence, pending.occurrence)
-            served.release()
-            served.await { served.paths.count { it == "/api/tasks?view=upcoming" } == 2 }
+            assertEquals(1, served.paths.count { it == "/api/tasks?view=upcoming" })
         } }
     }
     @Test fun aRefreshThatLandsBeforeTheScreenRedrawsKeepsTheOpenedOccurrence() {
@@ -825,20 +821,309 @@ class RepositoryTest {
             assertTrue(cache.get("member-one", "today")!!.json.contains("event-one"))
             assertEquals("Watered Synthetic fern", repository.state.value.receipt!!.text)
             assertEquals("event-one", repository.state.value.receipt!!.undo!!.id)
-            server.enqueue(MockResponse().setBody("""{"event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}}"""))
-            // A lost refresh after a successful undo must not leave another Undo in the cache.
-            server.enqueue(MockResponse().setResponseCode(503))
+            server.enqueue(MockResponse().setBody(undoResponse(""""event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}""") { taskListFixture(it) }))
             assertTrue(repository.act(done, "undo"))
             assertNull(repository.state.value.today!!.sections.single().tasks.single().completedEvent)
             assertEquals(1, repository.state.value.today!!.sections.single().tasks.single().lateDays)
             assertEquals("Undone", repository.state.value.receipt!!.text)
             val requests = (1..7).map { server.takeRequest() }
-            assertEquals("/api/tasks?view=today", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
-            assertNull(repository.state.value.today!!.sections.single().tasks.single().completedEvent)
+            // The undo response's lists replace the cached ones, so no Undo stays in the cache and no refresh follows.
+            assertNull(server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS))
+            assertFalse(cache.get("member-one", "today")!!.json.contains("event-one"))
             assertEquals("/api/plants/plant-one/tasks/water/complete", requests[5].path)
             assertEquals("Bearer synthetic-access", requests[5].getHeader("Authorization"))
             java.util.UUID.fromString(org.json.JSONObject(requests[5].body.readUtf8()).getString("request_id"))
             assertEquals("/api/care-events/event-one/undo", requests[6].path)
+        }
+    }
+    // Every write is followed by refreshes that fail here, so the rows show only what the write responses carried.
+    private fun undoServer(server: MockWebServer, rows: (String) -> String, vararg responses: Pair<String, String>, plants: String = "[]") {
+        val written = java.util.concurrent.atomic.AtomicBoolean(false)
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when (val path = request.requestUrl!!.encodedPath) {
+                "/api/me" -> MockResponse().setBody("""{"member":{"id":"member-one","role":"owner"}}""")
+                "/api/tasks" -> if (written.get()) MockResponse().setResponseCode(503) else MockResponse().setBody(rows(request.requestUrl!!.queryParameter("view")!!))
+                "/api/plants" -> MockResponse().setBody(plants)
+                "/api/meta" -> MockResponse().setBody("""{"timezone":"Europe/Oslo"}""")
+                else -> responses.toMap()[path]?.let { if (request.method == "POST") written.set(true); MockResponse().setBody(it) } ?: MockResponse().setResponseCode(404)
+            }
+        }
+    }
+    private fun withRows(view: String, vararg rows: org.json.JSONObject, due: String = "2030-06-09"): String {
+        val json = org.json.JSONObject(taskListFixture(view, due))
+        val template = json.getJSONArray("sections").getJSONObject(0).getJSONArray("tasks").getJSONObject(0)
+        json.getJSONArray("sections").getJSONObject(0).put("tasks", org.json.JSONArray(rows.map { row ->
+            org.json.JSONObject(template.toString()).put("lateDays", 0).also { copy -> row.keys().forEach { copy.put(it, row.get(it)) } }
+        }))
+        return json.toString()
+    }
+    private val lateWater = """{"status":"due","dueOn":"2030-05-27","intervalDays":7,"lateDays":6,"basedOn":[],"postponed":null}"""
+    private fun late(view: String, vararg plants: String) = withRows(view, *plants.map { org.json.JSONObject(lateWater).put("plant_id", it) }.toTypedArray(), due = "2030-05-27")
+    // An undo response carries the member's lists as the server lists them after the undo.
+    private fun undoResponse(fields: String, lists: (String) -> String) = """{$fields,"today":${lists("today")},"upcoming":${lists("upcoming")}}"""
+    private fun assertShows(repository: Repository, lists: (String) -> String) {
+        assertEquals(parseTaskList(lists("today")), repository.state.value.today)
+        assertEquals(parseTaskList(lists("upcoming")), repository.state.value.upcoming)
+    }
+    private fun assertLate(rows: List<CareTask>, plants: List<String>) {
+        assertEquals(plants, rows.map { it.plantId })
+        for (row in rows) {
+            assertNull(row.completedEvent)
+            assertEquals(6, row.lateDays)
+            assertEquals(listOf("complete", "snooze", "skip"), row.actions("2030-06-02", Member("member-one", Role.owner)))
+        }
+    }
+    @Test fun aCareActionForTheOpenPlantShowsInItsHistoryAndItsUndoMarksItUndone() {
+        withRepository { repository, server, _ ->
+            val history = java.util.concurrent.atomic.AtomicReference("[]")
+            val undone = org.json.JSONObject(eventFixture).put("undone_at", "2030-06-02T10:05:00Z").put("can_undo", false)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = MockResponse().setBody(when (request.requestUrl!!.encodedPath) {
+                    "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
+                    "/api/tasks" -> taskListFixture(request.requestUrl!!.queryParameter("view")!!)
+                    "/api/plants" -> "[$plantFixture]"
+                    "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
+                    "/api/plants/plant-one" -> plantFixture
+                    "/api/plants/plant-one/history" -> history.get()
+                    "/api/plants/plant-one/tasks" -> """{"water":$nextWater,"customTasks":{}}"""
+                    "/api/plants/plant-one/tasks/water/complete" -> { history.set("[$eventFixture]"); """{"event":$eventFixture,"task":$nextWater}""" }
+                    "/api/care-events/event-one/undo" -> { history.set("[$undone]"); undoResponse(""""event":$undone,"task":$lateWater""") { late(it, "plant-one") } }
+                    else -> "{}"
+                })
+            }
+            repository.refresh()
+            repository.openPlant("plant-one")
+            assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.single(), "complete"))
+            assertEquals(listOf("event-one" to null), repository.state.value.detail!!.history.map { it.id to it.undoneAt })
+            assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.single(), "undo"))
+            assertEquals(listOf("event-one" to "2030-06-02T10:05:00Z"), repository.state.value.detail!!.history.map { it.id to it.undoneAt })
+        }
+    }
+    @Test fun undoingACardBatchReloadsTheOpenPageOfAnotherPlantInIt() {
+        withRepository { repository, server, _ ->
+            val events = listOf("plant-one", "plant-two").map { plant -> org.json.JSONObject(eventFixture).put("id", "event-$plant").put("plant_id", plant)
+                .put("batch_id", "batch-one").put("batch_plant_count", 2).put("batch_event_count", 2).put("batch_action", "complete-type").put("batch_task", "water") }
+            val undone = java.util.concurrent.atomic.AtomicBoolean(false)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = MockResponse().setBody(when (request.requestUrl!!.encodedPath) {
+                    "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
+                    "/api/tasks" -> withRows(request.requestUrl!!.queryParameter("view")!!, *events.map { org.json.JSONObject().put("plant_id", it.getString("plant_id")).put("completed_event", it) }.toTypedArray())
+                    "/api/plants" -> "[]"
+                    "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
+                    "/api/plants/plant-two" -> org.json.JSONObject(plantFixture).put("id", "plant-two").toString()
+                    "/api/plants/plant-two/history" -> "[${org.json.JSONObject(events[1].toString()).apply { if (undone.get()) put("undone_at", "2030-06-02T10:05:00Z").put("can_undo", false) }}]"
+                    "/api/plants/plant-two/tasks" -> """{"water":$lateWater,"customTasks":{}}"""
+                    "/api/task-batches/batch-one/undo" -> { undone.set(true); undoResponse(""""batchId":"batch-one","undoneAt":"2030-06-02T10:05:00Z"""") { late(it, "plant-one", "plant-two") } }
+                    else -> "{}"
+                })
+            }
+            repository.refresh()
+            repository.openPlant("plant-two")
+            // The receipt's event belongs to the first plant of the batch.
+            assertTrue(repository.undoReceipt(Receipt("Watered 2 plants", parseEvent(events[0]))))
+            assertEquals(listOf("event-plant-two" to "2030-06-02T10:05:00Z"), repository.state.value.detail!!.history.map { it.id to it.undoneAt })
+        }
+    }
+    @Test fun anUndoneBatchShowsEveryRowsLateBadgeAndSnoozeBeforeTheNextRefresh() {
+        withRepository { repository, server, cache ->
+            val events = listOf("plant-one", "plant-two").map { plant -> org.json.JSONObject(eventFixture).put("id", "event-$plant").put("plant_id", plant)
+                .put("batch_id", "batch-one").put("batch_plant_count", 2).put("batch_event_count", 2).put("batch_action", "complete-type").put("batch_task", "water") }
+            val restored = { view: String -> late(view, "plant-one", "plant-two") }
+            undoServer(server, { view -> withRows(view, *events.map { org.json.JSONObject().put("plant_id", it.getString("plant_id")).put("completed_event", it) }.toTypedArray()) },
+                "/api/task-batches/batch-one/undo" to undoResponse(""""batchId":"batch-one","undoneAt":"2030-06-02T10:00:00Z"""", restored))
+            repository.refresh()
+            assertTrue(repository.undoReceipt(Receipt("Watered 2 plants", parseEvent(events[0]))))
+            for (list in listOf(repository.state.value.today!!, repository.state.value.upcoming!!)) assertLate(list.sections.flatMap { it.tasks }, listOf("plant-one", "plant-two"))
+            // The app shows exactly the server's lists from the undo response, also after a restart.
+            assertShows(repository, restored)
+            val restarted = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
+            restarted.restore()
+            assertShows(restarted, restored)
+        }
+    }
+    @Test fun undoingLiquidFertilizeShowsItsLinkedWaterAsLateAgainBeforeTheNextRefresh() {
+        withRepository { repository, server, _ ->
+            val fertilize = org.json.JSONObject(eventFixture).put("task_type", "fertilize")
+            val water = org.json.JSONObject(eventFixture).put("id", "event-water").put("linked_event_id", "event-one")
+            val lateFertilize = org.json.JSONObject(lateWater).put("intervalDays", 30)
+            undoServer(server, { view -> withRows(view, org.json.JSONObject().put("task_type", "fertilize").put("completed_event", fertilize),
+                org.json.JSONObject().put("completed_event", water)) },
+                "/api/care-events/event-one/undo" to undoResponse(""""event":$fertilize,"task":$lateFertilize""") { view ->
+                    withRows(view, org.json.JSONObject(lateFertilize.toString()).put("task_type", "fertilize"), org.json.JSONObject(lateWater), due = "2030-05-27") })
+            repository.refresh()
+            assertTrue(repository.undo(parseEvent(fertilize)))
+            for (list in listOf(repository.state.value.today!!, repository.state.value.upcoming!!)) {
+                val rows = list.sections.flatMap { it.tasks }
+                assertEquals(listOf("fertilize", "water"), rows.map { it.key }.sorted())
+                assertLate(rows, listOf("plant-one", "plant-one"))
+            }
+        }
+    }
+    @Test fun anUndoneCompletionBesideItsPostponedOccurrenceLeavesOnePendingRow() {
+        withRepository { repository, server, _ ->
+            val skipped = org.json.JSONObject(lateWater).put("dueOn", "2030-06-09").put("lateDays", 0).put("postponed", "skipped")
+            val done = org.json.JSONObject().put("postponed", org.json.JSONObject.NULL).put("completed_event", org.json.JSONObject(eventFixture))
+            // Today never lists a postponed occurrence, which is due after today.
+            undoServer(server, { view -> withRows(view, *listOfNotNull(done, skipped.takeIf { view == "upcoming" }).toTypedArray()) },
+                "/api/care-events/event-one/undo" to undoResponse(""""event":$eventFixture,"task":$skipped""") { view ->
+                    withRows(view, *listOfNotNull(skipped.takeIf { view == "upcoming" }).toTypedArray()) })
+            repository.refresh()
+            assertTrue(repository.undo(parseEvent(org.json.JSONObject(eventFixture))))
+            assertTrue(repository.state.value.today!!.sections.flatMap { it.tasks }.isEmpty())
+            val row = repository.state.value.upcoming!!.sections.flatMap { it.tasks }.single()
+            assertNull(row.completedEvent)
+            assertEquals("skipped", row.postponed)
+        }
+    }
+    @Test fun undoingASnoozeOrSkipBringsItsTodayRowBackBeforeTheNextRefresh() {
+        withRepository { repository, server, _ ->
+            fun postponed(kind: String) = org.json.JSONObject(eventFixture).put("id", "event-$kind").put("kind", kind)
+            fun later(kind: String) = org.json.JSONObject(lateWater).put("dueOn", "2030-06-03").put("lateDays", 0).put("postponed", kind)
+            undoServer(server, { view -> late(view, "plant-one") },
+                *listOf("snooze" to "snoozed", "skip" to "skipped").flatMap { (action, kind) -> listOf(
+                    "/api/plants/plant-one/tasks/water/$action" to """{"event":${postponed(kind)},"task":${later(kind)}}""",
+                    "/api/care-events/event-$kind/undo" to undoResponse(""""event":${postponed(kind)},"task":$lateWater""") { late(it, "plant-one") }) }.toTypedArray())
+            repository.refresh()
+            fun today() = repository.state.value.today!!.sections.flatMap { it.tasks }
+            fun assertRestored() {
+                assertLate(today(), listOf("plant-one"))
+                val upcoming = repository.state.value.upcoming!!.sections.filter { it.tasks.isNotEmpty() }
+                assertEquals(listOf("2030-06-02"), upcoming.map { it.key })
+                assertLate(upcoming.single().tasks, listOf("plant-one"))
+            }
+            assertTrue(repository.act(today().single(), "snooze"))
+            assertTrue(today().isEmpty())
+            assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
+            assertRestored()
+            assertTrue(repository.act(today().single(), "skip"))
+            assertTrue(today().isEmpty())
+            assertTrue(repository.undoHistory(parseEvent(postponed("skipped"))))
+            assertRestored()
+        }
+    }
+    @Test fun undoingAnEarlierCompletionMovesItsUpcomingRowToTodayAndAddsItToToday() {
+        withRepository { repository, server, _ ->
+            val earlier = org.json.JSONObject(eventFixture).put("occurred_on", "2030-05-27")
+            val next = org.json.JSONObject(lateWater).put("dueOn", "2030-06-03").put("lateDays", 0)
+            undoServer(server, { view -> if (view == "today") withRows(view) else withRows(view, next, due = "2030-06-03") },
+                "/api/care-events/event-one/undo" to undoResponse(""""event":$earlier,"task":$lateWater""") { late(it, "plant-one") })
+            repository.refresh()
+            assertTrue(repository.undoHistory(parseEvent(earlier)))
+            assertLate(repository.state.value.today!!.sections.flatMap { it.tasks }, listOf("plant-one"))
+            val upcoming = repository.state.value.upcoming!!.sections.filter { it.tasks.isNotEmpty() }
+            assertEquals(listOf("2030-06-02"), upcoming.map { it.key })
+            assertLate(upcoming.single().tasks, listOf("plant-one"))
+        }
+    }
+    @Test fun anUndoneSkipOfAPlantWithoutRowsShowsTheServersRestoredRowInAnyFilter() {
+        for (filter in listOf("all", "indoor")) withRepository { repository, server, _ ->
+            val skipped = org.json.JSONObject(eventFixture).put("id", "event-skipped").put("kind", "skipped")
+            fun filtered(list: String) = list.replace("\"filter\":\"all\"", "\"filter\":\"$filter\"")
+            undoServer(server, { view -> filtered(withRows(view)) },
+                "/api/care-events/event-skipped/undo" to undoResponse(""""event":$skipped,"task":$lateWater""") { view -> filtered(late(view, "plant-one")) },
+                plants = "[$plantFixture]")
+            repository.refresh()
+            assertTrue(repository.undoHistory(parseEvent(skipped)))
+            val rows = repository.state.value.today!!.sections.flatMap { it.tasks }
+            assertLate(rows, listOf("plant-one"))
+            assertEquals("Synthetic fern, Synthetic site", rows.single().plantAndSite)
+        }
+    }
+    private val rainEvents = listOf("plant-one", "plant-two").map { plant -> org.json.JSONObject(eventFixture).put("id", "rain-$plant").put("plant_id", plant)
+        .put("batch_id", "batch-rain").put("batch_plant_count", 2).put("batch_event_count", 2).put("batch_action", "rain") }
+    private val rainWeather = org.json.JSONObject(com.epaflix.fytorium.feed.weatherFixture).put("lastRainBatch", org.json.JSONObject("""{"id":"batch-rain","plantCount":2}""")).toString()
+    private fun rainRows(view: String, vararg more: org.json.JSONObject) =
+        withRows(view, *rainEvents.map { org.json.JSONObject().put("plant_id", it.getString("plant_id")).put("completed_event", it) }.toTypedArray(), *more)
+    private fun rainFeed(server: MockWebServer, repository: Repository) = com.epaflix.fytorium.feed.FeedRepository(
+        ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}, { true }, repository::undoBatch)
+            .apply { refresh(Member("member-one", Role.owner)) }
+    private fun rainServer(request: okhttp3.mockwebserver.RecordedRequest, rows: (String) -> String, extra: (String) -> String?): MockResponse =
+        MockResponse().setBody(extra(request.requestUrl!!.encodedPath) ?: when (request.requestUrl!!.encodedPath) {
+        "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
+        "/api/plants" -> "[]"
+        "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
+        "/api/feed" -> com.epaflix.fytorium.feed.feedFixture
+        "/api/weather" -> rainWeather
+        "/api/tasks" -> rows(request.requestUrl!!.queryParameter("view")!!)
+        else -> "{}"
+    })
+    @Test fun undoingRainFromTheFeedShowsItsRowsLateBeforeTheNextRefresh() {
+        withRepository { repository, server, _ ->
+            val restored = { view: String -> late(view, "plant-one", "plant-two") }
+            undoServer(server, { view -> rainRows(view) },
+                "/api/feed" to com.epaflix.fytorium.feed.feedFixture, "/api/weather" to rainWeather,
+                "/api/task-batches/batch-rain/undo" to undoResponse(""""batchId":"batch-rain","undoneAt":"2030-06-02T10:00:00Z"""", restored))
+            repository.refresh()
+            val feed = rainFeed(server, repository)
+            assertEquals("batch-rain", feed.state.value.weather!!.lastBatchId)
+            assertTrue(feed.undoRain())
+            for (list in listOf(repository.state.value.today!!, repository.state.value.upcoming!!)) assertLate(list.sections.flatMap { it.tasks }, listOf("plant-one", "plant-two"))
+            assertShows(repository, restored)
+        }
+    }
+    @Test fun rainUndoShowsItsListsWhileTheFeedRefreshIsHeld() {
+        withRepository { repository, server, _ ->
+            val restored = { view: String -> late(view, "plant-one", "plant-two") }
+            val undone = java.util.concurrent.atomic.AtomicBoolean(false)
+            HeldServer(server, held = { it.path == "/api/feed" && undone.get() }) { request ->
+                rainServer(request, { rainRows(it) }) { path ->
+                    if (path == "/api/task-batches/batch-rain/undo") { undone.set(true); undoResponse(""""batchId":"batch-rain","undoneAt":"2030-06-02T10:00:00Z"""", restored) } else null
+                }
+            }.use { held ->
+                repository.refresh()
+                val feed = rainFeed(server, repository)
+                val undo = held.submit { feed.undoRain() }
+                held.await { held.paths.count { it == "/api/feed" } == 2 }
+                assertShows(repository, restored)
+                held.release()
+                assertTrue(undo.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+        }
+    }
+    @Test fun aCompletionMadeWhileARainUndoIsInFlightSurvivesIt() {
+        withRepository { repository, server, _ ->
+            val third = org.json.JSONObject().put("plant_id", "plant-three").put("plant_name", "Third fern").put("status", "due").put("dueOn", "2030-06-02").put("lateDays", 0)
+            val completed = org.json.JSONObject(eventFixture).put("id", "event-three").put("plant_id", "plant-three")
+            val undo = "/api/task-batches/batch-rain/undo"
+            HeldServer(server, held = { it.path == undo }) { request ->
+                rainServer(request, { rainRows(it, third) }) { path -> when (path) {
+                    undo -> undoResponse(""""batchId":"batch-rain","undoneAt":"2030-06-02T10:00:00Z"""") { view ->
+                        withRows(view, *listOf("plant-one", "plant-two").map { org.json.JSONObject(lateWater).put("plant_id", it) }.toTypedArray(), third, due = "2030-05-27") }
+                    "/api/plants/plant-three/tasks/water/complete" -> """{"event":$completed,"task":$nextWater}"""
+                    else -> null
+                } }
+            }.use { held ->
+                repository.refresh()
+                val feed = rainFeed(server, repository)
+                val rain = held.submit { feed.undoRain() }
+                held.await { undo in held.paths }
+                val row = repository.state.value.today!!.sections.flatMap { it.tasks }.single { it.plantId == "plant-three" }
+                val complete = held.submit { repository.act(row, "complete") }
+                runCatching { complete.get(1, java.util.concurrent.TimeUnit.SECONDS) }
+                held.release()
+                assertTrue(rain.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                assertTrue(complete.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals("event-three", repository.state.value.today!!.sections.flatMap { it.tasks }.single { it.plantId == "plant-three" }.completedEvent?.id)
+            }
+        }
+    }
+    @Test fun undoingRainReloadsTheOpenPageOfAPlantInTheBatch() {
+        withRepository { repository, server, _ ->
+            val undone = java.util.concurrent.atomic.AtomicBoolean(false)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse =
+                    rainServer(request, { rainRows(it) }) { path -> when (path) {
+                        "/api/plants/plant-two" -> org.json.JSONObject(plantFixture).put("id", "plant-two").toString()
+                        "/api/plants/plant-two/history" -> "[${org.json.JSONObject(rainEvents[1].toString()).apply { if (undone.get()) put("undone_at", "2030-06-02T10:05:00Z").put("can_undo", false) }}]"
+                        "/api/plants/plant-two/tasks" -> """{"water":$lateWater,"customTasks":{}}"""
+                        "/api/task-batches/batch-rain/undo" -> { undone.set(true); undoResponse(""""batchId":"batch-rain","undoneAt":"2030-06-02T10:05:00Z"""") { late(it, "plant-one", "plant-two") } }
+                        else -> null
+                    } }
+            }
+            repository.refresh()
+            repository.openPlant("plant-two")
+            assertTrue(rainFeed(server, repository).undoRain())
+            assertEquals(listOf("rain-plant-two" to "2030-06-02T10:05:00Z"), repository.state.value.detail!!.history.map { it.id to it.undoneAt })
         }
     }
     @Test fun logoutWipesDataEvenWhenTheRevokeRequestFails() {
@@ -1082,7 +1367,7 @@ class RepositoryTest {
             val event = repository.state.value.today!!.sections.single().tasks.single().completedEvent!!
             server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
                 override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when (request.requestUrl!!.encodedPath) {
-                    "/api/care-events/event-one/undo" -> MockResponse().setBody("""{"event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}}""")
+                    "/api/care-events/event-one/undo" -> MockResponse().setBody(undoResponse(""""event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}""") { taskListFixture(it) })
                     "/api/tasks" -> MockResponse().setBody(taskListFixture(request.requestUrl!!.queryParameter("view")!!))
                     "/api/plants" -> MockResponse().setBody("[]")
                     else -> MockResponse().setResponseCode(404)

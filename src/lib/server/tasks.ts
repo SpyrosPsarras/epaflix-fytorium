@@ -92,6 +92,11 @@ export async function plantTasks(plantId: string, household: string, language: I
 export async function listedTasks(identity: Identity, view: TaskList['view']): Promise<TaskList> {
   return (await listedTaskContext(identity, { view })).tasks;
 }
+// An undo returns the member's lists, so a device shows every row it reversed in its earlier state without rebuilding them.
+async function undoneLists(identity: Identity) {
+  const [today, upcoming] = await Promise.all([listedTasks(identity, 'today'), listedTasks(identity, 'upcoming')]);
+  return { today, upcoming };
+}
 
 // The feed reuses this batch, ignoring Today filters and completed-row preferences.
 export async function listedTaskContext(identity: Identity, { view, forFeed = false, batch }: {
@@ -191,7 +196,7 @@ export async function undo(identity: Identity, eventId: string) {
     return event;
   });
   const tasks = await plantTasks(event.plant_id, household, identity.language);
-  return { event: await withUndoFlag(identity, { ...event, occurred_on: calendarDate(event.occurred_at) }), task: taskIn(tasks, taskKey(event)) };
+  return { event: await withUndoFlag(identity, { ...event, occurred_on: calendarDate(event.occurred_at) }), task: taskIn(tasks, taskKey(event)), ...await undoneLists(identity) };
 }
 
 export async function dueDates(client: pg.PoolClient, identity: Identity, plantId: string) {
@@ -350,7 +355,7 @@ export async function undoBatch(identity: Identity, batchId: string) {
   await requireOwnUndo(identity, batchId, true);
   if (!isUuid(batchId)) error(404, 'Task batch not found');
   const household = identity.household.id;
-  return await withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR NO KEY UPDATE', [household]);
     // Plant locks come before the action lock, matching careAction and lifecycle commands.
     const plants = await client.query('SELECT p.status FROM plants p WHERE p.household_id = $2 AND (p.id IN (SELECT plant_id FROM care_events WHERE batch_id = $1 AND household_id = $2) OR p.id IN (SELECT plant_id FROM care_actions WHERE request_id = $1 AND household_id = $2)) ORDER BY p.id FOR UPDATE', [batchId, household]);
@@ -362,4 +367,5 @@ export async function undoBatch(identity: Identity, batchId: string) {
     await client.query('UPDATE care_actions SET undone_at = $1, undone_by = $2 WHERE request_id = $3 AND household_id = $4', [time, identity.member.id, batchId, household]);
     return { batchId, undoneAt: time.toISOString() };
   });
+  return { ...result, ...await undoneLists(identity) };
 }

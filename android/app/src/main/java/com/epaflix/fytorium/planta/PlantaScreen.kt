@@ -78,7 +78,8 @@ import kotlinx.coroutines.withContext
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Create a one-time app code in the Planta App Portal. Fytorium reads the official API, not your password.")
-            Text("A new fetch replaces this review and updates Planta-sourced species, nickname, cultivar, site, pot and soil, including your edits. Local settings stay. Covers are downloaded only once.")
+            Text("A new fetch replaces this review and updates Planta-sourced species, cultivar, site, pot and soil, including your edits. " +
+                "A name you give a plant in Fytorium stays until its name in Planta changes. Local settings stay. Covers are downloaded only once.")
             if (!online) Text("Actions are unavailable offline. Reconnect and refresh to make changes.")
             if (state.updateRequired) Text("Update Fytorium. This server needs a newer app.")
             if (state.loading || state.saving || submitting) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -205,9 +206,9 @@ import kotlinx.coroutines.withContext
 @Composable private fun ImportCandidate(candidate: SpeciesCandidate, enabled: Boolean, imageApi: ApiClient? = null, suggested: Boolean = false, onConfirm: () -> Unit) {
     OutlinedCard(onClick = onConfirm, enabled = enabled,
         border = BorderStroke(if (suggested) 2.dp else 1.dp, if (suggested) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "This is ${candidate.canonicalName}" }) {
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { contentDescription = "This is ${candidate.headline}" }) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ReferencePhoto(imageApi, candidate.key, candidate.canonicalName, showName = true, size = 240.dp, commonName = candidate.commonName)
+            ReferencePhoto(imageApi, candidate.key, candidate.canonicalName, showName = true, size = 240.dp, commonName = candidate.commonName, matchNote = candidate.matchNote)
             val colours = ButtonDefaults.buttonColors()
             Surface(color = if (enabled) colours.containerColor else colours.disabledContainerColor,
                 contentColor = if (enabled) colours.contentColor else colours.disabledContentColor, shape = MaterialTheme.shapes.extraLarge) {

@@ -32,6 +32,14 @@ export function importNickname(fields: ImportedFields, ...species: Pick<Candidat
   return localized && ![fields.scientific_name, ...species.flatMap(item => [item.scientific_name, item.canonical_name])]
     .some(name => name && squash(name) === squash(localized)) ? localized : null;
 }
+// planta_name is '' when the last import had no Planta name, and null when unknown because the plant was imported before names were stored.
+export type PlantaNames = { nickname: string | null; planta_name: string | null };
+// Planta's name replaces the nickname only when it changed since the last import, so a Fytorium rename stays.
+export function namesAfterImport(plantaName: string | null, plant?: PlantaNames): PlantaNames {
+  if (!plant) return { nickname: plantaName, planta_name: plantaName ?? '' };
+  if (plantaName === null) return plant;
+  return { nickname: plant.planta_name === null || plant.planta_name === plantaName ? plant.nickname : plantaName, planta_name: plantaName };
+}
 function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
   if (typeof raw?.id !== 'string' || !raw.id || raw.id.length > 200) error(502, 'Planta returned an invalid plant ID.');
   const pot = raw.environment?.pot;
@@ -69,15 +77,28 @@ export async function staging(household: string, language: CommonNameLanguage): 
   const rows = await storedStaging(household);
   const named = await withCommonNames(rows.flatMap(row => [...row.candidates, ...(row.selected ? [row.selected] : [])]), language);
   const canCommit = !rows.some(row => row.status === 'review') && rows.some(row => row.status === 'confirmed');
-  const covers = await db().query('SELECT planta_plant_id FROM plants WHERE household_id = $1 AND planta_cover_imported', [household]);
-  const importedCovers = new Set(covers.rows.map(row => row.planta_plant_id));
+  const imported = await db().query<PlantaNames & { planta_plant_id: string; planta_cover_imported: boolean; status: string; display_name: string }>(
+    'SELECT planta_plant_id, planta_cover_imported, nickname, planta_name, status, plant_display_name(nickname, gbif_key, $2) AS display_name FROM plants WHERE household_id = $1 AND planta_plant_id IS NOT NULL',
+    [household, language]);
+  const plants = new Map(imported.rows.map(plant => [plant.planta_plant_id, plant]));
+  const stored = await db().query<Pick<Candidate, 'gbif_key' | 'scientific_name' | 'canonical_name'>>('SELECT gbif_key, scientific_name, canonical_name FROM species WHERE gbif_key = ANY($1::integer[])',
+    [rows.flatMap(row => row.selected ? [row.selected.gbif_key] : [])]);
+  const species = new Map(stored.rows.map(row => [row.gbif_key, row]));
   return rows.map(row => {
     const { suggestion, identified_at, ...publicRow } = row;
     const { cover_url, custom_name, localized_name, ...mapped } = row.mapped;
-    const coverStatus: ImportStaging['cover_status'] = importedCovers.has(row.planta_plant_id) ? 'imported'
+    const plant = plants.get(row.planta_plant_id);
+    const coverStatus: ImportStaging['cover_status'] = plant?.planta_cover_imported ? 'imported'
       : row.cover_error ? 'failed' : !cover_url ? 'none' : ['skipped', 'committed'].includes(row.status) ? 'skipped' : 'pending';
-    return { ...publicRow, candidates: row.candidates.map(named), selected: row.selected ? named(row.selected) : null,
-      mapped: { ...mapped, has_cover: Boolean(cover_url) },
+    const selected = row.selected ? named(row.selected) : null;
+    // Commit keeps an existing species' stored taxonomy, so the plant gets that canonical name.
+    const taxonomy = selected && (species.get(selected.gbif_key) ?? selected);
+    // Commit skips a graveyard plant, so it keeps its current name.
+    const displayName = plant?.status === 'graveyard' ? plant.display_name
+      : namesAfterImport(importNickname(row.mapped, ...[selected, taxonomy].filter(item => item !== null)), plant).nickname
+        ?? selected?.common_name ?? taxonomy?.canonical_name ?? row.mapped.scientific_name;
+    return { ...publicRow, candidates: row.candidates.map(named), selected,
+      mapped: { ...mapped, has_cover: Boolean(cover_url) }, display_name: displayName,
       can_commit: canCommit, can_review: row.status !== 'committed', cover_status: coverStatus };
   });
 }

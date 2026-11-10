@@ -149,17 +149,22 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
   const schedule = await (await returning.request('/api/plants/' + shared + '/tasks')).json();
   only(schedule, ['water', 'fertilize', 'clean_leaves', 'remove_dead', 'cut_back', 'repot', 'customTasks']);
   Object.entries(schedule).forEach(([key, value]) => key === 'customTasks' ? Object.values(value as object).forEach(task) : task(value));
+  // An undo carries the sitter's own projected lists, exactly as GET /api/tasks returns them.
+  const lists = async (undone: any) => expect({ today: undone.today, upcoming: undone.upcoming }).toEqual({
+    today: await (await returning.request('/api/tasks?view=today')).json(), upcoming: await (await returning.request('/api/tasks?view=upcoming')).json() });
   const completion = await (await returning.request(`/api/plants/${shared}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
   only(completion, ['event', 'task', 'linked_events']); event(completion.event); task(completion.task);
   expect(completion.linked_events).toEqual([]);
   const undone = await (await returning.request('/api/care-events/' + completion.event.id + '/undo', 'POST')).json();
-  only(undone, ['event', 'task']); event(undone.event); task(undone.task);
+  only(undone, ['event', 'task', 'today', 'upcoming']); event(undone.event); task(undone.task);
+  await lists(undone);
   const batch = await (await returning.request(`/api/plants/${shared}/tasks/complete-all`, 'POST', { request_id: randomUUID() })).json();
   only(batch, ['events', 'tasks']); batch.events.forEach(event);
   expect(batch.events.length).toBeGreaterThan(0);
   for (const value of batch.events) expect(value).toMatchObject({ batch_action: 'complete-all', batch_task: null, linked_event_id: null });
   const batchUndo = await (await returning.request('/api/task-batches/' + batch.events[0].batch_id + '/undo', 'POST')).json();
-  only(batchUndo, ['batchId', 'undoneAt']);
+  only(batchUndo, ['batchId', 'undoneAt', 'today', 'upcoming']);
+  await lists(batchUndo);
   await owner.request('/api/care-events/' + repot.event.id + '/undo', 'POST');
 });
 

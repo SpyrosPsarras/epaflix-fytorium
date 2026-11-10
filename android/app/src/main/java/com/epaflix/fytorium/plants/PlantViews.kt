@@ -172,11 +172,11 @@ internal fun CareState.currentTask(occurrence: String?): CareTask? = rows.firstO
             items(detail.history, key = { "history:${it.id}" }) { event ->
                 Text("${event.occurredOn} · ${taskLabel(event.taskType, event.customTaskName)}")
                 Text("${event.label} by ${event.byName}" + if (event.undoneAt != null) " · Undone" else "")
-                if (event.batchId != null) Text("Part of a care batch. Undo reverses the whole batch.")
+                if (event.batchId != null && event.undoneAt == null) Text("Part of a care batch. Undo reverses the whole batch.")
                 val undoing = BusyKey.History(event.id) in state.pending
                 if (event.canUndo) OutlinedButton(onClick = { onUndo(event) }, enabled = enabled && !undoing, modifier = Modifier.heightIn(min = 48.dp).testTag("undo:${event.id}")) {
                     ButtonProgress(undoing)
-                    Text("Undo")
+                    Text(undoLabel(event, detail.history))
                 }
             }
         }

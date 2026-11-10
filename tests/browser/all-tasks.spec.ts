@@ -43,7 +43,8 @@ test('cares for several task types, customizes intervals on a phone', async ({ p
     await row('remove_dead').getByRole('button', { name: 'Undo', exact: true }).click();
     await row('clean_leaves').getByRole('link', { name, exact: true }).click();
     saveUndo();
-    await expect(row('remove_dead').getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+    // The undone row stays busy until its deferred reload lands after the navigation.
+    await expect(row('remove_dead').getByRole('button', { name: 'Done', exact: true })).toBeDisabled();
     await screenshot('all-tasks-clean-done.png');
     openPlant();
     await expect(page.getByText('Next leaf cleaning: 2026-07-05', { exact: true })).toBeVisible();
@@ -91,7 +92,7 @@ test('cares for several task types, customizes intervals on a phone', async ({ p
     await row('water').getByRole('link', { name, exact: true }).click();
     await expect(page.getByText('Next watering: 2026-06-12', { exact: true })).toBeVisible();
     const fertilized = page.getByRole('region', { name: 'Care history', exact: true }).getByRole('listitem').filter({ hasText: 'Fertilize' });
-    await fertilized.getByRole('button', { name: 'Undo', exact: true }).click();
+    await fertilized.getByRole('button', { name: 'Undo fertilizing and watering', exact: true }).click();
     await expect(page.getByText('Next watering: 2026-05-01', { exact: true })).toBeVisible();
   } finally {
     await page.request.post('/__test/clock', { data: { action: 'reset' } });

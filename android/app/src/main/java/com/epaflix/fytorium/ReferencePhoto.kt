@@ -49,7 +49,7 @@ import org.json.JSONObject
 
 private data class PhotoCredit(val creator: String, val license: String, val source: String)
 @Composable fun ReferencePhoto(api: ApiClient?, key: Long, name: String, showName: Boolean = false, displayPhoto: Boolean = true, size: Dp = 120.dp,
-                               commonName: String? = null) {
+                               commonName: String? = null, matchNote: String? = null) {
     val path = "/api/species/$key/photo"
     val credit by produceState<PhotoCredit?>(null, api, key) {
         value = null
@@ -71,6 +71,7 @@ private data class PhotoCredit(val creator: String, val license: String, val sou
                 fontWeight = FontWeight.Bold, minLines = 2)
             Text(if (commonName != null) name else "", style = MaterialTheme.typography.bodySmall,
                 minLines = 1)
+            matchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         if (displayPhoto) {
             val creditHeight = with(LocalDensity.current) { MaterialTheme.typography.labelSmall.lineHeight.toDp() * 3 + 16.dp }

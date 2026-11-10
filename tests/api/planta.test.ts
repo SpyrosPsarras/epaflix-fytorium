@@ -3,6 +3,7 @@ import { createApiHarness } from './harness';
 import sharp from 'sharp';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createImageHost } from './planta-images';
 import { createFakePlanta, syntheticPlant } from './planta-fake';
 
@@ -475,9 +476,12 @@ test('re-import skips graveyard plants entirely, even after their site was delet
   imported.actions.watering.completed.date = '2026-06-09T12:00:00Z';
   imported.image.url = imageHost.url;
   fake.setPlants([imported]);
-  expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+  const fetched = await owner.request(endpoint, 'POST', { code: fake.code });
+  expect(fetched.status).toBe(200);
+  // Commit skips a graveyard plant, so its review heading is the name it keeps.
+  expect((await fetched.json())[0].display_name).toBe('Test retired import');
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
-  expect((await (await owner.request(endpoint)).json())[0]).toMatchObject({ status: 'skipped', plant_id: plant.id });
+  expect((await (await owner.request(endpoint)).json())[0]).toMatchObject({ status: 'skipped', plant_id: plant.id, display_name: 'Test retired import' });
   expect(await (await owner.request(path)).json()).toEqual(before);
   expect(await (await owner.request(path + '/history')).json()).toEqual(history);
   expect(await (await owner.request(path + '/photos')).json()).toEqual(photos);
@@ -685,6 +689,131 @@ test('re-fetch preserves an owner nickname when Planta has no vernacular nicknam
   expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
   expect((await owner.request(endpoint + '/commit', 'POST', {})).status).toBe(200);
   expect(await (await owner.request(path)).json()).toMatchObject({ nickname: 'Planta familiar leaf' });
+});
+
+test('a re-fetch keeps a Fytorium rename until the name Planta sends changes, and the review heading shows the name the plant will get', async () => {
+  harness.setGbif({ usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  const imported = syntheticPlant('synthetic-kept-rename-' + randomUUID(), 'Test Planta lantern');
+  const refetch = async (expected: string) => {
+    fake.setPlants([imported]);
+    const [staged] = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+    const [committed] = await (await owner.request(endpoint + '/commit', 'POST', {})).json();
+    const plant = await (await owner.request('/api/plants/' + committed.plant_id)).json();
+    expect({ heading: staged.display_name, nickname: plant.nickname }).toEqual({ heading: expected, nickname: expected });
+    return plant;
+  };
+  const rename = async (plant: Record<string, unknown>, nickname: string) =>
+    expect((await owner.request('/api/plants/' + plant.id, 'PUT', { ...plant, nickname })).status).toBe(200);
+  await rename(await refetch('Test Planta lantern'), 'Test owner lantern');
+  imported.environment.pot.size = 31;
+  expect(await refetch('Test owner lantern')).toMatchObject({ pot_size_cm: 31 });
+  imported.names.custom = 'Test Planta renamed lantern';
+  await rename(await refetch('Test Planta renamed lantern'), 'Test second owner lantern');
+  imported.names.custom = '';
+  await refetch('Test second owner lantern');
+  // Planta sending no name in between is not a change of the name it last imported.
+  imported.names.custom = 'Test Planta renamed lantern';
+  await refetch('Test second owner lantern');
+});
+
+test('a review heading without a Planta name uses the selected species common name, else its canonical name', async () => {
+  harness.setGbif({ usageKey: 910031, scientificName: 'Headlinia synthetica Inventor', canonicalName: 'Headlinia synthetica', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  const plant = syntheticPlant('synthetic-headline-' + randomUUID(), '');
+  Object.assign(plant.names, { localizedName: 'Headlinia synthetica', scientific: 'Headlinia synthetica Inventor' });
+  fake.setPlants([plant]);
+  const [unstored] = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect(unstored).toMatchObject({ status: 'confirmed', mapped: { nickname: null }, selected: { gbif_key: 910031, common_name: null }, display_name: 'Headlinia synthetica' });
+  const [committed] = await (await owner.request(endpoint + '/commit', 'POST', {})).json();
+  expect((await owner.request('/api/species/910031/names', 'POST', { language: 'en', name: 'Synthetic headline leaf' })).status).toBe(201);
+  const [stored] = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect(stored).toMatchObject({ selected: { gbif_key: 910031, common_name: 'Synthetic headline leaf' }, display_name: 'Synthetic headline leaf' });
+  expect((await (await owner.request('/api/plants/' + committed.plant_id)).json()).display_name).toBe('Synthetic headline leaf');
+});
+
+test('a review heading without a Planta name uses the stored species name the plant will keep, not the match result', async () => {
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await database.query("INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at) VALUES (910061, 'Storedia prima Inventor', 'Storedia prima', 'SPECIES', CURRENT_TIMESTAMP)");
+  } finally { await database.end(); }
+  harness.setGbif({ usageKey: 910061, scientificName: 'Renamia secunda Inventor', canonicalName: 'Renamia secunda', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  const plant = syntheticPlant('synthetic-stored-name-' + randomUUID(), '');
+  Object.assign(plant.names, { scientific: 'Renamia secunda Inventor' });
+  fake.setPlants([plant]);
+  const [staged] = await (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  expect(staged).toMatchObject({ status: 'confirmed', selected: { gbif_key: 910061, canonical_name: 'Renamia secunda', common_name: null }, display_name: 'Storedia prima' });
+  const [committed] = await (await owner.request(endpoint + '/commit', 'POST', {})).json();
+  expect((await (await owner.request('/api/plants/' + committed.plant_id)).json()).display_name).toBe('Storedia prima');
+});
+
+test('a plant imported before Planta names were stored keeps its Fytorium rename through the first fetch after the upgrade', async () => {
+  harness.setGbif({ usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  const named = syntheticPlant('synthetic-upgrade-named-' + randomUUID(), 'Test Planta beacon');
+  const unnamed = syntheticPlant('synthetic-upgrade-unnamed-' + randomUUID(), '');
+  const fetchReview = async () => {
+    fake.setPlants([named, unnamed]);
+    return (await owner.request(endpoint, 'POST', { code: fake.code })).json();
+  };
+  const commit = async () => {
+    const rows: { planta_plant_id: string; plant_id: string }[] = await (await owner.request(endpoint + '/commit', 'POST', {})).json();
+    return Promise.all([named, unnamed].map(async plant => (await owner.request('/api/plants/' + rows.find(row => row.planta_plant_id === plant.id)!.plant_id)).json()));
+  };
+  await fetchReview();
+  const [beacon] = await commit();
+  expect((await owner.request('/api/plants/' + beacon.id, 'PUT', { ...beacon, nickname: 'Test owner beacon' })).status).toBe(200);
+  // Fetching before the upgrade replaced the committed review, so nothing tells the migration which name the last import wrote.
+  await fetchReview();
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('ALTER TABLE plants DROP COLUMN planta_name');
+    await client.query(readFileSync('migrations/20261110090000_planta_name.sql', 'utf8').split('-- migrate:down')[0]);
+    const upgraded = (await client.query('SELECT planta_name FROM plants WHERE id = $1', [beacon.id])).rows[0].planta_name;
+    await client.query('ROLLBACK');
+    expect(upgraded).toBeNull();
+    await client.query('UPDATE plants SET planta_name = $1 WHERE id = $2', [upgraded, beacon.id]);
+  } finally {
+    client.release();
+    await database.end();
+  }
+  const review: { planta_plant_id: string; display_name: string }[] = await (await owner.request(endpoint)).json();
+  expect(review.find(row => row.planta_plant_id === named.id)!.display_name).toBe('Test owner beacon');
+  expect((await commit()).map(plant => plant.nickname)).toEqual(['Test owner beacon', null]);
+  unnamed.names.custom = 'Test Planta glow';
+  await fetchReview();
+  expect((await commit()).map(plant => plant.nickname)).toEqual(['Test owner beacon', 'Test Planta glow']);
+  named.names.custom = 'Test Planta new beacon';
+  await fetchReview();
+  expect((await commit()).map(plant => plant.nickname)).toEqual(['Test Planta new beacon', 'Test Planta glow']);
+});
+
+test('the Planta name migration stores the last committed import name, empty when that import had none, else no name, and rolls back', async () => {
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('CREATE SCHEMA planta_name_migration_test');
+    await client.query('SET LOCAL search_path TO planta_name_migration_test');
+    await client.query(`CREATE TABLE plants (id integer PRIMARY KEY, household_id integer, planta_plant_id text, nickname text);
+      CREATE TABLE import_staging (household_id integer, planta_plant_id text, mapped jsonb, status text);
+      INSERT INTO plants VALUES (1, 1, 'renamed', 'Owner rename'), (2, 1, 'unstaged', 'Imported name'), (3, 1, NULL, 'Local plant'),
+        (4, 1, 'reviewing', 'Current name'), (5, 2, 'renamed', 'Other household'), (6, 1, 'unnamed', 'Owner name');
+      INSERT INTO import_staging VALUES (1, 'renamed', '{"nickname":"Planta name"}', 'committed'), (1, 'reviewing', '{"nickname":"Staged name"}', 'review'),
+        (1, 'unnamed', '{"nickname":null}', 'committed')`);
+    const [up, down] = readFileSync('migrations/20261110090000_planta_name.sql', 'utf8').split('-- migrate:down');
+    await client.query(up);
+    expect((await client.query('SELECT id, planta_name FROM plants ORDER BY id')).rows).toEqual([
+      { id: 1, planta_name: 'Planta name' }, { id: 2, planta_name: null }, { id: 3, planta_name: null },
+      { id: 4, planta_name: null }, { id: 5, planta_name: null }, { id: 6, planta_name: '' },
+    ]);
+    await client.query(down);
+    expect((await client.query(`SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'planta_name_migration_test' AND table_name = 'plants' AND column_name = 'planta_name'`)).rowCount).toBe(0);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+    await database.end();
+  }
 });
 
 test.each([

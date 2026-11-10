@@ -120,9 +120,8 @@ import org.json.JSONObject
         "restore" -> "Restore plant"; "species-care" -> "Species care"; else -> "Species names"
     }
     val snackbar = remember { SnackbarHostState() }
-    ReceiptSnackbar(state.receipt, snackbar, onUndo = { receipt ->
-        scope.launch { if (withContext(Dispatchers.IO) { repository?.undoReceipt(receipt) } == true) id?.let { refreshDetail(it) } }
-    }, onDone = { repository?.clearReceipt(it) })
+    ReceiptSnackbar(state.receipt, snackbar, onUndo = { receipt -> scope.launch(Dispatchers.IO) { repository?.undoReceipt(receipt) } },
+        onDone = { repository?.clearReceipt(it) })
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             if (page != "detail" || detail == null) TopAppBar(title = { Heading(title) }, navigationIcon = {
@@ -144,7 +143,7 @@ import org.json.JSONObject
                 "detail" -> if (detail == null) PlantColumn { Text("No cached details yet. Connect to load this plant.") } else PlantDetailScreen(state, detail,
                     onEdit = { repository?.clearPlantErrors(); run { loadOptions(); if (options != null) page = "form" } }, onCommand = ::command,
                     onSpecies = { run { loadOptions(); species = withContext(Dispatchers.IO) { repository!!.species(JSONObject(detail.plant.attributesJson).getLong("gbif_key")) }; if (species != null) page = "names" } },
-                    onUndo = { event -> scope.launch { if (withContext(Dispatchers.IO) { repository?.undoHistory(event) } == true) refreshDetail(event.plantId) } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
+                    onUndo = { event -> scope.launch(Dispatchers.IO) { repository?.undoHistory(event) } }, thumbnails = thumbnails, enabled = enabled, options = options, onBack = ::back,
                     onSpeciesCare = speciesApi?.let { { page = "species-care" } }, todayTask = initialTask,
                     onTaskAction = { action -> initialTask?.let { state.currentTask(it.occurrence) }?.let { onTaskAction(it, action) } })
                 "species-care" -> PlantColumn {

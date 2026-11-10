@@ -144,6 +144,9 @@ function sitterSchedule(resource: unknown) {
   return { ...Object.fromEntries(taskTypes.filter(type => Object.hasOwn(schedule, type)).map(type => [type, sitterTask(schedule[type])])),
     customTasks: Object.fromEntries(Object.entries(record(schedule.customTasks)).map(([id, task]) => [id, sitterTask(task)])) };
 }
+function sitterLists(value: Record<string, unknown>) {
+  return { today: sitterView(value.today, 'taskList'), upcoming: sitterView(value.upcoming, 'taskList') };
+}
 
 // Build every sitter response from named fields. New source fields are private until added here.
 export function sitterView(resource: unknown, projection: 'home'): SitterHome;
@@ -177,9 +180,10 @@ export function sitterView(resource: unknown, projection: SitterProjection): unk
   case 'plantList': return (Array.isArray(resource) ? resource : []).map(plant => sitterView(plant, 'plantHeader'));
   case 'plantHeader': return fields(value, ['id', 'display_name', 'nickname', 'scientific_name', 'canonical_name', 'cultivar', 'birthday', 'status']);
   case 'task': return { event: sitterEvent(value.event), task: sitterTask(value.task),
-    ...(Array.isArray(value.linked_events) ? { linked_events: value.linked_events.map(sitterEvent) } : {}) };
+    ...(Array.isArray(value.linked_events) ? { linked_events: value.linked_events.map(sitterEvent) } : {}),
+    ...(value.today ? sitterLists(value) : {}) };
   case 'batch': return { events: (Array.isArray(value.events) ? value.events : []).map(sitterEvent), tasks: sitterSchedule(value.tasks) };
-  case 'batchUndo': return fields(value, ['batchId', 'undoneAt']);
+  case 'batchUndo': return { ...fields(value, ['batchId', 'undoneAt']), ...sitterLists(value) };
   case 'schedule': return sitterSchedule(value);
   default: error(500, 'Missing sitter projection');
   }

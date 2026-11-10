@@ -13,7 +13,12 @@ data class PlantsRequestState(val online: Boolean = true, val refreshing: Boolea
 // Match acceptance belongs to the server, including partial names and all languages.
 data class SpeciesCandidate(val key: Long, val scientificName: String, val canonicalName: String, val rank: String,
     val matchType: String?, val confidence: Int?, val requiresConfirmation: Boolean, val matchedName: String?, val matchedLanguage: String?,
-    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null)
+    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null) {
+    val headline get() = commonName ?: canonicalName
+    // A name that matched but is neither name on the card tells the user why this species answered.
+    val matchNote get() = matchedName?.takeIf { matched -> listOf(headline, canonicalName).none { squash(it) == squash(matched) } }?.let { "Matches \u201c$it\u201d" }
+}
+private fun squash(name: String) = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD).lowercase().filter(Char::isLetter)
 data class SpeciesSearch(val id: String, val candidates: List<SpeciesCandidate>)
 fun parseSpeciesSearch(json: String): SpeciesSearch {
     val j = JSONObject(json)

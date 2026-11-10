@@ -16,6 +16,7 @@ const history = () => request(`/api/plants/${plantId}/history`).then(r => r.json
 const act = (action: string, type = 'water', request_id = randomUUID()) => request(`/api/plants/${plantId}/tasks/${type}/${action}`, 'POST', { request_id });
 const undo = (id: string) => request(`/api/care-events/${id}/undo`, 'POST');
 const undoBatch = (id: string) => request(`/api/task-batches/${id}/undo`, 'POST');
+const lists = async () => ({ today: await (await request('/api/tasks?view=today')).json(), upcoming: await (await request('/api/tasks?view=upcoming')).json() });
 async function addPlant(site_id: string, nickname: string) {
   const search = await (await request('/api/species/search?q=Testoria%20lucida')).json();
   const response = await request('/api/plants', 'POST', { ...fixturePlant, site_id, nickname, search_id: search.search_id, gbif_key: 910001 });
@@ -492,8 +493,15 @@ describe('complete-type', () => {
     expect(response.status).toBe(200);
     const result = await response.json();
     expect((await undo(result.events[0].id)).status).toBe(409);
-    expect((await undoBatch(result.batch_id)).status).toBe(200);
+    const undone = await undoBatch(result.batch_id);
+    expect(undone.status).toBe(200);
     expect(await Promise.all([plantTasks(late), plantTasks(due)])).toEqual(before);
+    // The undo carries the lists GET /api/tasks returns now, so a device shows every row's late badge and Snooze before refreshing.
+    const body = await undone.json();
+    expect({ today: body.today, upcoming: body.upcoming }).toEqual(await lists());
+    expect(body.today.groups.clean_leaves.filter((row: { plant_id: string }) => [late, due].includes(row.plant_id))
+      .map((row: { plant_id: string; lateDays: number }) => [row.plant_id, row.lateDays, 'completed_event' in row]))
+      .toEqual([[late, before[0].clean_leaves.lateDays, false], [due, before[1].clean_leaves.lateDays, false]]);
     expect((await undoBatch(result.batch_id)).status).toBe(409);
   });
 
@@ -636,7 +644,13 @@ describe('liquid fertilizing', () => {
     expect(one.linked_events).toEqual([expect.objectContaining({ id: water.id, task_type: 'water', linked_event_id: one.event.id, occurred_at: one.event.occurred_at, can_undo: true })]);
     expect([one.event.due_on, water.due_on]).toEqual([before.fertilize.dueOn, '2026-06-20']);
     expect((await plantTasks()).water.dueOn).toBe('2026-06-21');
-    expect((await undo(one.event.id)).status).toBe(200);
+    const undone = await undo(one.event.id);
+    expect(undone.status).toBe(200);
+    // The linked water's restored date comes with the undo, not only with the next refresh.
+    const body = await undone.json();
+    expect({ today: body.today, upcoming: body.upcoming }).toEqual(await lists());
+    expect(body.upcoming.groups.water.filter((row: { plant_id: string }) => row.plant_id === id)
+      .map((row: { dueOn: string }) => [row.dueOn, 'completed_event' in row])).toEqual([[before.water.dueOn, false]]);
     expect((await (await fertilize('complete', key)).json()).event.undone_at).not.toBeNull();
     expect(await plantHistory()).toHaveLength(3);
   });

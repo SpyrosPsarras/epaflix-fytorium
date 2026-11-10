@@ -91,18 +91,18 @@ class TaskScreenTest {
         for (screen in listOf("today", "upcoming")) {
             compose.runOnIdle { view.value = screen }
             event(own.copy(byMember = "member-two", canUndo = false))
-            compose.onNodeWithContentDescription("Done for Synthetic fern").assertHasNoClickAction()
+            compose.onNodeWithContentDescription("Water done for Synthetic fern").assertHasNoClickAction()
             event(own.copy(taskType = "repot", previousPot = true, canUndo = false))
-            compose.onNodeWithContentDescription("Done for Synthetic fern").assertHasNoClickAction()
+            compose.onNodeWithContentDescription("Water done for Synthetic fern").assertHasNoClickAction()
             event(own)
             compose.onNodeWithText("Undo").assertDoesNotExist()
-            compose.onNodeWithContentDescription("Done for Synthetic fern. Double tap to undo").assertHasClickAction().assertHeightIsAtLeast(48.dp)
+            compose.onNodeWithContentDescription("Water done for Synthetic fern. Double tap to undo").assertHasClickAction().assertHeightIsAtLeast(48.dp)
             compose.onNodeWithContentDescription("Task view settings").assertDoesNotExist()
             compose.onNode(hasText("Synthetic site", substring = true)).assertDoesNotExist()
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/sitter-$screen-${if (dark) "dark" else "light"}.png")
             compose.runOnIdle { current.value = current.value.copy(offline = true) }
-            compose.onNodeWithContentDescription("Done for Synthetic fern. Double tap to undo").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Water done for Synthetic fern. Double tap to undo").assertIsNotEnabled()
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         }
     }
@@ -164,7 +164,7 @@ class TaskScreenTest {
             compose.onNodeWithContentDescription("Open Synthetic fern").assertHasClickAction()
             compose.onNodeWithText("Handle all tasks for Synthetic fern").assertDoesNotExist()
             compose.onNodeWithText("Undo").assertDoesNotExist()
-            val label = "Done for Synthetic fern, Synthetic site"
+            val label = "Water done for Synthetic fern, Synthetic site"
             if (done && role != Role.sitter) compose.onNodeWithContentDescription("$label. Double tap to undo").assertHasClickAction()
             else compose.onNodeWithContentDescription("$label. Double tap to undo").assertDoesNotExist()
         }
@@ -173,12 +173,12 @@ class TaskScreenTest {
         compose.runOnIdle { current.value = state().copy(today = done) ; view.value = "today" }
         val handledRow = hasAnyAncestor(hasTestTag("task:plant-one:water"))
         compose.onNode(handledRow and hasText("Undo")).assertDoesNotExist()
-        compose.onNode(hasContentDescription("Done for Synthetic fern, Synthetic site. Double tap to undo")).assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNode(hasContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo")).assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
         compose.runOnIdle { assertEquals(listOf("undo"), actions) }
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertDoesNotExist()
         compose.runOnIdle { view.value = "upcoming" }
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsDisplayed()
-        compose.onNode(hasContentDescription("Done for", substring = true)).assertDoesNotExist()
+        compose.onNode(hasContentDescription(" done for", substring = true) and !hasContentDescription("Mark ", substring = true)).assertDoesNotExist()
     }
     @Test fun receiptLight() = receipts(false)
     @Test fun receiptDark() = receipts(true)
@@ -230,16 +230,32 @@ class TaskScreenTest {
             row.copy(plantId = "plant-three", plantName = "Third fern"))
         val list = base.today.copy(sections = listOf(TaskSection("water", "Water", rows)))
         val actions = mutableListOf<String>()
-        compose.setContent { TaskTestTheme(dark) { TaskScreen(base.copy(today = list, batches = mapOf("batch-one" to BatchReceipt("Watered 2 plants", "2 plants"))), "today",
+        compose.setContent { TaskTestTheme(dark) { TaskScreen(base.copy(today = list, batches = mapOf("batch-one" to BatchReceipt("Watered 2 plants", "2 plants", 2))), "today",
             onAction = { task, action -> actions.add("${task.plantId}:$action") }) } }
         compose.onNodeWithText("Undo").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Done for Second fern, Synthetic site. Part of 2 plants batch").assertHasClickAction()
-        compose.onNodeWithContentDescription("Done for Synthetic fern, Synthetic site. Part of 2 plants batch").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithContentDescription("Water done for Second fern, Synthetic site. Part of a batch of 2 plants. Double tap to see the batch").assertHasClickAction()
+        compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Part of a batch of 2 plants. Double tap to see the batch").assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithContentDescription("Mark Water done for Third fern, Synthetic site").assertIsEnabled()
         compose.runOnIdle { assertEquals(listOf("plant-one:undo"), actions) }
         compose.mainClock.advanceTimeBy(1000)
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         compose.onRoot().captureRoboImage("src/test/screenshots/batch-completed-${if (dark) "dark" else "light"}.png")
+    }
+    @Test fun filledChecksNameTheirTaskAndBatch() {
+        val base = state()
+        val row = base.today!!.sections.single().tasks.single().copy(lateDays = 0)
+        fun event(id: String, type: String, vararg batch: Pair<String, Any>) =
+            parseEvent(org.json.JSONObject(eventFixture).put("id", id).put("task_type", type).apply { batch.forEach { (key, value) -> put(key, value) } })
+        val water = event("event-one", "water")
+        val handled = event("event-fertilize", "fertilize", "batch_id" to "batch-plant", "batch_action" to "complete-all", "batch_plant_count" to 1, "batch_event_count" to 3)
+        val card = event("event-clean", "clean_leaves", "batch_id" to "batch-card", "batch_action" to "complete-type", "batch_task" to "clean_leaves",
+            "batch_plant_count" to 4, "batch_event_count" to 4)
+        val rows = listOf(water, handled, card).map { row.copy(taskType = it.taskType, completedEvent = it) }
+        compose.setContent { TaskTestTheme { TaskScreen(base.copy(today = base.today.copy(sections = listOf(TaskSection("plant-one", "Synthetic fern", rows))),
+            batches = listOf(handled, card).associate { it.batchId!! to batchReceipt(it, "Synthetic fern")!! }), "today") } }
+        compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo").assertHasClickAction()
+        compose.onNodeWithContentDescription("Fertilize done for Synthetic fern, Synthetic site. Part of a batch of 3 tasks. Double tap to see the batch").assertHasClickAction()
+        compose.onNodeWithContentDescription("Clean leaves done for Synthetic fern, Synthetic site. Part of a batch of 4 plants. Double tap to see the batch").assertHasClickAction()
     }
     @Test fun upcomingSnoozedLight() = snoozedUpcoming(false)
     @Test fun upcomingSnoozedDark() = snoozedUpcoming(true)
@@ -253,7 +269,7 @@ class TaskScreenTest {
         compose.onNode(hasText("Snoozed") and hasAnyAncestor(hasTestTag("task:plant-one:water"))).assertIsDisplayed()
         compose.onNode(hasText("Skipped") and hasAnyAncestor(hasTestTag("task:plant-two:water"))).assertIsDisplayed()
         compose.onNode(hasContentDescription("Snoozed for", substring = true)).assertDoesNotExist()
-        compose.onNode(hasContentDescription("Done for", substring = true)).assertDoesNotExist()
+        compose.onNode(hasContentDescription(" done for", substring = true) and !hasContentDescription("Mark ", substring = true)).assertDoesNotExist()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsEnabled()
         compose.mainClock.advanceTimeBy(1000)
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
@@ -301,7 +317,7 @@ class TaskScreenTest {
                 val busy = repository.state.value
                 compose.setContent { TaskTestTheme { TaskScreen(busy, "upcoming") } }
                 compose.onAllNodesWithContentDescription("Saving Water for Synthetic fern, Synthetic site").assertCountEquals(1)
-                compose.onNodeWithContentDescription("Done for Synthetic fern, Synthetic site. Double tap to undo").assertIsEnabled()
+                compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo").assertIsEnabled()
                 held.release()
                 assertTrue(acting.get(5, java.util.concurrent.TimeUnit.SECONDS))
             }

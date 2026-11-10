@@ -10,6 +10,8 @@ test('imports Planta plants with fuzzy confirmation, cover photos and continued 
   await page.request.post('/__test/clock', { data: { action: 'set', at: '2026-06-10T12:00:00Z' } });
   try {
     await page.getByRole('link', { name: 'Import from Planta', exact: true }).click();
+    await expect(page.getByText('A new fetch replaces this review. Re-running updates Planta-sourced species, cultivar, site, pot and soil, even if you edited them here. A name you give a plant in Fytorium stays until its name in Planta changes. Local settings stay. Covers are downloaded only once.', { exact: true })).toBeVisible();
+    await expect(page.getByText(/nickname/i)).toHaveCount(0);
     await page.getByLabel('One-time app code', { exact: true }).fill('synthetic-browser-import');
     await screenshot('planta-code.png');
     let releaseCredit!: () => void;
@@ -112,5 +114,14 @@ test('imports Planta plants with fuzzy confirmation, cover photos and continued 
     await page.goto('/plants');
     await page.getByLabel('Search plants', { exact: true }).fill('Test import blue');
     await expect(page.getByRole('link', { name: 'Test import blue', exact: true })).toBeVisible();
+    // A rename in Fytorium heads the next review and survives it while Planta still sends the imported name.
+    const listed = (await (await page.request.get('/api/plants')).json()).find((plant: { display_name: string }) => plant.display_name === 'Test import blue');
+    const blue = await (await page.request.get('/api/plants/' + listed.id)).json();
+    expect((await page.request.put('/api/plants/' + blue.id, { data: { ...blue, nickname: 'Test renamed blue' } })).ok()).toBe(true);
+    await page.goto('/import');
+    await page.getByLabel('One-time app code', { exact: true }).fill('synthetic-browser-import');
+    await page.getByRole('button', { name: 'Fetch Planta plants', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Test renamed blue', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Test import blue', exact: true })).toHaveCount(0);
   } finally { await page.request.post('/__test/clock', { data: { action: 'reset' } }); }
 });

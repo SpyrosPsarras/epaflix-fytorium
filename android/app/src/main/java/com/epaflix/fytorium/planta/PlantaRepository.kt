@@ -39,7 +39,7 @@ private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
     val mapped = row.getJSONObject("mapped")
     val candidates = parseSpeciesSearch(JSONObject().put("search_id", "").put("candidates", row.getJSONArray("candidates")).toString()).candidates
     val care = mapped.getJSONObject("care")
-    ImportRow(row.getString("id"), mapped.nullable("nickname") ?: mapped.getString("scientific_name"),
+    ImportRow(row.getString("id"), row.getString("display_name"),
         mapped.getString("scientific_name"), mapped.getString("site_name"), mapped.nullable("cultivar"),
         mapped.getString("pot_type"), mapped.nullable("pot_size_cm") ?: "unknown", mapped.getString("soil_type"),
         care.keys().asSequence().associateWith { care.getString(it) }, row.getString("status"), row.getString("cover_status"),

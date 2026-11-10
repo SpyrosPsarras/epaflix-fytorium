@@ -88,7 +88,7 @@ class TodayNavigationTest {
         }
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
-        compose.onNode(hasContentDescription("Done for ${plant.displayName}", substring = true)).assertIsDisplayed()
+        compose.onNode(hasContentDescription("Water done for ${plant.displayName}", substring = true)).assertIsDisplayed()
     }
 
     @Test fun aRestartedProcessHandsTheOpenedOccurrenceToItsNewRepository() {

@@ -73,6 +73,10 @@ test('snoozes, skips, plans upcoming care, keeps filters, handles all tasks and 
     await expect(page.getByRole('status')).toContainText('Handled 4 tasks.');
     await expect(page.getByText('Next watering: 2026-06-12', { exact: true })).toBeVisible();
     await expect(page.getByText('Next leaf cleaning: 2026-07-05', { exact: true })).toBeVisible();
+    const history = page.getByRole('region', { name: 'Care history', exact: true });
+    const batchHint = history.getByText('Part of a care batch. Undo reverses the whole batch.', { exact: true });
+    await expect(batchHint).toHaveCount(4);
+    await expect(history.getByRole('button', { name: 'Undo all 4', exact: true })).toHaveCount(4);
     await screenshot('handling-all-done.png');
     await page.goto('/');
     // Liquid fertilizing also waters, so the batch is fertilize, its water, clean leaves and remove dead.
@@ -96,9 +100,11 @@ test('snoozes, skips, plans upcoming care, keeps filters, handles all tasks and 
     await expect(attributes).toContainText('24');
     await expect(attributes).toContainText('aroid');
     await screenshot('handling-repotted.png');
-    const history = page.getByRole('region', { name: 'Care history', exact: true });
+    // The batch was undone from Today, so its entries no longer offer or explain an undo.
+    await expect(batchHint).toHaveCount(0);
+    await expect(history.getByRole('button', { name: 'Undo all 4', exact: true })).toHaveCount(0);
     const repotEvent = history.getByRole('listitem').filter({ hasText: 'Repot' }).filter({ hasText: 'Completed by' });
-    await repotEvent.getByRole('button', { name: 'Undo', exact: true }).click();
+    await repotEvent.getByRole('button', { name: 'Undo repotting', exact: true }).click();
     await expect(attributes).toContainText('plastic');
     await expect(page.getByText('Next repotting: 2028-04-30', { exact: true })).toBeVisible();
   } finally {
@@ -197,7 +203,8 @@ test('an Undo that finishes while Today switches to Upcoming leaves no completed
     await undo.click();
     await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
     held.saveUndo();
-    await expect(done).toBeEnabled();
+    // The undone row stays busy until its reload lands after the navigation.
+    await expect(done).toBeDisabled();
     held.deliverData();
     await expect(page).toHaveURL('/upcoming');
     await expect(done).toBeVisible();
@@ -224,7 +231,7 @@ test('an Undo that finishes during a navigation back to the current page leaves 
     await undo.click();
     await page.getByRole('link', { name: 'Today', exact: true }).click();
     held.saveUndo();
-    await expect(undo).toBeEnabled();
+    await expect(undo).toBeDisabled();
     // Returning to the current page reuses its data from before the Undo.
     await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
     held.deliverData();
