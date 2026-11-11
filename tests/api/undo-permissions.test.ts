@@ -119,7 +119,8 @@ for (const role of ['owner', 'family', 'sitter'] as const) test(`${role} receive
   if (role !== 'sitter') await historyFlag(member, batch.events[0].id, false);
   if (role === 'sitter') {
     const other = await (await owner.request(`/api/plants/${plant}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
-    await eventInViews(member, other.event.id, false);
+    // A sitter lists only their own care, whatever they saved while they were family.
+    for (const view of ['today', 'upcoming']) expect(JSON.stringify(await (await member.request('/api/tasks?view=' + view)).json())).not.toContain(other.event.id);
     expect((await member.request(`/api/care-events/${other.event.id}/undo`, 'POST')).status).toBe(403);
     await owner.request(`/api/care-events/${other.event.id}/undo`, 'POST');
   }
@@ -197,6 +198,10 @@ test('complete-type admits family but refuses sitters and hides their former hou
     expect(denied.status).toBe(403);
   }
   await eventInViews(sitter, event.id, false);
+  // Receipt counts cover the whole batch, not the sitter's shared plants.
+  const listed = (Object.values((await (await sitter.request('/api/tasks?view=today')).json()).groups).flat() as any[]).find(row => row.completed_event?.id === event.id);
+  expect(listed.completed_event).toMatchObject({ batch_action: 'complete-type', batch_task: 'water',
+    batch_plant_count: new Set(result.events.map((event: any) => event.plant_id)).size, batch_event_count: result.events.length });
   const denied = await sitter.request(`/api/task-batches/${result.batch_id}/undo`, 'POST');
   expect(denied.status).toBe(404);
   expect(await denied.json()).toMatchObject({ message: 'Care action not found' });

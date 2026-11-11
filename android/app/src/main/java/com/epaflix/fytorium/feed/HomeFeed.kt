@@ -3,12 +3,15 @@ package com.epaflix.fytorium.feed
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.Role
@@ -16,24 +19,34 @@ import com.epaflix.fytorium.countLabel
 
 // The task list below already shows late tasks with their late pills, and late tasks were the only cards sitters had.
 internal fun FeedState.todayCards() = if (member?.role == Role.sitter) emptyList() else cards.filter { it.kind != "late_tasks" }
+// The strip appears or goes only at a moment the user picks, so a refresh never moves the rows below it.
+internal fun FeedState.keepingStripOf(shown: FeedState) =
+    if (shown.member == member && shown.todayCards().isEmpty() != todayCards().isEmpty()) copy(cards = shown.cards) else this
+private data class Why(val title: String, val lines: List<String>, val technical: List<String>, val plants: List<Pair<String, String>> = emptyList())
 
-@Composable fun HomeFeed(state: FeedState, today: String? = null, connectionNotice: Boolean = true, onOpen: (String) -> Unit = {},
-                         onWater: () -> Unit = {}, onUndo: () -> Unit = {}) {
-    FeedNotice(state, connectionNotice)
+@Composable fun HomeFeed(state: FeedState, today: String? = null, offline: Boolean = state.offline, connectionNotice: Boolean = true,
+                         onOpen: (String) -> Unit = {}, onWater: () -> Unit = {}, onUndo: () -> Unit = {}) {
+    if (state.member == null || state.member.role == Role.sitter) return
+    if (offline) Text("Weather and tips need a connection", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    else FeedNotice(state, connectionNotice)
     val cards = state.todayCards()
+    if (cards.isEmpty()) return
     val latestRain = cards.lastOrNull { it.rain }?.id
-    val ordered = cards.sortedBy { when { it.id == latestRain -> 0; it.rain -> 1; it.kind == "weather_alerts" -> 2; it.kind == "current_weather" -> 3; else -> 4 } }
-    var why by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
-    // Every card takes the tallest card's height, so a short card leaves no empty band above the toggle.
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).height(IntrinsicSize.Min).testTag("feed-strip"),
+    val ordered = cards.filter { it.kind != "plant_warnings" }
+        .sortedBy { when { it.id == latestRain -> 0; it.rain -> 1; it.kind == "weather_alerts" -> 2; else -> 3 } }
+    var why by remember { mutableStateOf<Why?>(null) }
+    val type = MaterialTheme.typography
+    val measurer = rememberTextMeasurer()
+    // Top padding, two headline lines and a two-line button fit the rain card's fullest state, so a refresh that changes cards never moves the rows below.
+    val height = with(LocalDensity.current) {
+        28.dp + (measurer.measure("1\n2", type.titleSmall).size.height + measurer.measure("1\n2", type.labelLarge).size.height).toDp()
+    }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).height(height).testTag("feed-strip"),
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ordered.forEach { card ->
             val title = card.headline(today)
             when {
-                card.kind == "plant_warnings" -> card.warnings.forEach { warning ->
-                    StripCard("feed-${card.id}-${warning.kind}", warning.text, { onOpen(card.href) },
-                        onWhy = { why = warning.text to listOf(warning.reason) + warning.inputs })
-                }
                 card.id == latestRain -> {
                     val weather = state.weather
                     val rain = weather?.rain
@@ -42,22 +55,35 @@ internal fun FeedState.todayCards() = if (member?.role == Role.sitter) emptyList
                     StripCard("feed-${card.id}", title, { onOpen(card.href) }, detail = weather?.rainReceipt?.takeIf { undoable && waterable }) {
                         when {
                             waterable -> TextButton(onClick = onWater, enabled = state.writable, modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp)) {
-                                Text("Mark ${countLabel(rain.plantCount, "outdoor plant")} watered")
+                                Text("Mark ${countLabel(rain.plantCount, "outdoor plant")} watered", maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
-                            undoable -> Text(weather?.rainReceipt.orEmpty(), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                            weather != null -> Text("Rain watering is no longer available.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 12.dp))
+                            undoable -> Text(weather?.rainReceipt.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(start = 12.dp))
+                            weather != null -> Text("Rain watering is no longer available.", style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 12.dp))
                         }
                         if (undoable) TextButton(onClick = onUndo, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Undo rain watering" }) { Text("Undo") }
                     }
                 }
                 card.rain || card.why.isEmpty() -> StripCard("feed-${card.id}", title, { onOpen(card.href) })
-                else -> StripCard("feed-${card.id}", title, { onOpen(card.href) }, onWhy = { why = title to card.why })
+                else -> StripCard("feed-${card.id}", title, { onOpen(card.href) }, onWhy = { why = Why(title, card.why, card.technical) })
             }
         }
+        cards.warningCards().forEach { warning ->
+            val explain = { why = Why(warning.title, warning.why, warning.technical, warning.plants) }
+            StripCard(warning.tag, warning.title, warning.href?.let { href -> { onOpen(href) } } ?: explain, onWhy = explain)
+        }
     }
-    why?.let { (title, lines) ->
+    why?.let { shown ->
         AlertDialog(onDismissRequest = { why = null }, confirmButton = { TextButton(onClick = { why = null }) { Text("Close") } },
-            title = { Text(title) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { lines.forEach { Text(it) } } })
+            title = { Text(shown.title) }, text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                shown.lines.forEach { Text(it) }
+                shown.plants.forEach { (name, href) ->
+                    TextButton(onClick = { why = null; onOpen(href) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(name) }
+                }
+                if (shown.technical.isNotEmpty()) Text("Technical details: " + shown.technical.joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } })
     }
 }
 
@@ -66,8 +92,9 @@ internal fun FeedState.todayCards() = if (member?.role == Role.sitter) emptyList
     Card(onClick = onOpen, modifier = Modifier.width(248.dp).fillMaxHeight().testTag(tag),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.fillMaxHeight().padding(top = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp))
-            detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp)) }
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (detail == null) 2 else 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp))
+            detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp)) }
             Spacer(Modifier.weight(1f))
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 action()
@@ -80,7 +107,8 @@ internal fun FeedState.todayCards() = if (member?.role == Role.sitter) emptyList
 @Composable internal fun FeedNotice(state: FeedState, connectionNotice: Boolean = true) {
     val message = when {
         state.offline -> if (!connectionNotice) null else if (state.loaded) "Feed is offline. Showing last loaded cards. Actions are unavailable offline." else "Actions are unavailable offline."
-        state.unavailable -> if (connectionNotice) "Fytorium isn't responding. Showing last loaded cards. Refresh to try again." else null
+        state.unavailable -> if (!connectionNotice) null
+            else "Fytorium isn't responding. " + (if (state.todayCards().isEmpty()) "" else "Showing last loaded cards. ") + "Refresh to try again."
         else -> state.message
     }
     message?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }

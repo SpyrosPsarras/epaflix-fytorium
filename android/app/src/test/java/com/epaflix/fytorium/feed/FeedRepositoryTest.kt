@@ -12,17 +12,57 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class FeedRepositoryTest {
-    private fun withFeed(undoBatch: (String) -> Boolean = { false }, test: (FeedRepository, MockWebServer, (Boolean) -> Unit) -> Unit) {
+    private fun withFeed(undoBatch: (String, String?) -> Boolean = { _, _ -> false }, test: (FeedRepository, MockWebServer, (Boolean) -> Unit) -> Unit) {
         val server = MockWebServer(); server.start()
         var online = true
         val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
         val feed = FeedRepository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, { online }, undoBatch)
         try { test(feed, server) { online = it } } finally { server.shutdown() }
     }
+    @Test fun theLastLoadedFeedIsKeptPerMemberForTheNextColdStart() = withCache("synthetic-member") { cache, api, server ->
+        val member = Member("synthetic-member", Role.owner)
+        server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+        FeedRepository(api, { true }, cache = cache).refresh(member)
+        val restarted = FeedRepository(api, { true }, cache = cache).apply { restore() }.state.value
+        assertEquals(member, restarted.member)
+        assertEquals(listOf("late", "current", "cold", "rain", "warnings"), restarted.cards.map { it.id })
+        assertEquals(1, restarted.weather?.rain?.plantCount)
+        assertTrue("A cached feed is not a loading one", restarted.loaded)
+        assertEquals(2, server.requestCount)
+        server.enqueue(MockResponse().setBody("""{"settings":$settingsFixture,"cards":[]}""")); server.enqueue(MockResponse().setBody(weatherFixture))
+        FeedRepository(api, { true }, cache = cache).apply { restore() }.refresh(member)
+        FeedRepository(api, { true }, cache = cache).apply { restore() }.state.value.let {
+            assertTrue("An empty feed is kept too", it.loaded); assertEquals(emptyList<FeedCard>(), it.cards) }
+        cache.bind("""{"member":{"id":"synthetic-other","role":"family"}}""")
+        FeedRepository(api, { true }, cache = cache).apply { restore() }.state.value.let {
+            assertEquals(Member("synthetic-other", Role.family), it.member); assertFalse(it.loaded); assertEquals(emptyList<FeedCard>(), it.cards) }
+    }
+    @Test fun whyTimesUseTheHouseholdTimeZone() = withCache("synthetic-member") { cache, api, server ->
+        cache.save("synthetic-member", mapOf("meta" to """{"timezone":"Pacific/Auckland"}"""), 0)
+        server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+        val feed = FeedRepository(api, { true }, cache = cache).apply { refresh(Member("synthetic-member", Role.owner)) }
+        assertEquals("Checked 1 Jun 22:00", feed.state.value.cards.single { it.id == "current" }.why[1])
+    }
     private fun load(feed: FeedRepository, server: MockWebServer, role: Role = Role.owner) {
         server.enqueue(MockResponse().setBody(feedFixture))
         if (role != Role.sitter) server.enqueue(MockResponse().setBody(weatherFixture))
         feed.refresh(Member("synthetic-member", role))
+    }
+    @Test fun aSuccessfulRefreshClearsTheLastFailureButKeepsASavesConfirmation() = withFeed { feed, server, online ->
+        load(feed, server)
+        online(false); feed.refresh(feed.state.value.member)
+        assertEquals("Could not reach Fytorium. Retry uses the same request.", feed.state.value.message)
+        online(true); feed.connectivityChanged(true)
+        load(feed, server)
+        assertNull("A reconnect's refresh left the failure on screen", feed.state.value.message)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready","message":"Synthetic refusal"}"""))
+        assertFalse(feed.water())
+        assertEquals("Rain watering is not ready. Try again in a moment.", feed.state.value.message)
+        load(feed, server)
+        assertNull("A later refresh left the failure on screen", feed.state.value.message)
+        server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+        assertTrue(feed.saveSettings(feed.state.value.settings!!))
+        assertEquals("Feed settings saved.", feed.state.value.message)
     }
     @Test fun backgroundReadKeepsWritesEnabled() = withFeed { feed, server, _ ->
         load(feed, server)
@@ -67,8 +107,8 @@ class FeedRepositoryTest {
         assertEquals(before, server.requestCount)
     }
     @Test fun unknownWeatherEventIsSkippedAndRainNumbersMatchSvelte() {
-        assertEquals("6", rainAmount(6.0)); assertEquals("6.25", rainAmount(6.25))
-        assertEquals("0", rainAmount(0.0)); assertEquals("0.001", rainAmount(0.001))
+        assertEquals("6", plainNumber(6.0)); assertEquals("6.25", plainNumber(6.25))
+        assertEquals("0", plainNumber(0.0)); assertEquals("0.001", plainNumber(0.001))
         val rain = org.json.JSONObject(feedFixture).getJSONArray("cards").getJSONObject(3)
         assertEquals("Rain: 6 mm on 2030-06-01.", parseFeedCard(rain)!!.why.single())
         rain.getJSONObject("event").put("kind", "future_event")
@@ -83,7 +123,7 @@ class FeedRepositoryTest {
         assertEquals(2, server.requestCount)
     }
     private val undone = mutableListOf<String>()
-    @Test fun rainRetryKeepsRequestIdAndOnlyNotReadyReasonOffersMomentRetry() = withFeed({ undone += it; true }) { feed, server, _ ->
+    @Test fun rainRetryKeepsRequestIdAndOnlyNotReadyReasonOffersMomentRetry() = withFeed({ id, confirmation -> undone += "$id:$confirmation"; true }) { feed, server, _ ->
         load(feed, server)
         server.takeRequest(); server.takeRequest()
         for ((code, reason) in listOf(409 to "rain_report_not_ready", 409 to "no_outdoor_plants", 422 to "rain_report_not_ready")) {
@@ -103,12 +143,12 @@ class FeedRepositoryTest {
         repeat(3) { server.takeRequest() }
         server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
         assertTrue(feed.undoRain())
-        assertEquals(listOf("batch-one"), undone)
+        assertEquals("Today's receipt confirms the Undo", listOf("batch-one:Undid watering for 1 outdoor plant"), undone)
         assertEquals("/api/feed", server.takeRequest().path)
-        assertEquals("Undid watering for 1 outdoor plant", feed.state.value.message)
+        assertNull("No lasting text above the feed", feed.state.value.message)
         assertNull(feed.state.value.weather!!.lastBatchId)
     }
-    @Test fun aFailedRainUndoKeepsTheCardAndLeavesItsMessageToToday() = withFeed({ false }) { feed, server, _ ->
+    @Test fun aFailedRainUndoKeepsTheCardAndLeavesItsMessageToToday() = withFeed({ _, _ -> false }) { feed, server, _ ->
         server.enqueue(MockResponse().setBody(feedFixture))
         server.enqueue(MockResponse().setBody(org.json.JSONObject(weatherFixture).put("lastRainBatch", org.json.JSONObject("""{"id":"batch-one","plantCount":1}""")).toString()))
         feed.refresh(Member("synthetic-member", Role.owner))
@@ -218,7 +258,7 @@ class FeedRepositoryTest {
             server.enqueue(MockResponse().setBody(weatherFixture))
             feed.refresh(Member("synthetic-owner", Role.owner))
             assertEquals(listOf("late", "current", "cold", "rain", "warnings"), feed.state.value.cards.map { it.id })
-            assertEquals("bring Synthetic outdoor fern inside", feed.state.value.cards[2].text)
+            assertEquals("Synthetic outdoor fern: frost today, bring inside", feed.state.value.cards[2].headline("2030-06-01"))
             assertTrue(feed.state.value.cards[2].why.first().contains("below 6"))
             assertEquals("/api/feed", server.takeRequest().path)
             assertEquals("/api/weather", server.takeRequest().path)

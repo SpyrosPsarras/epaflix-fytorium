@@ -6,12 +6,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.time.ZoneId
 import org.json.JSONObject
 
 private class FeedFailure(val status: Int, val reason: String?, message: String) : Exception(message)
 
-// Memory only. Session changes discard the feed, settings and any in-flight result.
-class FeedRepository(private val api: ApiClient, private val connected: () -> Boolean, private val undoBatch: (String) -> Boolean = { false }) {
+// Session changes discard the feed, settings and any in-flight result. The member's offline cache keeps the last loaded feed for the next cold start.
+class FeedRepository(private val api: ApiClient, private val connected: () -> Boolean, private val undoBatch: (String, String?) -> Boolean = { _, _ -> false },
+                     private val cache: CareCache? = null) {
     private val monitor = Any()
     private val workLock = Any()
     private var generation = 0
@@ -20,6 +22,22 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
     private val mutable = MutableStateFlow(FeedState())
     val state = mutable.asStateFlow()
     fun wipe() = synchronized(monitor) { generation++; rainRequestId = null; fastPollAttempts = 0; mutable.value = FeedState() }
+    fun restore() = synchronized(monitor) { cache?.member()?.let(::switchTo) }
+    private fun switchTo(member: Member?) {
+        if (member == state.value.member) return
+        generation++; rainRequestId = null; fastPollAttempts = 0
+        mutable.value = member?.let(::cached) ?: FeedState()
+    }
+    private fun cached(member: Member): FeedState {
+        val snapshot = cache?.get(member.id, "feed") ?: return FeedState(member = member)
+        return runCatching { JSONObject(snapshot.json).let { parseFeed(member, it.getJSONObject("feed"), it.optJSONObject("weather")) } }.getOrElse { FeedState(member = member) }
+    }
+    private fun parseFeed(member: Member, feed: JSONObject, weather: JSONObject?): FeedState {
+        val zone = cache?.get(member.id, "meta")?.let { runCatching { parseTimezone(it.json) }.getOrNull() } ?: ZoneId.systemDefault()
+        val cards = feed.getJSONArray("cards").mapObjects { parseFeedCard(it, zone) }.filterNotNull().filter { member.role != Role.sitter || it.kind == "late_tasks" }
+        val settings = if (member.role == Role.sitter) null else feed.getJSONObject("settings").let { j -> feedLabels.keys.associateWith { j.getBoolean(it) } }
+        return FeedState(member = member, cards = cards, settings = settings, weather = weather?.let(::parseWeather), loaded = true)
+    }
     fun connectivityChanged(online: Boolean) = synchronized(monitor) {
         mutable.value = mutable.value.copy(offline = !online, unavailable = if (online) mutable.value.unavailable else false)
     }
@@ -53,7 +71,7 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
     }
     fun refresh(member: Member?) = synchronized(workLock) refresh@ {
         val epoch = synchronized(monitor) {
-            if (member != state.value.member) { generation++; rainRequestId = null; fastPollAttempts = 0; mutable.value = FeedState(member = member) }
+            switchTo(member)
             if (member == null) return@refresh
             mutable.value = mutable.value.copy(refreshing = true)
             generation
@@ -61,13 +79,13 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         try {
             if (!connected()) throw IOException("Offline")
             val feed = read("/api/feed")
-            val cards = feed.getJSONArray("cards").mapObjects(::parseFeedCard).filterNotNull()
-                .filter { member!!.role != Role.sitter || it.kind == "late_tasks" }
-            val settings = if (member!!.role == Role.sitter) null else feed.getJSONObject("settings").let { j -> feedLabels.keys.associateWith { j.getBoolean(it) } }
-            val weather = if (member.role == Role.sitter) null else parseWeather(read("/api/weather"))
-            synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(cards = cards, settings = settings,
-                weather = weather, loaded = true, offline = !connected(), unavailable = false,
-                message = if (mutable.value.unavailable) null else mutable.value.message) }
+            val weather = if (member!!.role == Role.sitter) null else read("/api/weather")
+            val next = parseFeed(member, feed, weather)
+            synchronized(monitor) { if (epoch == generation) {
+                mutable.value = mutable.value.copy(cards = next.cards, settings = next.settings, weather = next.weather, loaded = true,
+                    offline = !connected(), unavailable = false, message = null)
+                cache?.save(member.id, mapOf("feed" to JSONObject().put("feed", feed).put("weather", weather ?: JSONObject.NULL).toString()), System.currentTimeMillis())
+            } }
         } catch (error: Exception) { failed(error, epoch) }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
@@ -113,8 +131,8 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             synchronized(monitor) { mutable.value = mutable.value.copy(message = "Rain watering could not be undone. Refresh to try again.") }
             return false
         }
-        // The care repository sends the Undo, shows its lists and reports its failures.
-        return write(weather.rainUndone, { if (undoBatch(id)) JSONObject() else null }) { rainRequestId = null }
+        // The care repository sends the Undo, shows its lists and confirms it or reports its failure in Today's receipt.
+        return write(null, { if (undoBatch(id, weather.rainUndone)) JSONObject() else null }) { rainRequestId = null }
     }
     private fun write(path: String, method: String, body: JSONObject?, message: String? = null, applied: (JSONObject) -> Unit) =
         write(message, { read(path, method, body) }, applied)
@@ -129,11 +147,12 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             synchronized(monitor) {
                 if (epoch != generation) return@write false
                 applied(result)
-                if (message != null) mutable.value = mutable.value.copy(message = message)
             }
         } catch (error: Exception) { failed(error, epoch); return@write false }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(saving = false) } }
         refresh(state.value.member)
+        // Set after the refresh, because a successful refresh clears earlier messages.
+        if (message != null) synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(message = message) }
         true
     }
     private fun failed(error: Exception, epoch: Int) = synchronized(monitor) {

@@ -57,13 +57,13 @@ A vernacular-name hit needs confirmation unless the whole query matches exactly 
 The effective care values for a species, with a source for each value. Owner overrides take priority over Perenual, Open Plantbook and Fytorium rules.
 
 **Task**:
-A care action for a plant or site. Built-in task types are `water`, `fertilize`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by type.
+A care action for a plant or site. Built-in task types are `water`, `fertilize`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by task type, plant or site, following the task view.
 
 **Due date**:
-A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Other interval tasks are first due on added date plus interval. Otherwise tasks are due on the last effective completion date plus the current interval. Seasonal cut-back uses pruning months instead. Reads recompute due dates. Schedules store no due date. A care event keeps the due date it acted on only to place today's completed row; schedules never read it. Anchors have source `history` in Based on.
+A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Other interval tasks are first due on added date plus interval. Otherwise tasks are due on the last effective completion date plus the current interval. Seasonal cut-back uses pruning months instead. Reads recompute due dates. Schedules store no due date. A care event keeps the due date it acted on only to place today's completed, snoozed or skipped row and to name the pending occurrence it acted on; schedules never read it. Anchors have source `history` in Based on.
 
 **Task occurrence**:
-One listed instance of a task for a plant. A pending occurrence is identified by its plant, task, due date and whether a snooze or skip set that date; Today and Upcoming list at most one per plant and task. A completion is its own occurrence, identified by its care event, and stays at the due date it completed, or its own day for events from before that date was stored. A result recorded on a device belongs to the occurrence it was recorded on. Unrelated to a GBIF occurrence.
+One listed instance of a task for a plant. A pending occurrence is identified by its plant, task, due date and whether a snooze or skip set that date; Today and Upcoming list at most one per plant and task. A completion, snooze or skip is its own occurrence, identified by its care event, and stays at the due date it acted on, or its own day for events from before that date was stored. A snooze or skip row names the date it set. A result recorded on a device belongs to the occurrence it was recorded on. Unrelated to a GBIF occurrence.
 
 **Late**:
 The whole-calendar-day difference between today and a past due date. Due today is not late. Today shows this as "3d late", for example. DST does not add or remove calendar days.
@@ -93,7 +93,7 @@ Whole days from 1–365, stored per plant and task type in the plant's household
 A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable built-in or custom task. Exactly one of task_type or custom_task_id identifies its target. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
 
 **Undo**:
-Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked, without an Undo button or batch hint. The undo response carries the member's Today and Upcoming lists, built as GET /api/tasks builds them. Already-undone events and events from another household are refused.
+Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked, without an Undo button or batch hint. The undo response carries the member's Today and Upcoming lists, built as GET /api/tasks builds them, and for each event it reversed the pending occurrence it brought back into those lists, or none when that occurrence was already listed, for example after another member's snooze or skip. Already-undone events and events from another household are refused.
 
 **Receipt**:
 The short message a care action shows, such as "Watered Thyme" or "Watered 9 plants", with Undo for exactly the event or batch it names. Its wording and batch counts come from the server's event fields, never from the rows on screen. A species search receipt is different: it is the server's record of a search that a later plant save refers to.
@@ -199,13 +199,13 @@ A snoozed care event that moves a task's due date to the action's household cale
 A skipped care event that moves a task's due date to the action's household calendar date plus its current interval, without recording a completion. A later completion supersedes both skip and snooze; neither makes a not-applicable task applicable.
 
 **Upcoming**:
-Care tasks grouped by household calendar day for fourteen days including today, with overdue tasks in today's group. Not-applicable tasks are excluded; today's due and late tasks agree with Today.
+Care tasks grouped by household calendar day for fourteen days including today, with overdue tasks in today's group, and within each day by task type, plant or site, following the task view. Not-applicable tasks are excluded; today's due and late tasks agree with Today.
 
 **Task view**:
-A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show others' completed tasks. Today and Upcoming always list the completions the member made today, with Undo where allowed, even when the task no longer applies; Show others' completed tasks adds those of other members. The choice belongs to the member across sessions, not the device.
+A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show others' completed tasks. Today and Upcoming always list the completions, snoozes and skips the member made today, with Undo where allowed, even when the task no longer applies; Show others' completed tasks adds those of other members. Sitters see only their own, whatever they saved while they were family. The choice belongs to the member across sessions, not the device.
 
 **Handle all tasks**:
-One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. A Today card's Handle all tasks completes every due or late task of that card's type on the plants shown in the member's Today view. Either action forms one undoable care batch.
+One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. Under plant sort, a Today plant card's Handle all tasks is this action for that plant. Under task-type sort, a Today card's Handle all tasks completes every due or late task of that card's type on the plants shown in the member's Today view. Site cards have none. Either action forms one undoable care batch.
 
 **Care batch**:
 One `care_actions` request identity groups `care_events.batch_id` completions. Per-plant Handle all tasks, per-type Today card completion and rain watering share this mechanism and `POST /api/task-batches/:id/undo`. Single-event undo refuses batched events. Rain tap aliases live in `care_actions.batch_id`, and `weather_events.batch_id` links to the original `care_actions.request_id`. Undo marks the action and its completions undone without deleting history.

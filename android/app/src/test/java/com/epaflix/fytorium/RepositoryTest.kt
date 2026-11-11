@@ -413,7 +413,7 @@ class RepositoryTest {
             val complete = "/api/plants/plant-one/tasks/water/complete"
             served.responses[complete] = """{"event":$eventFixture,"linked_events":[],"task":$nextWater}"""
             assertTrue(repository.act(repository.state.value.upcoming!!.sections.single().tasks.single(), "complete"))
-            val second = org.json.JSONObject(eventFixture).put("id", "event-two")
+            val second = org.json.JSONObject(eventFixture).put("id", "event-two").put("due_on", "2030-06-09")
             fun section(due: String, row: String) = org.json.JSONObject(taskListFixture("upcoming", due, event = row)).getJSONArray("sections").getJSONObject(0)
             fun upcoming(later: String) = org.json.JSONObject(taskListFixture("upcoming")).put("sections", org.json.JSONArray()
                 .put(section("2030-06-02", ""","postponed":null,"completed_event":$eventFixture""")).put(section("2030-06-09", later))).toString()
@@ -448,7 +448,7 @@ class RepositoryTest {
     @Test fun aCompletionUndoneElsewhereDisappearsOnRefreshAndRestart() {
         withRepository { repository, server, cache -> ServedLists(server, today = emptyToday(), upcoming = taskListFixture("upcoming", "2030-06-05")).use { served ->
             repository.refresh()
-            served.responses["/api/plants/plant-one/tasks/water/complete"] = """{"event":$eventFixture,"linked_events":[],"task":$nextWater}"""
+            served.responses["/api/plants/plant-one/tasks/water/complete"] = """{"event":${org.json.JSONObject(eventFixture).put("due_on", "2030-06-05")},"linked_events":[],"task":$nextWater}"""
             assertTrue(repository.act(repository.state.value.upcoming!!.sections.single().tasks.single(), "complete"))
             assertEquals("event-one", repository.state.value.upcoming!!.sections.single().tasks.single().completedEvent!!.id)
             // Undone on another device: the server lists the occurrence as due again.
@@ -533,23 +533,65 @@ class RepositoryTest {
             repository.open(opened.occurrence)
             val snooze = org.json.JSONObject(eventFixture).put("id", "event-snooze").put("kind", "snoozed")
             served.responses["/api/plants/plant-one/tasks/water/snooze"] = """{"event":$snooze,"task":{"status":"due","dueOn":"2030-06-04","intervalDays":7,"lateDays":0,"basedOn":[],"postponed":"snoozed"}}"""
-            served.today = emptyToday(); served.upcoming = taskListFixture("upcoming", "2030-06-04", event = ""","postponed":"snoozed"""")
+            postponedLists(snooze, "2030-06-04").let { (today, upcoming) -> served.today = today; served.upcoming = upcoming }
             holding.set(true)
             assertTrue(repository.act(opened, "snooze"))
             assertEquals("event-snooze", repository.state.value.receipt!!.undo!!.id)
             val snoozed = repository.state.value.openedTask()!!
-            assertEquals("Snoozed", snoozed.postponedLabel)
-            assertNull(snoozed.completedEvent)
+            assertEquals("event-snooze" to "2030-06-04", snoozed.completedEvent?.id to snoozed.postponedUntil)
             served.release()
             served.await { served.paths.count { it == "/api/tasks?view=upcoming" } == 2 }
             repository.refresh()
             assertEquals(snoozed.occurrence, repository.state.value.openedOccurrence)
-            assertEquals("Snoozed", repository.state.value.openedTask()!!.postponedLabel)
+            assertEquals("event-snooze", repository.state.value.openedTask()!!.completedEvent?.id)
             // The snooze is undone elsewhere, so the server lists the original occurrence again and the snoozed one is gone.
             served.today = taskListFixture("today"); served.upcoming = taskListFixture("upcoming")
             repository.refresh()
             assertNull(repository.state.value.openedTask())
             assertNull(repository.state.value.currentTask(opened.occurrence)!!.postponed)
+        } }
+    }
+    // Today's snooze or skip as the server lists it: in the acted row's place, beside the occurrence it postponed.
+    private fun postponedLists(event: org.json.JSONObject, until: String): Pair<String, String> {
+        val row = ""","postponed":null,"postponed_until":"$until","completed_event":$event"""
+        fun section(due: String, fields: String) = org.json.JSONObject(taskListFixture("upcoming", due, event = fields)).getJSONArray("sections").getJSONObject(0)
+        return taskListFixture("today", event = row) to org.json.JSONObject(taskListFixture("upcoming")).put("sections", org.json.JSONArray()
+            .put(section("2030-06-02", row)).put(section(until, ""","postponed":"${event.getString("kind")}""""))).toString()
+    }
+    @Test fun aSnoozedRowStaysOnTodayThroughRefreshAndRestartAndItsUndoRestoresThePendingRow() =
+        postponedRowStays("snooze", "snoozed", "2030-06-04", "Snoozed Synthetic fern until Tue 4 Jun", "Undid snooze for Synthetic fern")
+    @Test fun aSkippedRowStaysOnTodayThroughRefreshAndRestartAndItsUndoRestoresThePendingRow() =
+        postponedRowStays("skip", "skipped", "2030-06-09", "Skipped Synthetic fern until Sun 9 Jun", "Undid skip for Synthetic fern")
+    private fun postponedRowStays(action: String, kind: String, until: String, receipt: String, undone: String) {
+        withRepository { repository, server, cache -> ServedLists(server).use { served ->
+            repository.refresh()
+            val pending = repository.state.value.today!!.sections.single().tasks.single()
+            val event = org.json.JSONObject(eventFixture).put("id", "event-$kind").put("kind", kind)
+            served.responses["/api/plants/plant-one/tasks/water/$action"] =
+                """{"event":$event,"linked_events":[],"task":{"status":"due","dueOn":"$until","intervalDays":7,"lateDays":0,"basedOn":[],"postponed":"$kind"}}"""
+            postponedLists(event, until).let { (today, upcoming) -> served.today = today; served.upcoming = upcoming }
+            assertTrue(repository.act(pending, action))
+            assertEquals(receipt, repository.state.value.receipt!!.text)
+            fun check(state: CareState) {
+                assertEquals(listOf(Triple("event-$kind", kind, until)), state.today!!.sections.flatMap { it.tasks }.map { Triple(it.completedEvent?.id, it.completedEvent?.kind, it.postponedUntil) })
+                assertEquals(listOf("undo"), state.today.sections.single().tasks.single().actions("2030-06-02", Member("member-one", Role.owner)))
+            }
+            check(repository.state.value)
+            served.await { served.paths.count { it == "/api/tasks?view=upcoming" } == 2 }
+            repository.refresh()
+            check(repository.state.value)
+            // The occurrence it postponed keeps its own row at its new date.
+            assertEquals(listOf(Triple("2030-06-02", "event-$kind", null), Triple(until, null, kind)),
+                repository.state.value.upcoming!!.sections.flatMap { section -> section.tasks.map { Triple(section.key, it.completedEvent?.id, it.postponed) } })
+            val restarted = Repository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials()) {}, cache, { false })
+            restarted.restore()
+            check(restarted.state.value)
+            served.responses["/api/care-events/event-$kind/undo"] = undoResponse(""""event":$event,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[],"postponed":null}""") { taskListFixture(it) }
+            assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.single(), "undo"))
+            assertEquals(undone, repository.state.value.receipt!!.text)
+            val restored = repository.state.value.today!!.sections.single().tasks.single()
+            assertEquals(pending.occurrence to null, restored.occurrence to restored.completedEvent)
+            assertEquals(listOf("complete", "snooze", "skip"), restored.actions("2030-06-02", Member("member-one", Role.owner)))
         } }
     }
     @Test fun theOpenedOccurrenceFollowsThisDevicesDoneAndUndo() {
@@ -558,7 +600,7 @@ class RepositoryTest {
             val opened = repository.state.value.today!!.sections.single().tasks.single()
             repository.open(opened.occurrence)
             served.responses["/api/plants/plant-one/tasks/water/complete"] = """{"event":$eventFixture,"linked_events":[],"task":$nextWater}"""
-            served.responses["/api/care-events/event-one/undo"] = undoResponse(""""event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]}""") { taskListFixture(it) }
+            served.responses["/api/care-events/event-one/undo"] = undoResponse(""""event":$eventFixture,"task":{"status":"due","dueOn":"2030-06-01","intervalDays":7,"lateDays":1,"basedOn":[]},$restoredWater""") { taskListFixture(it) }
             assertTrue(repository.act(opened, "complete"))
             val done = repository.state.value.openedTask()!!
             assertEquals("event-one", done.completedEvent!!.id)
@@ -874,6 +916,7 @@ class RepositoryTest {
     private fun late(view: String, vararg plants: String) = withRows(view, *plants.map { org.json.JSONObject(lateWater).put("plant_id", it) }.toTypedArray(), due = "2030-05-27")
     // An undo response carries the member's lists as the server lists them after the undo.
     private fun undoResponse(fields: String, lists: (String) -> String) = """{$fields,"today":${lists("today")},"upcoming":${lists("upcoming")}}"""
+    private val restoredWater = """"restored":[{"event_id":"event-one","occurrence":{"plant_id":"plant-one","task_type":"water","custom_task_id":null,"due_on":"2030-06-01"}}]"""
     private fun assertShows(repository: Repository, lists: (String) -> String) {
         assertEquals(parseTaskList(lists("today")), repository.state.value.today)
         assertEquals(parseTaskList(lists("upcoming")), repository.state.value.upcoming)
@@ -991,7 +1034,7 @@ class RepositoryTest {
     }
     @Test fun undoingASnoozeOrSkipBringsItsTodayRowBackBeforeTheNextRefresh() {
         withRepository { repository, server, _ ->
-            fun postponed(kind: String) = org.json.JSONObject(eventFixture).put("id", "event-$kind").put("kind", kind)
+            fun postponed(kind: String) = org.json.JSONObject(eventFixture).put("id", "event-$kind").put("kind", kind).put("due_on", "2030-05-27")
             fun later(kind: String) = org.json.JSONObject(lateWater).put("dueOn", "2030-06-03").put("lateDays", 0).put("postponed", kind)
             undoServer(server, { view -> late(view, "plant-one") },
                 *listOf("snooze" to "snoozed", "skip" to "skipped").flatMap { (action, kind) -> listOf(
@@ -1006,12 +1049,12 @@ class RepositoryTest {
                 assertLate(upcoming.single().tasks, listOf("plant-one"))
             }
             assertTrue(repository.act(today().single(), "snooze"))
-            assertTrue(today().isEmpty())
+            assertEquals(listOf("event-snoozed" to "2030-06-03"), today().map { it.completedEvent?.id to it.postponedUntil })
             assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
             assertEquals("Undid snooze for Synthetic fern", repository.state.value.receipt!!.text)
             assertRestored()
             assertTrue(repository.act(today().single(), "skip"))
-            assertTrue(today().isEmpty())
+            assertEquals(listOf("event-skipped" to "2030-06-03"), today().map { it.completedEvent?.id to it.postponedUntil })
             assertTrue(repository.undoHistory(parseEvent(postponed("skipped"))))
             assertEquals("Undid skip for Synthetic fern", repository.state.value.receipt!!.text)
             assertRestored()
@@ -1073,7 +1116,8 @@ class RepositoryTest {
             val feed = rainFeed(server, repository)
             assertEquals("batch-rain", feed.state.value.weather!!.lastBatchId)
             assertTrue(feed.undoRain())
-            assertEquals("Undid watering for 2 outdoor plants", feed.state.value.message)
+            assertNull("The Undo leaves no lasting text above the feed", feed.state.value.message)
+            assertEquals("Undid watering for 2 outdoor plants" to true, repository.state.value.receipt?.let { it.text to it.short })
             for (list in listOf(repository.state.value.today!!, repository.state.value.upcoming!!)) assertLate(list.sections.flatMap { it.tasks }, listOf("plant-one", "plant-two"))
             assertShows(repository, restored)
         }
@@ -1118,7 +1162,7 @@ class RepositoryTest {
     @Test fun aCompletionMadeWhileARainUndoIsInFlightSurvivesIt() {
         withRepository { repository, server, _ ->
             val third = org.json.JSONObject().put("plant_id", "plant-three").put("plant_name", "Third fern").put("status", "due").put("dueOn", "2030-06-02").put("lateDays", 0)
-            val completed = org.json.JSONObject(eventFixture).put("id", "event-three").put("plant_id", "plant-three")
+            val completed = org.json.JSONObject(eventFixture).put("id", "event-three").put("plant_id", "plant-three").put("due_on", "2030-06-02")
             val undo = "/api/task-batches/batch-rain/undo"
             HeldServer(server, held = { it.path == undo }) { request ->
                 rainServer(request, { rainRows(it, third) }) { path -> when (path) {
@@ -1360,28 +1404,30 @@ class RepositoryTest {
             assertTrue(repository.state.value.today!!.sections.single().tasks.isEmpty())
         }
     }
-    @Test fun snoozeLeavesTodayWithAReceiptAndKeepsUpcomingWithoutACheck() {
+    @Test fun snoozeKeepsItsTodayRowWithAReceiptAndUpcomingListsThePostponedOccurrenceWithoutACheck() {
         withRepository { repository, server, _ ->
             enqueueRefresh(server); repository.refresh()
             repeat(5) { server.takeRequest() }
             val task = repository.state.value.today!!.sections.single().tasks.single()
             val snoozed = org.json.JSONObject(eventFixture).put("id", "event-snooze").put("kind", "snoozed")
+            val (today, upcoming) = postponedLists(snoozed, "2030-06-04")
             server.enqueue(MockResponse().setBody("""{"event":$snoozed,"task":{"status":"due","dueOn":"2030-06-04","intervalDays":7,"lateDays":0,"basedOn":[],"postponed":"snoozed"}}"""))
-            server.enqueue(MockResponse().setBody(emptyToday()))
-            server.enqueue(MockResponse().setBody(taskListFixture("upcoming", "2030-06-04", event = ""","postponed":"snoozed"""")))
+            server.enqueue(MockResponse().setBody(today))
+            server.enqueue(MockResponse().setBody(upcoming))
             assertTrue(repository.act(task, "snooze"))
-            assertTrue(repository.state.value.today!!.sections.flatMap { it.tasks }.isEmpty())
+            fun todayRows() = repository.state.value.today!!.sections.flatMap { it.tasks }.map { it.completedEvent?.id to it.postponedUntil }
+            assertEquals(listOf("event-snooze" to "2030-06-04"), todayRows())
             val receipt = repository.state.value.receipt!!
             assertEquals("Snoozed Synthetic fern until Tue 4 Jun", receipt.text)
             assertEquals("event-snooze", receipt.undo!!.id)
-            val upcoming = repository.state.value.upcoming!!.sections.single().tasks.single()
-            assertNull(upcoming.completedEvent)
-            assertEquals("Snoozed", upcoming.postponedLabel)
             assertEquals("/api/plants/plant-one/tasks/water/snooze", server.takeRequest().path)
             assertEquals("/api/tasks?view=today", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
             assertEquals("/api/tasks?view=upcoming", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)
-            enqueueRefresh(server, today = emptyToday(), upcoming = taskListFixture("upcoming", "2030-06-04", event = ""","postponed":"snoozed"""")); repository.refresh()
-            assertTrue(repository.state.value.today!!.sections.flatMap { it.tasks }.isEmpty())
+            enqueueRefresh(server, today = today, upcoming = upcoming); repository.refresh()
+            assertEquals(listOf("event-snooze" to "2030-06-04"), todayRows())
+            val rows = repository.state.value.upcoming!!.sections.flatMap { it.tasks }
+            assertEquals(listOf("event-snooze", null), rows.map { it.completedEvent?.id })
+            assertEquals("Snoozed", rows.last().postponedLabel)
         }
     }
     @Test fun failedCareWriteShowsTheServerMessageWithoutUndo() {
@@ -1418,7 +1464,7 @@ class RepositoryTest {
     }
     @Test fun undoingLiquidFertilizeBeforeTheWaterIsListedNamesBothFromTheWriteResponse() {
         withRepository { repository, server, cache ->
-            val fertilize = org.json.JSONObject(eventFixture).put("task_type", "fertilize")
+            val fertilize = org.json.JSONObject(eventFixture).put("task_type", "fertilize").put("due_on", "2030-06-09")
             val water = org.json.JSONObject(eventFixture).put("id", "event-water").put("linked_event_id", "event-one").put("can_undo", false)
             val pending = { view: String -> withRows(view, org.json.JSONObject().put("task_type", "fertilize")) }
             undoServer(server, pending,
@@ -1594,7 +1640,7 @@ class RepositoryTest {
 }
 
 val plantFixture = """{"id":"plant-one","display_name":"Synthetic fern","scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida","status":"active","site_name":"Synthetic site","cover_photo_id":null,"pot_type":"plastic","pot_size_cm":14,"soil_type":"all_purpose","site_id":"site-one","nickname":"Synthetic fern","cultivar":null,"birthday":null,"drainage":true,"plant_size":"small","growth_stage":"young","window_distance_cm":null,"grow_light":false,"near_ac":false,"near_heater":false,"fertilizer_type":"liquid","health":null,"household_id":"household-one","gbif_key":910001,"created_at":"2030-06-01T10:00:00Z","attributes_as_of":"2030-06-01","graveyard_on":null,"rank":"SPECIES"}"""
-val eventFixture = """{"id":"event-one","plant_id":"plant-one","task_type":"water","custom_task_id":null,"kind":"completed","occurred_on":"2030-06-02","by_member":"member-one","by_name":"Synthetic member","batch_id":null,"undone_at":null,"can_undo":true}"""
+val eventFixture = """{"id":"event-one","plant_id":"plant-one","task_type":"water","custom_task_id":null,"kind":"completed","occurred_on":"2030-06-02","by_member":"member-one","by_name":"Synthetic member","batch_id":null,"undone_at":null,"can_undo":true,"due_on":"2030-06-01","postponed_until":null}"""
 
 fun taskListFixture(view: String, due: String = "2030-06-01", event: String = "", basis: String = "[]"): String = """{
  "today":"2030-06-02","view":"$view","settings":{"sort":"task","filter":"all","show_completed":false},

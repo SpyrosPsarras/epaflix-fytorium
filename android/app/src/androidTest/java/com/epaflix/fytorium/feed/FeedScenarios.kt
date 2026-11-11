@@ -46,11 +46,12 @@ fun runFeedScenarios(app: FytoriumApplication, compose: ComposeContentTestRule) 
         worker.setRequestProperty("Authorization", "Bearer " + app.store.tokens!!.access)
         worker.setRequestProperty("Content-Type", "application/json")
         try { assertEquals(200, worker.responseCode) } finally { worker.disconnect() }
-        app.care.refresh()
-        compose.waitForState("Cold weather alert loaded", 45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.any { it.text == "bring $nickname inside" && it.kind == "weather_alerts" } }
-        val cold = app.feed.state.value.cards.first { it.text == "bring $nickname inside" && it.kind == "weather_alerts" }
+        // A strip that a refresh adds waits for a pull, as for a user on Today.
+        app.care.refresh(pulled = true)
+        compose.waitForState("Cold weather alert loaded", 45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.any { it.plant == nickname && it.kind == "weather_alerts" } }
+        val cold = app.feed.state.value.cards.first { it.plant == nickname && it.kind == "weather_alerts" }
         compose.waitForNode(hasTestTag("feed-${cold.id}")).performScrollTo()
-        compose.onNode(hasText(": bring $nickname inside", substring = true) and hasAnyAncestor(hasTestTag("feed-${cold.id}"))).assertIsDisplayed()
+        compose.onNode(hasText("$nickname: ", substring = true) and hasText(", bring inside", substring = true) and hasAnyAncestor(hasTestTag("feed-${cold.id}"))).assertIsDisplayed()
         val rainCard = app.feed.state.value.cards.last { it.rain }
         compose.waitForNode(hasTestTag("feed-${rainCard.id}")).performScrollTo()
         val count = app.feed.state.value.weather!!.rain!!.plantCount
@@ -71,6 +72,6 @@ fun runFeedScenarios(app: FytoriumApplication, compose: ComposeContentTestRule) 
         json("/api/feed/settings", "PUT", settings)
         json("/api/household/location", "PUT", location)
         app.care.refresh()
-        compose.waitForState("Feed fixture removed", 30_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.none { nickname in it.text } }
+        compose.waitForState("Feed fixture removed", 30_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.none { nickname in it.text || it.plant == nickname } }
     }
 }

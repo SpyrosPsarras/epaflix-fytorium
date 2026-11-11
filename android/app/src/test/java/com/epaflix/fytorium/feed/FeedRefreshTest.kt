@@ -93,6 +93,44 @@ class FeedRefreshTest {
             await("The history Undo refreshes the feed") { feedReads.get() > before && !feed.state.value.refreshing }
         } finally { controller.close(); server.shutdown(); db.close() }
     }
+    @Test fun aPullsSpinnerLastsUntilItsFeedRefreshEnds() {
+        val server = MockWebServer()
+        val holdFeed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val feedStarted = CountDownLatch(1)
+        val releaseFeed = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = when {
+                    request.path == "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
+                    request.path!!.startsWith("/api/tasks?") -> taskListFixture(if (request.path!!.contains("view=upcoming")) "upcoming" else "today")
+                    request.path == "/api/plants" -> "[]"
+                    request.path == "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
+                    request.path == "/api/feed" -> { if (holdFeed.get()) { feedStarted.countDown(); releaseFeed.await(5, TimeUnit.SECONDS) }; feedFixture }
+                    request.path == "/api/weather" -> weatherFixture
+                    else -> return MockResponse().setResponseCode(404)
+                }
+                return MockResponse().setBody(body)
+            }
+        }
+        server.start()
+        val context = RuntimeEnvironment.getApplication()
+        val db = Room.inMemoryDatabaseBuilder(context, CareDatabase::class.java).allowMainThreadQueries().build()
+        val store = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
+        val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
+        val repository = Repository(api, CareCache(db), { true })
+        val feed = FeedRepository(api, { true })
+        val controller = CareController(context, store, repository, api, feed)
+        try {
+            await("The first refresh finishes") { feed.state.value.loaded && !feed.state.value.refreshing && !repository.state.value.busy }
+            holdFeed.set(true)
+            controller.refresh(pulled = true)
+            assertTrue(feedStarted.await(5, TimeUnit.SECONDS))
+            assertTrue("The spinner ended before the pull's feed refresh, so the strip would wait for the next pull", controller.pulling.value)
+            releaseFeed.countDown()
+            await("The spinner ends with the pull's feed refresh") { !controller.pulling.value }
+            assertFalse(feed.state.value.refreshing)
+        } finally { releaseFeed.countDown(); controller.close(); server.shutdown(); db.close() }
+    }
     @Test fun onlyAPullShowsTheRefreshSpinner() {
         val server = MockWebServer()
         server.start()

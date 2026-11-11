@@ -15,7 +15,7 @@ async function addSproutOnMay1(page: Page, label: string) {
   await addPlantForSite(page.request, siteName, name);
   const plant = (await (await page.request.get('/api/plants')).json()).find((item: { display_name: string }) => item.display_name === name);
   const row = (type: string) => page.locator(`article[data-task-type="${type}"]`).filter({ has: page.getByRole('link', { name, exact: true }) });
-  return { name, plantId: plant.id as string, row };
+  return { name, siteName, plantId: plant.id as string, row };
 }
 // The Undo request waits until released; the next page's data is built by the server before the Undo is saved.
 async function holdUndoAndData(page: Page, dataPath: string) {
@@ -41,22 +41,24 @@ test('snoozes, skips, plans upcoming care, keeps filters, handles all tasks and 
     if (process.env.PLAYWRIGHT_KEEP_ARTIFACTS === '1') await page.screenshot({ path: testInfo.outputPath(file), fullPage: true });
   };
   try {
-    const { name, row } = await addSproutOnMay1(page, 'handling');
+    const { name, siteName, row } = await addSproutOnMay1(page, 'handling');
     await logInOnJune5(page);
     await page.goto('/');
     await row('water').getByRole('button', { name: 'Snooze 2 days', exact: true }).click();
     await expect(row('water')).toContainText('Snoozed');
-    await expect(row('water')).toContainText('2026-06-07');
+    await expect(row('water')).toContainText('Snoozed until Sun 7 Jun');
     await screenshot('handling-snoozed.png');
     await row('water').getByRole('button', { name: 'Undo', exact: true }).click();
     await row('water').getByRole('button', { name: 'Skip', exact: true }).click();
     await expect(row('water')).toContainText('Skipped');
-    await expect(row('water')).toContainText('2026-06-12');
+    await expect(row('water')).toContainText('Skipped until Fri 12 Jun');
     await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Upcoming', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '2026-06-05', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '2026-06-12', exact: true })).toBeVisible();
-    await expect(row('water')).toContainText('2026-06-12');
+    // Today's skip keeps its own row, and the occurrence it postponed is listed at its new date.
+    await expect(row('water')).toHaveCount(2);
+    await expect(row('water').last()).toContainText('2026-06-12');
     await expect(row('water').getByRole('button', { name: 'Snooze 2 days', exact: true })).toHaveCount(0);
     await page.getByLabel('Sort tasks', { exact: true }).selectOption('site');
     await page.getByLabel('Filter location', { exact: true }).selectOption('indoor');
@@ -67,8 +69,13 @@ test('snoozes, skips, plans upcoming care, keeps filters, handles all tasks and 
     await expect(page.getByLabel('Sort tasks', { exact: true })).toHaveValue('site');
     await expect(page.getByLabel('Filter location', { exact: true })).toHaveValue('indoor');
     await expect(page.getByLabel('Show others\' completed tasks', { exact: true })).toBeChecked();
+    // Under site sort each day keeps its heading and holds one card per site.
+    await expect(row('water').last().locator('xpath=preceding-sibling::h3[1]')).toHaveText('2026-06-12');
+    await expect(row('water').last().locator('xpath=preceding-sibling::h4[1]')).toHaveText(siteName);
+    await expect(row('water').first().locator('xpath=preceding-sibling::h3[1]')).toHaveText('2026-06-05');
+    await expect(row('water').first().locator('xpath=preceding-sibling::h4[1]')).toHaveText(siteName);
     await screenshot('handling-upcoming-grouped.png');
-    await row('water').getByRole('link', { name, exact: true }).click();
+    await row('water').last().getByRole('link', { name, exact: true }).click();
     await page.getByRole('button', { name: 'Handle all tasks', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('Handled 4 tasks.');
     await expect(page.getByText('Next watering: 2026-06-12', { exact: true })).toBeVisible();
@@ -124,8 +131,10 @@ test('each occurrence keeps its own result, busy state and Undo after a skipped 
     // The same member skips the next occurrence from another device.
     expect((await page.request.post(`/api/plants/${plantId}/tasks/water/skip`, { data: { request_id: randomUUID() } })).status()).toBe(200);
     await page.goto('/upcoming');
-    await expect(rows).toHaveCount(2);
-    const [completed, skipped] = [rows.nth(0), rows.nth(1)];
+    // The skip is listed as its own row between the completion and the occurrence it postponed.
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(1).getByRole('status')).toHaveText('Skipped until Fri 12 Jun');
+    const [completed, skipped] = [rows.nth(0), rows.nth(2)];
     await expect(completed.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
     let release = () => {};
     const held = new Promise<void>(resolve => { release = resolve; });
@@ -139,10 +148,10 @@ test('each occurrence keeps its own result, busy state and Undo after a skipped 
     await expect(completed.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
     await page.unroute('**/tasks/water/complete');
     await page.reload();
-    await expect(rows).toHaveCount(2);
-    await expect(rows.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(2);
-    await rows.nth(1).getByRole('button', { name: 'Undo', exact: true }).click();
-    await expect(rows.nth(1).getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+    await expect(rows).toHaveCount(3);
+    await expect(rows.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(3);
+    await rows.nth(2).getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(rows.nth(2).getByRole('button', { name: 'Done', exact: true })).toBeVisible();
     await expect(rows.nth(0).getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
     const history = await (await page.request.get(`/api/plants/${plantId}/history`)).json();
     const completions = history.filter((event: { task_type: string; kind: string }) => event.task_type === 'water' && event.kind === 'completed');
@@ -159,8 +168,10 @@ test('after each reload the rows are the server\'s: your completions stay, a pos
     expect((await page.request.put(`/api/plants/${plantId}/care-settings`, { data: { customIntervals: { water: 7, fertilize: 7, clean_leaves: 7 } } })).status()).toBe(200);
     await logInOnJune5(page);
     expect((await page.request.post(`/api/plants/${plantId}/tasks/fertilize/skip`, { data: { request_id: randomUUID() } })).status()).toBe(200);
-    const done = (type: string) => row(type).getByRole('button', { name: 'Done', exact: true });
-    const undo = (type: string) => row(type).getByRole('button', { name: 'Undo', exact: true });
+    // Today's skips keep their own rows with Undo, so these find the occurrences being completed.
+    const listed = (type: string) => row(type).filter({ hasNotText: ' until ' });
+    const done = (type: string) => listed(type).getByRole('button', { name: 'Done', exact: true });
+    const undo = (type: string) => listed(type).getByRole('button', { name: 'Undo', exact: true });
     const completions = async (type: string) => (await (await page.request.get(`/api/plants/${plantId}/history`)).json())
       .filter((event: { task_type: string; kind: string }) => event.task_type === type && event.kind === 'completed');
     await page.goto('/upcoming');
@@ -168,7 +179,7 @@ test('after each reload the rows are the server\'s: your completions stay, a pos
     await expect(undo('water')).toBeEnabled();
     // Fertilizing the skipped occurrence reloads the list, which lists the earlier watering and the linked water as two completions.
     await done('fertilize').click();
-    await expect(row('fertilize').getByRole('status')).toContainText('Done');
+    await expect(listed('fertilize').getByRole('status')).toContainText('Done');
     await expect(undo('fertilize')).toBeEnabled();
     await expect(undo('water')).toHaveCount(2);
     await undo('fertilize').click();
@@ -185,6 +196,38 @@ test('after each reload the rows are the server\'s: your completions stay, a pos
     await expect(done('clean_leaves')).toBeVisible();
     await expect(done('water')).toBeVisible();
     await expect(undo('fertilize')).toBeEnabled();
+  } finally {
+    await page.request.post('/__test/clock', { data: { action: 'reset' } });
+  }
+});
+
+test('a snoozed or skipped row keeps its place on Today with its date and Undo after a reload, and its occurrence is listed in Upcoming', async ({ page }) => {
+  try {
+    const { row } = await addSproutOnMay1(page, 'postponed');
+    await logInOnJune5(page);
+    const water = row('water');
+    await page.goto('/');
+    await water.getByRole('button', { name: 'Snooze 2 days', exact: true }).click();
+    await expect(water.getByRole('status')).toHaveText('Snoozed until Sun 7 Jun');
+    await expect(water.getByRole('button', { name: 'Done', exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(water).toHaveCount(1);
+    await expect(water.getByRole('status')).toHaveText('Snoozed until Sun 7 Jun');
+    await expect(water.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
+    await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
+    await expect(water).toHaveCount(2);
+    await expect(water.nth(0).getByRole('status')).toHaveText('Snoozed until Sun 7 Jun');
+    await expect(water.nth(1)).toContainText('Due 2026-06-07');
+    await page.getByRole('link', { name: 'Today', exact: true }).click();
+    await water.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(water.getByRole('button', { name: 'Snooze 2 days', exact: true })).toBeEnabled();
+    await expect(water.getByRole('status')).toHaveCount(0);
+    await water.getByRole('button', { name: 'Skip', exact: true }).click();
+    await expect(water.getByRole('status')).toHaveText('Skipped until Fri 12 Jun');
+    await page.reload();
+    await expect(water.getByRole('status')).toHaveText('Skipped until Fri 12 Jun');
+    await water.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(water.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   } finally {
     await page.request.post('/__test/clock', { data: { action: 'reset' } });
   }

@@ -170,15 +170,17 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     onOpenTask = { openTask(it.occurrence); feedPlant = it.plantId; tab = "Plants" },
                     onRefresh = { controller?.refresh(pulled = true) }, refreshing = controller?.pulling?.collectAsState()?.value == true,
                     onAction = { task, action -> controller?.act(task, action) },
-                    onHandleType = { controller?.handleType(it) }, onSettings = { controller?.settings(it) == true }, thumbnails = thumbnails,
+                    onHandleType = { controller?.handleType(it) }, onHandlePlant = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) == true }, thumbnails = thumbnails,
                     onUndoReceipt = { controller?.undoReceipt(it) }, onReceiptDone = { controller?.clearReceipt(it) },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
-                    feedContent = { if (feedState != null && feedState.todayCards().isNotEmpty()) HomeFeed(feedState, careState.today?.today,
-                        connectionNotice = !careState.offline && !careState.serverUnavailable,
-                        onOpen = { href -> if (href.startsWith("/plants/")) { feedPlant = href.removePrefix("/plants/"); tab = "Plants" } else openFeedSettings() },
-                        onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.refresh() } },
-                        onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } }) })
+                    feed = feedState, feedContent = { shown ->
+                        HomeFeed(shown, careState.today?.today,
+                            offline = shown.offline || careState.offline, connectionNotice = !careState.offline && !careState.serverUnavailable,
+                            onOpen = { href -> if (href.startsWith("/plants/")) { feedPlant = href.removePrefix("/plants/"); tab = "Plants" } else openFeedSettings() },
+                            onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.rainWatered(feed.state.value.weather?.lastBatchId) } },
+                            onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } })
+                    })
                 else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
                     onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false },
                     initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,

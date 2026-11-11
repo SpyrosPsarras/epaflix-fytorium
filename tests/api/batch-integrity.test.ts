@@ -175,3 +175,18 @@ test('an invalid rain alias target maps to 422 and rolls back the API request', 
     await db.end();
   }
 });
+test('a rain Undo names the water occurrence it brought back for each plant', async () => {
+  const { request, plants } = await setup('outdoor', 2);
+  expect((await request('/api/household/location', 'PUT', { location: { latitude: .5, longitude: .5 } })).status).toBe(200);
+  expect((await request('/__test/weather-worker', 'POST')).status).toBe(200);
+  const due = await Promise.all(plants.map(async plant => (await (await request(`/api/plants/${plant.id}/tasks`)).json()).water.dueOn));
+  expect(due).toEqual(['2030-06-01', '2030-06-01']);
+  const rain = await (await request('/api/weather/rain/water', 'POST', { request_id: randomUUID() })).json();
+  const events = (await Promise.all(plants.map(async plant => (await (await request(`/api/plants/${plant.id}/history`)).json()))))
+    .flat().filter((event: { batch_id: string }) => event.batch_id === rain.batchId);
+  expect(events).toHaveLength(2);
+  const body = await (await request(`/api/task-batches/${rain.batchId}/undo`, 'POST')).json();
+  expect(body.restored).toHaveLength(rain.plantCount);
+  expect(body.restored).toEqual(expect.arrayContaining(events.map((event: { id: string; plant_id: string }) =>
+    ({ event_id: event.id, occurrence: { plant_id: event.plant_id, task_type: 'water', custom_task_id: null, due_on: '2030-06-01' } }))));
+});

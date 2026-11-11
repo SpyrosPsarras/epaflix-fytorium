@@ -26,11 +26,11 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
         it.getNetworkCapabilities(it.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
     }
     val thumbnails: Thumbnails by lazy { Thumbnails(api, ThumbnailCache(File(cacheDir, "thumbnails")), ::connected) }
-    val repository: Repository by lazy {
-        val database = Room.databaseBuilder(this, CareDatabase::class.java, "care-cache.db").fallbackToDestructiveMigration(dropAllTables = true).build()
-        Repository(api, CareCache(database), ::connected, wipeThumbnails = thumbnails::wipe)
+    private val careCache: CareCache by lazy {
+        CareCache(Room.databaseBuilder(this, CareDatabase::class.java, "care-cache.db").fallbackToDestructiveMigration(dropAllTables = true).build())
     }
-    val feed: com.epaflix.fytorium.feed.FeedRepository by lazy { com.epaflix.fytorium.feed.FeedRepository(api, ::connected, repository::undoBatch) }
+    val repository: Repository by lazy { Repository(api, careCache, ::connected, wipeThumbnails = thumbnails::wipe) }
+    val feed: com.epaflix.fytorium.feed.FeedRepository by lazy { com.epaflix.fytorium.feed.FeedRepository(api, ::connected, repository::undoBatch, careCache) }
     private val careInstance = lazy { CareController(this, store, repository, api, feed) }
     val care: CareController get() = careInstance.value
     val api: ApiClient by lazy {

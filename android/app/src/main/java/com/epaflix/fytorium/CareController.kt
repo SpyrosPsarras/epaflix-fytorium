@@ -21,7 +21,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
     private val _online = MutableStateFlow(connected())
     val online: StateFlow<Boolean> = _online
     private val _pulling = MutableStateFlow(false)
-    // Only a pull shows the spinner, until the refresh that serves it ends.
+    // Only a pull shows the spinner, until the refresh that serves it and its feed read end, so the pull shows the new strip too.
     val pulling: StateFlow<Boolean> = _pulling
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onLost(network: Network) { _online.value = false; api.networkLost(); repository.connectivityChanged(false); feed?.connectivityChanged(false) }
@@ -40,6 +40,8 @@ class CareController(context: Context, private val store: CredentialStore, val r
         scope.launch {
             store.tokensState.map { it != null }.distinctUntilChanged().collect { loggedIn ->
                 if (loggedIn) {
+                    // The cached strip is then already in place when the cached rows appear.
+                    feed?.restore()
                     repository.restore()
                     work.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, periodicRequest())
                     refresh()
@@ -56,15 +58,19 @@ class CareController(context: Context, private val store: CredentialStore, val r
         refreshJob = job
         // Feed reads must not extend the task refresh's single-flight window.
         job.invokeOnCompletion { error ->
-            synchronized(this) { if (refreshJob === job) _pulling.value = false }
-            if (error == null && store.tokens != null) scope.launch { feed?.refresh(repository.state.value.member) }
+            scope.launch {
+                if (error == null && store.tokens != null) feed?.refresh(repository.state.value.member)
+                synchronized(this@CareController) { if (refreshJob === job) _pulling.value = false }
+            }
         }
     }
     fun act(task: CareTask, action: String) { scope.launch { repository.act(task, action) } }
+    fun rainWatered(batchId: String?) { scope.launch { repository.rainWatered(batchId); feed?.refresh(repository.state.value.member) } }
     fun open(occurrence: String?) = repository.open(occurrence)
     fun clearReceipt(receipt: Receipt) = repository.clearReceipt(receipt)
     fun undoReceipt(receipt: Receipt) { scope.launch { repository.undoReceipt(receipt) } }
     fun handleType(taskKey: String) { scope.launch { repository.handleType(taskKey) } }
+    fun handleAll(plantId: String) { scope.launch { repository.handleAll(plantId) } }
     suspend fun settings(settings: TaskSettings): Boolean = withContext(Dispatchers.IO) { repository.saveSettings(settings) }
     fun cancelRefresh() { work.cancelUniqueWork(WORK_NAME); work.cancelUniqueWork(com.epaflix.fytorium.notifications.PushRefresh.NAME) }
     fun close() { network.unregisterNetworkCallback(callback); scope.cancel() }

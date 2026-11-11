@@ -47,12 +47,14 @@ test('creates site and plant tasks, completes, snoozes, plans and undoes them on
     await row('Test inspect supports').getByRole('button', { name: 'Done', exact: true }).click();
     await expect(row('Test inspect supports')).toContainText('Done');
     await row('Test check stakes').getByRole('button', { name: 'Snooze 2 days', exact: true }).click();
-    await expect(row('Test check stakes')).toContainText('2026-05-04');
+    await expect(row('Test check stakes')).toContainText('Snoozed until Mon 4 May');
     await row('Test inspect supports').getByRole('button', { name: 'Undo', exact: true }).click();
     await expect(row('Test inspect supports')).toContainText('Due today');
     await page.getByRole('link', { name: 'Upcoming', exact: true }).click();
     await expect(page.getByRole('heading', { name: '2026-05-04', exact: true })).toBeVisible();
-    await expect(row('Test check stakes')).toContainText('2026-05-04');
+    // Today's snooze keeps its own row; the occurrence it postponed is listed at its new date.
+    await expect(row('Test check stakes')).toHaveCount(2);
+    await expect(row('Test check stakes').last()).toContainText('Due 2026-05-04');
     await screenshot('custom-upcoming.png');
     await page.goto('/plants/' + plant.id);
     await expect(page.getByRole('region', { name: 'Test inspect supports', exact: true })).toContainText('2026-05-02');

@@ -115,19 +115,73 @@ class FeedScreenTest {
     }
     @Test fun cardsUsePlainWordsAndKeepTheDetailsBehindWhy() {
         compose.setContent { Screen(false) { HomeFeed(state(), today = "2030-06-01") } }
-        compose.onNodeWithText("Too dark for Synthetic outdoor fern").assertExists()
-        compose.onNodeWithText("Frost today: bring Synthetic outdoor fern inside").assertExists()
+        compose.onNodeWithText("Synthetic outdoor fern: too dark").assertExists()
+        compose.onNodeWithText("Synthetic outdoor fern: frost today, bring inside").assertExists()
         compose.onNodeWithText("Today: low 0 °C, high 30 °C").assertExists()
         for (technical in listOf("warning.effective_light@1", "effectiveLight", "Hardiness source", "hardiness.pot_offset@1", "Open-Meteo", "Warning inputs", "2030-06-07"))
             compose.onNode(hasText(technical, substring = true)).assertDoesNotExist()
         compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-warnings-too_dark"))).performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
-        compose.onNode(hasText("warning.effective_light@1", substring = true)).assertIsDisplayed()
         compose.onNodeWithText("The site is too dark for this plant.").assertIsDisplayed()
+        compose.onNodeWithText("Technical details: warning.effective_light@1 · rule").assertIsDisplayed()
+        compose.onNode(hasText("effectiveLight", substring = true)).assertDoesNotExist()
         compose.onNodeWithText("Close").performClick()
         compose.onNode(hasText("warning.effective_light@1", substring = true)).assertDoesNotExist()
         compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-cold"))).performScrollTo().performClick()
-        compose.onNode(hasText("hardiness.pot_offset@1", substring = true)).assertIsDisplayed()
-        compose.onNode(hasText("2030-06-07", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("Technical details:", substring = true) and hasText("hardiness.pot_offset@1", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("Sat 1 Jun to Fri 7 Jun", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("2030-06-0", substring = true)).assertDoesNotExist()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-current"))).performScrollTo().performClick()
+        val checked = java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse("2030-06-01T10:00:00Z"))
+        compose.onNodeWithText("Checked $checked").assertIsDisplayed()
+        compose.onNodeWithText("Technical details: Open-Meteo").assertIsDisplayed()
+        compose.onNode(hasText("2030-06-01T", substring = true)).assertDoesNotExist()
+    }
+    @Test fun aLongWarningStillNamesItsPlantAtLargeText() {
+        val peony = parseFeedCard(JSONObject("""{"id":"peony","kind":"plant_warnings","href":"/plants/peony","plantName":"Chinese peony","warnings":[{"kind":"missing_info","reason":"Missing information.","inputs":[
+            {"input":"site.light","value":"not set","source":"setting"},{"input":"pot.pot_type","value":"not set","source":"setting"},
+            {"input":"careProfile","value":{},"source":"rule"},{"input":"household.location","value":false,"source":"setting"}]}]}"""))!!
+        compose.setContent { CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides
+            androidx.compose.ui.unit.Density(androidx.compose.ui.platform.LocalDensity.current.density, 1.3f)) {
+            Screen(false) { HomeFeed(state().copy(cards = listOf(peony)), today = "2030-06-01") }
+        } }
+        val layout = compose.onNode(hasAnyAncestor(hasTestTag("feed-peony-missing_info")) and hasText("missing", substring = true, ignoreCase = true), useUnmergedTree = true)
+            .fetchSemanticsNode().textLayout()
+        val text = layout.layoutInput.text.text
+        assertTrue("Up to two lines: ${layout.lineCount}", layout.lineCount <= 2)
+        val at = text.indexOf("Chinese peony")
+        assertTrue("The plant name is not on the first line: $text", at >= 0 && at + "Chinese peony".length <= layout.getLineEnd(0))
+    }
+    @Test fun warningsOfOneKindShareACardWhoseWhyOpensEachPlant() {
+        fun plant(id: String, name: String, vararg kinds: String) = parseFeedCard(JSONObject().put("id", id).put("kind", "plant_warnings").put("href", "/plants/$id").put("plantName", name)
+            .put("warnings", org.json.JSONArray(kinds.map { kind -> if (kind == "too_dark") JSONObject().put("kind", kind).put("reason", "Too dark.").put("inputs", org.json.JSONArray())
+                else JSONObject().put("kind", "missing_info").put("reason", "Missing information.").put("inputs", org.json.JSONArray()
+                    .put(JSONObject().put("input", "pot.pot_size_cm").put("value", "not set").put("source", "setting"))) })))!!
+        val cards = listOf(plant("peony", "Chinese peony", "missing_info"), plant("jade", "Jade Plant", "too_dark", "missing_info"), plant("thyme", "Thyme", "missing_info"))
+        var opened = ""
+        compose.setContent { Screen(false) { HomeFeed(state().copy(cards = cards), today = "2030-06-01", onOpen = { opened = it }) } }
+        compose.onAllNodesWithText("Missing pot size for 3 plants").assertCountEquals(1)
+        compose.onNodeWithText("Jade Plant: too dark").assertExists()
+        compose.onNode(hasText("Chinese peony", substring = true)).assertDoesNotExist()
+        compose.onNodeWithText("Missing pot size for 3 plants").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("", opened) }
+        for (name in listOf("Chinese peony", "Jade Plant", "Thyme")) compose.onNode(hasText(name) and hasClickAction()).assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNode(hasText("Thyme") and hasClickAction()).performClick()
+        compose.runOnIdle { assertEquals("/plants/thyme", opened) }
+        compose.onNodeWithText("Close").assertDoesNotExist()
+        compose.onNode(hasText("Why?") and hasAnyAncestor(hasText("Missing pot size for 3 plants"))).performClick()
+        compose.onNode(hasText("Chinese peony") and hasClickAction()).assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(1000)
+        com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/feed-grouped-why-light.png")
+    }
+    @Test fun offlineTheStripKeepsItsCardsAndSaysWeatherAndTipsNeedAConnection() {
+        val current = mutableStateOf(state().copy(offline = true))
+        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01", connectionNotice = false) } }
+        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
+        compose.onNodeWithTag("feed-cold").assertExists()
+        compose.runOnIdle { current.value = FeedState(member = Member("synthetic-member", Role.owner), offline = true) }
+        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
+        compose.onAllNodes(hasAnyAncestor(hasTestTag("feed-strip"))).assertCountEquals(0)
     }
     @Test fun theRainCardComesFirstWithItsCountedReceipt() {
         val current = mutableStateOf(state())
@@ -175,7 +229,7 @@ class FeedScreenTest {
         compose.runOnIdle { notice.value = true }
         compose.onNodeWithText("Fytorium isn't responding. Showing last loaded cards. Refresh to try again.").assertIsDisplayed()
         compose.runOnIdle { current.value = state().copy(offline = true) }
-        compose.onNodeWithText("Feed is offline. Showing last loaded cards. Actions are unavailable offline.").assertIsDisplayed()
+        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
         compose.runOnIdle { notice.value = false; current.value = state().copy(message = "Synthetic feed failure") }
         compose.onNodeWithText("Synthetic feed failure").assertIsDisplayed()
     }
@@ -203,7 +257,7 @@ class FeedScreenTest {
         compose.onNodeWithTag("feed-cold").assertHasClickAction().assertHeightIsAtLeast(48.dp)
         capture("feed-home")
         compose.onNodeWithTag("feed-cold").performScrollTo()
-        compose.onNodeWithText("Frost today: bring Synthetic outdoor fern inside").assertIsDisplayed()
+        compose.onNodeWithText("Synthetic outdoor fern: frost today, bring inside").assertIsDisplayed()
         compose.onNodeWithTag("feed-cold").performClick()
         assertEquals("/plants/fern", opened)
         capture("feed-cold")
@@ -225,7 +279,7 @@ class FeedScreenTest {
         compose.runOnIdle { current.value = state() }
         compose.onNodeWithTag("feed-warnings-too_dark").performScrollTo()
         compose.onNode(hasText("Why?") and hasAnyAncestor(hasTestTag("feed-warnings-too_dark"))).performClick()
-        compose.onNode(hasText("warning.effective_light@1", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("Technical details:", substring = true)).assertIsDisplayed()
         compose.mainClock.advanceTimeBy(1000)
         com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/feed-warnings-${if (dark) "dark" else "light"}.png")
         compose.onNodeWithText("Close").performClick()
@@ -250,7 +304,7 @@ class FeedScreenTest {
         compose.onNodeWithTag("feed-warnings-too_dark").assertDoesNotExist()
         capture("feed-sitter")
         compose.runOnIdle { current.value = FeedState(member = Member("synthetic-member", Role.owner), offline = true) }
-        compose.onNodeWithText("Actions are unavailable offline.").assertIsDisplayed()
+        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
         capture("feed-unavailable-offline")
     }
 }

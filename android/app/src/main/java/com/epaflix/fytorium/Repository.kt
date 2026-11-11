@@ -21,7 +21,7 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
                      val offline: Boolean = false, val serverUnavailable: Boolean = false, val lastUpdated: Long? = null, val busy: Boolean = false,
                      val message: String? = null, val updateRequired: Boolean = false,
                      val receipt: Receipt? = null, val pending: Set<BusyKey> = emptySet(), val batches: Map<String, BatchReceipt> = emptyMap(),
-                     val openedOccurrence: String? = null) {
+                     val openedOccurrence: String? = null, val transitions: List<Pair<String, String>> = emptyList()) {
     val writable get() = !offline && !serverUnavailable && !updateRequired && member != null
     val rows get() = listOfNotNull(today, upcoming).flatMap { list -> list.groups.values.flatten() + list.sections.flatMap { it.tasks } }
     // Only the server's lists, or this device's patch of the row until they replace it, know whether the water is still live.
@@ -138,7 +138,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             val plants = read("/api/plants")
             parseTaskList(today); parseTaskList(upcoming); JSONArray(plants).mapObjects(::parsePlant)
             val meta = read("/api/meta")
-            ZoneId.of(JSONObject(meta).getString("timezone"))
+            parseTimezone(meta)
             synchronized(monitor) {
                 if (epoch == generation) {
                     cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming, "plants" to plants, "meta" to meta), clock())
@@ -229,7 +229,9 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 val watered = (response.optJSONArray("linked_events")?.length() ?: 0) > 0
                 if (watered) saved.put("linked_events", response.getJSONArray("linked_events"))
                 val next = response.optJSONObject("task")
-                patchEvents(listOf(saved), next?.let { mapOf(task.key to it) } ?: emptyMap(), if (action == "complete") Patch.Complete else Patch.Postpone, task.occurrence)
+                val linked = response.optJSONArray("linked_events")?.mapObjects { it }.orEmpty()
+                followed(linked.map(::parseEvent).mapNotNull { water -> state.value.rows.actedOn(water)?.let { it.occurrence to water.id } })
+                patchEvents(listOf(saved), next?.let { mapOf(task.key to it) } ?: emptyMap(), linked)
                 requestIds.remove(request)
                 val text = if (action == "complete") doneText(task.taskType, task.customTaskName, task.plantName, watered = watered)
                     else (if (action == "snooze") "Snoozed " else "Skipped ") + task.plantName + next?.nullable("dueOn")?.let { " until " + shortDate(it) }.orEmpty()
@@ -273,17 +275,34 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
     }
     // The feed's rain card has only its batch id, and undoes it through the same write as every other Undo.
-    fun undoBatch(batchId: String): Boolean =
-        write("/api/task-batches/${requireSafeId(batchId)}/undo", body = null, receipts = true, notifiesFeed = false) { undone(JSONObject(it)) }
+    fun undoBatch(batchId: String, confirmation: String? = null): Boolean =
+        write("/api/task-batches/${requireSafeId(batchId)}/undo", body = null, receipts = true, notifiesFeed = false) {
+            undone(JSONObject(it))
+            if (confirmation != null) mutable.value = mutable.value.copy(receipt = Receipt(confirmation, short = true))
+        }
             .also { success -> if (success) reloadOpenPlant { it.history.any { past -> past.batchId == batchId } } }
     // An undo's response carries the member's lists, so every row it reversed shows its earlier state at once.
     private fun undone(response: JSONObject) {
         val member = state.value.member ?: return
-        val opened = state.value.rows.firstOrNull { it.occurrence == state.value.openedOccurrence }
         saveLists(member, response.getJSONObject("today").toString(), response.getJSONObject("upcoming").toString())
-        // The restored row has a new occurrence, so the plant page follows that plant's pending task.
-        if (opened != null && state.value.rows.none { it.occurrence == opened.occurrence }) mutable.value = mutable.value.copy(openedOccurrence =
-            state.value.rows.firstOrNull { it.plantId == opened.plantId && it.key == opened.key && it.completedEvent == null }?.occurrence ?: opened.occurrence)
+        // Only the server knows which pending occurrence each reversed event brought back; another member's may already have been listed.
+        val restored = response.optJSONArray("restored")?.mapObjects { reversed ->
+            reversed.optJSONObject("occurrence")?.let { named -> state.value.rows.firstOrNull { it.completedEvent == null && it.plantId == named.getString("plant_id")
+                && it.key == named.taskKey() && it.dueOn == named.getString("due_on") } }?.let { reversed.getString("event_id") to it.occurrence } }.orEmpty().filterNotNull()
+        followed(restored)
+        mutable.value = mutable.value.copy(openedOccurrence = mutable.value.openedOccurrence?.let { opened -> restored.toMap()[opened] ?: opened })
+    }
+    // The rain write names only its batch, so each of its listed events follows the pending water row with its plant and due date.
+    fun rainWatered(batchId: String?) = synchronized(workLock) {
+        val before = state.value.rows
+        refresh()
+        synchronized(monitor) { followed(state.value.rows.mapNotNull { row -> row.completedEvent?.takeIf { it.batchId != null && it.batchId == batchId }
+            ?.let { event -> before.actedOn(event)?.let { it.occurrence to event.id } } }) }
+    }
+    private fun List<CareTask>.actedOn(event: CareEvent) = firstOrNull { it.completedEvent == null && it.plantId == event.plantId && it.key == event.key && it.dueOn == event.dueOn }
+    // Held Today and Upcoming rows follow only these occurrence changes, which this device's own writes and Undos caused.
+    private fun followed(changes: List<Pair<String, String>>) {
+        if (changes.isNotEmpty()) mutable.value = mutable.value.copy(transitions = mutable.value.transitions + changes)
     }
     private fun saveLists(member: Member, today: String, upcoming: String) {
         parseTaskList(today); parseTaskList(upcoming)
@@ -321,27 +340,27 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         if (state.value.member?.role == Role.sitter) return false
         return write("/api/tasks/settings", "PUT", settings.json(), refreshAfter = true, notifiesFeed = false) {}
     }
-    private enum class Patch { Complete, Postpone }
-    // Until the next refresh replaces the lists, a write's response patches only the rows it acted on.
-    private fun patchEvents(events: List<JSONObject>, tasks: Map<String, JSONObject>, mode: Patch = Patch.Complete, acting: String? = null) {
+    // A pending row of a created event's task with another due date was already gone on the server, so it leaves the lists.
+    private fun patchEvents(events: List<JSONObject>, tasks: Map<String, JSONObject>, linked: List<JSONObject> = emptyList()) {
         val member = state.value.member ?: return
         val patched = mutableMapOf<String, String>()
-        fun JSONObject.pendingFor(event: JSONObject) = completedEventId() == null &&
+        fun JSONObject.sameTask(event: JSONObject) = completedEventId() == null &&
             getString("plant_id") == event.getString("plant_id") && taskKey() == event.taskKey()
-        fun JSONObject.target(): JSONObject? = if (acting != null) events.single().takeIf { occurrence() == acting } else events.firstOrNull { pendingFor(it) }
         val snapshots = listOf("today", "upcoming").mapNotNull { view ->
             val row = cache.get(member.id, view) ?: return@mapNotNull null
             val json = JSONObject(row.json)
             fun patch(rows: JSONArray) = JSONArray(rows.mapObjects { it }.filter { task ->
+                val created = (events + linked).filter { task.sameTask(it) }
+                val acted = created.filter { task.nullable("dueOn") == it.nullable("due_on") }
+                if (created.isNotEmpty() && acted.isEmpty()) return@filter false
+                val event = acted.firstOrNull { it in events }
                 val before = task.occurrence()
-                val event = task.target()
                 if (event != null) {
                     tasks[task.taskKey()]?.let { next -> listOf("status", "dueOn", "intervalDays", "lateDays", "basedOn", "postponed").forEach { field ->
                         if (next.has(field)) task.put(field, next.get(field)) else task.remove(field)
                     } }
-                    // A snoozed or skipped task is no longer due, so it leaves Today at once.
-                    if (mode == Patch.Postpone && view == "today") return@filter false
-                    if (mode == Patch.Complete) task.put("completed_event", event)
+                    task.put("completed_event", event)
+                    if (event.getString("kind") != "completed") task.put("postponed_until", tasks[task.taskKey()]?.opt("dueOn"))
                 }
                 if (task.occurrence() != before) patched[before] = task.occurrence()
                 true
@@ -354,6 +373,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         cache.save(member.id, snapshots, state.value.lastUpdated ?: 0)
         loadCached()
         mutable.value = mutable.value.copy(openedOccurrence = mutable.value.openedOccurrence?.let { patched[it] ?: it })
+        followed(patched.toList())
     }
     private fun write(path: String, method: String = "POST", body: JSONObject?, refreshAfter: Boolean = false, plantsScreen: Boolean = false,
                       refreshSchedulesAfter: Boolean = false, receipts: Boolean = false, notifiesFeed: Boolean = true, applied: (String) -> Unit): Boolean = synchronized(workLock) {

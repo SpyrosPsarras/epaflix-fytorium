@@ -90,11 +90,11 @@ class TaskScreenTest {
             compose.runOnIdle {
                 val fresh = state(view.value, sitter = true)
                 fun rows(list: TaskList?) = list?.copy(sections = list.sections.map { it.copy(tasks = it.tasks.map { row -> row.copy(completedEvent = event, dueOn = if (event == null) row.dueOn else "2030-06-09", lateDays = if (event == null) row.lateDays else 0) }) })
-                current.value = fresh.copy(today = rows(fresh.today), upcoming = rows(fresh.upcoming))
+                current.value = current.value.written(fresh.copy(today = rows(fresh.today), upcoming = rows(fresh.upcoming)))
             }
         }
         for (screen in listOf("today", "upcoming")) {
-            compose.runOnIdle { view.value = screen }
+            compose.runOnIdle { current.value = state(screen, sitter = true); view.value = screen }
             event(own.copy(byMember = "member-two", canUndo = false))
             compose.onNodeWithContentDescription("Water done for Synthetic fern").assertHasNoClickAction()
             event(own.copy(taskType = "repot", previousPot = true, canUndo = false))
@@ -107,7 +107,8 @@ class TaskScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/sitter-$screen-${if (dark) "dark" else "light"}.png")
             compose.runOnIdle { current.value = current.value.copy(offline = true) }
-            compose.onNodeWithContentDescription("Water done for Synthetic fern. Double tap to undo").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Water done for Synthetic fern").assertIsNotEnabled()
+            compose.onNode(hasContentDescription("Double tap", substring = true)).assertDoesNotExist()
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         }
     }
@@ -135,13 +136,11 @@ class TaskScreenTest {
         compose.onNodeWithText("Refresh").assertDoesNotExist()
         compose.onNodeWithContentDescription("Task view").performClick()
         compose.onNode(hasText("Task view") and isHeading()).assertIsDisplayed()
-        compose.onNodeWithText("Sort tasks: Task type").performClick()
-        compose.onNodeWithText("Plant", useUnmergedTree = false).performClick()
-        compose.onNodeWithText("Sort tasks: Plant").assertIsDisplayed()
+        compose.onNodeWithText("Plant").performClick()
+        compose.onNodeWithText("Plant").assertIsSelected()
         compose.runOnIdle { assertEquals(TaskSettings("plant", "all", false), saved) }
-        compose.onNodeWithText("Filter: All").performClick()
         compose.onNodeWithText("Outdoor").performClick()
-        compose.onNodeWithText("Filter: Outdoor").assertIsDisplayed()
+        compose.onNodeWithText("Outdoor").assertIsSelected()
         compose.runOnIdle { assertEquals(TaskSettings("plant", "outdoor", false), saved) }
         compose.onNodeWithText("Show others' completed tasks").assertIsOff().assertHasClickAction().performClick().assertIsOn()
         compose.onAllNodes(isToggleable()).assertCountEquals(1)
@@ -150,6 +149,75 @@ class TaskScreenTest {
         compose.runOnIdle { assertEquals(TaskSettings("plant", "outdoor", true), saved) }
         compose.onNodeWithText("Saved").assertIsDisplayed()
         compose.onNodeWithText("Show others' completed tasks").assertIsDisplayed()
+    }
+    @Test fun theTaskViewSheetUsesSegmentedChoicesAndASpacedCheckbox() {
+        var saved: TaskSettings? = null
+        compose.setContent { TaskTestTheme { TaskScreen(state(), "today", onSettings = { saved = it; true }) } }
+        compose.onNodeWithContentDescription("Task view").performClick()
+        compose.onNode(hasText("Sort tasks:", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("Filter:", substring = true)).assertDoesNotExist()
+        compose.onNodeWithText("Sort tasks").assertIsDisplayed()
+        compose.onNodeWithText("Filter").assertIsDisplayed()
+        compose.onNodeWithText("Task type").assertIsSelected()
+        compose.onNodeWithText("All").assertIsSelected()
+        compose.onNodeWithText("Site").assertIsNotSelected()
+        compose.onNodeWithText("Plant").assertIsNotSelected().assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(TaskSettings(sort = "plant"), saved) }
+        compose.onNodeWithText("Plant").assertIsSelected()
+        compose.onNodeWithText("Task type").assertIsNotSelected()
+        compose.onNodeWithText("Indoor").assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(TaskSettings(sort = "plant", filter = "indoor"), saved) }
+        val box = compose.onNode(isToggleable()).fetchSemanticsNode().boundsInRoot
+        val label = compose.onNodeWithText("Show others' completed tasks", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue("16 dp between the checkbox and its label: ${label.left - box.left}", label.left - box.left >= 40f)
+    }
+    @Test fun theTaskViewSheetSaysWhyItCannotSaveInsteadOfTryAgain() {
+        val current = mutableStateOf(state(offline = true))
+        compose.setContent { TaskTestTheme { TaskScreen(current.value, "today", onSettings = {
+            current.value = current.value.copy(serverUnavailable = true); false }) } }
+        compose.onNodeWithContentDescription("Task view").performClick()
+        compose.onNodeWithText("Task view needs a connection.").assertIsDisplayed()
+        compose.onNodeWithText("Plant").assertIsNotEnabled()
+        compose.onNode(hasText("Try again", substring = true)).assertDoesNotExist()
+        compose.runOnIdle { current.value = state() }
+        compose.onNodeWithText("Task view needs a connection.").assertDoesNotExist()
+        compose.onNodeWithText("Plant").assertIsEnabled().performClick()
+        compose.onNodeWithText("Task view needs Fytorium to respond.").assertIsDisplayed()
+        compose.onNode(hasText("Try again", substring = true)).assertDoesNotExist()
+        compose.onNodeWithText("Task type").assertIsSelected().assertIsNotEnabled()
+        compose.runOnIdle { current.value = state().copy(updateRequired = true) }
+        compose.onNodeWithText("Update Fytorium to change the task view.").assertIsDisplayed()
+        compose.onNodeWithText("Plant").assertIsNotEnabled()
+    }
+    @Test fun offlineChecksAndSnoozeLookAndReadDisabled() {
+        val base = state()
+        val row = base.today!!.sections.single().tasks.single()
+        val list = base.today.copy(sections = listOf(TaskSection("water", "Water", listOf(row.copy(completedEvent = parseEvent(org.json.JSONObject(eventFixture))),
+            row.copy(plantId = "plant-two", plantName = "Second fern")))))
+        val current = mutableStateOf(base.copy(today = list))
+        var host: android.view.View? = null
+        compose.setContent { host = androidx.compose.ui.platform.LocalView.current; TaskTestTheme { TaskScreen(current.value, "today") } }
+        fun colours(matcher: SemanticsMatcher): Set<androidx.compose.ui.graphics.Color> {
+            val bounds = compose.onNode(matcher).fetchSemanticsNode().boundsInRoot
+            val found = mutableSetOf<androidx.compose.ui.graphics.Color>()
+            compose.runOnUiThread {
+                val bitmap = android.graphics.Bitmap.createBitmap(host!!.width, host!!.height, android.graphics.Bitmap.Config.ARGB_8888)
+                host!!.draw(android.graphics.Canvas(bitmap))
+                for (x in bounds.left.toInt() until bounds.right.toInt()) for (y in bounds.top.toInt() until bounds.bottom.toInt())
+                    found += androidx.compose.ui.graphics.Color(bitmap.getPixel(x, y))
+                bitmap.recycle()
+            }
+            return found
+        }
+        val done = "Water done for Synthetic fern, Synthetic site"
+        assertTrue(LightColors.primary in colours(hasContentDescription("$done. Double tap to undo")))
+        assertTrue(LightColors.primary in colours(hasContentDescription("Snooze 2 days")))
+        compose.runOnIdle { current.value = current.value.copy(offline = true) }
+        compose.onNode(hasContentDescription("Double tap", substring = true)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(done).assertIsNotEnabled()
+        assertFalse("A disabled check is drawn as enabled", LightColors.primary in colours(hasContentDescription(done)))
+        assertFalse("A disabled snooze is drawn as enabled", LightColors.primary in colours(hasContentDescription("Snooze 2 days")))
+        compose.onRoot().captureRoboImage("src/test/screenshots/offline-checks-light.png")
     }
     @Test fun rowsOpenWithoutInlineActionsAndUndoFollowsTheServer() {
         val current = mutableStateOf(state())
@@ -166,7 +234,7 @@ class TaskScreenTest {
                 val list = original.copy(sections = original.sections.map { it.copy(tasks = it.tasks.map { row ->
                     row.copy(completedEvent = if (done) event.copy(canUndo = role != Role.sitter) else null)
                 }) })
-                current.value = state().copy(member = Member("member-one", role), today = list, upcoming = list)
+                current.value = current.value.written(state().copy(member = Member("member-one", role), today = list, upcoming = list))
                 view.value = screen
             }
             compose.onNodeWithContentDescription("Open Synthetic fern").assertHasClickAction()
@@ -178,7 +246,7 @@ class TaskScreenTest {
         }
         // A completion is part of its own row; a pending row never shows a check.
         val done = original.copy(sections = original.sections.map { it.copy(tasks = it.tasks.map { row -> row.copy(completedEvent = event) }) })
-        compose.runOnIdle { current.value = state().copy(today = done) ; view.value = "today" }
+        compose.runOnIdle { current.value = current.value.written(state().copy(today = done)) ; view.value = "today" }
         val handledRow = hasAnyAncestor(hasTestTag("task:plant-one:water"))
         compose.onNode(handledRow and hasText("Undo")).assertDoesNotExist()
         compose.onNode(hasContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo")).assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
@@ -301,9 +369,52 @@ class TaskScreenTest {
         compose.onNode(hasContentDescription("Snoozed for", substring = true)).assertDoesNotExist()
         compose.onNode(hasContentDescription(" done for", substring = true) and !hasContentDescription("Mark ", substring = true)).assertDoesNotExist()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsEnabled()
+        // Beside both reserved controls the site gives way whole, so no text on a row is cut.
+        val cut = compose.onAllNodes(hasText("", substring = true) and (inRow("plant-one") or inRow("plant-two")), useUnmergedTree = true).fetchSemanticsNodes()
+            .filter { node -> node.textLayout().let { layout -> (0 until layout.lineCount).any(layout::isLineEllipsized) } }
+            .map { it.config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString() }
+        assertEquals(emptyList<String>(), cut)
         compose.mainClock.advanceTimeBy(1000)
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         compose.onRoot().captureRoboImage("src/test/screenshots/upcoming-snoozed-${if (dark) "dark" else "light"}.png")
+    }
+    @Test fun aSnoozedOrSkippedRowShowsItsDateAndUndoWithoutACheckOrCircleLight() = postponedRows(false)
+    @Test fun aSnoozedOrSkippedRowShowsItsDateAndUndoWithoutACheckOrCircleDark() = postponedRows(true)
+    private fun postponedRows(dark: Boolean) {
+        compose.enableAccessibilityChecks()
+        val base = state()
+        val row = base.today!!.sections.single().tasks.single()
+        val event = parseEvent(org.json.JSONObject(eventFixture))
+        val snoozed = row.copy(dueOn = "2030-06-04", lateDays = 0, postponedUntil = "2030-06-04", completedEvent = event.copy(id = "event-snooze", kind = "snoozed"))
+        val skipped = row.copy(plantId = "plant-two", plantName = "Second fern", dueOn = "2030-06-09", lateDays = 0, postponedUntil = "2030-06-09",
+            completedEvent = event.copy(id = "event-skip", plantId = "plant-two", kind = "skipped"))
+        val theirs = row.copy(plantId = "plant-three", plantName = "Third fern", postponedUntil = "2030-06-04",
+            completedEvent = event.copy(id = "event-theirs", plantId = "plant-three", kind = "snoozed", byMember = "member-two", canUndo = false))
+        val current = mutableStateOf(base.copy(today = base.today.copy(sections = listOf(TaskSection("water", "Water", listOf(snoozed, skipped, theirs))))))
+        val actions = mutableListOf<String>()
+        compose.setContent { TaskTestTheme(dark) { TaskScreen(current.value, "today", onAction = { task, action -> actions += "${task.plantName}:$action" }) } }
+        compose.onNode(hasText("until Tue 4 Jun") and inRow("plant-one"), useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasText("until Sun 9 Jun") and inRow("plant-two"), useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasText("until Tue 4 Jun") and inRow("plant-three"), useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasContentDescription(" done for", substring = true)).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Snooze 2 days").assertDoesNotExist()
+        compose.onNodeWithText("1d late").assertDoesNotExist()
+        compose.onNode(hasContentDescription("Undo", substring = true) and inRow("plant-three")).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Undo watering skip for Second fern, Synthetic site").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithContentDescription("Undo watering snooze for Synthetic fern, Synthetic site").assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(listOf("Second fern:undo", "Synthetic fern:undo"), actions) }
+        compose.mainClock.advanceTimeBy(1000)
+        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+        compose.onRoot().captureRoboImage("src/test/screenshots/today-postponed-${if (dark) "dark" else "light"}.png")
+        // Only the row being undone is busy, and its control keeps its size.
+        val undo = compose.onNodeWithContentDescription("Undo watering snooze for Synthetic fern, Synthetic site").fetchSemanticsNode().boundsInRoot
+        compose.runOnIdle { current.value = current.value.copy(pending = setOf(BusyKey.Row("event-snooze"))) }
+        compose.onNodeWithContentDescription("Saving Water for Synthetic fern, Synthetic site").assertIsNotEnabled()
+        assertEquals(undo, compose.onNodeWithContentDescription("Saving Water for Synthetic fern, Synthetic site").fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithContentDescription("Undo watering skip for Second fern, Synthetic site").assertIsEnabled()
+        compose.runOnIdle { current.value = current.value.copy(pending = emptySet(), offline = true) }
+        compose.onNodeWithContentDescription("Undo watering skip for Second fern, Synthetic site").assertIsNotEnabled()
+        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
     @Test fun onlyTheActingRowAndCardButtonAreBusy() {
         val base = state()
@@ -336,7 +447,7 @@ class TaskScreenTest {
                     "/api/tasks" -> if (request.requestUrl!!.queryParameter("view") == "upcoming") upcoming else taskListFixture("today")
                     "/api/plants" -> "[]"
                     "/api/meta" -> """{"timezone":"Europe/Oslo"}"""
-                    else -> """{"event":${org.json.JSONObject(eventFixture).put("id", "event-two")},"task":{"status":"due","dueOn":"2030-06-09","intervalDays":7,"lateDays":0,"basedOn":[]}}"""
+                    else -> """{"event":${org.json.JSONObject(eventFixture).put("id", "event-two").put("due_on", "2030-06-09")},"task":{"status":"due","dueOn":"2030-06-09","intervalDays":7,"lateDays":0,"basedOn":[]}}"""
                 }) }.use { held ->
                 val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
                 val repository = Repository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, CareCache(db), { true })

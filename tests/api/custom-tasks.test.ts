@@ -106,7 +106,8 @@ test('Today and Upcoming group custom names, honor every sort/location filter an
         if (filter === 'outdoor') { expect(list.groups[plantTaskId]).toBeUndefined(); continue; }
         expect(list.groups[plantTaskId]).toContainEqual(expect.objectContaining({ plant_id: plantId, custom_task_name: 'Test check roots', completed_event: expect.objectContaining({ id: done.event.id }) }));
         expect(list.groups[siteTaskId]).toContainEqual(expect.objectContaining({ plant_id: plantId, custom_task_name: 'Test check roots' }));
-        expect(list.sections).toContainEqual(expect.objectContaining({ label: view === 'upcoming' ? '2026-05-13' : sort === 'task' ? 'Test check roots' : sort === 'plant' ? 'Test custom plant' : 'Test custom room' }));
+        expect(list.sections).toContainEqual(expect.objectContaining({ label: sort === 'task' ? 'Test check roots' : sort === 'plant' ? 'Test custom plant' : 'Test custom room',
+          ...(view === 'upcoming' ? { day: '2026-05-13' } : {}) }));
       }
     }
   }
@@ -114,7 +115,7 @@ test('Today and Upcoming group custom names, honor every sort/location filter an
   await request('/api/tasks/settings', 'PUT', baseline);
   const snoozed = await (await act(plantTaskId, 'snooze')).json();
   const upcoming = await (await request('/api/tasks?view=upcoming')).json();
-  expect(upcoming.sections).toContainEqual(expect.objectContaining({ key: '2026-05-15', tasks: expect.arrayContaining([expect.objectContaining({ custom_task_id: plantTaskId })]) }));
+  expect(upcoming.sections).toContainEqual(expect.objectContaining({ day: '2026-05-15', label: 'Test check roots', tasks: expect.arrayContaining([expect.objectContaining({ custom_task_id: plantTaskId })]) }));
   await undo(snoozed.event.id);
 });
 

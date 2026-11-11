@@ -20,7 +20,11 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.lifecycle.compose.LifecycleStartEffect
+import com.epaflix.fytorium.feed.FeedState
+import com.epaflix.fytorium.feed.keepingStripOf
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
@@ -45,16 +49,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-@Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
+@Composable fun TaskScreen(care: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String) -> Unit = { _, _ -> },
-                           onHandleType: (String) -> Unit = {}, onSettings: suspend (TaskSettings) -> Boolean = { true }, refreshing: Boolean = false,
+                           onHandleType: (String) -> Unit = {}, onHandlePlant: (String) -> Unit = {}, onSettings: suspend (TaskSettings) -> Boolean = { true }, refreshing: Boolean = false,
                            onUndoReceipt: (Receipt) -> Unit = {}, onReceiptDone: (Receipt) -> Unit = {},
                            thumbnails: Thumbnails? = null,
                            onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
                            deviceOnline: Boolean = true, onOpenTask: (CareTask) -> Unit = {}, scrollState: ScrollState = rememberScrollState(),
                            thumbnailLoader: suspend (String) -> Bitmap? = { id -> withContext(Dispatchers.IO) {
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
-                           } }, feedContent: @Composable () -> Unit = {}) {
+                           } }, feed: FeedState? = null, feedContent: @Composable (FeedState) -> Unit = {}) {
+    val pullState = rememberPullToRefreshState()
+    // Layout changes wait for a moment the user picked: the end of a pull, the app coming back to the foreground, a view switch or a return to Today.
+    var moment by remember { mutableIntStateOf(0) }
+    // Zero-duration device animations can leave the refresh indicator at its shown offset.
+    LaunchedEffect(refreshing) { if (!refreshing) { pullState.snapTo(0f); moment++ } }
+    LifecycleStartEffect(Unit) { moment++; onStopOrDispose {} }
+    val live = if (view == "upcoming") care.upcoming else care.today
+    val since = remember(view, moment, care.member) { care.transitions.size }
+    val list = rememberHeld(live, view, moment, care.member) { shown, next -> next?.keepingLayoutOf(shown, care.transitions.drop(since).toMap()) }
+    // Losing the last plant or share removes the toggle and every row, so it waits for the same moment.
+    val noPlants = rememberHeld(care.plants.isEmpty().takeIf { care.today != null }, view, moment, care.member) { shown, next -> shown ?: next } == true
+    // A row the server no longer lists stays in place until then, without controls that would act on it again.
+    val listed = live?.sections.orEmpty().flatMapTo(mutableSetOf()) { section -> section.tasks.map { it.occurrence } }
+    val state = if (view == "upcoming") care.copy(upcoming = list) else care.copy(today = list)
+    val shownFeed = feed?.let { rememberHeld(it, view, moment) { shown, next -> next.keepingStripOf(shown) } }
     val photoIds = remember(state.today, state.upcoming) {
         listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
     }
@@ -84,34 +103,32 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
             }
         }
     }
-    val pullState = rememberPullToRefreshState()
-    // Zero-duration device animations can leave the refresh indicator at its shown offset.
-    LaunchedEffect(refreshing) { if (!refreshing) pullState.snapTo(0f) }
     val scope = rememberCoroutineScope()
-    val list = if (view == "upcoming") state.upcoming else state.today
     val editor = state.member?.role in listOf(Role.owner, Role.family)
-    val presentation = state.todayPresentation()
-    val noPlants = state.today != null && state.plants.isEmpty()
+    val presentation = state.todayPresentation(noPlants)
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
-    val canAdd = editor && deviceOnline && state.writable
     fun saveView(settings: TaskSettings) { scope.launch { onSettings(settings) } }
     var settingsOpen by remember { mutableStateOf(false) }
+    fun needs(action: String, update: String, retry: String = "") = when {
+        !deviceOnline || state.offline -> "$action needs a connection."
+        state.serverUnavailable -> "$action needs Fytorium to respond.$retry"
+        !state.writable -> "Update Fytorium to $update."
+        else -> null
+    }
+    val viewBlocked = needs("Task view", "change the task view")
+    val blocked = needs("Adding a plant", "add plants", " Pull down to try again.")
+    val canAdd = editor && blocked == null
     if (settingsOpen && list != null) ModalBottomSheet(onDismissRequest = { settingsOpen = false }) {
-        ViewSettings(list.settings, state.writable, state.message, onSettings)
+        ViewSettings(list.settings, viewBlocked, state.message, onSettings)
     }
     val snackbar = remember { SnackbarHostState() }
-    val blocked = when {
-        !deviceOnline || state.offline -> "Adding a plant needs a connection."
-        state.serverUnavailable -> "Adding a plant needs Fytorium to respond. Pull down to try again."
-        else -> "Update Fytorium to add plants."
-    }
-    fun adding(action: () -> Unit): () -> Unit = { if (canAdd) action() else scope.launch { snackbar.showSnackbar(blocked) } }
-    val addingLook = Modifier.semantics { if (!canAdd) { disabled(); stateDescription = blocked } }
+    fun adding(action: () -> Unit): () -> Unit = { if (canAdd) action() else blocked?.let { scope.launch { snackbar.showSnackbar(it) } } }
+    val addingLook = Modifier.semantics { if (!canAdd) { disabled(); blocked?.let { stateDescription = it } } }
     val blockedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     var receiptHeight by remember { mutableIntStateOf(0) }
     ReceiptSnackbar(state.receipt, snackbar, onUndoReceipt, onReceiptDone)
     Scaffold(snackbarHost = { SnackbarHost(snackbar, Modifier.onSizeChanged { receiptHeight = it.height }) }, topBar = {
-        CenterAlignedTopAppBar(title = { Text("Today") }, navigationIcon = {
+        CenterAlignedTopAppBar(title = { Text(if (view == "upcoming") "Upcoming" else "Today") }, navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
         }, actions = {
             if (editor && list != null && !noPlants) IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Default.Tune, contentDescription = "Task view") }
@@ -128,51 +145,62 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                     modifier = Modifier.align(Alignment.TopCenter), state = pullState, isRefreshing = refreshing,
                     containerColor = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }) {
-            Column(Modifier.fillMaxSize().testTag("task-list").verticalScroll(scrollState)
+            Column(Modifier.fillMaxSize().testTag("task-list").steadyScroll(scrollState)
                 .padding(start = 16.dp, end = 16.dp, bottom = 16.dp + padding.calculateBottomPadding()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (view == "today") feedContent()
+                if (view == "today" && shownFeed != null) feedContent(shownFeed)
                 if (!noPlants) ViewToggle(view, onView)
                 if (!noPlants) list?.settings?.let { settings -> ActiveView(settings, editor, state.writable) { saveView(TaskSettings()) } }
                 TodayNotice(state)
                 if (sections.isEmpty()) Column(Modifier.fillMaxWidth().padding(vertical = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Icon(Icons.Outlined.Eco, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
-                    val filter = list?.takeIf { state.plants.isNotEmpty() }?.hidingFilter()
-                    val title = if (view == "upcoming" && state.plants.isNotEmpty() && list != null) "No upcoming " + filter?.let { "$it " }.orEmpty() + "tasks" else presentation.emptyTitle
+                    val filter = list?.takeIf { !noPlants }?.hidingFilter()
+                    val title = if (view == "upcoming" && !noPlants && list != null) "No upcoming " + filter?.let { "$it " }.orEmpty() + "tasks" else presentation.emptyTitle
                     Text(title, style = MaterialTheme.typography.headlineSmall)
                     presentation.emptyHint?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
-                    if (view == "today" && state.plants.isNotEmpty()) presentation.nextTask?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+                    if (view == "today" && !noPlants) presentation.nextTask?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
                     if (filter != null && editor) TextButton(onClick = { list?.let { saveView(it.settings.copy(filter = "all")) } }, enabled = state.writable,
                         modifier = Modifier.heightIn(min = 48.dp)) { Text("Show all") }
-                    if (state.today != null && state.plants.isEmpty() && editor) {
-                        Button(onClick = adding(onAddPlant), modifier = addingLook.heightIn(min = 48.dp), colors = if (canAdd) ButtonDefaults.buttonColors()
-                            else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f), contentColor = blockedColor)) { Text("Add plant") }
+                    if (noPlants && editor) {
+                        Button(onClick = adding(onAddPlant), modifier = addingLook.heightIn(min = 48.dp), colors = ButtonDefaults.buttonColors().let { colors ->
+                            if (canAdd) colors else ButtonDefaults.buttonColors(containerColor = colors.disabledContainerColor, contentColor = colors.disabledContentColor) }) { Text("Add plant") }
                         if (state.member?.role == Role.owner) TextButton(onClick = adding(onImport), modifier = addingLook.heightIn(min = 48.dp),
                             colors = if (canAdd) ButtonDefaults.textButtonColors() else ButtonDefaults.textButtonColors(contentColor = blockedColor)) { Text("Import from Planta") }
                     }
                 }
-                sections.forEach { section ->
+                sections.forEachIndexed { index, section ->
+                    val day = section.day
+                    if (day != null && day != sections.getOrNull(index - 1)?.day) Text(dayLabel(day, list!!.today), style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     Card(Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Text(if (view == "upcoming" && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) dayLabel(section.key, list!!.today) else section.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                        // Lists cached before Upcoming cards carried their day are one card per day, keyed by the date.
+                        val dated = view == "upcoming" && day == null && section.key.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))
+                        Text(if (dated) dayLabel(section.key, list!!.today) else section.label,
+                            style = if (day != null) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp).semantics { heading() })
                         section.tasks.forEach { task ->
-                            key(task.plantId, task.key) { TaskRow(task, state, list!!.today, photos[task.coverPhotoId],
+                            key(task.plantId, task.key) { TaskRow(task, care, list!!.today, photos[task.coverPhotoId],
                                 onAction = { action -> onAction(task, action) },
-                                onOpen = { onOpenTask(task) }, showType = view == "upcoming",
+                                onOpen = { onOpenTask(task) }, showType = dated || list.settings.sort != "task",
+                                showPostponed = view == "upcoming" || list.settings.sort != "task", listed = task.occurrence in listed,
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
-                        if (view == "today" && editor && section.tasks.any { task ->
-                            task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today && task.completedEvent == null
-                        }) {
-                            val handling = BusyKey.Card(section.key) in state.pending
-                            FilledTonalButton(onClick = { onHandleType(section.key) }, enabled = state.writable && !handling,
+                        val sort = list!!.settings.sort
+                        val due = section.tasks.any { task -> task.status == "due" && task.dueOn != null && task.dueOn <= list.today && task.completedEvent == null }
+                        // A handled card keeps the button's place, so the rows below stay under the next tap.
+                        if (view == "today" && editor && sort != "site" && (due || section.tasks.any { it.completedEvent != null })) {
+                            val done = section.tasks.any { it.completedEvent?.kind == "completed" }
+                            val handling = (if (sort == "plant") BusyKey.HandleAll(section.key) else BusyKey.Card(section.key)) in state.pending
+                            FilledTonalButton(onClick = { if (sort == "plant") onHandlePlant(section.key) else onHandleType(section.key) },
+                                enabled = due && state.writable && !handling,
                                 shape = RoundedCornerShape(50), modifier = Modifier.align(Alignment.CenterHorizontally)
                                     .padding(top = 12.dp, bottom = 16.dp).heightIn(min = 48.dp)
-                                    .semantics { contentDescription = "Handle all ${section.label} tasks" }) {
+                                    .semantics { contentDescription = if (due) "Handle all ${section.label} tasks"
+                                        else if (done) "All ${section.label} tasks done" else "No ${section.label} tasks due today" }) {
                                 ButtonProgress(handling)
-                                Text("Handle all tasks")
+                                Text(if (due) "Handle all tasks" else if (done) "All done" else "Nothing due today")
                             }
                         }
                     }
@@ -180,6 +208,19 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
             }
         }
     }
+}
+
+@Composable private fun <T> rememberHeld(live: T, vararg keys: Any?, keep: (shown: T, live: T) -> T): T {
+    val shown = remember(*keys) { mutableStateOf(live) }
+    val next = keep(shown.value, live)
+    SideEffect { shown.value = next }
+    return next
+}
+
+// Clamping the scroll to a shorter list or a taller viewport would move every row, so the list ends in blank space instead.
+private fun Modifier.steadyScroll(state: ScrollState) = verticalScroll(state).layout { measurable, constraints ->
+    val content = measurable.measure(constraints)
+    layout(content.width, maxOf(content.height, state.value + constraints.minHeight)) { content.place(0, 0) }
 }
 
 @Composable internal fun ReceiptSnackbar(receipt: Receipt?, host: SnackbarHostState, onUndo: (Receipt) -> Unit, onDone: (Receipt) -> Unit) {
@@ -260,7 +301,7 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
     }
 }
 
-@Composable private fun ViewSettings(settings: TaskSettings, enabled: Boolean, failure: String?, save: suspend (TaskSettings) -> Boolean) {
+@Composable private fun ViewSettings(settings: TaskSettings, blocked: String?, failure: String?, save: suspend (TaskSettings) -> Boolean) {
     var choice by remember(settings) { mutableStateOf(settings) }
     var saving by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf<Boolean?>(null) }
@@ -275,21 +316,36 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
             if (!ok) choice = previous
         }
     }
-    val active = enabled && !saving
+    val active = blocked == null && !saving
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Task view", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-        Choice("Sort tasks", choice.sort, listOf("task" to "Task type", "plant" to "Plant", "site" to "Site"), active) { pick(choice.copy(sort = it)) }
-        Choice("Filter", choice.filter, listOf("all" to "All", "indoor" to "Indoor", "outdoor" to "Outdoor"), active) { pick(choice.copy(filter = it)) }
+        Segments("Sort tasks", choice.sort, listOf("task" to "Task type", "plant" to "Plant", "site" to "Site"), active) { pick(choice.copy(sort = it)) }
+        Segments("Filter", choice.filter, listOf("all" to "All", "indoor" to "Indoor", "outdoor" to "Outdoor"), active) { pick(choice.copy(filter = it)) }
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = choice.showCompleted, enabled = active,
             role = SemanticsRole.Checkbox, onValueChange = { pick(choice.copy(showCompleted = it)) }), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(choice.showCompleted, onCheckedChange = null, enabled = active)
+            Spacer(Modifier.width(16.dp))
             Text("Show others' completed tasks")
         }
         Box(Modifier.fillMaxWidth().heightIn(min = 24.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
             when {
                 saving -> Text("Saving…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                blocked != null -> Text(blocked, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 saved == true -> Text("Saved", color = MaterialTheme.colorScheme.primary)
                 saved == false -> Text(failure ?: "Could not save. Try again.", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun Segments(label: String, value: String, choices: List<Pair<String, String>>, enabled: Boolean, change: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            choices.forEachIndexed { index, (key, text) ->
+                SegmentedButton(selected = key == value, onClick = { change(key) }, enabled = enabled, icon = {},
+                    shape = SegmentedButtonDefaults.itemShape(index, choices.size), modifier = Modifier.heightIn(min = 48.dp)) { Text(text) }
             }
         }
     }

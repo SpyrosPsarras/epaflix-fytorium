@@ -41,19 +41,23 @@ test('snooze and skip record history, are idempotent and undo restores the exact
   const snoozed = await act('snooze', 'water', key);
   expect(snoozed.status).toBe(200);
   const result = await snoozed.json();
-  expect(result).toMatchObject({ event: { kind: 'snoozed', occurred_on: '2026-05-03' }, task: { dueOn: '2026-05-05', intervalDays: 7, postponed: 'snoozed' } });
+  expect(result).toMatchObject({ event: { kind: 'snoozed', occurred_on: '2026-05-03', postponed_until: '2026-05-05' }, task: { dueOn: '2026-05-05', intervalDays: 7, postponed: 'snoozed' } });
   expect((await (await act('snooze', 'water', key)).json()).event.id).toBe(result.event.id);
   const skipped = await act('skip');
   expect(skipped.status).toBe(200);
   const skip = await skipped.json();
-  expect(skip).toMatchObject({ event: { kind: 'skipped' }, task: { dueOn: '2026-05-10', intervalDays: 7, postponed: 'skipped' } });
-  expect((await (await undo(skip.event.id)).json()).task.dueOn).toBe('2026-05-05');
+  expect(skip).toMatchObject({ event: { kind: 'skipped', postponed_until: '2026-05-10' }, task: { dueOn: '2026-05-10', intervalDays: 7, postponed: 'skipped' } });
+  const undoneSkip = await (await undo(skip.event.id)).json();
+  expect(undoneSkip.task.dueOn).toBe('2026-05-05');
+  expect(undoneSkip.event.postponed_until).toBe('2026-05-10');
   expect((await (await undo(result.event.id)).json()).task).toEqual(before.water);
-  expect(await history()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'snoozed', undone_at: expect.any(String) }), expect.objectContaining({ kind: 'skipped', undone_at: expect.any(String) })]));
+  expect(await history()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'snoozed', postponed_until: '2026-05-05', undone_at: expect.any(String) }),
+    expect.objectContaining({ kind: 'skipped', postponed_until: '2026-05-10', undone_at: expect.any(String) })]));
   // Equal-clock commands are ordered by the server, not by random event UUIDs.
   const second = await (await act('snooze')).json();
   const done = await (await act('complete')).json();
   expect(done.task).toMatchObject({ dueOn: '2026-05-10', postponed: null });
+  expect(done.event.postponed_until).toBeNull();
   expect(done.linked_events).toEqual([]);
   expect((await (await undo(done.event.id)).json()).task.dueOn).toBe('2026-05-05');
   await undo(second.event.id);
@@ -150,8 +154,7 @@ test('Upcoming shares Today\'s household calendar day, groups 14 days, omits ina
   expect(upcomingResponse.status).toBe(200);
   const upcoming = await upcomingResponse.json();
   expect(upcoming.today).toBe('2026-06-06');
-  expect(upcoming.sections[0]).toMatchObject({ key: '2026-06-06', label: '2026-06-06' });
-  expect(upcoming.sections.map((section: { key: string }) => section.key)).toEqual(['2026-06-06', '2026-06-18']);
+  expect(upcoming.sections.map((section: { day: string; label: string }) => [section.day, section.label])).toEqual([['2026-06-06', 'A test outdoor plant'], ['2026-06-18', 'A test outdoor plant']]);
   expect(upcoming.sections[0].tasks).toEqual(today.groups.water);
   expect(upcoming.groups.clean_leaves).toEqual([]);
   expect(upcoming.groups.water.map((row: { plant_id: string }) => row.plant_id)).toEqual([outdoorId]);
@@ -272,7 +275,7 @@ test('Today and Upcoming show completed repotting even when the new pot makes re
   expect(today.groups.repot).toContainEqual(expect.objectContaining({ plant_id: plantId, completed_event: expect.objectContaining({ id: result.event.id }) }));
   const upcoming = await (await request('/api/tasks?view=upcoming')).json();
   expect(upcoming.groups.repot).toEqual([expect.objectContaining({ plant_id: plantId, status: 'not_applicable', completed_event: expect.objectContaining({ id: result.event.id }) })]);
-  expect(upcoming.sections.find((section: { tasks: { completed_event?: { id: string } }[] }) => section.tasks.some(row => row.completed_event?.id === result.event.id)).key)
+  expect(upcoming.sections.find((section: { tasks: { completed_event?: { id: string } }[] }) => section.tasks.some(row => row.completed_event?.id === result.event.id)).day)
     .toBe(result.event.due_on);
   await undo(result.event.id);
   await request('/api/tasks/settings', 'PUT', { sort: 'task', filter: 'all', show_completed: false });
@@ -751,13 +754,14 @@ describe('liquid fertilizing', () => {
     const invite = await (await request('/api/household/invites', 'POST', { role: 'sitter', plant_ids: [id] })).json();
     const sitter = await harness.login('synthetic-batch-count-sitter', {}, invite.link.split('/').at(-1));
     for (const view of ['today', 'upcoming']) {
+      // A sitter lists only their own care, whatever they saved while they were family.
       const list = await (await sitter.request('/api/tasks?view=' + view)).json();
-      const completed = list.groups.fertilize.filter((row: { completed_event?: { batch_id: string } }) => row.completed_event?.batch_id === key);
-      expect(completed).toHaveLength(1);
-      expect(completed[0].completed_event).toMatchObject({ ...receipt, linked_event_id: null });
-      expect(list.groups.water.find((row: { plant_id: string }) => row.plant_id === id).completed_event)
-        .toMatchObject({ ...receipt, linked_event_id: completed[0].completed_event.id });
+      expect((Object.values(list.groups).flat() as { completed_event?: { batch_id: string } }[]).filter(row => row.completed_event?.batch_id === key)).toEqual([]);
       const ownerList = await (await request('/api/tasks?view=' + view)).json();
+      const completed = ownerList.groups.fertilize.filter((row: { plant_id: string; completed_event?: { batch_id: string } }) => row.plant_id === id && row.completed_event?.batch_id === key);
+      expect(completed).toHaveLength(1);
+      expect(ownerList.groups.water.find((row: { plant_id: string }) => row.plant_id === id).completed_event)
+        .toMatchObject({ ...receipt, linked_event_id: completed[0].completed_event.id });
       for (const row of ownerList.groups.fertilize.filter((row: { completed_event?: { batch_id: string } }) => row.completed_event?.batch_id === key)) {
         expect(row.completed_event).toMatchObject({ ...receipt, linked_event_id: null });
       }
@@ -808,14 +812,15 @@ test('a skip after today\'s completion keeps the completion and the skipped occu
   const invite = await (await request('/api/household/invites', 'POST', { role: 'family' })).json();
   const family = await harness.login('synthetic-skip-after-done', {}, invite.link.split('/').at(-1));
   const water = async (member: typeof request, view: string) => (await (await member('/api/tasks?view=' + view)).json()).sections
-    .flatMap((section: { key: string; tasks: { plant_id: string; task_type: string }[] }) => section.tasks
-      .filter(row => row.plant_id === id && row.task_type === 'water').map(row => ({ section: section.key, ...row })));
+    .flatMap((section: { key: string; day?: string; tasks: { plant_id: string; task_type: string }[] }) => section.tasks
+      .filter(row => row.plant_id === id && row.task_type === 'water').map(row => ({ section: section.day ?? section.key, ...row })));
   try {
     const done = await (await request(`/api/plants/${id}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
     const skip = await (await family.request(`/api/plants/${id}/tasks/water/skip`, 'POST', { request_id: randomUUID() })).json();
     expect(skip.task.postponed).toBe('skipped');
     const skipped = { section: skip.task.dueOn, dueOn: skip.task.dueOn, postponed: 'skipped' };
-    expect(await water(family.request, 'upcoming')).toEqual([expect.objectContaining(skipped)]);
+    const ownSkip = { section: skip.event.due_on, completed_event: expect.objectContaining({ id: skip.event.id, kind: 'skipped' }), postponed: null };
+    expect(await water(family.request, 'upcoming')).toEqual([expect.objectContaining(ownSkip), expect.objectContaining(skipped)]);
     const retained = { completed_event: expect.objectContaining({ id: done.event.id }), postponed: null };
     expect(await water(request, 'today')).toEqual([expect.objectContaining({ section: 'water', ...retained })]);
     const upcoming = await water(request, 'upcoming');
@@ -842,8 +847,8 @@ describe('Today and Upcoming list every completion the member made today', () =>
   const joined: Awaited<ReturnType<typeof harness.login>>[] = [];
   type Row = { plant_id: string; task_type: string | null; custom_task_id?: string | null; completed_event?: { id: string } };
   const rows = async (member: typeof request, view: string, ids: string[], type = 'water'): Promise<{ section: string; plant: string; done: string | null }[]> => (await (await member('/api/tasks?view=' + view)).json()).sections
-    .flatMap((section: { key: string; tasks: Row[] }) => section.tasks.filter(row => ids.includes(row.plant_id) && (row.custom_task_id ?? row.task_type) === type)
-      .map(row => ({ section: section.key, plant: row.plant_id, done: row.completed_event?.id ?? null })));
+    .flatMap((section: { key: string; day?: string; tasks: Row[] }) => section.tasks.filter(row => ids.includes(row.plant_id) && (row.custom_task_id ?? row.task_type) === type)
+      .map(row => ({ section: section.day ?? section.key, plant: row.plant_id, done: row.completed_event?.id ?? null })));
   const complete = async (member: typeof request, id: string, type = 'water') => {
     const response = await member(`/api/plants/${id}/tasks/${type}/complete`, 'POST', { request_id: randomUUID() });
     expect(response.status).toBe(200);
@@ -962,6 +967,287 @@ describe('Today and Upcoming list every completion the member made today', () =>
     expect(await rows(sitter.request, 'today', [shared, sharedToo])).toEqual([{ section: 'water', plant: shared, done: null }]);
   });
 
+  const postpone = async (member: typeof request, id: string, action: 'snooze' | 'skip') => {
+    const response = await member(`/api/plants/${id}/tasks/water/${action}`, 'POST', { request_id: randomUUID() });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  type Listed = Row & { postponed: string | null; postponed_until?: string | null; completed_event?: { id: string; kind: string } };
+  const listed = async (member: typeof request, view: string, ids: string[], type = 'water') => (await (await member('/api/tasks?view=' + view)).json()).sections
+    .flatMap((section: { key: string; day?: string; tasks: Listed[] }) => section.tasks.filter(row => ids.includes(row.plant_id) && row.task_type === type)
+      .map(row => ({ section: section.day ?? section.key, plant: row.plant_id, event: row.completed_event?.id ?? null, kind: row.completed_event?.kind ?? null,
+        until: row.postponed_until ?? null, postponed: row.postponed })));
+  type Postponed = { event: { id: string; kind: string }; task: { dueOn: string; postponed: string } };
+  const postponedRow = (plant: string, { event, task }: Postponed, section = 'water') => ({ section, plant, event: event.id, kind: event.kind, until: task.dueOn, postponed: null });
+  const pendingRow = (plant: string, { task }: Postponed) => ({ section: task.dueOn, plant, event: null, kind: null, until: null, postponed: task.postponed });
+  const dueRow = (plant: string) => ({ section: 'water', plant, event: null, kind: null, until: null, postponed: null });
+
+  test('lists your own snoozes and skips of today with Show others\' completed tasks off, others\' only with it on, and drops undone ones', async () => {
+    await start('2026-10-05T09:00:00Z');
+    const snoozed = await plant('Test postponed 1 snoozed');
+    const skipped = await plant('Test postponed 2 skipped');
+    const theirs = await plant('Test postponed 3 theirs');
+    const ids = [snoozed, skipped, theirs];
+    const family = await join('family', 'synthetic-postponed-family');
+    const snooze = await postpone(request, snoozed, 'snooze');
+    const skip = await postpone(request, skipped, 'skip');
+    const other = await postpone(family.request, theirs, 'snooze');
+    expect([snooze.task.dueOn, other.task.dueOn]).toEqual(['2026-10-07', '2026-10-07']);
+    expect(skip.task.dueOn > '2026-10-07').toBe(true);
+    expect(await listed(request, 'today', ids)).toEqual([postponedRow(snoozed, snooze), postponedRow(skipped, skip)]);
+    expect(await listed(family.request, 'today', ids)).toEqual([postponedRow(theirs, other)]);
+    // The postponed occurrence keeps its own row at its new date.
+    expect(await listed(request, 'upcoming', ids)).toEqual([postponedRow(snoozed, snooze, '2026-10-05'), postponedRow(skipped, skip, '2026-10-05'),
+      pendingRow(snoozed, snooze), pendingRow(theirs, other), pendingRow(skipped, skip)]);
+    expect((await request('/api/tasks/settings', 'PUT', on)).status).toBe(200);
+    expect(await listed(request, 'today', ids)).toEqual([postponedRow(snoozed, snooze), postponedRow(skipped, skip), postponedRow(theirs, other)]);
+    expect((await undo(snooze.event.id)).status).toBe(200);
+    expect((await family.request(`/api/care-events/${other.event.id}/undo`, 'POST')).status).toBe(200);
+    expect(await listed(request, 'today', ids)).toEqual([dueRow(snoozed), postponedRow(skipped, skip), dueRow(theirs)]);
+    expect(await listed(family.request, 'today', ids)).toEqual([dueRow(snoozed), dueRow(theirs)]);
+  });
+
+  test('lists a sitter\'s own snoozes and skips on shared plants with the date they set, but not other members\'', async () => {
+    await start('2026-10-12T09:00:00Z');
+    const shared = await plant('Test postponed shared 1');
+    const sharedToo = await plant('Test postponed shared 2');
+    const sitter = await join('sitter', 'synthetic-postponed-sitter', [shared, sharedToo]);
+    const own = await postpone(sitter.request, shared, 'skip');
+    const owners = await postpone(request, sharedToo, 'snooze');
+    const ids = [shared, sharedToo];
+    expect(await listed(sitter.request, 'today', ids)).toEqual([postponedRow(shared, own)]);
+    expect(await listed(sitter.request, 'upcoming', ids)).toEqual([postponedRow(shared, own, '2026-10-12'), pendingRow(sharedToo, owners), pendingRow(shared, own)]);
+    expect(await listed(request, 'today', ids)).toEqual([postponedRow(sharedToo, owners)]);
+    const list = await (await sitter.request('/api/tasks?view=today')).json();
+    expect(list.groups.water.find((row: Row) => row.plant_id === shared).completed_event).toMatchObject({ id: own.event.id, kind: 'skipped', can_undo: true });
+    expect((await sitter.request(`/api/care-events/${own.event.id}/undo`, 'POST')).status).toBe(200);
+    expect(await listed(sitter.request, 'today', ids)).toEqual([dueRow(shared)]);
+  });
+
+  test('a snoozed row keeps the date it set after its postponed occurrence is completed', async () => {
+    await start('2026-10-19T09:00:00Z');
+    const id = await plant('Test postponed then done');
+    const snooze = await postpone(request, id, 'snooze');
+    expect(snooze.task.dueOn).toBe('2026-10-21');
+    expect(await listed(request, 'upcoming', [id])).toEqual([postponedRow(id, snooze, '2026-10-19'), pendingRow(id, snooze)]);
+    const done = await complete(request, id);
+    const completed = (section: string) => ({ section, plant: id, event: done.event.id, kind: 'completed', until: null, postponed: null });
+    expect(await listed(request, 'today', [id])).toEqual([postponedRow(id, snooze), completed('water')]);
+    expect(await listed(request, 'upcoming', [id])).toEqual([postponedRow(id, snooze, '2026-10-19'), completed('2026-10-21')]);
+  });
+
+  const clearStoredDate = async (eventId: string) => {
+    const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+    try { expect((await database.query('UPDATE care_events SET postponed_until = NULL WHERE id = $1', [eventId])).rowCount).toBe(1); }
+    finally { await database.end(); }
+  };
+
+  test('a skipped row keeps the date the skip set after the interval changes, and an older skip without it uses the current interval', async () => {
+    await start('2026-10-19T09:00:00Z');
+    const id = await plant('Test postponed interval change');
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { water: 7 } })).status).toBe(200);
+    const skip = await postpone(request, id, 'skip');
+    expect([skip.task.dueOn, skip.event.postponed_until]).toEqual(['2026-10-26', '2026-10-26']);
+    const skipped = (until: string) => [{ section: 'water', plant: id, event: skip.event.id, kind: 'skipped', until, postponed: null }];
+    expect(await listed(request, 'today', [id])).toEqual(skipped('2026-10-26'));
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { water: 10 } })).status).toBe(200);
+    expect(await listed(request, 'today', [id])).toEqual(skipped('2026-10-26'));
+    expect((await listed(request, 'upcoming', [id])).at(-1)).toEqual({ section: '2026-10-29', plant: id, event: null, kind: null, until: null, postponed: 'skipped' });
+    await clearStoredDate(skip.event.id);
+    expect(await listed(request, 'today', [id])).toEqual(skipped('2026-10-29'));
+  });
+
+  test('a skip of a task that stopped applying keeps its stored date, and an older skip without one has no date', async () => {
+    await start('2026-09-10T09:00:00Z');
+    const id = await plant('Test postponed moved outdoors');
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { clean_leaves: 1 } })).status).toBe(200);
+    await start('2026-09-11T09:00:00Z');
+    const response = await request(`/api/plants/${id}/tasks/clean_leaves/skip`, 'POST', { request_id: randomUUID() });
+    expect(response.status).toBe(200);
+    const skip = await response.json();
+    expect(skip.event.postponed_until).toBe('2026-09-12');
+    const garden = await (await request('/api/sites', 'POST', { name: 'Test postponed garden', location: 'outdoor', light: 'part_sun', humidity: 'normal', draft: false, grow_light: false })).json();
+    const attributes = await (await request('/api/plants/' + id)).json();
+    expect((await request('/api/plants/' + id, 'PUT', { ...attributes, site_id: garden.id })).status).toBe(200);
+    expect((await (await request(`/api/plants/${id}/tasks`)).json()).clean_leaves.status).toBe('not_applicable');
+    const row = (until: string | null) => [{ section: 'clean_leaves', plant: id, event: skip.event.id, kind: 'skipped', until, postponed: null }];
+    expect(await listed(request, 'today', [id], 'clean_leaves')).toEqual(row('2026-09-12'));
+    await clearStoredDate(skip.event.id);
+    expect(await listed(request, 'today', [id], 'clean_leaves')).toEqual(row(null));
+  });
+
+  test('Upcoming holds one card per task type, plant or site within each day', async () => {
+    await start('2026-11-01T09:00:00Z');
+    const fern = await plant('Test cards 1 fern');
+    const ivy = await plant('Test cards 2 ivy');
+    const porch = await (await request('/api/sites', 'POST', { name: 'Test upcoming porch', location: 'indoor', light: 'part_sun', humidity: 'normal', draft: false, grow_light: false })).json();
+    const moss = await addPlant(porch.id, 'Test cards 3 moss');
+    created.push({ id: moss, name: 'Test cards 3 moss' });
+    expect((await request(`/api/plants/${ivy}/care-settings`, 'PUT', { customIntervals: { clean_leaves: 1 } })).status).toBe(200);
+    await start('2026-11-02T09:00:00Z');
+    expect((await postpone(request, fern, 'snooze')).task.dueOn).toBe('2026-11-04');
+    const names = new Map([[fern, 'fern'], [ivy, 'ivy'], [moss, 'moss']]);
+    const cards = async () => {
+      const list = await (await request('/api/tasks?view=upcoming')).json();
+      expect(new Set(list.sections.map((section: { key: string }) => section.key)).size).toBe(list.sections.length);
+      return list.sections.map((section: { day: string; label: string; tasks: Row[] }) => ({ day: section.day, label: section.label,
+        rows: section.tasks.filter(row => names.has(row.plant_id) && ['water', 'clean_leaves'].includes(row.task_type ?? ''))
+          .map(row => names.get(row.plant_id) + ':' + row.task_type) }))
+        .filter((card: { rows: string[] }) => card.rows.length);
+    };
+    expect(await cards()).toEqual([
+      { day: '2026-11-02', label: 'Water', rows: ['fern:water', 'ivy:water', 'moss:water'] },
+      { day: '2026-11-02', label: 'Clean leaves', rows: ['ivy:clean_leaves'] },
+      { day: '2026-11-04', label: 'Water', rows: ['fern:water'] }]);
+    expect((await request('/api/tasks/settings', 'PUT', { ...off, sort: 'plant' })).status).toBe(200);
+    expect(await cards()).toEqual([
+      { day: '2026-11-02', label: 'Test cards 1 fern', rows: ['fern:water'] },
+      { day: '2026-11-02', label: 'Test cards 2 ivy', rows: ['ivy:water', 'ivy:clean_leaves'] },
+      { day: '2026-11-02', label: 'Test cards 3 moss', rows: ['moss:water'] },
+      { day: '2026-11-04', label: 'Test cards 1 fern', rows: ['fern:water'] }]);
+    expect((await request('/api/tasks/settings', 'PUT', { ...off, sort: 'site' })).status).toBe(200);
+    expect(await cards()).toEqual([
+      { day: '2026-11-02', label: 'Test handling room', rows: ['fern:water', 'ivy:water', 'ivy:clean_leaves'] },
+      { day: '2026-11-02', label: 'Test upcoming porch', rows: ['moss:water'] },
+      { day: '2026-11-04', label: 'Test handling room', rows: ['fern:water'] }]);
+    expect((await (await request('/api/tasks?view=today')).json()).sections.filter((section: object) => 'day' in section)).toEqual([]);
+  });
+
+  const occurrence = (plant: string, due_on: string, task_type = 'water') => ({ plant_id: plant, task_type, custom_task_id: null, due_on });
+  const pendingRows = (list: { sections: { tasks: (Row & { dueOn: string })[] }[] }, plant: string) => list.sections.flatMap(section => section.tasks)
+    .filter(row => row.plant_id === plant && row.task_type === 'water' && !row.completed_event).map(row => row.dueOn);
+
+  test('an Undo of a completion, snooze or skip names the pending occurrence it brought back', async () => {
+    await start('2026-12-07T09:00:00Z');
+    const id = await plant('Test restored single');
+    for (const action of ['complete', 'snooze', 'skip']) {
+      const acted = await (await request(`/api/plants/${id}/tasks/water/${action}`, 'POST', { request_id: randomUUID() })).json();
+      expect(acted.event.due_on).toBe('2026-12-07');
+      const body = await (await undo(acted.event.id)).json();
+      expect(body.restored).toEqual([{ event_id: acted.event.id, occurrence: occurrence(id, '2026-12-07') }]);
+      expect(pendingRows(body.today, id)).toEqual(['2026-12-07']);
+    }
+  });
+
+  test('an Undo of liquid fertilizing names the occurrence it brought back for the fertilizing and for its linked water', async () => {
+    await start('2026-06-10T09:00:00Z');
+    const id = await plant('Test restored liquid');
+    const attributes = await (await request('/api/plants/' + id)).json();
+    expect((await request('/api/plants/' + id, 'PUT', { ...attributes, fertilizer_type: 'liquid' })).status).toBe(200);
+    expect((await request(`/api/plants/${id}/care-settings`, 'PUT', { customIntervals: { water: 10, fertilize: 1 } })).status).toBe(200);
+    await complete(request, id);
+    await start('2026-06-11T09:00:00Z');
+    const done = await complete(request, id, 'fertilize');
+    const [water] = done.linked_events;
+    expect(water.due_on).toBe('2026-06-20');
+    const body = await (await undo(done.event.id)).json();
+    expect(body.restored).toHaveLength(2);
+    expect(body.restored).toEqual(expect.arrayContaining([{ event_id: done.event.id, occurrence: occurrence(id, done.event.due_on, 'fertilize') },
+      { event_id: water.id, occurrence: occurrence(id, '2026-06-20') }]));
+    expect(pendingRows(body.upcoming, id)).toEqual(['2026-06-20']);
+  });
+
+  test('an Undo of a card names the occurrence it brought back for each plant in the batch', async () => {
+    await start('2026-12-14T09:00:00Z');
+    const ids = [await plant('Test restored card 1'), await plant('Test restored card 2')];
+    const card = await (await completeType('water')).json();
+    const ours = card.events.filter((event: { plant_id: string }) => ids.includes(event.plant_id));
+    expect(ours).toHaveLength(2);
+    const body = await (await undoBatch(card.batch_id)).json();
+    expect(body.restored).toHaveLength(card.events.length);
+    expect(body.restored).toEqual(expect.arrayContaining(ours.map((event: { id: string; plant_id: string }) => ({ event_id: event.id, occurrence: occurrence(event.plant_id, '2026-12-14') }))));
+  });
+
+  test('an Undo names no occurrence when the pending one was already listed, and names the one a hidden completion by another member leaves listed', async () => {
+    await start('2026-12-21T09:00:00Z');
+    const id = await plant('Test restored beside another member');
+    const family = await join('family', 'synthetic-restored-family');
+    const done = await complete(request, id);
+    const skip = await postpone(family.request, id, 'skip');
+    expect(pendingRows(await (await request('/api/tasks?view=upcoming')).json(), id)).toEqual([skip.task.dueOn]);
+    const undone = await (await undo(done.event.id)).json();
+    expect(undone.restored).toEqual([{ event_id: done.event.id, occurrence: null }]);
+    expect(pendingRows(undone.upcoming, id)).toEqual([skip.task.dueOn]);
+    await complete(family.request, id);
+    const next = await complete(request, id);
+    const body = await (await undo(next.event.id)).json();
+    expect(body.restored).toEqual([{ event_id: next.event.id, occurrence: occurrence(id, next.event.due_on) }]);
+    expect(pendingRows(body.upcoming, id)).toEqual([next.event.due_on]);
+    expect((await request('/api/tasks/settings', 'PUT', on)).status).toBe(200);
+    const shown = await complete(request, id);
+    expect((await (await undo(shown.event.id)).json()).restored).toEqual([{ event_id: shown.event.id, occurrence: null }]);
+  });
+
+  // A second connection holds one care event's row lock until the given number of Undos wait for a lock, then runs meanwhile and lets them go.
+  async function holdingEvent(eventId: string, waiting: number, send: () => void, meanwhile = async () => {}) {
+    const control = new pg.Client({ connectionString: harness.postgres.getConnectionUri() });
+    await control.connect();
+    try {
+      await control.query('BEGIN');
+      await control.query('SELECT id FROM care_events WHERE id = $1 FOR UPDATE', [eventId]);
+      send();
+      let blocked = 0;
+      for (let attempt = 0; attempt < 250 && blocked < waiting; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        await control.query('SELECT pg_stat_clear_snapshot()');
+        blocked = (await control.query(`SELECT count(*)::integer AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND pid <> pg_backend_pid()
+          AND (query LIKE 'UPDATE care_events SET undone_at%' OR query LIKE 'SELECT status, pot_type, pot_size_cm, soil_type FROM plants%')`)).rows[0].n;
+      }
+      expect(blocked).toBe(waiting);
+      await meanwhile();
+    } finally {
+      await control.query('ROLLBACK');
+      await control.end();
+    }
+  }
+
+  test('an Undo names its restored occurrence from one snapshot when an interval changes between its two schedule reads', async () => {
+    await start('2027-01-04T09:00:00Z');
+    const id = await plant('Test restored snapshot');
+    const mist = await (await request('/api/custom-tasks', 'POST', { plant_id: id, name: 'Test snapshot mist', interval_days: 7 })).json();
+    const older = await complete(request, id, mist.id);
+    await start('2027-01-05T09:00:00Z');
+    await complete(request, id, mist.id);
+    await start('2027-01-06T09:00:00Z');
+    // Undoing the older completion leaves the newer one in charge, so no occurrence comes back.
+    let undone: Promise<Response> | undefined;
+    await holdingEvent(older.event.id, 1, () => { undone = undo(older.event.id); }, async () => {
+      expect((await request('/api/custom-tasks/' + mist.id, 'PUT', { name: 'Test snapshot mist', interval_days: 10 })).status).toBe(200);
+    });
+    const response = await undone!;
+    expect(response.status).toBe(200);
+    expect((await response.json()).restored).toEqual([{ event_id: older.event.id, occurrence: null }]);
+  });
+
+  test('two concurrent Undos of one event give one Undo and one refusal, not a server error', async () => {
+    await start('2027-01-11T09:00:00Z');
+    const id = await plant('Test concurrent undo');
+    const done = await complete(request, id);
+    const undos: Promise<Response>[] = [];
+    await holdingEvent(done.event.id, 2, () => { undos.push(undo(done.event.id), undo(done.event.id)); });
+    expect((await Promise.all(undos)).map(response => response.status).sort()).toEqual([200, 409]);
+  });
+
+  test('a family member who saved Show others\' completed tasks and becomes a sitter sees only their own completions, snoozes and skips', async () => {
+    await start('2026-12-28T09:00:00Z');
+    const ids = [await plant('Test former family 1'), await plant('Test former family 2'), await plant('Test former family 3'), await plant('Test former family 4')];
+    const member = await join('family', 'synthetic-former-family');
+    expect((await member.request('/api/tasks/settings', 'PUT', on)).status).toBe(200);
+    const theirs = [await complete(request, ids[0]), await postpone(request, ids[1], 'snooze'), await postpone(request, ids[2], 'skip')];
+    const own = await complete(member.request, ids[3]);
+    const listedEvents = async (view: string) => {
+      const list = await (await member.request('/api/tasks?view=' + view)).json();
+      return { show_completed: list.settings.show_completed, events: list.sections.flatMap((section: { tasks: Row[] }) => section.tasks)
+        .filter((row: Row) => ids.includes(row.plant_id) && row.completed_event).map((row: Row) => row.completed_event!.id).sort() };
+    };
+    for (const view of ['today', 'upcoming']) {
+      expect(await listedEvents(view)).toEqual({ show_completed: true, events: [...theirs, own].map(acted => acted.event.id).sort() });
+    }
+    const memberId = (await (await member.request('/api/me')).json()).member.id;
+    expect((await request('/api/household/members/' + memberId, 'PUT', { role: 'sitter', plant_ids: ids })).status).toBe(200);
+    for (const view of ['today', 'upcoming']) expect(await listedEvents(view)).toEqual({ show_completed: false, events: [own.event.id] });
+  });
+
   async function wateredEarly(name: string) {
     await start('2026-09-01T09:00:00Z');
     const id = await plant(name);
@@ -977,7 +1263,7 @@ describe('Today and Upcoming list every completion the member made today', () =>
     expect(skip.task.dueOn).toBe('2026-09-10');
     const done = await complete(request, id);
     const stays = [{ section: '2026-09-10', plant: id, done: done.event.id }];
-    expect(await rows(request, 'upcoming', [id])).toEqual(stays);
+    expect(await rows(request, 'upcoming', [id])).toEqual([{ section: '2026-09-08', plant: id, done: skip.event.id }, ...stays]);
     expect((await undo(skip.event.id)).status).toBe(200);
     expect(await rows(request, 'upcoming', [id])).toEqual(stays);
     expect(await rows(request, 'today', [id])).toEqual([{ section: 'water', plant: id, done: done.event.id }]);
@@ -1031,6 +1317,28 @@ describe('Today and Upcoming list every completion the member made today', () =>
       expect((await client.query('SELECT id, due_on::text FROM care_events ORDER BY id')).rows).toEqual([{ id: 1, due_on: null }, { id: 2, due_on: '2026-09-08' }]);
       await client.query(down);
       expect((await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'due_on_migration_test' AND table_name = 'care_events'")).rows)
+        .toEqual([{ column_name: 'id' }]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await database.end();
+    }
+  });
+
+  test('the postponed date migration adds an empty column for existing events and rolls back', async () => {
+    const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+    const client = await database.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('CREATE SCHEMA postponed_until_migration_test');
+      await client.query('SET LOCAL search_path TO postponed_until_migration_test, public');
+      await client.query('CREATE TABLE care_events (id integer PRIMARY KEY); INSERT INTO care_events VALUES (1)');
+      const [up, down] = readFileSync('migrations/20261110100000_care_event_postponed_until.sql', 'utf8').split('-- migrate:down');
+      await client.query(up);
+      await client.query("INSERT INTO care_events VALUES (2, '2026-10-26')");
+      expect((await client.query('SELECT id, postponed_until::text FROM care_events ORDER BY id')).rows).toEqual([{ id: 1, postponed_until: null }, { id: 2, postponed_until: '2026-10-26' }]);
+      await client.query(down);
+      expect((await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'postponed_until_migration_test' AND table_name = 'care_events'")).rows)
         .toEqual([{ column_name: 'id' }]);
     } finally {
       await client.query('ROLLBACK');
