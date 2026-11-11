@@ -54,7 +54,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                            onUndoReceipt: (Receipt) -> Unit = {}, onReceiptDone: (Receipt) -> Unit = {},
                            thumbnails: Thumbnails? = null,
                            onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {}, onRetry: () -> Unit = {},
-                           receipts: SnackbarHostState? = null,
+                           receipts: SnackbarHostState? = null, onReceiptGone: () -> Unit = {},
                            deviceOnline: Boolean = true, onOpenTask: (CareTask) -> Unit = {}, scrollState: ScrollState = rememberScrollState(),
                            thumbnailLoader: suspend (String) -> Bitmap? = { id -> withContext(Dispatchers.IO) {
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
@@ -127,11 +127,11 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     }
     val own = remember { SnackbarHostState() }
     val snackbar = receipts ?: own
-    fun explain(message: String) { scope.launch { snackbar.showSnackbar(message) } }
+    fun explain(message: String) { scope.launch { snackbar.showSnackbar(message); onReceiptGone() } }
     fun adding(action: () -> Unit): () -> Unit = { if (canAdd) action() else blocked?.let(::explain) }
     val addingLook = Modifier.semantics { if (!canAdd) { disabled(); blocked?.let { stateDescription = it } } }
     val blockedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-    ReceiptSnackbar(state.receipt, snackbar, onUndoReceipt, onReceiptDone)
+    ReceiptSnackbar(state.receipt, snackbar, onUndoReceipt, onReceiptDone, onReceiptGone)
     Scaffold(snackbarHost = { if (receipts == null) SnackbarHost(own) }, topBar = {
         CenterAlignedTopAppBar(title = { Text(if (view == "upcoming") "Upcoming" else "Today") }, navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
@@ -230,14 +230,16 @@ private fun Modifier.steadyScroll(state: ScrollState) = verticalScroll(state).la
     layout(content.width, maxOf(content.height, state.value + constraints.minHeight)) { content.place(0, 0) }
 }
 
-@Composable internal fun ReceiptSnackbar(receipt: Receipt?, host: SnackbarHostState, onUndo: (Receipt) -> Unit, onDone: (Receipt) -> Unit) {
+@Composable internal fun ReceiptSnackbar(receipt: Receipt?, host: SnackbarHostState, onUndo: (Receipt) -> Unit, onDone: (Receipt) -> Unit, onGone: () -> Unit = {}) {
     val undo by rememberUpdatedState(onUndo)
     val done by rememberUpdatedState(onDone)
+    val gone by rememberUpdatedState(onGone)
     LaunchedEffect(receipt) {
         if (receipt == null) return@LaunchedEffect
         try {
             val result = host.showSnackbar(receipt.text, actionLabel = if (receipt.undo != null) "Undo" else null, withDismissAction = !receipt.short,
                 duration = if (receipt.short) SnackbarDuration.Short else SnackbarDuration.Long)
+            gone()
             if (result == SnackbarResult.ActionPerformed) undo(receipt) else done(receipt)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Leaving the screen ends the receipt, so returning later does not replay an old one.
@@ -332,7 +334,7 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
             role = SemanticsRole.Checkbox, onValueChange = { pick(choice.copy(showCompleted = it)) }), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(choice.showCompleted, onCheckedChange = null, enabled = active)
             Spacer(Modifier.width(16.dp))
-            Text("Show others' completed tasks")
+            Text("Show others' completed tasks", color = if (active) Color.Unspecified else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
         }
         Box(Modifier.fillMaxWidth().heightIn(min = 24.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
             when {

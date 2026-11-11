@@ -105,6 +105,10 @@ From `council-w2-opus-r2.md` (r2-1..r2-8) and `council-w2-sol-r2.md` (W2-sol-4).
 
 - A13h. (a) The receipt, any explanation and its action fit inside the navigation bar's height at 1.0x and 1.3x: text takes at most two lines, ends with "…" if longer, and its full wording is the content description and the TalkBack announcement. (b) For a family member the household-location card reads "Ask the owner to set the household location for frost alerts" and still opens weather settings; the owner's wording stays. (c) A feed error message is cleared when the device goes offline; after reconnecting, a feed error shows only if a feed refresh fails again. (d) Tapping a held row's disabled control explains it: "This task changed elsewhere. Pull to refresh.", with no write.
 
+## Council round 3 amendment (2026-11-11)
+
+- A13i. (a) In a blocked task view sheet, every control and its label dim alike, including "Show others' completed tasks" (W2-opus-r3-1). (b) A tap that lands on the navigation bar within 500 ms after a receipt or explanation leaves it (timeout or swipe) is ignored, so a late tap on the receipt's action never switches tabs; the bar shows its items without a blank frame in between. The pause starts whenever a receipt or explanation finishes by timeout, swipe or its own Undo or Dismiss button, also when another one is queued behind it and appears at once; a receipt replaced because the user took a new action does not start it.
+
 ## Non-goals
 Plant page, add flow, More/settings, navigation model, web UI.
 

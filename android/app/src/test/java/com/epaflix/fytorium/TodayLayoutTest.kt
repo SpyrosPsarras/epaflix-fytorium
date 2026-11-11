@@ -221,7 +221,7 @@ class TodayLayoutTest {
             Receipt("Adding a plant needs Fytorium to respond. Pull down to try again.", short = true))) {
             compose.runOnIdle { care.value = care.value.copy(receipt = receipt) }
             compose.onNodeWithContentDescription(receipt.text).assertExists()
-            val snackbar = bounds(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss))
+            val snackbar = bounds(hasTestTag("receipt"))
             assertTrue("'${receipt.text.take(30)}…' at ${fontScale}x leaves the bar: $snackbar vs $navigation",
                 snackbar.top >= navigation.top - 0.5f && snackbar.bottom <= navigation.bottom + 0.5f)
         }
@@ -243,6 +243,155 @@ class TodayLayoutTest {
             .map { it.boundsInRoot }.filter { it.height > 0f }
         assertTrue(controls.any { it.bottom > snackbar.top - 120f })
         assertEquals("Row controls under the receipt", emptyList<Rect>(), controls.filter { it.overlaps(snackbar) })
+    }
+
+    @Test fun aTapOnTheBarJustAfterAReceiptTimesOutKeepsTheTab() = lateTap(swiped = false)
+    @Test fun aTapOnTheBarJustAfterAReceiptIsSwipedKeepsTheTab() = lateTap(swiped = true)
+    private fun lateTap(swiped: Boolean) {
+        val care = mutableStateOf(state(tasks = rows(2)))
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
+        val more = bounds(hasText("More") and hasClickAction()).center
+        compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 1", event)) }
+        compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
+        if (swiped) compose.onNodeWithText("Watered Fern 1").performTouchInput { swipeRight() } else compose.mainClock.advanceTimeBy(10_000)
+        compose.onNodeWithText("Watered Fern 1").assertDoesNotExist()
+        compose.onRoot().performTouchInput { click(more) }
+        compose.onNodeWithTag("task-list").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onRoot().performTouchInput { click(more) }
+        compose.onNodeWithTag("task-list").assertDoesNotExist()
+        compose.onNode(hasText("More") and !hasClickAction()).assertIsDisplayed()
+    }
+
+    @Test fun aTapOnTheBarWhileANewExplanationFadesInWaitsHalfASecondAfterTheLastOneLeft() {
+        val message = "Changes need a connection."
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(2)).copy(offline = true)) } }
+        val more = bounds(hasText("More") and hasClickAction()).center
+        val control = compose.onNodeWithContentDescription("Mark Water done for Fern 0, Synthetic site")
+        control.performClick()
+        compose.onNodeWithText(message).assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText(message).performTouchInput { swipeRight() }
+        var frames = 0
+        while (compose.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()) {
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue("The explanation stays after $frames frames", ++frames < 30)
+        }
+        // The explanation left about 80 ms before it vanished; the next one arrives near the end of the pause.
+        compose.mainClock.advanceTimeBy(300)
+        control.performClick()
+        frames = 0
+        while (compose.onAllNodesWithText(message).fetchSemanticsNodes().isEmpty()) {
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue("No explanation after $frames frames", ++frames < 30)
+        }
+        compose.mainClock.advanceTimeBy(32)
+        compose.onRoot().performTouchInput { click(more) }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("task-list").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(32)
+        compose.onRoot().performTouchInput { click(more) }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("task-list").assertDoesNotExist()
+        compose.onNodeWithText(message).assertExists()
+    }
+
+    @Test fun aTapOnTheBarJustAfterAnExplanationIsSwipedKeepsTheTabWhileTheQueuedOneFadesIn() = queuedLateTap(swiped = true)
+    @Test fun aTapOnTheBarJustAfterAnExplanationTimesOutKeepsTheTabWhileTheQueuedOneFadesIn() = queuedLateTap(swiped = false)
+    private fun queuedLateTap(swiped: Boolean) {
+        val first = "Changes need a connection."
+        val queued = "Adding a plant needs a connection."
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(2)).copy(offline = true)) } }
+        val more = bounds(hasText("More") and hasClickAction()).center
+        compose.onNodeWithContentDescription("Mark Water done for Fern 0, Synthetic site").performClick()
+        compose.onNodeWithContentDescription("Add plant").performClick()
+        compose.onNodeWithText(first).assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        if (swiped) compose.onNodeWithText(first).performTouchInput { swipeRight() }
+        else { compose.mainClock.advanceTimeBy(3_000); compose.onNodeWithText(queued).assertDoesNotExist() }
+        var frames = 0
+        while (compose.onAllNodesWithText(queued).fetchSemanticsNodes().isEmpty()) {
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue("No queued explanation after $frames frames", ++frames < 100)
+        }
+        compose.mainClock.advanceTimeBy(32)
+        compose.onRoot().performTouchInput { click(more) }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("task-list").assertIsDisplayed()
+        compose.onNodeWithText(queued).assertExists()
+    }
+
+    @Test fun aTapOnATabWhileAReceiptFadesInSwitchesTheTab() = tapWhileFadingIn(replacing = false)
+    @Test fun aTapOnATabWhileAReceiptReplacesAnotherSwitchesTheTab() = tapWhileFadingIn(replacing = true)
+    private fun tapWhileFadingIn(replacing: Boolean) {
+        val care = mutableStateOf(state(tasks = rows(2)))
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
+        val more = bounds(hasText("More") and hasClickAction()).center
+        if (replacing) {
+            compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 0", event)) }
+            compose.onNodeWithText("Watered Fern 0").assertIsDisplayed()
+        }
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { care.value = care.value.copy(receipt = Receipt("Watered Fern 1", event)) }
+        var frames = 0
+        while (compose.onAllNodesWithText("Watered Fern 1").fetchSemanticsNodes().isEmpty()) {
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue("No receipt after $frames frames", ++frames < 30)
+        }
+        compose.mainClock.advanceTimeBy(if (replacing) 180 else 32)
+        compose.onRoot().performTouchInput { click(more) }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithTag("task-list").assertDoesNotExist()
+    }
+
+    @Test fun aTapOnTheBarOnceTheReceiptIsFullyShownHitsTheReceipt() {
+        val care = mutableStateOf(state(tasks = rows(2)))
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
+        val tabs = listOf("Today", "Plants", "Journal", "More").map { bounds(hasText(it) and hasClickAction() and !hasTestTag("view-today")) }
+        compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 1", event)) }
+        compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(100)
+        val undo = bounds(hasText("Undo") and hasClickAction())
+        val overTab = tabs.map { it.intersect(undo) }.firstOrNull { !it.isEmpty }
+        assertNotNull("Undo $undo lies over no tab: $tabs", overTab)
+        compose.onRoot().performTouchInput { click(overTab!!.center) }
+        compose.onNodeWithText("Watered Fern 1").assertDoesNotExist()
+        compose.onNodeWithTag("task-list").assertIsDisplayed()
+    }
+
+    @Test fun theBarShowsItsItemsOrTheReceiptInEveryFrame() {
+        val care = mutableStateOf(state(tasks = rows(2)))
+        var host: android.view.View? = null
+        compose.setContent { host = LocalView.current; FytoriumTheme { AppShell(true, false, careState = care.value) } }
+        val today = bounds(hasText("Today") and hasClickAction() and !hasTestTag("view-today"))
+        val bar = Rect(today.left, today.top, bounds(hasText("More") and hasClickAction()).right, today.bottom)
+        fun blank(): Boolean {
+            val colors = mutableSetOf<Int>()
+            compose.runOnUiThread {
+                val bitmap = android.graphics.Bitmap.createBitmap(host!!.width, host!!.height, android.graphics.Bitmap.Config.ARGB_8888)
+                host!!.draw(android.graphics.Canvas(bitmap))
+                for (x in bar.left.toInt() until bar.right.toInt() step 3) for (y in bar.top.toInt() until bar.bottom.toInt() step 3) colors.add(bitmap.getPixel(x, y))
+                bitmap.recycle()
+            }
+            return colors.size == 1
+        }
+        fun frames(after: String, count: Int) = repeat(count) {
+            compose.mainClock.advanceTimeByFrame()
+            assertFalse("The bar shows neither its items nor the receipt ${it + 1} frames after $after", blank())
+        }
+        assertFalse(blank())
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { care.value = care.value.copy(receipt = Receipt("Watered Fern 1", event)) }
+        frames("the receipt arrived", 20)
+        compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(9_500)
+        frames("the receipt neared its timeout", 30)
+        compose.onNodeWithText("Watered Fern 1").assertDoesNotExist()
+        compose.runOnUiThread { care.value = care.value.copy(receipt = Receipt("Watered Fern 0", event)) }
+        frames("the next receipt arrived", 20)
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).performSemanticsAction(SemanticsActions.Dismiss)
+        frames("the receipt was dismissed", 20)
+        compose.onNodeWithText("Watered Fern 0").assertDoesNotExist()
     }
 
     @Test fun addPlantExplainsItselfWhenTasksAreOfflineServerlessOrOutdated() {
@@ -351,15 +500,15 @@ class TodayLayoutTest {
         assertTrue("Saved sits below the window: ${saved.bottom} > ${window.bottom}", saved.bottom <= window.bottom)
     }
 
-    @Test fun aBlockedTaskViewDimsEverySegmentAlikeAndKeepsTheSelection() {
+    @Test fun aBlockedTaskViewDimsEveryChoiceAndItsLabelAlikeAndKeepsTheSelection() {
         compose.setContent { Themed(dark = true) { TaskScreen(state(TaskSettings(sort = "plant")).copy(offline = true), "today") } }
         compose.onNodeWithContentDescription("Task view").performClick()
         compose.onNodeWithText("Task view needs a connection.").assertIsDisplayed()
         compose.onNode(hasText("Plant") and hasClickAction()).assertIsSelected().assertIsNotEnabled()
-        val colors = listOf("Task type", "Plant", "Site", "All", "Indoor", "Outdoor").associateWith { label ->
+        val colors = listOf("Task type", "Plant", "Site", "All", "Indoor", "Outdoor", "Show others' completed tasks").associateWith { label ->
             compose.onAllNodes(hasText(label) and hasAnyAncestor(hasClickAction()), useUnmergedTree = true).fetchSemanticsNodes().single().textLayout().layoutInput.style.color }
-        assertEquals("Disabled segments differ: $colors", 1, colors.values.distinct().size)
-        assertTrue("Disabled segments look enabled: $colors", colors.values.first().alpha < 0.5f)
+        assertEquals("Disabled choices differ: $colors", 1, colors.values.distinct().size)
+        assertTrue("Disabled choices look enabled: $colors", colors.values.first().alpha < 0.5f)
         compose.mainClock.advanceTimeBy(1_000)
         com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/task-view-sheet-offline-dark.png")
     }

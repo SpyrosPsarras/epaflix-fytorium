@@ -15,6 +15,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,6 +28,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.epaflix.fytorium.feed.*
 import com.epaflix.fytorium.plants.currentTask
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -97,26 +102,44 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     }
     BackHandler(enabled = about) { about = false }
     val receipts = remember { SnackbarHostState() }
+    val receipt = receipts.currentSnackbarData
+    val receiptsOnBar = remember { mutableSetOf<SnackbarData>() }
+    var receiptFadedIn by remember { mutableStateOf<SnackbarData?>(null) }
+    var barPaused by remember { mutableStateOf(false) }
+    var receiptsGone by remember { mutableIntStateOf(0) }
+    LaunchedEffect(receiptsGone) { if (receiptsGone > 0) { barPaused = true; delay(500); barPaused = false } }
     Scaffold(topBar = {
         if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
             TopAppBar(title = { Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) })
         }
     }, bottomBar = {
-        if (loggedIn && !updateRequired) Box {
-            NavigationBar {
+        val tabBar: @Composable (Modifier) -> Unit = { modifier ->
+            NavigationBar(modifier) {
                 listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                     "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
                     NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null },
                         icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
                 }
             }
+        }
+        if (loggedIn && !updateRequired) Box {
+            tabBar(Modifier)
             // Today's receipts take the navigation bar's place, so the list above never changes size or hides a row.
-            if (receipts.currentSnackbarData != null) Surface(Modifier.matchParentSize(), color = NavigationBarDefaults.containerColor) {}
-            SnackbarHost(receipts, Modifier.matchParentSize().windowInsetsPadding(NavigationBarDefaults.windowInsets)
-                .wrapContentHeight(Alignment.CenterVertically, unbounded = true)) { data ->
-                val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { if (it != SwipeToDismissBoxValue.Settled) data.dismiss(); true })
-                SwipeToDismissBox(swipe, backgroundContent = {}) { BarSnackbar(data) }
+            // The cover fades with the receipt, so the bar never shows a blank frame between its items and the receipt.
+            SnackbarHost(receipts, Modifier.matchParentSize()) { data ->
+                DisposableEffect(data) { receiptsOnBar += data; onDispose { receiptsOnBar -= data } }
+                // shortcut: mirrors Material 1.3.2's private snackbar fade timings (150 ms in, after 75 ms out), re-check when Material is upgraded or exposes a fade-finished signal.
+                LaunchedEffect(data) { delay(if (receiptsOnBar.size > 1) 225 else 150); receiptFadedIn = data }
+                Surface(Modifier.fillMaxSize(), color = NavigationBarDefaults.containerColor) {
+                    val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { if (it != SwipeToDismissBoxValue.Settled) data.dismiss(); true })
+                    SwipeToDismissBox(swipe, modifier = Modifier.windowInsetsPadding(NavigationBarDefaults.windowInsets)
+                        .wrapContentHeight(Alignment.CenterVertically, unbounded = true), backgroundContent = {}) { BarSnackbar(data) }
+                }
             }
+            // Until the receipt has faded in, taps go to an invisible copy of the bar, so a tab the user still sees switches.
+            if (receipt != null && receiptFadedIn != receipt) tabBar(Modifier.alpha(0f).clearAndSetSemantics {})
+            // A tap meant for a receipt that has just gone must not switch tabs.
+            if (barPaused) Box(Modifier.matchParentSize().pointerInput(Unit) {})
         }
     }) { padding ->
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
@@ -189,7 +212,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     onUndoReceipt = { controller?.undoReceipt(it) }, onReceiptDone = { controller?.clearReceipt(it) },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
-                    onRetry = { controller?.refresh() }, receipts = receipts,
+                    onRetry = { controller?.refresh() }, receipts = receipts, onReceiptGone = { receiptsGone++ },
                     feed = feedState, feedContent = { shown ->
                         HomeFeed(shown, careState.today?.today, sites = careState.plants.associate { it.id to it.siteName },
                             offline = shown.offline || careState.offline, connectionNotice = !careState.offline && !careState.serverUnavailable,
@@ -249,7 +272,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
 // Material's snackbar with two lines at most and no vertical margin, so it fits the navigation bar at 1.3x text; TalkBack reads it whole.
 @Composable private fun BarSnackbar(data: SnackbarData) {
     val visuals = data.visuals
-    Snackbar(Modifier.padding(horizontal = 12.dp),
+    Snackbar(Modifier.padding(horizontal = 12.dp).testTag("receipt"),
         action = visuals.actionLabel?.let { label -> @Composable { TextButton(onClick = data::performAction,
             colors = ButtonDefaults.textButtonColors(contentColor = SnackbarDefaults.actionColor)) { Text(label) } } },
         dismissAction = (@Composable { IconButton(onClick = data::dismiss) { Icon(Icons.Default.Close, contentDescription = "Dismiss") } }).takeIf { visuals.withDismissAction }) {
