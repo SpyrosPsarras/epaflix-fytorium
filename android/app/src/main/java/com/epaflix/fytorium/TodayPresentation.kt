@@ -19,7 +19,7 @@ internal fun TaskList.keepingLayoutOf(shown: TaskList?, transitions: Map<String,
     val same = shown.sections.map { section -> section.tasks.map { left.remove(it.occurrence) } }
     fun followed(occurrence: String) = generateSequence(transitions[occurrence]) { transitions[it] }.take(transitions.size).firstNotNullOfOrNull { left.remove(it) }
     return copy(sections = shown.sections.zip(same) { section, rows -> section.copy(tasks = section.tasks.zip(rows) { held, row ->
-        (row ?: followed(held.occurrence))?.copy(plantName = held.plantName, siteName = held.siteName) ?: held
+        (row ?: followed(held.occurrence))?.copy(plantName = held.plantName, siteName = held.siteName, customTaskName = held.customTaskName) ?: held
     }) })
 }
 

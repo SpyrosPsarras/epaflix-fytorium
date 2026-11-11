@@ -51,8 +51,10 @@ class FeedRepositoryTest {
     @Test fun aSuccessfulRefreshClearsTheLastFailureButKeepsASavesConfirmation() = withFeed { feed, server, online ->
         load(feed, server)
         online(false); feed.refresh(feed.state.value.member)
-        assertEquals("Could not reach Fytorium. Retry uses the same request.", feed.state.value.message)
+        assertTrue(feed.state.value.offline)
+        assertNull("A read that never left the device leaves no failure behind", feed.state.value.message)
         online(true); feed.connectivityChanged(true)
+        assertNull("A reconnect showed a failure before any request failed", feed.state.value.message)
         load(feed, server)
         assertNull("A reconnect's refresh left the failure on screen", feed.state.value.message)
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready","message":"Synthetic refusal"}"""))
@@ -63,6 +65,19 @@ class FeedRepositoryTest {
         server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
         assertTrue(feed.saveSettings(feed.state.value.settings!!))
         assertEquals("Feed settings saved.", feed.state.value.message)
+    }
+    @Test fun aFailureShownBeforeADisconnectDoesNotReturnAfterTheReconnect() = withFeed { feed, server, online ->
+        load(feed, server)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready","message":"Synthetic refusal"}"""))
+        assertFalse(feed.water())
+        assertEquals("Rain watering is not ready. Try again in a moment.", feed.state.value.message)
+        online(false); feed.connectivityChanged(false)
+        assertNull("Going offline kept the failure", feed.state.value.message)
+        online(true); feed.connectivityChanged(true)
+        assertNull("The old failure came back with the connection", feed.state.value.message)
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"message":"Synthetic feed failure"}"""))
+        feed.refresh(feed.state.value.member)
+        assertEquals("Synthetic feed failure", feed.state.value.message)
     }
     @Test fun backgroundReadKeepsWritesEnabled() = withFeed { feed, server, _ ->
         load(feed, server)

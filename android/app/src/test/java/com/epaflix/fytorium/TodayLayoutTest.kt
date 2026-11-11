@@ -178,23 +178,53 @@ class TodayLayoutTest {
         }
     }
 
-    @Test fun theReceiptSitsAboveTheNavigationBarAndTheListGrowsByItsHeight() {
-        val receipt = Receipt("Watered Fern 7", parseEvent(JSONObject(eventFixture)))
-        compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(8)).copy(receipt = receipt)) } }
-        compose.onNodeWithText("Watered Fern 7").assertIsDisplayed()
+    @Test fun theReceiptCoversTheNavigationBarUntilSwipedAndTheListKeepsItsSize() {
+        val care = mutableStateOf(state(tasks = rows(8)))
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
         compose.onNodeWithTag("task-list").performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 100_000f) }
+        val list = bounds(hasTestTag("task-list"))
+        val rows = rowTops()
+        compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 7", event)) }
+        compose.onNodeWithText("Watered Fern 7").assertIsDisplayed()
         val navigation = bounds(hasText("Today") and hasClickAction() and !hasTestTag("view-today"))
         val snackbar = bounds(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss))
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
-        val last = bounds(hasTestTag("task:plant-7:water"))
-        assertTrue("The receipt sits directly above the navigation bar: ${snackbar.bottom} vs ${navigation.top}",
-            snackbar.bottom <= navigation.top + 1f && navigation.top - snackbar.bottom <= 8f)
+        assertTrue("The receipt sits over the navigation bar: $snackbar vs $navigation", snackbar.overlaps(navigation) && snackbar.bottom <= root.bottom)
+        assertTrue("The receipt covers no part of the list: ${snackbar.top} < ${list.bottom}", snackbar.top >= list.bottom - 0.5f)
         assertEquals("The receipt spans the width minus its margins", root.width, snackbar.width, 1f)
-        assertTrue("The last row clears the receipt: ${last.bottom} > ${snackbar.top}", last.bottom <= snackbar.top)
-        val handleAll = bounds(hasContentDescription("Handle all Water tasks"))
-        assertTrue("The card's last control clears the receipt: ${handleAll.bottom} > ${snackbar.top}", handleAll.bottom <= snackbar.top)
-        assertTrue("The list grows by the receipt only: ${snackbar.top - handleAll.bottom}", snackbar.top - handleAll.bottom <= 40f)
+        assertEquals("The list keeps its size while a receipt shows", list, bounds(hasTestTag("task-list")))
+        assertEquals("A row moved when the receipt appeared", rows, rowTops())
+        compose.onNodeWithContentDescription("Handle all Water tasks").assertIsDisplayed()
         compose.onNodeWithContentDescription("Mark Water done for Fern 7, Synthetic site").assertIsDisplayed()
+        compose.onRoot().captureRoboImage("src/test/screenshots/today-receipt-light.png")
+        val plants = bounds(hasText("Plants") and hasClickAction())
+        compose.onRoot().performTouchInput { click(Offset(plants.center.x, snackbar.top + 2f)) }
+        compose.onNodeWithText("Watered Fern 7").assertIsDisplayed()
+        compose.onNodeWithTag("task-list").assertIsDisplayed()
+        compose.onNodeWithText("Watered Fern 7").performTouchInput { swipeRight() }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithText("Watered Fern 7").assertDoesNotExist()
+        assertEquals("A row moved when the receipt went", rows, rowTops())
+    }
+
+    @Test fun theLongestReceiptsAndExplanationsFitTheNavigationBar() = receiptsFitTheBar(1f)
+    @Test fun theLongestReceiptsAndExplanationsFitTheNavigationBarAtLargeText() = receiptsFitTheBar(1.3f)
+    private fun receiptsFitTheBar(fontScale: Float) {
+        val name = "Synthetic variegated Swiss cheese plant from the far corner of the greenhouse ".repeat(3).take(200).trim()
+        val custom = "Synthetic custom task named as long as the server allows it".take(60)
+        val care = mutableStateOf(state(tasks = rows(2)))
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+            FytoriumTheme { AppShell(true, false, careState = care.value) } } }
+        val navigation = bounds(hasText("Today") and hasClickAction() and !hasTestTag("view-today"))
+        for (receipt in listOf(Receipt(doneText("remove_dead", null, name), event), Receipt(doneText(null, custom, name), event),
+            Receipt(undoneText(event.copy(taskType = "remove_dead"), name, watered = true), short = true),
+            Receipt("Adding a plant needs Fytorium to respond. Pull down to try again.", short = true))) {
+            compose.runOnIdle { care.value = care.value.copy(receipt = receipt) }
+            compose.onNodeWithContentDescription(receipt.text).assertExists()
+            val snackbar = bounds(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss))
+            assertTrue("'${receipt.text.take(30)}…' at ${fontScale}x leaves the bar: $snackbar vs $navigation",
+                snackbar.top >= navigation.top - 0.5f && snackbar.bottom <= navigation.bottom + 0.5f)
+        }
     }
 
     @Test fun aReceiptAppearingMidListCoversNoRowControlInToday() = receiptMidList("today")
@@ -310,6 +340,100 @@ class TodayLayoutTest {
         compose.onNodeWithText("Outdoor").assertIsNotSelected()
         compose.onNodeWithText("Saved").assertDoesNotExist()
         compose.onNodeWithText("Show others' completed tasks").assertIsDisplayed()
+    }
+
+    @Test @Config(qualifiers = "w360dp-h640dp-mdpi") fun theTaskViewSheetOpensWholeSoItsStatusLineIsInView() {
+        compose.setContent { Themed { TaskScreen(state(), "today", onSettings = { true }) } }
+        compose.onNodeWithContentDescription("Task view").performClick()
+        compose.onNodeWithText("Plant").performClick()
+        val saved = compose.onNodeWithText("Saved").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val window = compose.onNode(isRoot() and hasAnyDescendant(hasText("Saved"))).fetchSemanticsNode().boundsInRoot
+        assertTrue("Saved sits below the window: ${saved.bottom} > ${window.bottom}", saved.bottom <= window.bottom)
+    }
+
+    @Test fun aBlockedTaskViewDimsEverySegmentAlikeAndKeepsTheSelection() {
+        compose.setContent { Themed(dark = true) { TaskScreen(state(TaskSettings(sort = "plant")).copy(offline = true), "today") } }
+        compose.onNodeWithContentDescription("Task view").performClick()
+        compose.onNodeWithText("Task view needs a connection.").assertIsDisplayed()
+        compose.onNode(hasText("Plant") and hasClickAction()).assertIsSelected().assertIsNotEnabled()
+        val colors = listOf("Task type", "Plant", "Site", "All", "Indoor", "Outdoor").associateWith { label ->
+            compose.onAllNodes(hasText(label) and hasAnyAncestor(hasClickAction()), useUnmergedTree = true).fetchSemanticsNodes().single().textLayout().layoutInput.style.color }
+        assertEquals("Disabled segments differ: $colors", 1, colors.values.distinct().size)
+        assertTrue("Disabled segments look enabled: $colors", colors.values.first().alpha < 0.5f)
+        compose.mainClock.advanceTimeBy(1_000)
+        com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/task-view-sheet-offline-dark.png")
+    }
+
+    @Test fun theTaskViewsBlockedMessageAsksFytoriumAgainAndClearsOnceWritesWork() {
+        val current = mutableStateOf(state().copy(serverUnavailable = true))
+        var retries = 0
+        compose.setContent { Themed { TaskScreen(current.value, "today", onRetry = { retries++ }) } }
+        compose.onNodeWithContentDescription("Task view").performClick()
+        compose.onNodeWithText("Task view needs Fytorium to respond.").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(6_000)
+        compose.runOnIdle { assertTrue("The sheet never asked Fytorium again", retries > 0) }
+        compose.runOnIdle { current.value = state() }
+        compose.onNodeWithText("Task view needs Fytorium to respond.").assertDoesNotExist()
+        compose.onNode(hasText("Plant") and hasClickAction()).assertIsEnabled()
+        val settled = retries
+        compose.mainClock.advanceTimeBy(20_000)
+        compose.runOnIdle { assertEquals("Retries go on once writes work", settled, retries) }
+    }
+
+    @Test fun aRowWithAnEmptySubtitleCentresItsNameOnThePhoto() = nameCentred(1f)
+    @Test fun aRowWithAnEmptySubtitleCentresItsNameOnThePhotoAtLargeText() = nameCentred(1.3f)
+    private fun nameCentred(fontScale: Float) {
+        val names = listOf("Spider Plant", "Variegated Monstera Fern 1")
+        val tasks = names.mapIndexed { index, name -> row.copy(plantId = "plant-$index", plantName = name, siteName = "") }
+        val care = mutableStateOf(state(role = Role.sitter, tasks = tasks))
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) { Themed { TaskScreen(care.value, "today") } } }
+        val photo = SemanticsMatcher("photo") { it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("thumbnail:") == true }
+        fun offsets() = names.mapIndexed { index, name ->
+            val text = compose.onNode(hasText(name) and inRow("plant-$index"), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val avatar = compose.onNode(photo and inRow("plant-$index"), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            name to text.center.y - avatar.center.y
+        }
+        assertEquals(2, compose.onNode(hasText(names[1]) and inRow("plant-1"), useUnmergedTree = true).fetchSemanticsNode().textLayout().lineCount)
+        val off = offsets().filter { kotlin.math.abs(it.second) > 1f }
+        assertEquals("Names off the photo's centre at ${fontScale}x text", emptyList<Pair<String, Float>>(), off)
+        val before = rowBounds()
+        compose.runOnIdle { care.value = care.value.written(state(role = Role.sitter, tasks = listOf(tasks[0], tasks[1].postponed("snoozed", "2030-06-04")))) }
+        compose.onNode(hasContentDescription("Snoozed until Tuesday 4 June") and inRow("plant-1"), useUnmergedTree = true).assertIsDisplayed()
+        assertEquals("A row changed when its label appeared at ${fontScale}x text", before, rowBounds())
+    }
+
+    @Test fun aDisabledRowControlExplainsWhyOnTap() {
+        val (pending, completed, snoozed) = rows(3)
+        val tasks = listOf(pending, done(completed), snoozed.postponed("snoozed", "2030-06-04"))
+        val current = mutableStateOf(state(tasks = tasks))
+        val acted = mutableListOf<String>()
+        compose.setContent { Themed { TaskScreen(current.value, "today", onAction = { task, action -> acted += "${task.plantName}:$action" }) } }
+        for ((blocked, message) in listOf(state(tasks = tasks).copy(offline = true) to "Changes need a connection.",
+            state(tasks = tasks).copy(serverUnavailable = true) to "Changes need Fytorium to respond.",
+            state(tasks = tasks).copy(updateRequired = true) to "Update Fytorium to make changes.")) {
+            compose.runOnIdle { current.value = blocked }
+            for (control in listOf("Mark Water done for Fern 0, Synthetic site", "Snooze 2 days", "Water done for Fern 1, Synthetic site",
+                "Undo watering snooze for Fern 2, Synthetic site")) {
+                compose.onNodeWithContentDescription(control).assertIsNotEnabled()
+                    .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, message)).performClick()
+                compose.onNodeWithText(message).assertIsDisplayed()
+                compose.mainClock.advanceTimeBy(10_000)
+                compose.onNodeWithText(message).assertDoesNotExist()
+            }
+        }
+        compose.runOnIdle { assertEquals(emptyList<String>(), acted) }
+    }
+
+    @Test fun aHeldRowsDisabledControlSaysItChangedElsewhere() {
+        val (kept, removed) = rows(2)
+        val current = mutableStateOf(state(tasks = listOf(kept, removed)))
+        val acted = mutableListOf<String>()
+        compose.setContent { Themed { TaskScreen(current.value, "today", onAction = { task, action -> acted += "${task.plantName}:$action" }) } }
+        compose.runOnIdle { current.value = state(tasks = listOf(kept)) }
+        compose.onNodeWithContentDescription("Mark Water done for Fern 1, Synthetic site").assertIsNotEnabled()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "This task changed elsewhere. Pull to refresh.")).performClick()
+        compose.onNodeWithText("This task changed elsewhere. Pull to refresh.").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(emptyList<String>(), acted) }
     }
 
     @Test fun aFilteredEmptyDayNamesTheFilterAndOffersShowAll() {
@@ -541,7 +665,7 @@ class TodayLayoutTest {
         assertEquals("Rows moved when the receipt appeared", before, rowTops())
         if (endOfList) scrollList(100_000f)
         val shown = rowTops()
-        if (endOfList) assertNotEquals("The receipt adds its height to the end of the list", before, shown)
+        assertEquals("The receipt adds nothing to the end of the list", before, shown)
         compose.mainClock.advanceTimeBy(11_000)
         compose.onNodeWithText("Watered Fern 3").assertDoesNotExist()
         compose.waitForIdle()
@@ -628,7 +752,16 @@ class TodayLayoutTest {
         fun headings() = compose.onAllNodes(isHeading()).fetchSemanticsNodes().map { it.config[SemanticsProperties.Text].joinToString() }
         assertEquals(listOf("Spider Plant", "Swiss Cheese Plant"), headings())
         compose.onRoot().captureRoboImage("src/test/screenshots/today-plant-sort-light.png")
-        compose.onNode(hasText("Inspect soil · Bathroom") and hasAnyAncestor(hasTestTag("task:spider:${soil.key}")), useUnmergedTree = true).assertExists()
+        for (name in listOf("Spider Plant", "Swiss Cheese Plant")) compose.onAllNodes(hasText(name), useUnmergedTree = true).assertCountEquals(1)
+        for ((task, key) in listOf("Water" to "water", "Inspect soil" to soil.key)) {
+            compose.onNode(hasText(task) and hasAnyAncestor(hasTestTag("task:spider:$key")), useUnmergedTree = true).assertExists()
+            compose.onNode(hasText("Bathroom") and hasAnyAncestor(hasTestTag("task:spider:$key")), useUnmergedTree = true).assertExists()
+        }
+        val heading = bounds(hasText("Swiss Cheese Plant") and isHeading())
+        val only = bounds(hasTestTag("task:cheese:water"))
+        val button = bounds(hasContentDescription("Handle all Swiss Cheese Plant tasks"))
+        assertTrue("A one-task card is one row plus its heading and button: ${button.bottom - heading.top}",
+            button.bottom - heading.top <= heading.height + 16f + only.height + 12f + button.height + 1f)
         compose.onNodeWithContentDescription("Handle all Spider Plant tasks").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(listOf("spider"), plants); assertTrue(types.isEmpty()) }
         compose.runOnIdle { current.value = current.value.copy(pending = setOf(BusyKey.HandleAll("spider"))) }
@@ -639,6 +772,9 @@ class TodayLayoutTest {
         compose.runOnIdle { current.value = current.value.copy(today = bySite, pending = emptySet()) }
         assertEquals(listOf("Bathroom", "Office"), headings())
         compose.onNode(hasContentDescription("Handle all", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("Spider Plant") and hasAnyAncestor(hasTestTag("task:spider:${soil.key}")), useUnmergedTree = true).assertExists()
+        compose.onNode(hasText("Inspect soil") and hasAnyAncestor(hasTestTag("task:spider:${soil.key}")), useUnmergedTree = true).assertExists()
+        for (site in listOf("Bathroom", "Office")) compose.onAllNodes(hasText(site, substring = true), useUnmergedTree = true).assertCountEquals(1)
     }
 
     @Test fun aRowKeepsItsNameColumnInEveryState() = nameColumnStays(1f)
@@ -688,7 +824,9 @@ class TodayLayoutTest {
         compose.setContent { Themed { TaskScreen(current.value, "upcoming") } }
         fun headings() = compose.onAllNodes(isHeading()).fetchSemanticsNodes().map { it.config[SemanticsProperties.Text].joinToString() }
         assertEquals(listOf("Today", "Spider Plant", "Swiss Cheese Plant", "Tomorrow", "Spider Plant"), headings())
-        compose.onNode(hasText("Water · Synthetic site") and hasAnyAncestor(hasTestTag("task:cheese:water")), useUnmergedTree = true).assertExists()
+        compose.onAllNodes(hasText("Swiss Cheese Plant"), useUnmergedTree = true).assertCountEquals(1)
+        compose.onNode(hasText("Water") and hasAnyAncestor(hasTestTag("task:cheese:water")), useUnmergedTree = true).assertExists()
+        compose.onNode(hasText("Synthetic site") and hasAnyAncestor(hasTestTag("task:cheese:water")), useUnmergedTree = true).assertExists()
         compose.onNode(hasText("Snoozed") and hasAnyAncestor(hasTestTag("task:spider:water")), useUnmergedTree = true).assertExists()
         compose.onRoot().captureRoboImage("src/test/screenshots/upcoming-plant-sort-light.png")
         val byType = byPlant.copy(settings = TaskSettings(), sections = listOf(
@@ -1058,6 +1196,25 @@ class TodayLayoutTest {
         screen.reach(Moment.Pull)
         assertEquals(listOf("Greenhouse"), headings())
         compose.onNodeWithContentDescription("Mark Water done for Fern 1, Greenhouse").assertIsEnabled()
+    }
+
+    @Test fun aBackgroundRenameOfACustomTaskWaitsForAMomentUnderPlantSort() = customTaskRenameWaits(1f)
+    @Test fun aBackgroundRenameOfACustomTaskWaitsForAMomentUnderPlantSortAtLargeText() = customTaskRenameWaits(1.3f)
+    private fun customTaskRenameWaits(fontScale: Float) {
+        val long = "Check every leaf and stem for signs of pests and disease"
+        val (fern, palm) = rows(2)
+        val check = fern.copy(taskType = null, customTaskId = "check", customTaskName = "Check")
+        fun byPlant(name: String) = state().copy(today = template.copy(settings = TaskSettings(sort = "plant"), sections = listOf(
+            TaskSection("plant-0", "Fern 0", listOf(check.copy(customTaskName = name), fern)), TaskSection("plant-1", "Fern 1", listOf(palm)))))
+        val screen = screen(byPlant("Check"), fontScale = fontScale)
+        val before = rowBounds()
+        compose.runOnIdle { screen.care.value = byPlant(long) }
+        assertEquals("A row moved or changed height with the rename at ${fontScale}x text", before, rowBounds())
+        compose.onNode(hasText("Check") and inRow("plant-0", "check"), useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasText(long), useUnmergedTree = true).assertDoesNotExist()
+        screen.reach(Moment.Pull)
+        assertEquals(2, compose.onNode(hasText(long) and inRow("plant-0", "check"), useUnmergedTree = true).fetchSemanticsNode().textLayout().lineCount)
+        assertNotEquals("The rename never applied at ${fontScale}x text", before, rowBounds())
     }
 
     @Test fun aBackgroundChangeOfAHeldRowsOccurrenceLeavesItInPlaceWithoutControlsUntilAMoment() {

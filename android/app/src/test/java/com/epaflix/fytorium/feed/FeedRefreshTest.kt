@@ -131,6 +131,31 @@ class FeedRefreshTest {
             assertFalse(feed.state.value.refreshing)
         } finally { releaseFeed.countDown(); controller.close(); server.shutdown(); db.close() }
     }
+    @Test fun aColdStartHasTheCachedListAndStripBeforeTheFirstFrameAndRestoresThemOnce() {
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() { override fun dispatch(request: RecordedRequest) = MockResponse().setResponseCode(503) }
+        server.start()
+        val context = RuntimeEnvironment.getApplication()
+        val upcomingReads = java.util.concurrent.atomic.AtomicInteger()
+        val db = Room.inMemoryDatabaseBuilder(context, CareDatabase::class.java).allowMainThreadQueries()
+            .setQueryCallback({ sql, args -> if (sql.startsWith("SELECT") && "upcoming" in args) upcomingReads.incrementAndGet() }, { it.run() }).build()
+        val cache = CareCache(db).apply {
+            bind("""{"member":{"id":"member-one","role":"owner"}}""")
+            save("member-one", mapOf("today" to taskListFixture("today"), "upcoming" to taskListFixture("upcoming"), "plants" to "[]",
+                "feed" to org.json.JSONObject().put("feed", org.json.JSONObject(feedFixture)).put("weather", org.json.JSONObject(weatherFixture)).toString()), 1L)
+        }
+        val store = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
+        val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
+        val repository = Repository(api, cache, { true })
+        val feed = FeedRepository(api, { true }, cache = cache)
+        val controller = CareController(context, store, repository, api, feed)
+        try {
+            assertNotNull("The cached list arrived after the first frame", repository.state.value.today)
+            assertTrue("The cached strip arrived after the first frame", feed.state.value.loaded)
+            assertNotNull("The cold start never refreshed", server.takeRequest(10, TimeUnit.SECONDS))
+            assertEquals("A cold start restores the cached list once and its refresh reads it once", 2, upcomingReads.get())
+        } finally { controller.close(); server.shutdown(); db.close() }
+    }
     @Test fun onlyAPullShowsTheRefreshSpinner() {
         val server = MockWebServer()
         server.start()

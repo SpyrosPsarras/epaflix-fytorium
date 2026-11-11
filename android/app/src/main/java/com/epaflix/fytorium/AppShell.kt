@@ -10,9 +10,14 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -91,16 +96,26 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired && careState != null && homeFeedVisible(tab, taskView, feedSettings)) feed?.poll(lifecycle)
     }
     BackHandler(enabled = about) { about = false }
+    val receipts = remember { SnackbarHostState() }
     Scaffold(topBar = {
         if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
             TopAppBar(title = { Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) })
         }
     }, bottomBar = {
-        if (loggedIn && !updateRequired) NavigationBar {
-            listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
-                "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null },
-                    icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
+        if (loggedIn && !updateRequired) Box {
+            NavigationBar {
+                listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
+                    "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
+                    NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null },
+                        icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
+                }
+            }
+            // Today's receipts take the navigation bar's place, so the list above never changes size or hides a row.
+            if (receipts.currentSnackbarData != null) Surface(Modifier.matchParentSize(), color = NavigationBarDefaults.containerColor) {}
+            SnackbarHost(receipts, Modifier.matchParentSize().windowInsetsPadding(NavigationBarDefaults.windowInsets)
+                .wrapContentHeight(Alignment.CenterVertically, unbounded = true)) { data ->
+                val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { if (it != SwipeToDismissBoxValue.Settled) data.dismiss(); true })
+                SwipeToDismissBox(swipe, backgroundContent = {}) { BarSnackbar(data) }
             }
         }
     }) { padding ->
@@ -174,8 +189,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     onUndoReceipt = { controller?.undoReceipt(it) }, onReceiptDone = { controller?.clearReceipt(it) },
                     onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
                     onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
+                    onRetry = { controller?.refresh() }, receipts = receipts,
                     feed = feedState, feedContent = { shown ->
-                        HomeFeed(shown, careState.today?.today,
+                        HomeFeed(shown, careState.today?.today, sites = careState.plants.associate { it.id to it.siteName },
                             offline = shown.offline || careState.offline, connectionNotice = !careState.offline && !careState.serverUnavailable,
                             onOpen = { href -> if (href.startsWith("/plants/")) { feedPlant = href.removePrefix("/plants/"); tab = "Plants" } else openFeedSettings() },
                             onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.rainWatered(feed.state.value.weather?.lastBatchId) } },
@@ -227,5 +243,16 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             message?.let { Text(it) }
             if (busy) Text("Please wait…")
         }
+    }
+}
+
+// Material's snackbar with two lines at most and no vertical margin, so it fits the navigation bar at 1.3x text; TalkBack reads it whole.
+@Composable private fun BarSnackbar(data: SnackbarData) {
+    val visuals = data.visuals
+    Snackbar(Modifier.padding(horizontal = 12.dp),
+        action = visuals.actionLabel?.let { label -> @Composable { TextButton(onClick = data::performAction,
+            colors = ButtonDefaults.textButtonColors(contentColor = SnackbarDefaults.actionColor)) { Text(label) } } },
+        dismissAction = (@Composable { IconButton(onClick = data::dismiss) { Icon(Icons.Default.Close, contentDescription = "Dismiss") } }).takeIf { visuals.withDismissAction }) {
+        Text(visuals.message, Modifier.semantics { contentDescription = visuals.message }, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

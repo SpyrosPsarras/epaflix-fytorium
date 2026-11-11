@@ -16,7 +16,8 @@ import org.json.JSONObject
 
 val feedLabels = linkedMapOf("late_tasks" to "Late tasks", "current_weather" to "Current weather",
     "weather_alerts" to "Weather alerts", "plant_warnings" to "Plant warnings")
-data class FeedWarning(val kind: String, val missing: List<String>, val reason: String, val details: List<String>, val technical: List<String>)
+data class FeedWarning(val kind: String, val missing: List<String>, val reason: String, val details: List<String>, val technical: List<String>,
+                       val inputTechnical: Map<String, List<String>> = emptyMap())
 data class FeedCard(val id: String, val kind: String, val href: String, val text: String, val why: List<String>,
                     val rain: Boolean, val warnings: List<FeedWarning>, val startsOn: String?, val frost: Boolean,
                     val plant: String? = null, val technical: List<String> = emptyList()) {
@@ -36,20 +37,35 @@ private fun phrase(items: List<String>) = if (items.size == 1) items.single() el
 // A fact is a warning kind, or one missing input of a missing_info warning, by its server key. Only titles put them into words.
 private fun FeedWarning.facts() = if (kind == "missing_info") missing.ifEmpty { listOf(kind) } else listOf(kind)
 private fun title(facts: List<String>) = warningTitles[facts.first()] ?: ("missing " + phrase(facts.map { missingLabels[it] ?: "information" }))
-internal fun List<FeedCard>.warningCards(): List<WarningCard> {
+private const val householdLocation = "household.location"
+private val factReasons = mapOf(
+    "pot.pot_size_cm" to "Pot size sets how often to water. Add it on each plant's page.",
+    "pot.pot_type" to "Pot type sets how often to water. Add it on each plant's page.",
+    "site.light" to "Site light sets how often to water and whether a plant gets enough light. Set it for each site under More, Sites.",
+    "careProfile" to "Species care data sets the starting care intervals. Add it under Species care on each plant's page.",
+    "too_dark" to "These plants get less light than their species needs. Move them closer to a window or add a grow light.",
+    "too_bright" to "These plants get more light than their species needs. Move them further from the window or to a shadier site.",
+    "no_drainage" to "A pot without drainage can hold excess water. Use pots with drainage holes.")
+internal fun List<FeedCard>.warningCards(sites: Map<String, String?> = emptyMap(), owner: Boolean = true): List<WarningCard> {
     val plants = filter { it.kind == "plant_warnings" }
-    val shared = plants.flatMap { card -> card.warnings.flatMap { it.facts() }.distinct().map { it to card } }
-        .groupBy({ it.first }, { it.second }).filterValues { it.size > 1 }
+    val facts = plants.flatMap { card -> card.warnings.flatMap { it.facts() }.distinct().map { it to card } }
+    // The location is one household setting, so it is one card that opens the setting, never a count of plants. Only the owner can set it.
+    val located = plants.flatMap { it.warnings }.filter { householdLocation in it.facts() }
+    val household = if (located.isEmpty()) emptyList() else listOf(WarningCard("feed-household-location",
+        if (owner) "Set your household location for frost alerts" else "Ask the owner to set the household location for frost alerts",
+        "/settings#weather-location-title", listOf("Frost and rain alerts for outdoor plants need the household location."),
+        located.flatMap { it.inputTechnical[householdLocation].orEmpty() }.distinct()))
+    val shared = facts.filter { it.first != householdLocation }.groupBy({ it.first }, { it.second }).filterValues { it.size > 1 }
     val groups = shared.map { (fact, cards) -> WarningCard("feed-plants-$fact",
-        title(listOf(fact)).replaceFirstChar(Char::uppercase) + " for ${cards.size} plants",
+        title(listOf(fact)).replaceFirstChar(Char::uppercase) + " for ${cards.size} plants", why = listOfNotNull(factReasons[fact]),
         technical = cards.flatMap { card -> card.warnings.filter { fact in it.facts() }.flatMap { it.technical } }.distinct(),
-        plants = cards.map { it.text to it.href }) }
+        plants = cards.map { card -> listOfNotNull(card.text, sites[card.href.removePrefix("/plants/")]?.takeIf { it.isNotBlank() }).joinToString(" · ") to card.href }) }
     val singles = plants.flatMap { card -> card.warnings.mapNotNull { warning ->
-        val left = warning.facts().filter { it !in shared }
+        val left = warning.facts().filter { it !in shared && it != householdLocation }
         if (left.isEmpty()) null else WarningCard("feed-${card.id}-${warning.kind}", card.text + ": " + title(left),
             card.href, listOf(warning.reason) + warning.details, warning.technical)
     } }
-    return groups + singles
+    return household + groups + singles
 }
 internal fun readableTime(iso: String, zone: ZoneId): String? = runCatching {
     DateTimeFormatter.ofPattern("d MMM HH:mm", Locale.getDefault()).withZone(zone).format(OffsetDateTime.parse(iso).toInstant())
@@ -73,7 +89,8 @@ private fun parseWarning(w: JSONObject, zone: ZoneId): FeedWarning? {
         w.getString("reason").replace('_', ' '),
         if (kind == "missing_info") emptyList() else inputs.mapNotNull { b -> inputLabels[b.getString("input")]?.let { label ->
             "$label: ${plainValue(b.opt("value"))}" + (b.nullable("fetchedAt")?.let { readableTime(it, zone) }?.let { ", checked $it" } ?: "") } },
-        inputs.flatMap { b -> listOfNotNull(b.nullable("ruleId"), b.nullable("source")) }.distinct())
+        inputs.flatMap { b -> listOfNotNull(b.nullable("ruleId"), b.nullable("source")) }.distinct(),
+        inputs.associate { b -> b.getString("input") to listOfNotNull(b.nullable("ruleId"), b.nullable("source")) })
 }
 data class Rain(val plantCount: Int, val precipitationMm: Double, val batchId: String?)
 data class FeedWeather(val locationSet: Boolean, val forecastFetchedAt: String?, val rain: Rain?, val lastBatchId: String?,

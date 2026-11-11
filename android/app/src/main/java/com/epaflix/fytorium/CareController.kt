@@ -36,16 +36,18 @@ class CareController(context: Context, private val store: CredentialStore, val r
     }
     init {
         network.registerDefaultNetworkCallback(callback)
+        // The cached list and strip are in place before the first frame, so a cold start never shows a loading state.
+        var restored = store.tokens != null && runBlocking(Dispatchers.IO) { feed?.restore(); repository.restore(); true }
         if (feed != null) scope.launch { repository.careChanged.collect { feed.refresh(repository.state.value.member) } }
         scope.launch {
             store.tokensState.map { it != null }.distinctUntilChanged().collect { loggedIn ->
                 if (loggedIn) {
-                    // The cached strip is then already in place when the cached rows appear.
-                    feed?.restore()
-                    repository.restore()
+                    // A login restores here, the strip before the rows; a cold start has already restored above.
+                    if (!restored) { feed?.restore(); repository.restore() }
                     work.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, periodicRequest())
                     refresh()
                 } else { work.cancelUniqueWork(WORK_NAME); repository.wipe(); feed?.wipe() }
+                restored = false
             }
         }
     }

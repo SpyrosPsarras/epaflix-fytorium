@@ -39,7 +39,8 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         return FeedState(member = member, cards = cards, settings = settings, weather = weather?.let(::parseWeather), loaded = true)
     }
     fun connectivityChanged(online: Boolean) = synchronized(monitor) {
-        mutable.value = mutable.value.copy(offline = !online, unavailable = if (online) mutable.value.unavailable else false)
+        // Going offline ends any earlier failure, so it never returns with the connection.
+        mutable.value = if (online) mutable.value.copy(offline = false) else mutable.value.copy(offline = true, unavailable = false, message = null)
     }
     internal suspend fun poll(lifecycle: Lifecycle, io: CoroutineDispatcher = Dispatchers.IO) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -160,6 +161,8 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         val failure = classifyNetworkFailure(connected(), (error as? FeedFailure)?.status)
         mutable.value = mutable.value.copy(offline = failure.offline, unavailable = failure.serverUnavailable,
             message = when {
+                // Offline already says it on screen, and a stale failure would flash up when the connection returns.
+                failure.offline -> null
                 error is FeedFailure && error.status == 409 && error.reason == "rain_report_not_ready" -> "Rain watering is not ready. Try again in a moment."
                 error is FeedFailure -> error.message
                 error is IOException -> "Could not reach Fytorium. Retry uses the same request."

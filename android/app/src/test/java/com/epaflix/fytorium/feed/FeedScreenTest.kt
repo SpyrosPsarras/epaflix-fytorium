@@ -174,6 +174,35 @@ class FeedScreenTest {
         compose.mainClock.advanceTimeBy(1000)
         com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/feed-grouped-why-light.png")
     }
+    @Test fun aGroupedWarningsWhySaysWhyAndHowAndNamesEachPlantWithItsSite() {
+        fun plant(id: String, name: String, vararg inputs: String) = parseFeedCard(JSONObject().put("id", id).put("kind", "plant_warnings").put("href", "/plants/$id")
+            .put("plantName", name).put("warnings", org.json.JSONArray().put(JSONObject().put("kind", "missing_info").put("reason", "Missing information.").put("inputs",
+                org.json.JSONArray(inputs.map { JSONObject().put("input", it).put("value", "not set").put("source", "setting").put("ruleId", "warning.missing_info@1") })))))!!
+        val cards = listOf(plant("cheese-office", "Swiss Cheese Plant", "pot.pot_size_cm"), plant("cheese-guest", "Swiss Cheese Plant", "pot.pot_size_cm"),
+            plant("thyme", "Thyme", "pot.pot_size_cm", "household.location"), plant("peony", "Chinese peony", "household.location"))
+        var opened = ""
+        compose.setContent { Screen(false) { HomeFeed(state().copy(cards = cards), today = "2030-06-01", onOpen = { opened = it },
+            sites = mapOf("cheese-office" to "Office", "cheese-guest" to "Guestroom", "thyme" to "Garden", "peony" to "Garden")) } }
+        compose.onNode(hasText("Why?") and hasAnyAncestor(hasText("Missing pot size for 3 plants"))).performScrollTo().performClick()
+        compose.onNodeWithText("Pot size sets how often to water. Add it on each plant's page.").assertIsDisplayed()
+        for (name in listOf("Swiss Cheese Plant · Office", "Swiss Cheese Plant · Guestroom", "Thyme · Garden"))
+            compose.onNode(hasText(name) and hasClickAction()).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.onAllNodes(hasText("location", substring = true)).assertCountEquals(1)
+        compose.onNode(hasText("for", substring = true) and hasText("plants", substring = true) and hasText("location", substring = true)).assertDoesNotExist()
+        compose.onNodeWithText("Set your household location for frost alerts").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("/settings#weather-location-title", opened) }
+        compose.onNode(hasText("Chinese peony", substring = true)).assertDoesNotExist()
+    }
+    @Test fun aFamilyMemberIsToldToAskTheOwnerForTheLocation() {
+        val thyme = parseFeedCard(JSONObject("""{"id":"thyme","kind":"plant_warnings","href":"/plants/thyme","plantName":"Thyme","warnings":[{"kind":"missing_info",
+            "reason":"Missing information.","inputs":[{"input":"household.location","value":false,"source":"setting","ruleId":"warning.missing_info@1"}]}]}"""))!!
+        var opened = ""
+        compose.setContent { Screen(false) { HomeFeed(state(Role.family).copy(cards = listOf(thyme)), today = "2030-06-01", onOpen = { opened = it }) } }
+        compose.onNodeWithText("Set your household location for frost alerts").assertDoesNotExist()
+        compose.onNodeWithText("Ask the owner to set the household location for frost alerts").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("/settings#weather-location-title", opened) }
+    }
     @Test fun offlineTheStripKeepsItsCardsAndSaysWeatherAndTipsNeedAConnection() {
         val current = mutableStateOf(state().copy(offline = true))
         compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01", connectionNotice = false) } }

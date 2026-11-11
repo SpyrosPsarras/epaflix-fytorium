@@ -24,7 +24,7 @@ internal fun FeedState.keepingStripOf(shown: FeedState) =
     if (shown.member == member && shown.todayCards().isEmpty() != todayCards().isEmpty()) copy(cards = shown.cards) else this
 private data class Why(val title: String, val lines: List<String>, val technical: List<String>, val plants: List<Pair<String, String>> = emptyList())
 
-@Composable fun HomeFeed(state: FeedState, today: String? = null, offline: Boolean = state.offline, connectionNotice: Boolean = true,
+@Composable fun HomeFeed(state: FeedState, today: String? = null, offline: Boolean = state.offline, connectionNotice: Boolean = true, sites: Map<String, String?> = emptyMap(),
                          onOpen: (String) -> Unit = {}, onWater: () -> Unit = {}, onUndo: () -> Unit = {}) {
     if (state.member == null || state.member.role == Role.sitter) return
     if (offline) Text("Weather and tips need a connection", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -69,7 +69,7 @@ private data class Why(val title: String, val lines: List<String>, val technical
                 else -> StripCard("feed-${card.id}", title, { onOpen(card.href) }, onWhy = { why = Why(title, card.why, card.technical) })
             }
         }
-        cards.warningCards().forEach { warning ->
+        cards.warningCards(sites, owner = state.member.role == Role.owner).forEach { warning ->
             val explain = { why = Why(warning.title, warning.why, warning.technical, warning.plants) }
             StripCard(warning.tag, warning.title, warning.href?.let { href -> { onOpen(href) } } ?: explain, onWhy = explain)
         }

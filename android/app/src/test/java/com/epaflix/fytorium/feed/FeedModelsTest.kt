@@ -26,8 +26,8 @@ class FeedModelsTest {
     @Test fun missingInformationNamesEachGapInPlainWords() {
         assertEquals("Synthetic fern: missing pot size", missing("pot.pot_size_cm"))
         assertEquals("Synthetic fern: missing pot type and pot size", missing("pot.pot_type", "pot.pot_size_cm"))
-        assertEquals("Synthetic fern: missing site light, pot type, species care data and weather location",
-            missing("site.light", "pot.pot_type", "careProfile", "household.location"))
+        assertEquals(listOf("Set your household location for frost alerts", "Synthetic fern: missing site light, pot type and species care data"),
+            listOf(warnings("fern", "Synthetic fern", gap("site.light", "pot.pot_type", "careProfile", "household.location"))).warningCards().map { it.title })
         assertEquals("Synthetic fern: missing information", missing("synthetic.future_input"))
         assertEquals("Synthetic fern: missing information", missing())
     }
@@ -36,11 +36,24 @@ class FeedModelsTest {
         val dark = JSONObject().put("kind", "too_dark").put("reason", "Too dark.").put("inputs", JSONArray())
         val cards = listOf(warnings("peony", "Chinese peony", gap("pot.pot_size_cm", "careProfile")),
             warnings("jade", "Jade Plant", dark, gap("pot.pot_size_cm")), warnings("thyme", "Thyme", gap("pot.pot_size_cm", "household.location")))
-        val shown = cards.warningCards()
-        assertEquals(listOf("Missing pot size for 3 plants", "Chinese peony: missing species care data", "Jade Plant: too dark", "Thyme: missing weather location"),
+        val shown = cards.warningCards(mapOf("jade" to "Office", "thyme" to ""))
+        assertEquals(listOf("Set your household location for frost alerts", "Missing pot size for 3 plants", "Chinese peony: missing species care data", "Jade Plant: too dark"),
             shown.map { it.title })
-        assertEquals(listOf("Chinese peony" to "/plants/peony", "Jade Plant" to "/plants/jade", "Thyme" to "/plants/thyme"), shown.first().plants)
+        assertEquals("/settings#weather-location-title", shown.first().href)
+        assertEquals(listOf("Chinese peony" to "/plants/peony", "Jade Plant · Office" to "/plants/jade", "Thyme" to "/plants/thyme"), shown[1].plants)
+        assertEquals(listOf("Pot size sets how often to water. Add it on each plant's page."), shown[1].why)
         assertEquals(listOf("Too dark for 2 plants"), listOf(warnings("jade", "Jade Plant", dark), warnings("fern", "Synthetic fern", dark)).warningCards().map { it.title })
+    }
+
+    @Test fun theLocationCardCitesOnlyTheLocationAndAsksFamilyToAskTheOwner() {
+        val profile = gap("careProfile", "household.location").apply { getJSONArray("inputs").getJSONObject(0).put("source", "rule") }
+        val cards = listOf(warnings("fern", "Synthetic fern", profile), warnings("thyme", "Thyme", gap("household.location")))
+        val owner = cards.warningCards().first()
+        assertEquals("Set your household location for frost alerts", owner.title)
+        assertEquals(listOf("warning.missing_info@1", "setting"), owner.technical)
+        val family = cards.warningCards(owner = false).first()
+        assertEquals("Ask the owner to set the household location for frost alerts", family.title)
+        assertEquals("/settings#weather-location-title", family.href)
     }
 
     @Test fun coldAlertsSayFrostAtOrBelowZeroAndColdAbove() {

@@ -89,6 +89,22 @@ From `council-w2-opus.md` (W2-opus-1..9) and `council-w2-sol.md` (W2-sol-1..3).
 
 - A1f. (1) Forward transitions use the event's own identity: every care event the app receives (owner, family and sitter projections) carries the `due_on` it acted on, and Android records the predecessor of each created event (single, linked water, card and plant batches, rain) as the pending occurrence with that event's plant, task and `due_on`. No pending row is ever looked up by plant and task alone; no batch fallback. (2) An Undo transaction computes `restored` from one consistent snapshot: it runs at REPEATABLE READ, so both schedule reads see the same non-event inputs (intervals, custom tasks, settings), and retries once on a serialization failure.
 
+## Council round 2 amendments (live, 2026-11-11)
+
+From `council-w2-opus-r2.md` (r2-1..r2-8) and `council-w2-sol-r2.md` (W2-sol-4).
+
+- A13a (r2-1; decided by Spyros). The receipt snackbar is drawn over the bottom navigation bar, in its place, for its duration (swipe dismisses it early). The list's viewport never changes size for a receipt, so no row is hidden or moved; D11/D12 are amended accordingly and the receipt-space reservation is removed.
+- A13b (r2-2). Under plant sort a card's heading is the plant name; its rows show the task (and site) without repeating the plant name; its disabled button reads "All done" / "Nothing due today" without the plant name (content description keeps it). Under site sort rows keep the plant name and drop the site. A one-task card is no taller than one row plus heading and button.
+- A13c (r2-3, W2-sol-4). The task view sheet's content, including "Saved" and blocked messages, sits above the navigation bar insets. Disabled segmented buttons keep their selection visible and dim all segments equally. The blocked message follows the live connection state and clears as soon as writes are possible again.
+- A13d (r2-4). A grouped warning's Why? says why it matters and how to fix it in one plain sentence ("Pot size sets how often to water. Add it on each plant's page."), and lists each plant with its site so same-named plants are distinguishable. A household-level fact (weather location) is one card ("Set your household location for frost alerts") opening weather settings, never "for N plants".
+- A13e (r2-5, r2-6). A "could not reach" or "isn't responding" notice appears only after a request has actually failed and does not toggle during a reconnect (the D20 offline banner still appears as soon as the device loses its network); a cold start with a cached list renders that list in the first frame, never "Loading tasks…".
+- A13f (r2-7). When a row's reserved subtitle line is empty, the plant name is vertically centred on the photo; the row height stays as A1d(2) requires.
+- A13g (r2-8). Tapping a disabled check or snooze control explains why, like the "+" ("Changes need a connection.", "Changes need Fytorium to respond.", "Update Fytorium to make changes.").
+
+## Gate amendment to A13 (2026-11-11)
+
+- A13h. (a) The receipt, any explanation and its action fit inside the navigation bar's height at 1.0x and 1.3x: text takes at most two lines, ends with "…" if longer, and its full wording is the content description and the TalkBack announcement. (b) For a family member the household-location card reads "Ask the owner to set the household location for frost alerts" and still opens weather settings; the owner's wording stays. (c) A feed error message is cleared when the device goes offline; after reconnecting, a feed error shows only if a feed refresh fails again. (d) Tapping a held row's disabled control explains it: "This task changed elsewhere. Pull to refresh.", with no write.
+
 ## Non-goals
 Plant page, add flow, More/settings, navigation model, web UI.
 
