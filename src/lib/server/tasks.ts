@@ -4,13 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { taskRules } from '$lib/schedule/rules';
 import { taskViewSettings } from './task-view-settings';
 import { getCustomTask } from './custom-tasks';
-import { schedule, taskTypes, type TaskType, type Task, type ScheduleInput } from '$lib/schedule/engine';
-import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList, type PlantSchedule, type ScheduledTask } from '$lib/tasks';
+import { schedule, postponedUntil, taskTypes, type TaskType, type Task, type ScheduleInput } from '$lib/schedule/engine';
+import { taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList, type TaskViewSettings, type PlantSchedule, type ScheduledTask } from '$lib/tasks';
 import type { Identity } from './auth';
 import { visiblePlantSql, requireSharedPlant, requireOwnUndo } from './policy';
 import { requireUndo, withUndoFlag, withUndoFlags } from './undo-policy';
 import { getPlant, isUuid, plantSelectFor, potErrors } from './plants';
-import { db, withTransaction } from './db';
+import { db, withSnapshot, withTransaction } from './db';
 import { now, calendarDate } from './clock';
 import type { ForecastDay } from '$lib/weather';
 import { recentRain } from './weather/rain';
@@ -23,7 +23,7 @@ function taskIn(schedule: Partial<PlantSchedule>, key: string) {
 }
 const dueOf = (task: Task) => task.status === 'due' ? task.dueOn : null;
 // Deleted custom tasks keep their row, so history and today's completions keep their names.
-const namedEvents = 'SELECT e.*, e.due_on::text, c.name AS custom_task_name FROM care_events e LEFT JOIN custom_tasks c ON c.id = e.custom_task_id AND c.household_id = e.household_id';
+const namedEvents = 'SELECT e.*, e.due_on::text, e.postponed_until::text, c.name AS custom_task_name FROM care_events e LEFT JOIN custom_tasks c ON c.id = e.custom_task_id AND c.household_id = e.household_id';
 
 export async function history(plantId: string, identity: Identity): Promise<CareEvent[]> {
   const household = identity.household.id;
@@ -98,6 +98,37 @@ async function undoneLists(identity: Identity) {
   return { today, upcoming };
 }
 
+// A returning sitter may have saved a site view or Show others' completed tasks while they were family. Sitters see neither.
+async function memberSettings(identity: Identity, database?: pg.PoolClient): Promise<TaskViewSettings> {
+  const saved = await taskViewSettings(identity, database);
+  return identity.member.role === 'sitter' ? { ...saved, sort: 'task', filter: 'all', show_completed: false } : saved;
+}
+// Your own events of today always, so a setting cannot take away their Undo; others' only with Show others' completed tasks.
+const shownToday = (identity: Identity, settings: TaskViewSettings, today: string) => (event: { occurred_at: Date; by_member: string | null }) =>
+  calendarDate(event.occurred_at) === today && (settings.show_completed || event.by_member === identity.member.id);
+// A completion shown today stands for its occurrence, so the next one is listed only once a later snooze or skip postponed it.
+const pendingDue = (task: ScheduledTask | undefined, completedToday: boolean) => task?.status === 'due' && (!completedToday || task.postponed) ? task.dueOn : null;
+
+// Read inside an Undo's snapshot: the due date of each plant task's pending occurrence in the member's listing, whatever the view's dates.
+async function pendingOccurrences(client: pg.PoolClient, identity: Identity, plantIds: string[]) {
+  const today = calendarDate(now());
+  const plants = await client.query(plantSelectFor(identity.language) + ' WHERE p.id = ANY($1::uuid[]) AND p.household_id = $2', [plantIds, identity.household.id]);
+  const { schedules, events } = await schedulePlantTasks(plants.rows, identity.household.id, today, identity.language, client, true);
+  const shown = shownToday(identity, await memberSettings(identity, client), today);
+  const completed = new Set(events.filter(event => event.kind === 'completed' && shown(event)).map(event => event.plant_id + ':' + taskKey(event)));
+  return (event: Pick<CareEvent, 'plant_id' | 'task_type' | 'custom_task_id'>) =>
+    pendingDue(taskIn(schedules.get(event.plant_id) ?? {}, taskKey(event)), completed.has(event.plant_id + ':' + taskKey(event)));
+}
+// An Undo brought back the occurrence its event's task has pending after it, unless that one was already pending before it.
+function restoredBy(before: (event: Pick<CareEvent, 'plant_id' | 'task_type' | 'custom_task_id'>) => string | null, after: typeof before,
+  events: Pick<CareEvent, 'id' | 'plant_id' | 'task_type' | 'custom_task_id'>[]) {
+  return events.map(event => {
+    const due = after(event);
+    return { event_id: event.id, occurrence: due && due !== before(event)
+      ? { plant_id: event.plant_id, task_type: event.task_type, custom_task_id: event.custom_task_id ?? null, due_on: due } : null };
+  });
+}
+
 // The feed reuses this batch, ignoring Today filters and completed-row preferences.
 export async function listedTaskContext(identity: Identity, { view, forFeed = false, batch }: {
   view: TaskList['view']; forFeed?: boolean;
@@ -105,9 +136,7 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
 }) {
   const household = identity.household.id;
   const today = calendarDate(now());
-  const savedSettings = forFeed ? { sort: 'task' as const, filter: 'all' as const, show_completed: false } : await taskViewSettings(identity);
-  // A returning sitter may have saved a site view while they were family. Never expose site headings.
-  const settings = identity.member.role === 'sitter' ? { ...savedSettings, sort: 'task' as const, filter: 'all' as const } : savedSettings;
+  const settings: TaskViewSettings = forFeed ? { sort: 'task', filter: 'all', show_completed: false } : await memberSettings(identity);
   const end = new Date(today + 'T00:00:00Z');
   end.setUTCDate(end.getUTCDate() + (view === 'upcoming' ? 13 : 0));
   const through = end.toISOString().slice(0, 10);
@@ -123,10 +152,10 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
   const listed = new Map(plants.rows.map(plant => [plant.id, plant]));
   const rowFor = (plant: typeof plants.rows[number], task: ScheduledTask & Pick<ListedTask, 'task_type' | 'custom_task_id' | 'custom_task_name'>): ListedTask =>
     ({ ...task, plant_id: plant.id, plant_name: plant.display_name, site_name: plant.site_name, cover_photo_id: plant.cover_photo_id ?? null });
-  // From the events, so a schedule change cannot hide a completion; your own always, so a setting cannot take away their Undo.
+  // From the events, so a schedule change cannot hide a completion, snooze or skip.
+  const shown = shownToday(identity, settings, today);
   const todays = forFeed ? [] : await withUndoFlags(identity, context.events
-    .filter(event => event.kind === 'completed' && listed.has(event.plant_id) && calendarDate(event.occurred_at) === today
-      && (settings.show_completed || event.by_member === identity.member.id))
+    .filter(event => listed.has(event.plant_id) && shown(event))
     .reverse().map(event => ({ ...event, occurred_on: today })));
   const completed = new Set<string>();
   for (const event of todays) {
@@ -134,14 +163,17 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
     const plant = listed.get(event.plant_id)!;
     const task = entries(schedules.get(plant.id)!).find(task => taskKey(task) === key)
       ?? { status: 'not_applicable' as const, basedOn: [], postponed: null, task_type: event.task_type, custom_task_id: event.custom_task_id ?? null, custom_task_name: event.custom_task_name ?? null };
-    (groups[key] ??= []).push({ ...rowFor(plant, task), postponed: null, completed_event: event });
-    completed.add(plant.id + ':' + key);
+    const row: ListedTask = { ...rowFor(plant, task), postponed: null, completed_event: event };
+    // Events from before the date was stored use today's interval.
+    if (event.kind !== 'completed') row.postponed_until = event.postponed_until ?? (task.status === 'due' ? postponedUntil(event.kind, today, task.intervalDays) : null);
+    (groups[key] ??= []).push(row);
+    if (event.kind === 'completed') completed.add(plant.id + ':' + key);
   }
   for (const plant of plants.rows) {
     for (const task of entries(schedules.get(plant.id)!)) {
       const key = taskKey(task);
-      // A snooze or skip after today's completion postpones the next occurrence, which is listed beside the completion.
-      if (task.status === 'due' && task.dueOn <= through && (!completed.has(plant.id + ':' + key) || task.postponed)) (groups[key] ??= []).push(rowFor(plant, task));
+      const due = pendingDue(task, completed.has(plant.id + ':' + key));
+      if (due && due <= through) (groups[key] ??= []).push(rowFor(plant, task));
     }
   }
   // A completion sits at the due date it completed, so it never moves later in the day. Events from before that date was stored use their own day.
@@ -158,17 +190,18 @@ export async function listedTaskContext(identity: Identity, { view, forFeed = fa
   const sections = new Map<string, TaskList['sections'][number]>();
   for (const row of rows) {
     const due = dueOn(row);
-    const key = view === 'upcoming' ? due && due > today ? due : today
-      : settings.sort === 'task' ? taskKey(row) : settings.sort === 'plant' ? row.plant_id : row.site_name;
-    const label = view === 'upcoming' ? key : settings.sort === 'task' ? taskPresentation(row).label : settings.sort === 'plant' ? row.plant_name : row.site_name;
-    if (!sections.has(key)) sections.set(key, { key, label, tasks: [] });
+    const day = view === 'upcoming' ? due && due > today ? due : today : null;
+    const group = settings.sort === 'task' ? taskKey(row) : settings.sort === 'plant' ? row.plant_id : row.site_name;
+    const key = day ? day + ':' + group : group;
+    const label = settings.sort === 'task' ? taskPresentation(row).label : settings.sort === 'plant' ? row.plant_name : row.site_name;
+    if (!sections.has(key)) sections.set(key, { key, label, ...(day ? { day } : {}), tasks: [] });
     sections.get(key)!.tasks.push(row);
   }
   if (view === 'today' && settings.sort === 'task') {
     for (const type of taskTypes) if (!sections.has(type)) sections.set(type, { key: type, label: taskRules[type].label, tasks: [] });
   }
   const ordered = [...sections.values()];
-  if (view === 'upcoming') ordered.sort((a, b) => a.key.localeCompare(b.key));
+  if (view === 'upcoming') ordered.sort((a, b) => a.day!.localeCompare(b.day!));
   else if (settings.sort === 'task') {
     const order = (key: string) => taskTypes.includes(key as TaskType) ? taskTypes.indexOf(key as TaskType) : taskTypes.length;
     ordered.sort((a, b) => order(a.key) - order(b.key) || a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
@@ -180,23 +213,24 @@ export async function undo(identity: Identity, eventId: string) {
   await requireOwnUndo(identity, eventId);
   if (!isUuid(eventId)) error(404, 'Care event not found');
   const household = identity.household.id;
-  const event = await withTransaction(async (client) => {
+  const { event, restored } = await withSnapshot(async (client) => {
     const existing = await client.query('SELECT * FROM care_events WHERE id = $1 AND household_id = $2', [eventId, household]);
     if (!existing.rowCount) error(404, 'Care event not found');
     const plant = await client.query('SELECT status, pot_type, pot_size_cm, soil_type FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [existing.rows[0].plant_id, household]);
     if (!plant.rowCount) error(404, 'Plant not found');
     await requireUndo(identity, eventId, false, client);
-    const result = await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE (id = $3 OR linked_event_id = $3) AND household_id = $4 AND undone_at IS NULL RETURNING *, due_on::text', [now(), identity.member.id, eventId, household]);
+    const before = await pendingOccurrences(client, identity, [existing.rows[0].plant_id]);
+    const result = await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE (id = $3 OR linked_event_id = $3) AND household_id = $4 AND undone_at IS NULL RETURNING *, due_on::text, postponed_until::text', [now(), identity.member.id, eventId, household]);
     const event = result.rows.find(row => row.id === eventId);
     if (!event) error(409, 'Care event already undone');
     if (event.previous_pot) {
       const pot = event.previous_pot;
       await client.query('UPDATE plants SET pot_type = $1, pot_size_cm = $2, soil_type = $3 WHERE id = $4 AND household_id = $5', [pot.pot_type, pot.pot_size_cm, pot.soil_type, event.plant_id, household]);
     }
-    return event;
+    return { event, restored: restoredBy(before, await pendingOccurrences(client, identity, [event.plant_id]), result.rows) };
   });
   const tasks = await plantTasks(event.plant_id, household, identity.language);
-  return { event: await withUndoFlag(identity, { ...event, occurred_on: calendarDate(event.occurred_at) }), task: taskIn(tasks, taskKey(event)), ...await undoneLists(identity) };
+  return { event: await withUndoFlag(identity, { ...event, occurred_on: calendarDate(event.occurred_at) }), task: taskIn(tasks, taskKey(event)), restored, ...await undoneLists(identity) };
 }
 
 export async function dueDates(client: pg.PoolClient, identity: Identity, plantId: string) {
@@ -233,16 +267,16 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
     if (!previous.rowCount) error(409, 'request_id already used for another action.');
     if (claimed.rowCount) await write(client, plants, now());
     const batch = (await client.query('SELECT b.request_id, b.undone_at FROM care_actions a JOIN care_actions b ON b.request_id = COALESCE(a.batch_id, a.request_id) WHERE a.request_id = $1 AND a.household_id = $2', [requestId, household])).rows[0];
-    const events = await client.query('SELECT *, due_on::text FROM care_events WHERE (request_id = $1 OR batch_id = $1 OR linked_event_id IN (SELECT id FROM care_events WHERE request_id = $1 AND household_id = $2)) AND household_id = $2 ORDER BY event_order', [batch.request_id, household]);
+    const events = await client.query('SELECT *, due_on::text, postponed_until::text FROM care_events WHERE (request_id = $1 OR batch_id = $1 OR linked_event_id IN (SELECT id FROM care_events WHERE request_id = $1 AND household_id = $2)) AND household_id = $2 ORDER BY event_order', [batch.request_id, household]);
     return { action: batch, events: await withUndoFlags(identity, events.rows.map(event => ({ ...event, occurred_on: calendarDate(event.occurred_at) })), client) };
   });
 }
 
 // dueOn is the acted-on task's due date at that moment, so the completed row keeps its place whatever the schedule does later.
-async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, dueOn: string | null, { batchId = null, previousPot = null, linkedEventId = null }: { batchId?: string | null; previousPot?: Record<string, unknown> | null; linkedEventId?: string | null } = {}) {
+async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, dueOn: string | null, { batchId = null, previousPot = null, linkedEventId = null, until = null }: { batchId?: string | null; previousPot?: Record<string, unknown> | null; linkedEventId?: string | null; until?: string | null } = {}) {
   const member = await client.query('SELECT display_name FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, identity.household.id]);
-  const event = await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id, linked_event_id, due_on) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id',
-    [identity.household.id, plantId, taskTypes.includes(taskType as TaskType) ? taskType : null, kind, at, identity.member.id, member.rows[0].display_name, requestId, batchId, previousPot, isUuid(taskType) ? taskType : null, linkedEventId, dueOn]);
+  const event = await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id, linked_event_id, due_on, postponed_until) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id',
+    [identity.household.id, plantId, taskTypes.includes(taskType as TaskType) ? taskType : null, kind, at, identity.member.id, member.rows[0].display_name, requestId, batchId, previousPot, isUuid(taskType) ? taskType : null, linkedEventId, dueOn, until]);
   // Fix the recipients at completion time. Turning notices on later must not replay history.
   if (kind === 'completed') await client.query(`INSERT INTO completion_notice_sends (event_id, member_id, attempted_at, claimed_until)
     SELECT $1, m.id, $2, $2::timestamptz - interval '1 millisecond' FROM members m
@@ -321,7 +355,8 @@ export async function complete(identity: Identity, plantId: string, taskType: st
     if (!task) error(404, 'Custom task not found for this plant');
     if (task.status === 'not_applicable') error(422, 'This task is not applicable.');
     if (kind === 'snoozed' && task.dueOn > calendarDate(at)) error(409, 'Only due or late tasks can be snoozed.');
-    const eventId = await recordEvent(client, identity, plantId, taskType, kind, requestId, at, task.dueOn);
+    const until = kind === 'completed' ? null : postponedUntil(kind, calendarDate(at), task.intervalDays);
+    const eventId = await recordEvent(client, identity, plantId, taskType, kind, requestId, at, task.dueOn, { until });
     if (kind === 'completed') await waterWithLiquidFertilizer(client, identity, plant, taskType, eventId, at, tasks.water);
   });
   const tasks = await plantTasks(plantId, identity.household.id, identity.language);
@@ -355,17 +390,19 @@ export async function undoBatch(identity: Identity, batchId: string) {
   await requireOwnUndo(identity, batchId, true);
   if (!isUuid(batchId)) error(404, 'Task batch not found');
   const household = identity.household.id;
-  const result = await withTransaction(async (client) => {
+  const result = await withSnapshot(async (client) => {
     await client.query('SELECT id FROM households WHERE id = $1 FOR NO KEY UPDATE', [household]);
     // Plant locks come before the action lock, matching careAction and lifecycle commands.
-    const plants = await client.query('SELECT p.status FROM plants p WHERE p.household_id = $2 AND (p.id IN (SELECT plant_id FROM care_events WHERE batch_id = $1 AND household_id = $2) OR p.id IN (SELECT plant_id FROM care_actions WHERE request_id = $1 AND household_id = $2)) ORDER BY p.id FOR UPDATE', [batchId, household]);
+    const plants = await client.query('SELECT p.id FROM plants p WHERE p.household_id = $2 AND (p.id IN (SELECT plant_id FROM care_events WHERE batch_id = $1 AND household_id = $2) OR p.id IN (SELECT plant_id FROM care_actions WHERE request_id = $1 AND household_id = $2)) ORDER BY p.id FOR UPDATE', [batchId, household]);
     const batch = await client.query("SELECT undone_at FROM care_actions WHERE request_id = $1 AND household_id = $2 AND action IN ('complete-all', 'complete-type', 'rain') AND batch_id IS NULL FOR UPDATE", [batchId, household]);
     if (!batch.rowCount) error(404, 'Task batch not found');
     await requireUndo(identity, batchId, true, client);
+    const plantIds = plants.rows.map(plant => plant.id);
+    const before = await pendingOccurrences(client, identity, plantIds);
     const time = now();
-    await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE batch_id = $3 AND household_id = $4 AND undone_at IS NULL', [time, identity.member.id, batchId, household]);
+    const reversed = await client.query('UPDATE care_events SET undone_at = $1, undone_by = $2 WHERE batch_id = $3 AND household_id = $4 AND undone_at IS NULL RETURNING id, plant_id, task_type, custom_task_id', [time, identity.member.id, batchId, household]);
     await client.query('UPDATE care_actions SET undone_at = $1, undone_by = $2 WHERE request_id = $3 AND household_id = $4', [time, identity.member.id, batchId, household]);
-    return { batchId, undoneAt: time.toISOString() };
+    return { batchId, undoneAt: time.toISOString(), restored: restoredBy(before, await pendingOccurrences(client, identity, plantIds), reversed.rows) };
   });
   return { ...result, ...await undoneLists(identity) };
 }

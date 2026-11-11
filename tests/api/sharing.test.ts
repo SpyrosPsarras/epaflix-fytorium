@@ -94,13 +94,14 @@ test('a fresh invite reactivates a removed subject with its new role and shares,
   expect((await returning.request('/api/plants/' + privatePlant)).status).toBe(404);
 });
 
-test('sitter Today and Upcoming page data and task APIs contain only the public projection, including completed repots', async () => {
+test('sitter Today and Upcoming page data and task APIs contain only the public projection, without other members\' completed repots', async () => {
   const repot = await (await owner.request(`/api/plants/${shared}/repot`, 'POST', { request_id: randomUUID(), pot_type: 'terracotta', pot_size_cm: 20, soil_type: 'all_purpose' })).json();
   expect(repot.event.previous_pot).not.toBeNull();
-  const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'batch_plant_count', 'batch_event_count', 'batch_action', 'batch_task', 'linked_event_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo'];
-  const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'postponed', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'cover_photo_id', 'completed_event'];
+  const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'batch_plant_count', 'batch_event_count', 'batch_action', 'batch_task', 'linked_event_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo', 'due_on', 'postponed_until'];
+  const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'postponed', 'postponed_until', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'cover_photo_id', 'completed_event'];
   const only = (value: Record<string, unknown>, fields: string[]) => expect(Object.keys(value).filter(key => !fields.includes(key))).toEqual([]);
-  const event = (value: Record<string, unknown>) => only(value, eventFields);
+  // Every event names the occurrence it acted on, so a device can follow exactly that row.
+  const event = (value: Record<string, unknown>) => { only(value, eventFields); expect(Object.keys(value)).toEqual(expect.arrayContaining(['due_on', 'postponed_until'])); };
   const task = (value: any) => {
     only(value, taskFields);
     expect(value.basedOn).toEqual([]);
@@ -108,15 +109,18 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
     if ('cover_photo_id' in value) expect(value.cover_photo_id).toBeNull();
     if (value.completed_event) event(value.completed_event);
   };
-  const list = (value: any) => {
+  const list = (value: any, done?: string) => {
     only(value, ['today', 'view', 'settings', 'groups', 'sections']);
     only(value.settings, ['sort', 'filter', 'show_completed']);
-    expect(value.settings.sort).toBe('task');
+    expect(value.settings).toMatchObject({ sort: 'task', show_completed: false });
     const rows = Object.values(value.groups).flat() as any[];
-    expect(rows.some(row => row.completed_event?.id === repot.event.id)).toBe(true);
+    // The sitter saved Show others' completed tasks while they were family, but lists only their own care.
+    expect(rows.some(row => row.completed_event?.id === repot.event.id)).toBe(false);
+    if (done) expect(rows.some(row => row.completed_event?.id === done)).toBe(true);
     rows.forEach(task);
     for (const section of value.sections) {
-      only(section, ['key', 'label', 'tasks']);
+      only(section, ['key', 'label', 'day', 'tasks']);
+      expect(section.day).toEqual(value.view === 'upcoming' ? expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) : undefined);
       expect(section.label).not.toBe('Sharing room');
       section.tasks.forEach(task);
     }
@@ -155,16 +159,26 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
   const completion = await (await returning.request(`/api/plants/${shared}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
   only(completion, ['event', 'task', 'linked_events']); event(completion.event); task(completion.task);
   expect(completion.linked_events).toEqual([]);
+  for (const view of ['today', 'upcoming']) list(await (await returning.request('/api/tasks?view=' + view)).json(), completion.event.id);
   const undone = await (await returning.request('/api/care-events/' + completion.event.id + '/undo', 'POST')).json();
-  only(undone, ['event', 'task', 'today', 'upcoming']); event(undone.event); task(undone.task);
+  only(undone, ['event', 'task', 'today', 'upcoming', 'restored']); event(undone.event); task(undone.task);
   await lists(undone);
+  const restored = (value: any) => {
+    only(value, ['event_id', 'occurrence']);
+    only(value.occurrence, ['plant_id', 'task_type', 'custom_task_id', 'due_on']);
+    expect(value.occurrence).toMatchObject({ plant_id: shared, due_on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+  };
+  expect(undone.restored.map((value: any) => value.event_id)).toEqual([completion.event.id]);
+  undone.restored.forEach(restored);
   const batch = await (await returning.request(`/api/plants/${shared}/tasks/complete-all`, 'POST', { request_id: randomUUID() })).json();
   only(batch, ['events', 'tasks']); batch.events.forEach(event);
   expect(batch.events.length).toBeGreaterThan(0);
   for (const value of batch.events) expect(value).toMatchObject({ batch_action: 'complete-all', batch_task: null, linked_event_id: null });
   const batchUndo = await (await returning.request('/api/task-batches/' + batch.events[0].batch_id + '/undo', 'POST')).json();
-  only(batchUndo, ['batchId', 'undoneAt', 'today', 'upcoming']);
+  only(batchUndo, ['batchId', 'undoneAt', 'today', 'upcoming', 'restored']);
   await lists(batchUndo);
+  expect(batchUndo.restored.map((value: any) => value.event_id).sort()).toEqual(batch.events.map((value: any) => value.id).sort());
+  batchUndo.restored.forEach(restored);
   await owner.request('/api/care-events/' + repot.event.id + '/undo', 'POST');
 });
 
@@ -200,6 +214,12 @@ test('owner, family and sitter task responses expose server receipt and postpone
     const done = await response.json();
     expect(done.linked_events).toEqual([expect.objectContaining({ task_type: 'water', kind: 'completed', linked_event_id: done.event.id })]);
     expect(done.task.postponed).toBeNull();
+    const [water] = done.linked_events;
+    expect(water.due_on).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    for (const view of ['today', 'upcoming']) {
+      const rows = (await (await member.request('/api/tasks?view=' + view)).json()).groups.water;
+      expect(rows.find((row: any) => row.completed_event?.id === water.id)?.completed_event).toMatchObject({ linked_event_id: done.event.id, due_on: water.due_on });
+    }
     expect((await member.request('/api/care-events/' + done.event.id + '/undo', 'POST')).status).toBe(200);
     for (const [action, postponed] of [['snooze', 'snoozed'], ['skip', 'skipped']]) {
       const before = await (await member.request('/api/plants/' + shared + '/tasks')).json();
@@ -209,6 +229,7 @@ test('owner, family and sitter task responses expose server receipt and postpone
       expect(acted.status).toBe(200);
       const result = await acted.json();
       expect(result.task.postponed).toBe(postponed);
+      expect(result.event).toMatchObject({ due_on: before.water.dueOn, postponed_until: result.task.dueOn });
       expect(result.linked_events).toEqual([]);
       const schedule = await (await member.request('/api/plants/' + shared + '/tasks')).json();
       expect(schedule.water.postponed).toBe(postponed);

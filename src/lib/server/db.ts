@@ -10,14 +10,14 @@ export function db(): pg.Pool {
   return pool;
 }
 
-export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>, begin = 'BEGIN'): Promise<T> {
   const client = await db().connect();
   let connectionError: Error | undefined;
   let discard = false;
   const onError = (cause: Error) => { connectionError = cause; discard = true; };
   client.on('error', onError);
   try {
-    await client.query('BEGIN');
+    await client.query(begin);
     const result = await fn(client);
     if (connectionError) throw connectionError;
     try { await client.query('COMMIT'); }
@@ -33,4 +33,10 @@ export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<
     else client.release();
     client.removeListener('error', onError);
   }
+}
+
+// Every read sees one snapshot. Postgres refuses (40001) a write to a row that changed since then, so the work runs once more on a fresh snapshot.
+export async function withSnapshot<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const run = () => withTransaction(fn, 'BEGIN ISOLATION LEVEL REPEATABLE READ');
+  return run().catch(cause => { if ((cause as { code?: string } | undefined)?.code === '40001') return run(); throw cause; });
 }

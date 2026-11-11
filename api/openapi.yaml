@@ -4179,8 +4179,14 @@ components:
               pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
             - type: "null"
         completed_event:
-          description: Today's completion. Every completion the requesting member made today is listed as its own row with postponed null, even when its task no longer applies; show_completed adds other members' completions. The row sorts at the event's due_on, or its occurred_on when due_on is null. A later snooze or skip is listed as a separate row without completed_event.
+          description: Today's completion, snooze or skip. Every one the requesting member made today is listed as its own row with postponed null, even when its task no longer applies; show_completed adds other members' completions, snoozes and skips. The row sorts at the event's due_on, or its occurred_on when due_on is null. The occurrence a snooze or skip postponed is listed as a separate row without completed_event.
           $ref: "#/components/schemas/CareEvent"
+        postponed_until:
+          description: On a row whose completed_event is a snooze or skip, the due date that event set, as stored on it. Later care or interval changes do not change it. For an event recorded before that date was stored, the date its task's current interval gives, or null when the task no longer applies.
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
       required:
         - status
         - basedOn
@@ -4233,7 +4239,7 @@ components:
             - indoor
             - outdoor
         show_completed:
-          description: Also list today's completions by other members. The member's own completions are always listed.
+          description: Also list today's completions, snoozes and skips by other members. The member's own are always listed. A sitter's lists ignore it and report false, whatever the member saved before becoming a sitter.
           type: boolean
       required:
         - sort
@@ -4266,7 +4272,12 @@ components:
               key:
                 type: string
               label:
+                description: The task type, plant or site this card groups, following the sort.
                 type: string
+              day:
+                description: Upcoming only. The household calendar day this card belongs to; overdue tasks join today. Cards are ordered by day, then by the sort.
+                type: string
+                pattern: ^\d{4}-\d{2}-\d{2}$
               tasks:
                 type: array
                 items:
@@ -4352,7 +4363,13 @@ components:
           type: string
           pattern: ^\d{4}-\d{2}-\d{2}$
         due_on:
-          description: Due date of the occurrence this event completed, snoozed or skipped, as it was at that moment. Planta imports use the reported day. Null for events recorded before due dates were stored. Not in sitter projections.
+          description: Due date of the occurrence this event completed, snoozed or skipped, as it was at that moment, in every projection including sitters'. A client follows exactly the pending row with this event's plant, task and due date. Planta imports use the reported day. Null for events recorded before due dates were stored, and for a repot, linked water or rain water whose task was not due.
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
+        postponed_until:
+          description: The due date a snooze or skip set, in every projection including sitters'. Null for completions and for events recorded before this date was stored.
           anyOf:
             - type: string
               pattern: ^\d{4}-\d{2}-\d{2}$
@@ -4433,6 +4450,8 @@ components:
         - undone_at
         - undone_by
         - request_id
+        - due_on
+        - postponed_until
       allOf:
         - if:
             properties:
@@ -4484,11 +4503,14 @@ components:
         upcoming:
           description: The member's Upcoming list after the undo, as GET /api/tasks?view=upcoming returns it.
           $ref: "#/components/schemas/TaskList"
+        restored:
+          $ref: "#/components/schemas/RestoredOccurrences"
       required:
         - event
         - task
         - today
         - upcoming
+        - restored
       additionalProperties: false
     BatchUndo:
       type: object
@@ -4505,12 +4527,48 @@ components:
         upcoming:
           description: The member's Upcoming list after the undo, as GET /api/tasks?view=upcoming returns it.
           $ref: "#/components/schemas/TaskList"
+        restored:
+          $ref: "#/components/schemas/RestoredOccurrences"
       required:
         - batchId
         - undoneAt
         - today
         - upcoming
+        - restored
       additionalProperties: false
+    RestoredOccurrences:
+      type: array
+      description: One entry for each event the undo reversed, including linked water. Computed from one snapshot of the undo's transaction (REPEATABLE READ, run once more after a serialization failure). occurrence is the pending occurrence the undo brought back into the member's listing (it was not pending there before the undo), or null when there is none, for example when another member's snooze or skip had already listed the pending occurrence. Clients match it to the pending row in today or upcoming with the same plant_id, task and dueOn.
+      items:
+        type: object
+        properties:
+          event_id:
+            type: string
+            pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+          occurrence:
+            anyOf:
+              - type: object
+                properties:
+                  plant_id:
+                    type: string
+                    pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                  task_type:
+                    anyOf:
+                      - enum: [water, fertilize, clean_leaves, remove_dead, cut_back, repot]
+                      - type: "null"
+                  custom_task_id:
+                    anyOf:
+                      - type: string
+                        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                      - type: "null"
+                  due_on:
+                    type: string
+                    pattern: ^\d{4}-\d{2}-\d{2}$
+                required: [plant_id, task_type, custom_task_id, due_on]
+                additionalProperties: false
+              - type: "null"
+        required: [event_id, occurrence]
+        additionalProperties: false
     RainAction:
       type: object
       properties:

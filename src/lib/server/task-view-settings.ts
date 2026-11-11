@@ -1,10 +1,11 @@
 import { error } from '@sveltejs/kit';
 import type { TaskViewSettings } from '$lib/tasks';
 import type { Identity } from './auth';
+import type pg from 'pg';
 import { db } from './db';
 
-export async function taskViewSettings(identity: Identity): Promise<TaskViewSettings> {
-  const result = await db().query('SELECT task_sort AS sort, task_filter AS filter, task_show_completed AS show_completed FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, identity.household.id]);
+export async function taskViewSettings(identity: Identity, database: pg.Pool | pg.PoolClient = db()): Promise<TaskViewSettings> {
+  const result = await database.query('SELECT task_sort AS sort, task_filter AS filter, task_show_completed AS show_completed FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, identity.household.id]);
   return result.rows[0];
 }
 export async function saveTaskViewSettings(identity: Identity, input: Record<string, unknown>) {

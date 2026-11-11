@@ -76,6 +76,13 @@ function intervalFor(input: ScheduleInput, type: TaskType) {
   return { intervalDays, basedOn, overridden: validOverride };
 }
 
+export const snoozeDays = 2;
+export function postponedUntil(kind: 'snoozed' | 'skipped', on: string, intervalDays: number) {
+  const due = new Date(on + 'T00:00:00Z');
+  due.setUTCDate(due.getUTCDate() + (kind === 'snoozed' ? snoozeDays : intervalDays));
+  return due.toISOString().slice(0, 10);
+}
+
 // Dates at this seam are ISO calendar dates, already resolved in the household time zone.
 export function schedule(input: ScheduleInput): Schedule {
   const builtIn = Object.fromEntries(taskTypes.map(type => [type, scheduleTask(input, type, taskRules[type], intervalFor(input, type))])) as Record<TaskType, Task>;
@@ -117,15 +124,14 @@ function scheduleTask(input: ScheduleInput, taskType: string, rules: Pick<TaskRu
   }
   // The adapter supplies only the latest effective postponement, after the last completion.
   const history = input.history[taskType];
-  const postponement = ([['snoozedUntil', history?.snoozedUntil, 2], ['skippedOn', history?.skippedOn, intervalDays]] as const)
+  const postponement = ([['snoozedUntil', history?.snoozedUntil, 'snoozed'], ['skippedOn', history?.skippedOn, 'skipped']] as const)
     .filter((entry): entry is typeof entry & { 1: string } => !!entry[1] && (!completion || entry[1] >= completion))
     .sort((a, b) => b[1].localeCompare(a[1]))[0];
   if (postponement) {
-    const [field, date, days] = postponement;
-    due = new Date(date + 'T00:00:00Z');
-    due.setUTCDate(due.getUTCDate() + days);
+    const [field, date, kind] = postponement;
+    due = new Date(postponedUntil(kind, date, intervalDays) + 'T00:00:00Z');
     basedOn.push({ input: `history.${taskType}.${field}`, value: date, source: 'history',
-      adjustment: `${field === 'snoozedUntil' ? 'Snoozed for 2 days' : 'Skipped until the next interval'} from ${date}.` });
+      adjustment: `${kind === 'snoozed' ? `Snoozed for ${snoozeDays} days` : 'Skipped until the next interval'} from ${date}.` });
   }
   const dueOn = due.toISOString().slice(0, 10);
   const lateDays = Math.max(0, Math.round((Date.parse(input.today + 'T00:00:00Z') - due.getTime()) / 86_400_000));

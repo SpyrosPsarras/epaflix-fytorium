@@ -9,7 +9,7 @@ import org.junit.Assert.assertTrue
 internal class HeldServer(server: MockWebServer, held: (RecordedRequest) -> Boolean, respond: (RecordedRequest) -> MockResponse) : AutoCloseable {
     private val latch = java.util.concurrent.CountDownLatch(1)
     private val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
-    val paths: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+    val paths: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
     init {
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -31,11 +31,11 @@ internal class HeldServer(server: MockWebServer, held: (RecordedRequest) -> Bool
 
 internal class ServedLists(server: MockWebServer, @Volatile var today: String = taskListFixture("today"),
                            @Volatile var upcoming: String = taskListFixture("upcoming"), @Volatile var plants: String = "[]",
-                           hold: (RecordedRequest) -> Boolean = { false }) : AutoCloseable {
+                           hold: (RecordedRequest) -> Boolean = { false }, role: String = "owner") : AutoCloseable {
     val responses = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val held = HeldServer(server, hold) { request ->
         when (val path = request.requestUrl!!.encodedPath) {
-            "/api/me" -> MockResponse().setBody("""{"member":{"id":"member-one","role":"owner"}}""")
+            "/api/me" -> MockResponse().setBody("""{"member":{"id":"member-one","role":"$role"}}""")
             "/api/tasks" -> MockResponse().setBody(if (request.requestUrl!!.queryParameter("view") == "today") today else upcoming)
             "/api/plants" -> MockResponse().setBody(plants)
             "/api/meta" -> MockResponse().setBody("""{"timezone":"Europe/Oslo"}""")

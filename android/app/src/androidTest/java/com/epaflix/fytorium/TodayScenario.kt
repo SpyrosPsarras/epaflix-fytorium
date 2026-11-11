@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.ui.test.*
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -72,10 +73,11 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             val last = app.repository.state.value.today!!.sections.last { it.tasks.isNotEmpty() }.tasks.last()
             compose.onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, 100_000f) }
             val row = compose.onNodeWithTag("task:${last.plantId}:${last.key}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-            val fab = compose.onNodeWithContentDescription("Add plant").fetchSemanticsNode().boundsInRoot
             val viewport = compose.onNodeWithTag("task-list").fetchSemanticsNode().boundsInRoot
-            assertTrue("Last row must clear the FAB", row.bottom < fab.top)
-            assertTrue("Viewport must extend behind the FAB", viewport.bottom > fab.bottom)
+            assertTrue("Last row must end inside the list", row.bottom <= viewport.bottom)
+            val covering = compose.onAllNodes(hasClickAction() and !hasAnyAncestor(hasTestTag("task-list"))).fetchSemanticsNodes()
+                .filter { it.boundsInRoot.overlaps(viewport) }.map { it.config.getOrNull(SemanticsProperties.ContentDescription) }
+            assertTrue("No control outside the list may sit over its rows: $covering", covering.isEmpty())
         } else {
             val list = compose.onNodeWithTag("task-list")
             val offset = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
@@ -189,7 +191,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.onNodeWithText("Skip").assertDoesNotExist()
         compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
         compose.onNodeWithTag("view-upcoming").performScrollTo().performClick()
-        compose.waitForNode(hasText("Next 14 calendar days, including today")).assertIsDisplayed()
+        compose.waitForNode(hasTestTag("view-upcoming") and isSelected()).assertIsDisplayed()
         capture("upcoming", false); capture("upcoming", true)
         val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.last { it.plantId in ids && it.dueOn!! > "2030-06-26" }
         val upcomingPosition = openTask(future)

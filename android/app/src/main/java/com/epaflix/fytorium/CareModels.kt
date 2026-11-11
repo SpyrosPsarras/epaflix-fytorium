@@ -1,6 +1,7 @@
 package com.epaflix.fytorium
 
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
@@ -19,7 +20,7 @@ data class CareEvent(val id: String, val plantId: String, val taskType: String?,
                      val byName: String, val batchId: String?, val undoneAt: String?, val previousPot: Boolean, val canUndo: Boolean,
                      val batchPlantCount: Int? = null, val batchEventCount: Int? = null,
                      val batchAction: String? = null, val batchTask: String? = null, val linkedEventId: String? = null,
-                     val linkedEventCount: Int = 0) {
+                     val linkedEventCount: Int = 0, val dueOn: String? = null) {
     val key get() = taskKey(customTaskId, taskType)
     val label get() = if (kind == "completed") "Done" else postponeLabel(kind) ?: "Skipped"
 }
@@ -31,7 +32,7 @@ internal fun taskOccurrence(plantId: String, key: String?, dueOn: String?, postp
 data class CareTask(val status: String, val dueOn: String?, val intervalDays: Int?, val lateDays: Int,
                     val basedOn: List<Basis>, val taskType: String?, val customTaskId: String?, val customTaskName: String?,
                     val plantId: String, val plantName: String, val siteName: String, val completedEvent: CareEvent?, val coverPhotoId: String? = null,
-                    val postponed: String? = null) {
+                    val postponed: String? = null, val postponedUntil: String? = null) {
     val key get() = taskKey(customTaskId, taskType)
     val occurrence get() = completedEvent?.id ?: taskOccurrence(plantId, key, dueOn, postponed)
     val label get() = taskLabel(taskType, customTaskName)
@@ -49,7 +50,7 @@ data class CareTask(val status: String, val dueOn: String?, val intervalDays: In
         }
     }
 }
-data class TaskSection(val key: String, val label: String, val tasks: List<CareTask>)
+data class TaskSection(val key: String, val label: String, val tasks: List<CareTask>, val day: String? = null)
 data class TaskList(val today: String, val view: String, val settings: TaskSettings,
                     val groups: Map<String, List<CareTask>>, val sections: List<TaskSection>)
 data class Plant(val id: String, val displayName: String, val scientificName: String, val status: String,
@@ -95,6 +96,8 @@ fun doneText(type: String?, custom: String?, subject: String, watered: Boolean =
     else taskVerbs[type]?.let { "$it $subject" } ?: "${taskLabel(type, custom)} done for $subject"
 internal fun countLabel(n: Int, noun: String) = "$n $noun" + if (n == 1) "" else "s"
 fun shortDate(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault()))
+fun longDate(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()))
+fun dayMonth(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
 // Undo reverses the whole server batch, so every device words it from the server's batch fields, never from the visible rows.
 internal fun batchReceipt(event: CareEvent, plantName: String, customTaskName: String? = null): BatchReceipt? =
     batchReceipt(event.batchAction, event.batchPlantCount, event.batchEventCount, plantName, event.batchTask, customTaskName)
@@ -114,24 +117,26 @@ internal fun batchReceipt(action: String?, plantCount: Int?, eventCount: Int?, p
 }
 internal fun JSONObject.nullable(name: String): String? = if (isNull(name)) null else getString(name)
 internal fun <T> JSONArray.mapObjects(parse: (JSONObject) -> T): List<T> = (0 until length()).map { parse(getJSONObject(it)) }
+internal fun parseTimezone(meta: String): ZoneId = ZoneId.of(JSONObject(meta).getString("timezone"))
 internal fun parseMember(json: String): Member = JSONObject(json).getJSONObject("member").let { Member(it.getString("id"), Role.valueOf(it.getString("role"))) }
 internal fun parseEvent(j: JSONObject) = CareEvent(j.getString("id"), j.getString("plant_id"), j.nullable("task_type"),
     j.nullable("custom_task_id"), j.nullable("custom_task_name"), j.getString("kind"), j.getString("occurred_on"),
     j.nullable("by_member"), j.optString("by_name"), j.nullable("batch_id"), j.nullable("undone_at"), !j.isNull("previous_pot"), j.getBoolean("can_undo"),
     if (j.isNull("batch_plant_count")) null else j.getInt("batch_plant_count"), if (j.isNull("batch_event_count")) null else j.getInt("batch_event_count"),
-    j.nullable("batch_action"), j.nullable("batch_task"), j.nullable("linked_event_id"), j.optJSONArray("linked_events")?.length() ?: 0)
+    j.nullable("batch_action"), j.nullable("batch_task"), j.nullable("linked_event_id"), j.optJSONArray("linked_events")?.length() ?: 0, j.nullable("due_on"))
 internal fun parseTask(j: JSONObject) = CareTask(j.getString("status"), j.nullable("dueOn"),
     if (j.isNull("intervalDays")) null else j.getInt("intervalDays"), j.optInt("lateDays"),
     j.getJSONArray("basedOn").mapObjects { b -> Basis(b.getString("input"), b.opt("value").takeUnless { it == JSONObject.NULL },
         b.getString("source"), b.getString("adjustment"), b.nullable("ruleId"), b.nullable("fetchedAt"),
         if (b.isNull("factor")) null else b.getDouble("factor"), b.nullable("reason")) },
     j.nullable("task_type"), j.nullable("custom_task_id"), j.nullable("custom_task_name") ?: j.nullable("name"),
-    j.optString("plant_id"), j.optString("plant_name"), j.optString("site_name"), j.optJSONObject("completed_event")?.let(::parseEvent), j.nullable("cover_photo_id"), j.nullable("postponed"))
+    j.optString("plant_id"), j.optString("plant_name"), j.optString("site_name"), j.optJSONObject("completed_event")?.let(::parseEvent), j.nullable("cover_photo_id"), j.nullable("postponed"),
+    j.nullable("postponed_until"))
 internal fun parseTaskList(json: String): TaskList {
     val j = JSONObject(json); val s = j.getJSONObject("settings"); val g = j.getJSONObject("groups")
     return TaskList(j.getString("today"), j.getString("view"), TaskSettings(s.getString("sort"), s.getString("filter"), s.getBoolean("show_completed")),
         g.keys().asSequence().associateWith { g.getJSONArray(it).mapObjects(::parseTask) },
-        j.getJSONArray("sections").mapObjects { TaskSection(it.getString("key"), it.getString("label"), it.getJSONArray("tasks").mapObjects(::parseTask)) })
+        j.getJSONArray("sections").mapObjects { TaskSection(it.getString("key"), it.getString("label"), it.getJSONArray("tasks").mapObjects(::parseTask), it.nullable("day")) })
 }
 internal fun parsePlant(j: JSONObject) = Plant(j.getString("id"), j.getString("display_name"), j.getString("scientific_name"),
     j.getString("status"), j.nullable("site_name"), j.nullable("cover_photo_id"), j.nullable("pot_type"),

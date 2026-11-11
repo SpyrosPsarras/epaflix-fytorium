@@ -86,7 +86,7 @@ class PlantsScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             compose.onRoot().captureRoboImage("src/test/screenshots/today-plant-task-${role.name}-${if (night) "dark" else "light"}.png")
         }
-        // The skip moves the opened occurrence to the postponed row; its Undo lives in the receipt, not on the page.
+        // The occurrence a skip postponed, opened from Upcoming, offers Done and no Undo; the Undo is on the skip's own row.
         val next = task.copy(dueOn = "2030-06-09", lateDays = 0, postponed = "skipped")
         compose.runOnIdle { state.value = state.value.copy(today = list.copy(sections = emptyList()),
             upcoming = list.copy(view = "upcoming", sections = listOf(TaskSection("2030-06-09", "2030-06-09", listOf(next)))))

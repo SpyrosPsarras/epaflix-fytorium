@@ -7,7 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.outlined.NotificationsPaused
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,8 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,11 +33,24 @@ private var SemanticsPropertyReceiver.thumbnailLoading by ThumbnailLoading
 fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days / 30}mo late"
 
 @Composable internal fun TaskRow(task: CareTask, state: CareState, today: String, photo: Bitmap?,
-    onAction: (String) -> Unit, showType: Boolean = false, photoLoading: Boolean = false, onOpen: () -> Unit = {}) {
+    onAction: (String) -> Unit, title: String = task.plantName, details: List<String> = listOf(task.siteName), photoLoading: Boolean = false, onOpen: () -> Unit = {},
+    showPostponed: Boolean = false, listed: Boolean = true, blocked: String? = null, onBlocked: (String) -> Unit = {}, subtitleLine: Int = subtitleLineHeight()) {
     val event = task.completedEvent
+    val postponed = event?.takeIf { it.kind != "completed" }
     val actions = state.member?.let { task.actions(today, it, event) }.orEmpty()
     val busy = BusyKey.Row(task.occurrence) in state.pending
-    val enabled = state.writable && !busy
+    val enabled = state.writable && !busy && listed
+    // A control that is off for a connection, an app update or a held change still takes a tap, to say why.
+    val tappable = enabled || (blocked != null && !busy)
+    fun tap(action: String) { if (enabled) onAction(action) else blocked?.let(onBlocked) }
+    val look = Modifier.semantics { if (!enabled) { disabled(); if (tappable) blocked?.let { stateDescription = it } } }
+    val off = IconButtonDefaults.iconButtonColors().disabledContentColor
+    val filled = IconButtonDefaults.filledIconButtonColors()
+    val parts = details.filter { it.isNotBlank() }
+    val until = task.postponedUntil
+    val status = postponed?.let { until?.let { "until " + shortDate(it) } ?: it.label } ?: task.postponedLabel?.takeIf { showPostponed && event == null }
+    // An empty subtitle keeps its line's height, split around the centred name, so a label appearing later never changes the row's height.
+    val emptyLine = subtitleLine.takeIf { parts.isEmpty() && status == null }
     Column(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClickLabel = "Open ${task.plantName}", onClick = onOpen)
@@ -41,38 +58,74 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
                 TaskPhoto(task, photo, event == null, photoLoading)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                    Text(task.plantName, style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val subtitle = if (showType) listOf(task.label, task.siteName).filter { it.isNotBlank() }.joinToString(" · ") else task.siteName
-                    if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (showType && event == null) task.postponedLabel?.let {
-                        Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    val padding = with(LocalDensity.current) { emptyLine?.let { Modifier.padding(top = (it / 2).toDp(), bottom = (it - it / 2).toDp()) } ?: Modifier }
+                    Text(title, padding, style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (emptyLine == null) SiteLine(parts, status, postponed, until)
                 }
             }
-            if ("snooze" in actions) IconButton(onClick = { onAction("snooze") }, enabled = enabled, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.NotificationsPaused, contentDescription = "Snooze 2 days", tint = MaterialTheme.colorScheme.primary)
-            }
-            if (busy) {
+            if ("snooze" in actions) IconButton(onClick = { tap("snooze") }, enabled = tappable, modifier = Modifier.size(48.dp).then(look)) {
+                Icon(Icons.Outlined.NotificationsPaused, contentDescription = "Snooze 2 days", tint = if (enabled) MaterialTheme.colorScheme.primary else off)
+            } else Spacer(Modifier.size(48.dp))
+            if (postponed != null) {
+                if ("undo" in actions) IconButton(onClick = { tap("undo") }, enabled = tappable, modifier = Modifier.size(48.dp).then(look).semantics {
+                    contentDescription = if (busy) "Saving ${task.label} for ${task.plantAndSite}" else "${undoLabel(postponed, emptyList())} for ${task.plantAndSite}"
+                }) {
+                    if (busy) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, tint = if (enabled) MaterialTheme.colorScheme.primary else off)
+                } else Spacer(Modifier.size(48.dp))
+            } else if (busy) {
                 Box(Modifier.size(48.dp).semantics { contentDescription = "Saving ${task.label} for ${task.plantAndSite}" }, contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
             } else if (event != null) {
-                val check = @Composable { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary) } }
+                val undoable = "undo" in actions
+                val check = @Composable { Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Check, contentDescription = null, tint = if (undoable && !enabled) filled.disabledContentColor else filled.contentColor) } }
                 val watered = event.batchId == null && state.linkedWater(event)
                 val done = "${task.label}${if (watered) " and water" else ""} done for ${task.plantAndSite}"
-                if ("undo" in actions) {
-                    val description = done + if (watered) ". Double tap to undo both" else if (event.batchId == null) ". Double tap to undo"
+                if (undoable) {
+                    val description = done + if (!enabled) "" else if (watered) ". Double tap to undo both" else if (event.batchId == null) ". Double tap to undo"
                         else ". Part of a batch" + state.batches[event.batchId]?.let { " of ${it.scope}" }.orEmpty() + ". Double tap to see the batch"
-                    Surface(onClick = { onAction("undo") }, enabled = enabled, shape = CircleShape, color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(48.dp).semantics { contentDescription = description }, content = check)
-                } else Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary,
+                    Surface(onClick = { tap("undo") }, enabled = tappable, shape = CircleShape,
+                        color = if (enabled) filled.containerColor else filled.disabledContainerColor,
+                        modifier = Modifier.size(48.dp).then(look).semantics { contentDescription = description }, content = check)
+                } else Surface(shape = CircleShape, color = filled.containerColor,
                     modifier = Modifier.size(48.dp).semantics { contentDescription = done }, content = check)
             } else if ("complete" in actions) {
-                IconButton(onClick = { onAction("complete") }, enabled = enabled,
+                IconButton(onClick = { tap("complete") }, enabled = tappable,
                     modifier = Modifier.size(48.dp).border(2.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
-                        .semantics { contentDescription = "Mark ${task.label} done for ${task.plantAndSite}" }) {
+                        .then(look).semantics { contentDescription = "Mark ${task.label} done for ${task.plantAndSite}" }) {
                     // An unfilled circle is the completion affordance, not a second checkbox.
                 }
+            } else Spacer(Modifier.size(48.dp))
+        }
+    }
+}
+
+@Composable internal fun subtitleLineHeight() = rememberTextMeasurer().measure("", MaterialTheme.typography.bodyMedium).size.height
+
+@Composable private fun SiteLine(parts: List<String>, status: String?, postponed: CareEvent?, until: String?) {
+    val shorter = until?.takeIf { postponed != null }?.let { "until " + dayMonth(it) }
+    val spoken = postponed?.let { it.label + until?.let { " until " + longDate(it) }.orEmpty() }
+    val glyph = postponed?.let { if (it.kind == "snoozed") Icons.Outlined.NotificationsPaused else Icons.Default.SkipNext }
+    val glyphSize = with(LocalDensity.current) { 18.sp.toDp() }
+    val glyphWidth = with(LocalDensity.current) { if (glyph == null) 0 else (glyphSize + 4.dp).roundToPx() }
+    ProvideTextStyle(MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+        BoxWithConstraints {
+            val measurer = rememberTextMeasurer()
+            val style = LocalTextStyle.current
+            fun width(text: String) = measurer.measure(text, style, maxLines = 1, softWrap = false).size.width
+            fun fits(subtitle: String, label: String) = (if (subtitle.isEmpty()) 0 else width(subtitle) + width(" · ")) + glyphWidth + width(label) <= constraints.maxWidth
+            // The site gives way first, then the weekday, so the date itself is never cut.
+            val choices = if (status == null) listOf(parts.joinToString(" · ") to status)
+                else (parts.size downTo 0).map { parts.take(it).joinToString(" · ") to status } + listOfNotNull(shorter?.let { "" to it })
+            val (subtitle, shown) = choices.firstOrNull { (text, label) -> label == null || fits(text, label) } ?: choices.last()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (subtitle.isNotEmpty()) Text(subtitle, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotEmpty() && shown != null) Text(" · ", Modifier.clearAndSetSemantics { testTag = "site-separator" }, maxLines = 1)
+                if (glyph != null) Icon(glyph, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp).size(glyphSize).testTag("${postponed.kind}-glyph"))
+                if (shown != null) Text(shown, Modifier.semantics { spoken?.let { contentDescription = it } }, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

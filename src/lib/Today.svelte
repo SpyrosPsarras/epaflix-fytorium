@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
   import { navigating } from '$app/state';
-  import { batchScope, careEventLabel, taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
+  import { batchScope, postponedLabel, taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
   import type { Task } from '$lib/schedule/engine';
   let { list, sitter = false, memberId }: { list: TaskList; sitter?: boolean; memberId?: string } = $props();
   // A result patches only the row acted on. Every load of the list starts again from the server's rows.
@@ -80,8 +80,11 @@
   {#if saved}<p role="status">{saved}</p>{/if}
   {#if message}<p role="alert">{message}</p>{/if}
   {#if list.sections.length === 0}<p>No tasks in this view.</p>{/if}
-  {#each list.sections as section (section.key)}
-    <h3>{section.label}</h3>
+  {#each list.sections as section, index (section.key)}
+    {#if section.day}
+      {#if section.day !== list.sections[index - 1]?.day}<h3>{section.day}</h3>{/if}
+      <h4>{section.label}</h4>
+    {:else}<h3>{section.label}</h3>{/if}
     {#if section.tasks.length === 0}<p>No tasks due today.</p>{/if}
     {#each section.tasks as row (occurrence(row))}
       {@const rules = taskPresentation(row)}
@@ -89,12 +92,13 @@
       {@const done = actionFor(row)}
       {@const task = done?.task ?? row}
       {@const batch = done?.event.batch_id ? batchScope(done.event, row.plant_name, row.custom_task_name ?? null) : null}
+      {@const until = row.postponed_until ?? (task.status === 'due' ? task.dueOn : null)}
       <article data-task-type={taskKey(row)} aria-label={rules.label + ' for ' + row.plant_name}>
         <div>
           <a href={'/plants/' + row.plant_id}>{row.plant_name}</a>
           <p>{rules.label}{#if row.site_name} · {row.site_name}{/if}</p>
           {#if done}
-            <p role="status">{careEventLabel(done.event.kind, 'Done')}{#if task.status === 'due'} · Next {rules.action}: {task.dueOn}{/if}</p>
+            <p role="status">{#if done.event.kind === 'completed'}Done{#if task.status === 'due'} · Next {rules.action}: {task.dueOn}{/if}{:else}{postponedLabel(done.event.kind, until)}{/if}</p>
             {#if batch}<p>{batch.text}</p>{/if}
           {:else if task.status === 'due'}
             {#if task.lateDays > 0}<span class="late">{task.lateDays}d late</span>

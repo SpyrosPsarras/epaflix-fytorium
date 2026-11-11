@@ -42,13 +42,14 @@ private fun ComposeContentTestRule.stateDump(): String {
         "feed[refreshing=${feed.refreshing},saving=${feed.saving},cards=${feed.cards.take(12).map { it.kind }},rainBatch=${feed.weather?.lastBatchId != null}]"
 }
 
-internal fun ComposeContentTestRule.scrollTaskClearOfFabs(tag: String) {
-    val row = onNodeWithTag(tag).performScrollTo()
-    val fabTop = onNodeWithContentDescription("Add plant").fetchSemanticsNode().boundsInRoot.top
-    val overlap = row.fetchSemanticsNode().boundsInRoot.bottom - fabTop + 16f
+internal fun ComposeContentTestRule.scrollTaskClearOfReceipt(tag: String) {
+    val row = onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+    val receiptTop = onAllNodes(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.Dismiss)).fetchSemanticsNodes()
+        .minOfOrNull { it.boundsInRoot.top } ?: return
+    val overlap = row.fetchSemanticsNode().boundsInRoot.bottom - receiptTop + 16f
     if (overlap > 0f) onNodeWithTag("task-list").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, overlap) }
     row.assertIsDisplayed()
-    check(row.fetchSemanticsNode().boundsInRoot.bottom < fabTop) { "Task $tag is still behind the FAB" }
+    check(row.fetchSemanticsNode().boundsInRoot.bottom < receiptTop) { "Task $tag is still behind the receipt" }
 }
 
 internal fun ComposeContentTestRule.waitForNode(matcher: SemanticsMatcher): SemanticsNodeInteraction {

@@ -200,14 +200,14 @@ class LaunchTest {
             fun button(tag: String, matcher: SemanticsMatcher) = compose.onNode(matcher and hasAnyAncestor(hasTestTag(tag)))
             val completeWater = hasContentDescription("Mark Water done for Synthetic A04 fern", substring = true)
             compose.waitForNode(hasText("1d late") and hasAnyAncestor(hasTestTag(waterTag))).performScrollTo().assertIsDisplayed()
-            compose.scrollTaskClearOfFabs(waterTag)
+            compose.scrollTaskClearOfReceipt(waterTag)
             compose.waitForNode(completeWater and hasAnyAncestor(hasTestTag(waterTag))).waitForAction("$waterTag complete").performClick()
             compose.waitForState("Water completion applied to Today", 30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent != null } == true }
             // A real refresh must not remove the row between completion and Undo.
             app.repository.refresh()
             val undoWater = hasContentDescription("Double tap to undo", substring = true)
             compose.waitForNode(undoWater and hasAnyAncestor(hasTestTag(waterTag)))
-            compose.scrollTaskClearOfFabs(waterTag)
+            compose.scrollTaskClearOfReceipt(waterTag)
             button(waterTag, undoWater).waitForAction("$waterTag Undo").performClick()
             try {
                 compose.waitForState("Water undo restored one-day lateness", 30_000) { !app.repository.state.value.busy && app.repository.state.value.today?.sections?.flatMap { it.tasks }?.any { it.plantId == plantId && it.taskType == "water" && it.completedEvent == null && it.lateDays == 1 } == true }
@@ -228,7 +228,7 @@ class LaunchTest {
             app.care.refresh()
             compose.waitForState("Offline cached Today banner visible", 30_000) {
                 runCatching {
-                    compose.onNode(hasText("Offline, last updated", substring = true)).performScrollTo().assertIsDisplayed()
+                    compose.onNode(hasText("Offline. Showing tasks from", substring = true)).performScrollTo().assertIsDisplayed()
                     true
                 }.getOrDefault(false)
             }

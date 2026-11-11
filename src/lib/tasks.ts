@@ -5,6 +5,10 @@ const eventLabels = { completed: 'Completed', snoozed: 'Snoozed', skipped: 'Skip
 export function careEventLabel(kind: CareEvent['kind'], completedLabel = eventLabels.completed) {
   return kind === 'completed' ? completedLabel : eventLabels[kind];
 }
+const shortDate = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+export function postponedLabel(kind: 'snoozed' | 'skipped', until: string | null) {
+  return eventLabels[kind] + (until ? ' until ' + shortDate.format(new Date(until + 'T00:00:00Z')) : '');
+}
 
 export type ScheduledTask = Task & { postponed: 'snoozed' | 'skipped' | null };
 export type PlantSchedule = Record<TaskType, ScheduledTask> & { customTasks: Record<string, ScheduledTask & { name: string; custom_task_id: string }> };
@@ -39,12 +43,12 @@ export function undoLabel(event: CareEvent, history: CareEvent[]) {
   return 'Undo ' + taskPresentation(event).action + (watered ? ' and watering' : postponedUndo[event.kind]);
 }
 
-export type ListedTask = ScheduledTask & { plant_id: string; plant_name: string; site_name: string; cover_photo_id?: string | null; task_type: TaskType | null; custom_task_id?: string | null; custom_task_name?: string | null; completed_event?: CareEvent };
+export type ListedTask = ScheduledTask & { plant_id: string; plant_name: string; site_name: string; cover_photo_id?: string | null; task_type: TaskType | null; custom_task_id?: string | null; custom_task_name?: string | null; completed_event?: CareEvent; postponed_until?: string | null };
 export type TaskViewSettings = { sort: 'task' | 'plant' | 'site'; filter: 'all' | 'indoor' | 'outdoor'; show_completed: boolean };
-export type TaskList = { today: string; view: 'today' | 'upcoming'; settings: TaskViewSettings; groups: Record<string, ListedTask[]>; sections: { key: string; label: string; tasks: ListedTask[] }[] };
+export type TaskList = { today: string; view: 'today' | 'upcoming'; settings: TaskViewSettings; groups: Record<string, ListedTask[]>; sections: { key: string; label: string; day?: string; tasks: ListedTask[] }[] };
 export type CareEvent = {
   id: string; plant_id: string; task_type: TaskType | null; custom_task_id?: string | null; custom_task_name?: string | null; kind: 'completed' | 'snoozed' | 'skipped'; occurred_at: string;
   linked_event_id?: string | null; batch_plant_count?: number; batch_event_count?: number;
   batch_action?: 'complete-all' | 'complete-type' | 'rain'; batch_task?: string | null; can_undo: boolean; batch_id: string | null; previous_pot: Record<string, unknown> | null;
-  occurred_on: string; due_on?: string | null; by_member: string | null; by_name: string; undone_at: string | null; undone_by: string | null; request_id: string;
+  occurred_on: string; due_on?: string | null; postponed_until?: string | null; by_member: string | null; by_name: string; undone_at: string | null; undone_by: string | null; request_id: string;
 };
