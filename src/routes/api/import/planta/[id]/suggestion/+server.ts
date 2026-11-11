@@ -7,5 +7,5 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   const identity = requireOwner(locals.identity);
   checkOrigin(request);
-  return json(await importSuggestion(params.id, identity.household.id), { headers: { 'cache-control': 'no-store' } });
+  return json(await importSuggestion(params.id, identity.household.id, identity.language), { headers: { 'cache-control': 'no-store' } });
 };

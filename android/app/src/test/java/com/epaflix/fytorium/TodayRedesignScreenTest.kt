@@ -83,13 +83,14 @@ class TodayRedesignScreenTest {
             compose.runOnIdle { state.value = base.copy(today = list.copy(sections = listOf(TaskSection("water", "Water", rows)))) }
             button.assertDoesNotExist()
         }
-        compose.runOnIdle { state.value = base.copy(handled = mapOf("plant-one:water" to event)) }
-        button.assertDoesNotExist()
-        for (blocked in listOf(base.copy(offline = true), base.copy(serverUnavailable = true), base.copy(saving = true), base.copy(updateRequired = true))) {
+        // A completion undone elsewhere comes back from the server as a due row.
+        compose.runOnIdle { state.value = base }
+        button.assertIsEnabled()
+        for (blocked in listOf(base.copy(offline = true), base.copy(serverUnavailable = true), base.copy(pending = setOf(BusyKey.Card("water"))), base.copy(updateRequired = true))) {
             compose.runOnIdle { state.value = blocked }
             button.assertExists().assertIsNotEnabled()
         }
-        compose.runOnIdle { state.value = base.copy(busy = true) }
+        compose.runOnIdle { state.value = base.copy(busy = true, pending = setOf(BusyKey.Row(task.occurrence), BusyKey.Card("fertilize"))) }
         button.assertIsEnabled()
         val custom = task.copy(taskType = null, customTaskId = "91000000-0000-4000-8000-000000000001", customTaskName = "Rotate")
         compose.runOnIdle { state.value = base.copy(today = list.copy(sections = listOf(
@@ -116,7 +117,7 @@ class TodayRedesignScreenTest {
         compose.onNodeWithText("Synthetic fern", useUnmergedTree = true).performTouchInput { click() }
         compose.runOnIdle { assertEquals(2, opened); assertTrue(actions.isEmpty()) }
         compose.onNodeWithContentDescription("Snooze 2 days").assertHeightIsAtLeast(48.dp).performClick()
-        compose.onNodeWithContentDescription("Mark Water for Synthetic fern done").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertHeightIsAtLeast(48.dp).performClick()
         compose.runOnIdle { assertEquals(2, opened); assertEquals(listOf("snooze", "complete"), actions) }
         compose.onNodeWithText("Skip").assertDoesNotExist()
         compose.onNodeWithText("Based on").assertDoesNotExist()
@@ -187,7 +188,7 @@ class TodayRedesignScreenTest {
         assertEquals(2, layout.lineCount)
         assertTrue(layout.isLineEllipsized(1))
         assertEquals(18.sp, layout.layoutInput.style.fontSize)
-        compose.onNodeWithContentDescription("Mark Water for ${task.plantName} done").assertIsDisplayed().assertWidthIsAtLeast(48.dp)
+        compose.onNodeWithContentDescription("Mark Water done for ${task.plantName}, Synthetic site").assertIsDisplayed().assertWidthIsAtLeast(48.dp)
     }
     @Test fun allStatesLight() = screenshots(false)
     @Test fun allStatesDark() = screenshots(true)
@@ -264,7 +265,7 @@ class TodayRedesignScreenTest {
         assertEquals(1, adds); assertEquals(1, imports)
         compose.runOnIdle { state.value = full.copy(today = mixed, offline = true) }
         compose.onNodeWithText(state.value.offlineBanner()).assertExists()
-        compose.onAllNodes(hasContentDescription("Mark Water for Fern done") or hasContentDescription("Mark Fertilize for Fern done"))
+        compose.onAllNodes(hasContentDescription("Mark Water done for Fern, Living room") or hasContentDescription("Mark Fertilize done for Fern, Living room"))
             .assertCountEquals(2).assertAll(isNotEnabled())
         compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
         capture("offline")

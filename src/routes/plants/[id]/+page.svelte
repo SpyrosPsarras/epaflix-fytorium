@@ -8,7 +8,7 @@
   import type { CareEvent } from '$lib/tasks';
   import { plantLabels, plantBooleans, plantNumbers, plantChoices } from '$lib/plants';
   import { taskTypes } from '$lib/schedule/engine';
-  import { careEventLabel, taskPresentation } from '$lib/tasks';
+  import { careEventLabel, taskPresentation, undoLabel } from '$lib/tasks';
   import { taskRules } from '$lib/schedule/rules';
   import type { PageData } from './$types';
   let { data }: { data: PageData } = $props();
@@ -154,8 +154,8 @@
       <li class:undone={event.undone_at}>
         <time datetime={event.occurred_on}>{event.occurred_on}</time> · {taskPresentation(event).label}
         <p>{careEventLabel(event.kind)} by {event.by_name}{#if event.undone_at}{' · Undone'}{/if}</p>
-        {#if event.batch_id}<p>Part of a care batch. Undo reverses the whole batch.</p>{/if}
-        {#if !event.undone_at && data.plant.status === 'active'}<button disabled={busy} onclick={() => undoEvent(event)}>Undo</button>{/if}
+        {#if event.batch_id && !event.undone_at}<p>Part of a care batch. Undo reverses the whole batch.</p>{/if}
+        {#if !event.undone_at && data.plant.status === 'active'}<button disabled={busy} onclick={() => undoEvent(event)}>{undoLabel(event, data.history)}</button>{/if}
       </li>
     {/each}
   </ul>

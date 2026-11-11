@@ -27,7 +27,7 @@ beforeEach(() => {
     if (sql === 'BEGIN') inTransaction = true;
     else if (sql === 'COMMIT' || sql === 'ROLLBACK') inTransaction = false;
     else if (sql.startsWith('SELECT p.id,')) rows = [plant];
-    else if (sql.startsWith('SELECT * FROM care_events') && lastWateredAt) rows = [{ plant_id: plant.id, task_type: 'water', kind: 'completed', occurred_at: lastWateredAt }];
+    else if (sql.startsWith('SELECT e.*') && lastWateredAt) rows = [{ plant_id: plant.id, task_type: 'water', kind: 'completed', occurred_at: lastWateredAt }];
     else if (sql.startsWith('SELECT * FROM sites')) rows = [{ id: plant.site_id, location: 'outdoor', humidity: 'normal' }];
     else if (sql.startsWith('SELECT task_sort')) rows = [{ sort: 'task', filter: 'all', show_completed: false }];
     else if (sql.startsWith('SELECT latitude')) rows = [{ latitude: null }];

@@ -1,17 +1,25 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import type { ImportSuggestion } from '$lib/import';
+import type { CommonNameLanguage } from '$lib/names';
 import { now } from '../clock';
 import { db } from '../db';
 import { matchSpecies } from '../gbif';
 import { identificationCandidates, storeQuota } from '../identification';
 import { plantnet } from '../identification/plantnet';
 import { isUuid } from '../plants';
+import { withCommonNames } from '../species';
 import { coverThumbnail } from './cover';
 import type { StoredImportStaging } from './import';
 
 const pending = new Map<string, Promise<ImportSuggestion>>();
 
-export async function importSuggestion(id: string, household: string): Promise<ImportSuggestion> {
+export async function importSuggestion(id: string, household: string, language: CommonNameLanguage): Promise<ImportSuggestion> {
+  const suggestion = await cachedSuggestion(id, household);
+  const named = await withCommonNames([...suggestion.candidates, ...(suggestion.genus ? [suggestion.genus] : [])], language);
+  return { ...suggestion, candidates: suggestion.candidates.map(named), genus: suggestion.genus ? named(suggestion.genus) : null };
+}
+
+async function cachedSuggestion(id: string, household: string): Promise<ImportSuggestion> {
   if (!isUuid(id)) error(404, 'Import plant not found');
   const key = household + ':' + id;
   const existing = pending.get(key);

@@ -29,7 +29,6 @@
   });
   const reviewRows = $derived(data.rows.filter(row => row.status === 'review'));
   const orderedRows = $derived([...reviewRows, ...data.rows.filter(row => row.status !== 'review')]);
-  const rowName = (row: PageData['rows'][number]) => row.mapped.nickname ?? row.mapped.scientific_name ?? row.planta_plant_id;
   function searchLabel(row: PageData['rows'][number]) {
     if (row.status === 'skipped') return 'Undo skip';
     if (row.status !== 'review') return 'Change species or skip';
@@ -62,7 +61,7 @@
 <a href="/">Home</a>
 <h1>Import from Planta</h1>
 <p>Run the real import once with the owner present. Create a one-time app code in the Planta App Portal that day. Fytorium reads the official API, not your password.</p>
-<p>A new fetch replaces this review. Re-running updates Planta-sourced species, nickname, cultivar, site, pot and soil, even if you edited them here. Local settings stay. Covers are downloaded only once.</p>
+<p>A new fetch replaces this review. Re-running updates Planta-sourced species, cultivar, site, pot and soil, even if you edited them here. A name you give a plant in Fytorium stays until its name in Planta changes. Local settings stay. Covers are downloaded only once.</p>
 <form onsubmit={fetchPlants}>
   <label for="planta-code">One-time app code</label>
   <input id="planta-code" type="password" autocomplete="off" bind:value={code} required maxlength="1000" />
@@ -76,7 +75,7 @@
   {#snippet reviewSummary()}
     {#if reviewRows.length}
       <p role="status" class="review-summary">{reviewRows.length} {reviewRows.length === 1 ? 'plant still needs' : 'plants still need'} review:
-        {#each reviewRows as row, index}{index ? ', ' : ''}<a href={'#import-' + row.id}>{rowName(row)}</a>{/each}
+        {#each reviewRows as row, index}{index ? ', ' : ''}<a href={'#import-' + row.id}>{row.display_name}</a>{/each}
       </p>
     {/if}
   {/snippet}
@@ -84,12 +83,12 @@
   {#each orderedRows as row (row.id)}
     {@const searchOpen = searching[row.id] ?? (row.status === 'review' && row.candidates.length === 0)}
     <article id={'import-' + row.id} class:needs-review={row.status === 'review'}>
-      <h3>{rowName(row)}</h3>
+      <h3>{row.display_name}</h3>
       {#if row.status === 'confirmed'}
         <p class="ready"><span aria-hidden="true">✓</span> Ready to import</p>
         {#if row.selected}<div class="selected-species"><SpeciesPhoto gbifKey={row.selected.gbif_key} name={row.selected.canonical_name} showName displayPhoto={false} /></div>{/if}
       {/if}
-      <Thumbnail src={row.mapped.has_cover ? `${endpoint}/${row.id}/cover` : null} alt={'Planta photo of ' + rowName(row)} placeholder="No Planta photo" size={row.status === 'review' ? '24rem' : '10rem'} />
+      <Thumbnail src={row.mapped.has_cover ? `${endpoint}/${row.id}/cover` : null} alt={'Planta photo of ' + row.display_name} placeholder="No Planta photo" size={row.status === 'review' ? '24rem' : '10rem'} />
       <p>{row.status === 'confirmed' ? '' : row.mapped.scientific_name + ' · '}{row.mapped.site_name}</p>
       <p>Pot: {row.mapped.pot_type.replaceAll('_', ' ')} · {row.mapped.pot_size_cm ?? 'unknown'} cm · Soil: {row.mapped.soil_type.replaceAll('_', ' ')}</p>
       {#if row.cover_error}<p role="status">Cover not imported: {row.cover_error} Fetch again to retry the cover.</p>{/if}

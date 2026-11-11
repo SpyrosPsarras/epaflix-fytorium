@@ -9,7 +9,9 @@ export const gbifNames: NameSource = {
     if (!Array.isArray(payload.results)) throw new Error('Invalid GBIF names');
     return payload.results.flatMap((row: { vernacularName: string; language: string }) => {
       const lang = language(row.language);
-      return lang ? [{ name: row.vernacularName, language: lang }] : [];
+      if (!lang) return [];
+      if (typeof row.vernacularName !== 'string') throw new Error('Invalid GBIF name');
+      return row.vernacularName.split(/[,;]/).map(name => name.trim()).filter(Boolean).map(name => ({ name, language: lang }));
     });
   },
 };

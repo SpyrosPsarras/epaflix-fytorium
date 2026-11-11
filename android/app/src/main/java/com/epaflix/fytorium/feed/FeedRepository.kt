@@ -11,7 +11,7 @@ import org.json.JSONObject
 private class FeedFailure(val status: Int, val reason: String?, message: String) : Exception(message)
 
 // Memory only. Session changes discard the feed, settings and any in-flight result.
-class FeedRepository(private val api: ApiClient, private val connected: () -> Boolean) {
+class FeedRepository(private val api: ApiClient, private val connected: () -> Boolean, private val undoBatch: (String) -> Boolean = { false }) {
     private val monitor = Any()
     private val workLock = Any()
     private var generation = 0
@@ -99,25 +99,33 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         val id = synchronized(monitor) { rainRequestId ?: java.util.UUID.randomUUID().toString().also { rainRequestId = it } }
         write("/api/weather/rain/water", "POST", JSONObject().put("request_id", id)) { result ->
             rainRequestId = null
-            mutable.value = mutable.value.copy(message = "Marked ${result.getInt("plantCount")} outdoor plants watered.")
+            val batch = result.getString("batchId")
+            // The card shows the receipt from the same fields a refresh or another device reads.
+            if (result.isNull("undoneAt")) mutable.value = mutable.value.copy(weather = mutable.value.weather?.let {
+                it.copy(rain = it.rain?.copy(batchId = batch), lastBatchId = batch, lastBatchPlantCount = result.getInt("plantCount"))
+            })
         }
     }
     fun undoRain(): Boolean {
-        val id = state.value.weather?.lastBatchId ?: return false
+        val weather = state.value.weather
+        val id = weather?.lastBatchId ?: return false
         if (!id.matches(Regex("[A-Za-z0-9_-]+"))) {
             synchronized(monitor) { mutable.value = mutable.value.copy(message = "Rain watering could not be undone. Refresh to try again.") }
             return false
         }
-        return write("/api/task-batches/$id/undo", "POST", null, "Rain watering undone.") { rainRequestId = null }
+        // The care repository sends the Undo, shows its lists and reports its failures.
+        return write(weather.rainUndone, { if (undoBatch(id)) JSONObject() else null }) { rainRequestId = null }
     }
-    private fun write(path: String, method: String, body: JSONObject?, message: String? = null, applied: (JSONObject) -> Unit): Boolean = synchronized(workLock) write@ {
+    private fun write(path: String, method: String, body: JSONObject?, message: String? = null, applied: (JSONObject) -> Unit) =
+        write(message, { read(path, method, body) }, applied)
+    private fun write(message: String?, send: () -> JSONObject?, applied: (JSONObject) -> Unit): Boolean = synchronized(workLock) write@ {
         val epoch = synchronized(monitor) {
             if (!state.value.writable || !connected()) { if (!connected()) connectivityChanged(false); return@write false }
             mutable.value = mutable.value.copy(saving = true, message = null)
             generation
         }
         try {
-            val result = read(path, method, body)
+            val result = send() ?: return@write false
             synchronized(monitor) {
                 if (epoch != generation) return@write false
                 applied(result)

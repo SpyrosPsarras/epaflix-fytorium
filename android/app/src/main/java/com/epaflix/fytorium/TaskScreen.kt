@@ -44,6 +44,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 @Composable fun TaskScreen(state: CareState, view: String, onView: (String) -> Unit = {}, onRefresh: () -> Unit = {},
                            onAction: (CareTask, String) -> Unit = { _, _ -> },
                            onHandleType: (String) -> Unit = {}, onSettings: (TaskSettings) -> Unit = {},
+                           onUndoReceipt: (Receipt) -> Unit = {}, onReceiptDone: (Receipt) -> Unit = {},
                            thumbnails: Thumbnails? = null,
                            onNotifications: () -> Unit = {}, onSearch: () -> Unit = {}, onAddPlant: () -> Unit = {}, onImport: () -> Unit = {},
                            deviceOnline: Boolean = true, onOpenTask: (CareTask) -> Unit = {}, scrollState: ScrollState = rememberScrollState(),
@@ -94,7 +95,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
     val showFab = state.member?.role in listOf(Role.owner, Role.family)
     val canAdd = state.member?.role in listOf(Role.owner, Role.family) && deviceOnline && !state.updateRequired
-    Scaffold(topBar = {
+    val snackbar = remember { SnackbarHostState() }
+    ReceiptSnackbar(state.receipt, snackbar, onUndoReceipt, onReceiptDone)
+    Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
         CenterAlignedTopAppBar(title = { Text(if (view == "upcoming") "Upcoming" else "Today") }, navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
         }, actions = {
@@ -152,17 +155,37 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
                         if (view == "today" && state.member?.role in listOf(Role.owner, Role.family) && section.tasks.any { task ->
-                            task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today &&
-                                (state.handled[task.plantId + ":" + task.key] ?: task.completedEvent) == null
+                            task.status == "due" && task.dueOn != null && task.dueOn <= list!!.today && task.completedEvent == null
                         }) {
-                            FilledTonalButton(onClick = { onHandleType(section.key) }, enabled = state.writable,
+                            val handling = BusyKey.Card(section.key) in state.pending
+                            FilledTonalButton(onClick = { onHandleType(section.key) }, enabled = state.writable && !handling,
                                 shape = RoundedCornerShape(50), modifier = Modifier.align(Alignment.CenterHorizontally)
                                     .padding(top = 12.dp, bottom = 16.dp).heightIn(min = 48.dp)
-                                    .semantics { contentDescription = "Handle all ${section.label} tasks" }) { Text("Handle all tasks") }
+                                    .semantics { contentDescription = "Handle all ${section.label} tasks" }) {
+                                ButtonProgress(handling)
+                                Text("Handle all tasks")
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable internal fun ReceiptSnackbar(receipt: Receipt?, host: SnackbarHostState, onUndo: (Receipt) -> Unit, onDone: (Receipt) -> Unit) {
+    val undo by rememberUpdatedState(onUndo)
+    val done by rememberUpdatedState(onDone)
+    LaunchedEffect(receipt) {
+        if (receipt == null) return@LaunchedEffect
+        try {
+            val result = host.showSnackbar(receipt.text, actionLabel = if (receipt.undo != null) "Undo" else null, withDismissAction = !receipt.short,
+                duration = if (receipt.short) SnackbarDuration.Short else SnackbarDuration.Long)
+            if (result == SnackbarResult.ActionPerformed) undo(receipt) else done(receipt)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // Leaving the screen ends the receipt, so returning later does not replay an old one.
+            done(receipt)
+            throw cancelled
         }
     }
 }
@@ -194,7 +217,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = completed, enabled = enabled,
             role = SemanticsRole.Checkbox, onValueChange = { completed = it }), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(completed, onCheckedChange = null, enabled = enabled)
-            Text("Show completed")
+            Text("Show others' completed tasks")
         }
         Button(onClick = { save(TaskSettings(sort, filter, completed)) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save task view") }
     }

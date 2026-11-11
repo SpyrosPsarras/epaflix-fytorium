@@ -139,6 +139,8 @@ test('rain watering is one atomic idempotent batch for active outdoor plants, wi
   expect((await report()).rain).toMatchObject({ plantCount: 2, precipitationMm: 6, ruleId: 'weather.rain@1' });
   const history = async (id: string) => (await request('/api/plants/' + id + '/history')).json();
   const customBefore = (await (await request('/api/plants/' + outdoorPot + '/tasks')).json()).customTasks[customTaskId];
+  const waterDue: Record<string, string> = {};
+  for (const id of [outdoorPot, outdoorGround]) waterDue[id] = (await (await request('/api/plants/' + id + '/tasks')).json()).water.dueOn;
   const request_id = randomUUID();
   const failureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   // Fail the second plant write to verify the shared action, events and rain link roll back together.
@@ -162,7 +164,7 @@ test('rain watering is one atomic idempotent batch for active outdoor plants, wi
   expect(secondTap.status).toBe(200);
   expect(await secondTap.json()).toEqual(batches[0]);
   expect((await report()).rain.batchId).toBe(batches[0].batchId);
-  for (const id of [outdoorPot, outdoorGround]) expect(await history(id)).toEqual([expect.objectContaining({ task_type: 'water', custom_task_id: null, kind: 'completed', batch_id: batches[0].batchId, by_name: 'Test member', undone_at: null })]);
+  for (const id of [outdoorPot, outdoorGround]) expect(await history(id)).toEqual([expect.objectContaining({ task_type: 'water', custom_task_id: null, kind: 'completed', due_on: waterDue[id], batch_id: batches[0].batchId, batch_action: 'rain', batch_task: null, batch_plant_count: 2, batch_event_count: 2, linked_event_id: null, by_name: 'Test member', undone_at: null })]);
   expect(await history(indoor)).toEqual([]);
   expect(await history(graveyard)).toEqual([]);
   expect((await (await request('/api/plants/' + outdoorPot + '/tasks')).json()).customTasks[customTaskId]).toEqual(customBefore);
@@ -173,7 +175,12 @@ test('rain watering is one atomic idempotent batch for active outdoor plants, wi
   expect((await request('/api/task-batches/' + batches[0].batchId + '/undo', 'POST')).status).toBe(409);
   for (const id of [outdoorPot, outdoorGround]) expect((await history(id))[0].undone_at).toBeNull();
   await request('/api/plants/' + outdoorPot + '/restore', 'POST', {});
-  expect((await request('/api/task-batches/' + batches[0].batchId + '/undo', 'POST')).status).toBe(200);
+  const undone = await request('/api/task-batches/' + batches[0].batchId + '/undo', 'POST');
+  expect(undone.status).toBe(200);
+  // The rain undo carries the lists GET /api/tasks returns now, so a device shows the outdoor rows due again without a refresh.
+  const lists = await undone.json();
+  expect({ today: lists.today, upcoming: lists.upcoming }).toEqual({
+    today: await (await request('/api/tasks?view=today')).json(), upcoming: await (await request('/api/tasks?view=upcoming')).json() });
   for (const id of [outdoorPot, outdoorGround]) expect((await history(id))[0].undone_at).toBe('2030-06-01T15:00:00.000Z');
   expect((await request('/api/task-batches/' + batches[0].batchId + '/undo', 'POST')).status).toBe(409);
   expect(await (await request('/api/weather/rain/water', 'POST', { request_id })).json()).toMatchObject({ batchId: batches[0].batchId, plantCount: 2, undoneAt: '2030-06-01T15:00:00.000Z' });

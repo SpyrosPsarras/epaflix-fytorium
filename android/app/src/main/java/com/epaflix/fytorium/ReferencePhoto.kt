@@ -48,35 +48,35 @@ import org.json.JSONObject
 }
 
 private data class PhotoCredit(val creator: String, val license: String, val source: String)
-private data class ReferenceInfo(val credit: PhotoCredit?, val commonName: String?)
-@Composable fun ReferencePhoto(api: ApiClient?, key: Long, name: String, showName: Boolean = false, displayPhoto: Boolean = true, size: Dp = 120.dp) {
+@Composable fun ReferencePhoto(api: ApiClient?, key: Long, name: String, showName: Boolean = false, displayPhoto: Boolean = true, size: Dp = 120.dp,
+                               commonName: String? = null, matchNote: String? = null) {
     val path = "/api/species/$key/photo"
-    val info by produceState<ReferenceInfo?>(null, api, key) {
+    val credit by produceState<PhotoCredit?>(null, api, key) {
         value = null
         value = withContext(Dispatchers.IO) {
             if (api == null) null else runCatching {
                 api.request("$path/credit").use { response ->
                     if (!response.isSuccessful) return@use null
-                    val body = JSONObject(response.body?.string().orEmpty())
-                    val photo = body.optJSONObject("photo")
-                    ReferenceInfo(photo?.let { PhotoCredit(it.getString("creator"), it.getString("license"), it.getString("source_url")) }, body.nullable("common_name"))
+                    JSONObject(response.body?.string().orEmpty()).optJSONObject("photo")
+                        ?.let { PhotoCredit(it.getString("creator"), it.getString("license"), it.getString("source_url")) }
                 }
             }.getOrNull()
         }
     }
     val uriHandler = LocalUriHandler.current
     Column(if (displayPhoto) Modifier.width(size) else Modifier) {
-        if (displayPhoto) AuthenticatedThumbnail(api, if (info?.credit != null) path else null, "Reference photo of $name", "No reference photo", size)
+        if (displayPhoto) AuthenticatedThumbnail(api, if (credit != null) path else null, "Reference photo of $name", "No reference photo", size)
         if (showName) {
-            Text(info?.commonName ?: name, style = if (displayPhoto) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodySmall,
+            Text(commonName ?: name, style = if (displayPhoto) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Bold, minLines = 2)
-            Text(if (info?.commonName != null) name else "", style = MaterialTheme.typography.bodySmall,
+            Text(if (commonName != null) name else "", style = MaterialTheme.typography.bodySmall,
                 minLines = 1)
+            matchNote?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         if (displayPhoto) {
             val creditHeight = with(LocalDensity.current) { MaterialTheme.typography.labelSmall.lineHeight.toDp() * 3 + 16.dp }
             Box(Modifier.fillMaxWidth().heightIn(min = creditHeight.coerceAtLeast(48.dp))) {
-                info?.credit?.let { attribution ->
+                credit?.let { attribution ->
                     TextButton(onClick = { uriHandler.openUri(attribution.source) }, modifier = Modifier.fillMaxWidth().heightIn(min = creditHeight.coerceAtLeast(48.dp))) {
                         Text("${attribution.license} · Photo: ${attribution.creator}", style = MaterialTheme.typography.labelSmall)
                     }

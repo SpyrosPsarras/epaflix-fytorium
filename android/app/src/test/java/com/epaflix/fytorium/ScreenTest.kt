@@ -52,7 +52,7 @@ class ScreenTest {
         compose.onNodeWithContentDescription("Add plant").assertIsEnabled()
     }
     @Test fun moreKeepsSitesAndFeedSettingsIndependentOfCareFailures() {
-        val feed = com.epaflix.fytorium.feed.FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}) { true }
+        val feed = com.epaflix.fytorium.feed.FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}, { true })
         val care = CareState(member = Member("member-one", Role.owner), busy = true, offline = true, serverUnavailable = true)
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care, feed = feed) } }
         compose.onNodeWithText("More").performClick()

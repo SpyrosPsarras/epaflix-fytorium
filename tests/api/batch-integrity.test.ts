@@ -47,12 +47,12 @@ test('full deletion after rain spanning three plants keeps all surviving plants 
   expect(await reused.json()).toEqual(batch);
   const [deleted, ...kept] = plants;
   const histories = await Promise.all(kept.map(plant => request(`/api/plants/${plant.id}/history`).then(r => r.json())));
-  for (const history of histories) expect(history).toContainEqual(expect.objectContaining({ batch_id: batch.batchId, kind: 'completed' }));
+  for (const history of histories) expect(history).toContainEqual(expect.objectContaining({ batch_id: batch.batchId, kind: 'completed', batch_plant_count: 3, batch_event_count: 3 }));
   expect((await request(`/api/plants/${deleted.id}`, 'DELETE', { confirm_name: deleted.display_name })).status).toBe(204);
   expect((await request(`/api/plants/${deleted.id}/history`)).status).toBe(404);
   for (const [i, plant] of kept.entries()) {
     expect(await (await request(`/api/plants/${plant.id}`)).json()).toEqual(plant);
-    expect(await (await request(`/api/plants/${plant.id}/history`)).json()).toEqual(histories[i]);
+    expect(await (await request(`/api/plants/${plant.id}/history`)).json()).toEqual(histories[i].map((event: Record<string, unknown>) => ({ ...event, batch_plant_count: 2, batch_event_count: 2 })));
   }
   expect((await request(`/api/task-batches/${batch.batchId}/undo`, 'POST')).status).toBe(200);
 });

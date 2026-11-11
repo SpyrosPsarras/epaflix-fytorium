@@ -59,6 +59,18 @@ class PlantaScreenTest {
             }
         }
     }
+    @Test fun theIntroSaysARenameInFytoriumStaysUntilTheNameInPlantaChanges() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true)) } }
+        compose.onNodeWithText("A new fetch replaces this review and updates Planta-sourced species, cultivar, site, pot and soil, including your edits. " +
+            "A name you give a plant in Fytorium stays until its name in Planta changes. Local settings stay. Covers are downloaded only once.").assertIsDisplayed()
+        compose.onAllNodes(hasText("nickname", substring = true, ignoreCase = true)).assertCountEquals(0)
+    }
+    @Test fun aTileSaysWhichOtherNameMatchedAndIsNamedByItsHeadline() {
+        val matched = candidate.copy(matchedName = "Synthetic misty leaf", commonName = "Synthetic cloudleaf")
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(candidates = listOf(matched))))) } }
+        compose.onNodeWithContentDescription("This is Synthetic cloudleaf").performScrollTo().assertIsEnabled()
+            .assert(hasText("Matches \u201cSynthetic misty leaf\u201d"))
+    }
     @Test fun reviewSkipIsAvailableWithoutExpandingControls() {
         var skipped: String? = null
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row)), onSkip = { skipped = it }) } }
@@ -67,8 +79,10 @@ class PlantaScreenTest {
         compose.runOnIdle { assertEquals(row.id, skipped) }
     }
     @Test fun reviewInstructionsExplainReadyAndUnmatchedPlants() {
-        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row.copy(status = "confirmed", selectedName = candidate.canonicalName))))
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(row.copy(status = "confirmed", selectedName = candidate.canonicalName,
+            selectedKey = candidate.key, selectedCommonName = "Synthetic cloudleaf"))))
         compose.setContent { FytoriumTheme { PlantaScreen(state.value) } }
+        compose.onNodeWithText("Synthetic cloudleaf").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Plants marked Needs review need one tap: choose the matching species or skip. Everything else is ready.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Ready to import").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Change species or skip").performScrollTo().assertIsEnabled()
@@ -127,6 +141,7 @@ class PlantaScreenTest {
                 compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Reference photo of Testoria nebulosa", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
                 val after = pill.fetchSemanticsNode().boundsInRoot
                 println("A11 photo credit choice bounds: before=$before after=$after")
+                compose.onAllNodesWithText("Synthetic cloudleaf", useUnmergedTree = true).assertCountEquals(0)
                 assertEquals(before, after)
             } finally { creditReady.countDown() }
         }

@@ -118,8 +118,9 @@ class PlantRepositoryTest {
         assertFalse(com.epaflix.fytorium.plants.PlantsRequestState().enabled(Member("sitter", Role.sitter), false))
     }
     @Test fun fuzzySearchKeepsServerConfirmationAndLanguageWithoutGuessing() = repository { repo, server ->
-        server.enqueue(MockResponse().setBody("""{"search_id":"synthetic-search","candidates":[{"gbif_key":910001,"canonical_name":"Testoria lucida","scientific_name":"Testoria lucida Inventor","rank":"SPECIES","match_type":"FUZZY","confidence":92,"requires_confirmation":true,"matched_name":"Δοκιμή","matched_language":"el"}]}"""))
+        server.enqueue(MockResponse().setBody("""{"search_id":"synthetic-search","candidates":[{"gbif_key":910001,"canonical_name":"Testoria lucida","scientific_name":"Testoria lucida Inventor","rank":"SPECIES","match_type":"FUZZY","confidence":92,"requires_confirmation":true,"matched_name":"Δοκιμή","matched_language":"el","common_name":"Synthetic lantern"}]}"""))
         val result = repo.searchSpecies("Δοκμή")!!
+        assertEquals("Synthetic lantern", result.candidates.single().commonName)
         assertTrue(result.candidates.single().requiresConfirmation)
         assertEquals("el", result.candidates.single().matchedLanguage)
         assertEquals("synthetic-search", result.id)

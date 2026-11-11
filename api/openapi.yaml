@@ -491,7 +491,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaskAction"
+                type: object
+                allOf:
+                  - $ref: "#/components/schemas/TaskAction"
+                required: [linked_events]
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -653,7 +656,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaskAction"
+                $ref: "#/components/schemas/TaskUndo"
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -3196,7 +3199,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Server-validated additional choices and optional photo suggestion. Quota or provider failures show no suggestion.
+          description: Server-validated additional choices and optional photo suggestion. Each candidate and genus carries common_name in the request language with English fallback, or null for unstored species. Cached suggestions use current names. Quota or provider failures show no suggestion.
           content:
             application/json:
               schema:
@@ -3313,7 +3316,7 @@ paths:
             type: string
       responses:
         "200":
-          description: "Cached GBIF photo attribution, or null when no reusable photo exists. Cache-Control: private, max-age=86400 with a photo; no-store without a photo."
+          description: "Cached GBIF photo attribution, or null when no reusable photo exists. The chosen common name follows Accept-Language with English fallback, or null for unstored species. Cache-Control: no-store keeps name edits visible."
           content:
             application/json:
               schema:
@@ -4008,6 +4011,11 @@ components:
             - type: "null"
         requires_confirmation:
           type: boolean
+        common_name:
+          description: Chosen common name in the request language with English fallback. Null for unstored species or missing chosen names.
+          anyOf:
+            - type: string
+            - type: "null"
         common_names:
           type: array
           items:
@@ -4118,6 +4126,9 @@ components:
     Task:
       type: object
       properties:
+        postponed:
+          description: Latest effective snooze or skip supplying the current due date. Null after a completion, undo, or when not applicable.
+          enum: [snoozed, skipped, null]
         status:
           enum:
             - due
@@ -4168,10 +4179,12 @@ components:
               pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
             - type: "null"
         completed_event:
+          description: Today's completion. Every completion the requesting member made today is listed as its own row with postponed null, even when its task no longer applies; show_completed adds other members' completions. The row sorts at the event's due_on, or its occurred_on when due_on is null. A later snooze or skip is listed as a separate row without completed_event.
           $ref: "#/components/schemas/CareEvent"
       required:
         - status
         - basedOn
+        - postponed
       additionalProperties: false
       allOf:
         - if:
@@ -4220,6 +4233,7 @@ components:
             - indoor
             - outdoor
         show_completed:
+          description: Also list today's completions by other members. The member's own completions are always listed.
           type: boolean
       required:
         - sort
@@ -4272,6 +4286,22 @@ components:
     CareEvent:
       type: object
       properties:
+        batch_plant_count:
+          type: integer
+          minimum: 1
+          description: Distinct plants in the full batch, regardless of visible rows, shares or task filters. Present when batch_id is not null.
+        batch_event_count:
+          type: integer
+          minimum: 1
+          description: All events in the full batch, including linked water events and undone events. Present when batch_id is not null.
+        batch_action:
+          enum: [complete-all, complete-type, rain]
+          description: Original action for the full batch. Present when batch_id is not null.
+        batch_task:
+          anyOf:
+            - type: string
+            - type: "null"
+          description: Built-in task key or custom task UUID completed by a complete-type batch. Null for complete-all and rain. Present when batch_id is not null.
         linked_event_id:
           description: Fertilize completion that added this water completion. Undoing that fertilize also undoes this water event.
           anyOf:
@@ -4321,6 +4351,12 @@ components:
         occurred_on:
           type: string
           pattern: ^\d{4}-\d{2}-\d{2}$
+        due_on:
+          description: Due date of the occurrence this event completed, snoozed or skipped, as it was at that moment. Planta imports use the reported day. Null for events recorded before due dates were stored. Not in sitter projections.
+          anyOf:
+            - type: string
+              pattern: ^\d{4}-\d{2}-\d{2}$
+            - type: "null"
         batch_id:
           anyOf:
             - type: string
@@ -4397,10 +4433,23 @@ components:
         - undone_at
         - undone_by
         - request_id
+      allOf:
+        - if:
+            properties:
+              batch_id:
+                type: string
+            required: [batch_id]
+          then:
+            required: [batch_plant_count, batch_event_count, batch_action, batch_task, linked_event_id]
       additionalProperties: false
     TaskAction:
       type: object
       properties:
+        linked_events:
+          type: array
+          description: Other events recorded with this single completion, such as water from liquid fertilizing. Returned for complete, snooze and skip, empty when none. Undoing the main event also reverses these events.
+          items:
+            $ref: "#/components/schemas/CareEvent"
         event:
           $ref: "#/components/schemas/CareEvent"
         task:
@@ -4422,6 +4471,25 @@ components:
         - events
         - tasks
       additionalProperties: false
+    TaskUndo:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/CareEvent"
+        task:
+          $ref: "#/components/schemas/Task"
+        today:
+          description: The member's Today list after the undo, as GET /api/tasks?view=today returns it.
+          $ref: "#/components/schemas/TaskList"
+        upcoming:
+          description: The member's Upcoming list after the undo, as GET /api/tasks?view=upcoming returns it.
+          $ref: "#/components/schemas/TaskList"
+      required:
+        - event
+        - task
+        - today
+        - upcoming
+      additionalProperties: false
     BatchUndo:
       type: object
       properties:
@@ -4431,9 +4499,17 @@ components:
         undoneAt:
           type: string
           pattern: ^\d{4}-\d{2}-\d{2}T
+        today:
+          description: The member's Today list after the undo, as GET /api/tasks?view=today returns it.
+          $ref: "#/components/schemas/TaskList"
+        upcoming:
+          description: The member's Upcoming list after the undo, as GET /api/tasks?view=upcoming returns it.
+          $ref: "#/components/schemas/TaskList"
       required:
         - batchId
         - undoneAt
+        - today
+        - upcoming
       additionalProperties: false
     RainAction:
       type: object
@@ -5429,9 +5505,17 @@ components:
             - type: string
               pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
             - type: "null"
+        display_name:
+          type: string
+          description: >-
+            The name the plant will have after import: the nickname import will set (a re-fetch keeps the plant's
+            current nickname unless Planta's name changed since the last import), else the selected species' common
+            name, else the canonical name the plant will have (the stored species' name when the species already
+            exists), else Planta's scientific name. A graveyard plant keeps its current name, because import skips it.
       required:
         - id
         - planta_plant_id
+        - display_name
         - can_commit
         - can_review
         - cover_status

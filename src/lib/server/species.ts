@@ -5,12 +5,14 @@ import { db } from './db';
 import { now } from './clock';
 import { matchSpecies } from './gbif';
 import { enqueueCareFetch } from './care/catalogue';
+import { lockUpdateAndRecomputeCommonNames } from './names';
 import type { Candidate } from '$lib/plants';
+import type { CommonNameLanguage } from '$lib/names';
 
 // A five-minute server record avoids a second GBIF call and never trusts client-sent taxonomy.
 // Records are household-scoped and bounded; after a restart or expiry the owner searches again.
 const searches = new Map<string, { household: string; expires: number; candidates: Candidate[] }>();
-export async function searchSpecies(query: string, household: string) {
+export async function searchSpecies(query: string, household: string, language: CommonNameLanguage) {
   query = query.trim();
   const names = await db().query(`
     WITH input AS (SELECT normalise_species_name($1) AS query, normalise_species_name($2) AS prefix), hits AS (
@@ -53,7 +55,19 @@ export async function searchSpecies(query: string, household: string) {
     }
   }
   if (!candidates.length) error(422, 'No species-rank plant matched that name. Try another name.');
+  candidates = candidates.map(await withCommonNames(candidates, language));
   return recordSpeciesSearch(candidates, household);
+}
+
+export async function speciesCommonNames(keys: number[], language: CommonNameLanguage) {
+  const result = await db().query<{ gbif_key: number; common_name: string | null }>(
+    'SELECT gbif_key, species_common_name(gbif_key, $2) AS common_name FROM species WHERE gbif_key = ANY($1::integer[])', [keys, language]);
+  return new Map(result.rows.map(row => [row.gbif_key, row.common_name]));
+}
+
+export async function withCommonNames(candidates: { gbif_key: number }[], language: CommonNameLanguage) {
+  const names = await speciesCommonNames(candidates.map(candidate => candidate.gbif_key), language);
+  return <T extends { gbif_key: number }>(candidate: T) => ({ ...candidate, common_name: names.get(candidate.gbif_key) ?? null });
 }
 
 export function recordSpeciesSearch(candidates: Candidate[], household: string) {
@@ -86,5 +100,6 @@ export async function saveSpecies(client: PoolClient, species: Candidate, preser
   await client.query("DELETE FROM species_names WHERE gbif_key = $1 AND language = 'la' AND source = 'gbif' AND name <> $2", [species.gbif_key, canonicalName]);
   await client.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES ($1, $2, 'la', 'gbif') ON CONFLICT DO NOTHING", [species.gbif_key, canonicalName]);
   await client.query("INSERT INTO species_name_fetches (gbif_key, source, retry_after) SELECT $1, source, $2 FROM unnest(ARRAY['gbif', 'wikidata', 'nortaxa']) AS source ON CONFLICT DO NOTHING", [species.gbif_key, now()]);
+  await lockUpdateAndRecomputeCommonNames(client, species.gbif_key);
   return stored.rows[0];
 }

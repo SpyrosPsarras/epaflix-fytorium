@@ -97,7 +97,7 @@ test('Today and Upcoming group custom names, honor every sort/location filter an
   const done = await (await act(plantTaskId, 'complete')).json();
   const baseline = { sort: 'task', filter: 'all', show_completed: false };
   await request('/api/tasks/settings', 'PUT', baseline);
-  expect((await (await request('/api/tasks?view=today')).json()).groups[plantTaskId]).toBeUndefined();
+  expect((await (await request('/api/tasks?view=today')).json()).groups[plantTaskId]).toEqual([expect.objectContaining({ plant_id: plantId, completed_event: expect.objectContaining({ id: done.event.id }) })]);
   for (const sort of ['task', 'plant', 'site']) {
     for (const filter of ['all', 'indoor', 'outdoor']) {
       await request('/api/tasks/settings', 'PUT', { sort, filter, show_completed: true });
@@ -118,7 +118,7 @@ test('Today and Upcoming group custom names, honor every sort/location filter an
   await undo(snoozed.event.id);
 });
 
-test('site tasks reach later additions independently, stop on moving off the site, and never reach the graveyard', async () => {
+test('site tasks reach later additions independently, stop on moving off the site while today\'s completion stays listed, and never reach the graveyard', async () => {
   await clock('2026-05-14T12:00:00Z');
   laterPlantId = await addPlant(siteId, 'Test later custom plant');
   expect((await tasks(laterPlantId)).customTasks[siteTaskId]).toMatchObject({ dueOn: '2026-05-17' });
@@ -126,13 +126,17 @@ test('site tasks reach later additions independently, stop on moving off the sit
   await clock('2026-05-16T12:00:00Z');
   const done = await (await act(siteTaskId, 'complete')).json();
   expect(done.task.dueOn).toBe('2026-05-19');
+  expect(done.event.due_on).toBe('2026-05-13');
   expect((await tasks(laterPlantId)).customTasks[siteTaskId].dueOn).toBe('2026-05-17');
   const otherSite = await (await request('/api/sites', 'POST', { name: 'Test other custom site', location: 'outdoor', light: 'part_sun', humidity: 'normal', draft: false, grow_light: false })).json();
   expect((await request(`/api/plants/${plantId}`, 'PUT', { ...fixturePlant, site_id: otherSite.id, nickname: 'Test custom plant' })).status).toBe(200);
   expect((await tasks()).customTasks[siteTaskId]).toBeUndefined();
   expect((await tasks()).customTasks[plantTaskId]).toBeDefined();
   expect((await act(siteTaskId, 'complete')).status).toBe(404);
-  for (const view of ['today', 'upcoming']) expect((await (await request('/api/tasks?view=' + view)).json()).groups[siteTaskId]?.map((r: { plant_id: string }) => r.plant_id) ?? []).not.toContain(plantId);
+  for (const view of ['today', 'upcoming']) {
+    const rows = (await (await request('/api/tasks?view=' + view)).json()).groups[siteTaskId].filter((row: { plant_id: string }) => row.plant_id === plantId);
+    expect(rows).toEqual([expect.objectContaining({ custom_task_name: 'Test check roots', site_name: 'Test other custom site', completed_event: expect.objectContaining({ id: done.event.id }) })]);
+  }
   await request(`/api/plants/${plantId}`, 'PUT', { ...fixturePlant, site_id: siteId, nickname: 'Test custom plant' });
   const ownTask = await (await request('/api/custom-tasks', 'POST', { plant_id: laterPlantId, name: 'Test later plant task', interval_days: 1 })).json();
   const laterDone = await (await act(siteTaskId, 'complete', laterPlantId)).json();
@@ -220,15 +224,18 @@ test('deleting an empty site keeps custom care history for its graveyard plants'
   expect((await request(`/api/plants/${plant}`, 'DELETE', { confirm_name: 'Test retired custom plant' })).status).toBe(204);
 });
 
-test('deleting plant and site tasks removes them everywhere but keeps their names and events readable', async () => {
+test('deleting plant and site tasks removes them from schedules but keeps their names, events and today\'s completed rows', async () => {
   for (const id of [plantTaskId, siteTaskId]) {
-    await act(id, 'complete');
+    const done = await (await act(id, 'complete')).json();
     expect((await request('/api/custom-tasks/' + id, 'DELETE')).status).toBe(204);
     expect((await request('/api/custom-tasks/' + id)).status).toBe(404);
     expect((await tasks()).customTasks[id]).toBeUndefined();
     expect((await tasks(laterPlantId)).customTasks[id]).toBeUndefined();
     expect(await (await request(`/api/plants/${plantId}/history`)).json()).toContainEqual(expect.objectContaining({ custom_task_id: id, custom_task_name: 'Test check roots', kind: 'completed' }));
-    for (const view of ['today', 'upcoming']) expect((await (await request('/api/tasks?view=' + view)).json()).groups[id]).toBeUndefined();
+    for (const view of ['today', 'upcoming']) {
+      expect((await (await request('/api/tasks?view=' + view)).json()).groups[id])
+        .toEqual([expect.objectContaining({ plant_id: plantId, custom_task_id: id, custom_task_name: 'Test check roots', completed_event: expect.objectContaining({ id: done.event.id }) })]);
+    }
     expect((await act(id, 'complete')).status).toBe(404);
   }
 });

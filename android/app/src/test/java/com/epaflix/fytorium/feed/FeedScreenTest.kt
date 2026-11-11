@@ -134,7 +134,8 @@ class FeedScreenTest {
         compose.onNodeWithText("Mark 1 outdoor plants watered").assertHasClickAction().assertHeightIsAtLeast(48.dp).performClick()
         assertEquals(1, waters)
         capture("feed-rain")
-        compose.runOnIdle { current.value = current.value.copy(weather = current.value.weather!!.copy(lastBatchId = "batch-one", rain = current.value.weather!!.rain!!.copy(batchId = "batch-one"))) }
+        compose.runOnIdle { current.value = current.value.copy(weather = current.value.weather!!.copy(lastBatchId = "batch-one", lastBatchPlantCount = 1, rain = current.value.weather!!.rain!!.copy(batchId = "batch-one"))) }
+        compose.onNodeWithText("Watered 1 outdoor plant").assertIsDisplayed()
         compose.onNodeWithText("Undo rain watering").assertHasClickAction().assertHeightIsAtLeast(48.dp)
         capture("feed-rain-watered")
         compose.runOnIdle { current.value = current.value.copy(offline = true) }

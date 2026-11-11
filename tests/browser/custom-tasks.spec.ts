@@ -57,7 +57,7 @@ test('creates site and plant tasks, completes, snoozes, plans and undoes them on
     await page.goto('/plants/' + plant.id);
     await expect(page.getByRole('region', { name: 'Test inspect supports', exact: true })).toContainText('2026-05-02');
     const history = page.getByRole('region', { name: 'Care history', exact: true });
-    await history.getByRole('listitem').filter({ hasText: 'Test check stakes' }).getByRole('button', { name: 'Undo', exact: true }).click();
+    await history.getByRole('listitem').filter({ hasText: 'Test check stakes' }).getByRole('button', { name: 'Undo Test check stakes snooze', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Test check stakes', exact: true })).toContainText('2026-05-02');
     await page.goto('/plants/' + plant.id + '/settings');
     await page.getByRole('form', { name: 'Edit Test check stakes', exact: true }).getByRole('button', { name: 'Delete task', exact: true }).click();

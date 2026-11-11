@@ -31,7 +31,7 @@ import com.epaflix.fytorium.Role
                     if (card.id == latestRain && state.weather != null) {
                         state.weather.rain?.let { rain ->
                             Text("It rained: ${rainAmount(rain.precipitationMm)} mm today or yesterday.")
-                            if (rain.batchId != null) Text("Marked watered.")
+                            if (rain.batchId != null) state.weather.rainReceipt?.let { Text(it) }
                             else OutlinedButton(onClick = onWater, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Mark ${rain.plantCount} outdoor plants watered") }
                         }
                         if (state.weather.lastBatchId != null) OutlinedButton(onClick = onUndo, enabled = state.writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Undo rain watering") }

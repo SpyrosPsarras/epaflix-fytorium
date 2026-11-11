@@ -23,7 +23,7 @@ A room, garden or terrace where plants live. A site belongs to the household. It
 A site with plants cannot be deleted. Move or remove its plants first.
 
 **Plant**:
-An individual plant in the household, with a species and a required site in the same household. Its display name is its non-blank nickname, then a vernacular name in the request language, then an English vernacular name, then its species' canonical name. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded. Active plants require a site; graveyard plants can keep their history without one.
+An individual plant in the household, with a species and a required site in the same household. Its display name is its non-blank nickname, then its species' chosen common name in the request language, then its English common name, then its canonical name. Each species has one chosen common name per supported language. Nickname, cultivar and birthday are optional. Birthday cannot be later than the server clock's UTC date. Health and care history are recorded. Active plants require a site; graveyard plants can keep their history without one.
 
 **Pot attributes**:
 Pot type is `plastic`, `terracotta`, `ceramic`, `glass`, `metal`, `wood`, `fabric`, `in_ground` or `other`. `other` records an unknown material without changing the schedule. Soil type is `all_purpose`, `cactus`, `orchid`, `aroid` or `other`. Pot size in cm is a positive whole number or unknown. Drainage is a boolean.
@@ -35,7 +35,7 @@ Plant size is `small`, `medium`, `large` or `very_large`. Growth stage is `seedl
 A botanical taxon at species rank or below, in kingdom Plantae. A Planta import may use a genus when the owner cannot choose a species. Its **GBIF key** is the backbone `usageKey`, or the `acceptedUsageKey` for a synonym. Scientific name includes the taxonomic authorship; canonical name omits it. Multiple plants share one species. Its common names belong to the shared name index.
 
 **Reference photo**:
-A GBIF occurrence's first still image, licensed CC BY 4.0 or CC0, shown beside species candidates on web and Android with photographer credit linking to the source page. Postgres caches its sanitised thumbnail and credit for 30 days, including a no-photo result. A GBIF photo lookup, common-name lookup or image download failure shortens that cache lifetime to one hour before retrying. Owner and family read `/api/species/:gbifKey/photo` and `/photo/credit`; external image URLs stay server-side. Missing or failed photos show "No reference photo".
+A GBIF occurrence's first still image, licensed CC BY 4.0 or CC0, shown beside species candidates on web and Android with photographer credit linking to the source page. Postgres caches its sanitised thumbnail and credit for 30 days, including a no-photo result. A GBIF photo lookup or image download failure shortens that cache lifetime to one hour before retrying. Its common name is the stored chosen common name in the request language with English fallback, or none for an unstored species. Owner and family read `/api/species/:gbifKey/photo` and `/photo/credit`; external image URLs stay server-side. Missing or failed photos show "No reference photo".
 
 **Name index**:
 The instance-wide collection of species names, each tied to a GBIF key, language and name source.
@@ -43,6 +43,9 @@ The instance-wide collection of species names, each tied to a GBIF key, language
 **Vernacular name**:
 A common name for a species in English, Norwegian or Greek. Different species can share a vernacular name.
 _Avoid_: Localized name
+
+**Chosen common name**:
+The single vernacular name selected for a species in one supported language. Owner names take priority over NorTaxa names, then agreement among GBIF and Wikidata names decides. Scientific and genus names are excluded. Missing names fall back to English, then to the canonical name for display.
 
 **Name source**:
 The origin of a species name: GBIF, Wikidata, NorTaxa or the owner. Owner names remain when external names change.
@@ -57,7 +60,10 @@ The effective care values for a species, with a source for each value. Owner ove
 A care action for a plant or site. Built-in task types are `water`, `fertilize`, `clean_leaves`, `remove_dead`, `cut_back` and `repot`. Their labels are Water, Fertilize, Clean leaves, Remove dead flowers and leaves, Seasonal cut-back and Repot. The pure schedule engine returns tasks keyed by type, with an interval, due date or `not_applicable`, and the inputs and adjustments behind them. Today groups due and late tasks by type.
 
 **Due date**:
-A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Other interval tasks are first due on added date plus interval. Otherwise tasks are due on the last effective completion date plus the current interval. Seasonal cut-back uses pruning months instead. Reads recompute due dates; no command stores or edits them. Anchors have source `history` in Based on.
+A calendar date in the household time zone, configured by HOUSEHOLD_TIMEZONE and defaulting to Europe/Oslo. With no completion, watering is due on the date the plant was added. Other interval tasks are first due on added date plus interval. Otherwise tasks are due on the last effective completion date plus the current interval. Seasonal cut-back uses pruning months instead. Reads recompute due dates. Schedules store no due date. A care event keeps the due date it acted on only to place today's completed row; schedules never read it. Anchors have source `history` in Based on.
+
+**Task occurrence**:
+One listed instance of a task for a plant. A pending occurrence is identified by its plant, task, due date and whether a snooze or skip set that date; Today and Upcoming list at most one per plant and task. A completion is its own occurrence, identified by its care event, and stays at the due date it completed, or its own day for events from before that date was stored. A result recorded on a device belongs to the occurrence it was recorded on. Unrelated to a GBIF occurrence.
 
 **Late**:
 The whole-calendar-day difference between today and a past due date. Due today is not late. Today shows this as "3d late", for example. DST does not add or remove calendar days.
@@ -87,7 +93,10 @@ Whole days from 1–365, stored per plant and task type in the plant's household
 A dated record of care, including the acting member and their display name. Completions, snoozes and skips exist for every applicable built-in or custom task. Exactly one of task_type or custom_task_id identifies its target. A client UUID request_id identifies one completion, so retries cannot write two events. The event timestamp comes from the server clock, not the client.
 
 **Undo**:
-Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked. Already-undone events and events from another household are refused.
+Marks a care event with undone_at and undone_by without deleting the original action or who performed it. The engine ignores undone events and restores the previous due date. History keeps them visibly marked, without an Undo button or batch hint. The undo response carries the member's Today and Upcoming lists, built as GET /api/tasks builds them. Already-undone events and events from another household are refused.
+
+**Receipt**:
+The short message a care action shows, such as "Watered Thyme" or "Watered 9 plants", with Undo for exactly the event or batch it names. Its wording and batch counts come from the server's event fields, never from the rows on screen. A species search receipt is different: it is the server's record of a search that a later plant save refers to.
 
 **Photo update**:
 A dated plant photo with an optional note and health value. The member chooses `taken_on`, defaulting to today in the household time zone. Past dates are allowed; future or invalid dates are refused. The server applies camera orientation, strips metadata and stores a re-encoded JPEG original and a thumbnail in private MinIO. Postgres stores their server-generated object keys, never image bytes. Uploads are limited to 15 MB and decoded before storage. App photo routes check the session and household before streaming bytes.
@@ -173,10 +182,10 @@ ImportStaging stores mapped fields and server-validated species candidates in Po
 A Pl@ntNet comparison of a staged plant's Planta cover, labelled "Looks most like your photo". It helps the owner compare pictures but never confirms a species automatically; GBIF text-match confidence is not a visual identification score.
 
 **Planta plant ID**:
-The external identifier of one Planta inventory plant, unique within its household. A fresh fetch updates species, nickname, cultivar, site, pot and soil by this key, including owner edits to those fields. Other Fytorium fields stay local. A graveyard plant is skipped without changing its fields, site, species, history or photos. Only an explicit restore followed by a fresh fetch makes it eligible again. Stored species taxonomy is never replaced by import. The successful cover-import flag stays even if that photo is deleted; later fetches cannot replace the cover or download it again.
+The external identifier of one Planta inventory plant, unique within its household. A fresh fetch updates species, cultivar, site, pot and soil by this key, including owner edits to those fields. Planta's `custom` name, or its `localizedName` field when it differs from the scientific and canonical names of the finally selected species, supplies the Planta name. The plant stores the last Planta name an import wrote. A fresh fetch replaces the nickname only when Planta's name differs from that stored name, so a Fytorium rename stays until the name in Planta changes; a fetch without a Planta name keeps the nickname. A plant imported before Planta names were stored has none, so its next fetch keeps the nickname and only stores Planta's name. A review card is headed by the name the plant will have after import: that nickname, else the selected species' common name, else the canonical name the plant will have (the stored species' name when the species already exists), else Planta's scientific name; a graveyard plant keeps its current name. Other Fytorium fields stay local. A graveyard plant is skipped without changing its fields, site, species, history or photos. Only an explicit restore followed by a fresh fetch makes it eligible again. Stored species taxonomy is never replaced by import. The successful cover-import flag stays even if that photo is deleted; later fetches cannot replace the cover or download it again.
 
 **Imported care event**:
-A completed care event with source `planta`, one per plant and action. A fresh fetch replaces its last completed timestamp without duplicating the event or removing an undo. Imported events are standalone, never part of a handle-all batch; their identity remains the same across fetches. Local batches, snoozes and skips are unchanged. Missing dates do not erase events. Future or invalid dates are refused. The existing schedule engine anchors on these events, like ordinary completions.
+A completed care event with source `planta`, one per plant and action. A fresh fetch with a new date replaces its last completed timestamp and stores the task's due date from just before it, without duplicating the event or removing an undo. A fetch with the same date changes nothing. Imported events are standalone, never part of a handle-all batch; their identity remains the same across fetches. Local batches, snoozes and skips are unchanged. Missing dates do not erase events. Future or invalid dates are refused. The existing schedule engine anchors on these events, like ordinary completions.
 
 **Imported site conditions**:
 Planta supplies a site name, not its conditions. Import matches names case-insensitively or creates an indoor site with default conditions and an incomplete-conditions flag. Saving its settings clears the flag. Re-runs never reset site conditions. The pot and soil mapping table and the full re-run rule are in README.md.
@@ -193,7 +202,7 @@ A skipped care event that moves a task's due date to the action's household cale
 Care tasks grouped by household calendar day for fourteen days including today, with overdue tasks in today's group. Not-applicable tasks are excluded; today's due and late tasks agree with Today.
 
 **Task view settings**:
-A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show today's completed tasks with Undo. The choice belongs to the member across sessions, not the device.
+A member's choice of task-type, plant or site sort, all/indoor/outdoor filter, and whether to show others' completed tasks. Today and Upcoming always list the completions the member made today, with Undo where allowed, even when the task no longer applies; Show others' completed tasks adds those of other members. The choice belongs to the member across sessions, not the device.
 
 **Handle all tasks**:
 One care action completing exactly a plant's due and late tasks today, never upcoming or not-applicable tasks. A Today card's Handle all tasks completes every due or late task of that card's type on the plants shown in the member's Today view. Either action forms one undoable care batch.

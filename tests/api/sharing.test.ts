@@ -97,8 +97,8 @@ test('a fresh invite reactivates a removed subject with its new role and shares,
 test('sitter Today and Upcoming page data and task APIs contain only the public projection, including completed repots', async () => {
   const repot = await (await owner.request(`/api/plants/${shared}/repot`, 'POST', { request_id: randomUUID(), pot_type: 'terracotta', pot_size_cm: 20, soil_type: 'all_purpose' })).json();
   expect(repot.event.previous_pot).not.toBeNull();
-  const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo'];
-  const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'cover_photo_id', 'completed_event'];
+  const eventFields = ['id', 'plant_id', 'task_type', 'custom_task_id', 'custom_task_name', 'kind', 'occurred_at', 'occurred_on', 'batch_id', 'batch_plant_count', 'batch_event_count', 'batch_action', 'batch_task', 'linked_event_id', 'by_member', 'by_name', 'undone_at', 'undone_by', 'request_id', 'can_undo'];
+  const taskFields = ['status', 'dueOn', 'intervalDays', 'lateDays', 'postponed', 'basedOn', 'name', 'custom_task_id', 'custom_task_name', 'task_type', 'plant_id', 'plant_name', 'site_name', 'cover_photo_id', 'completed_event'];
   const only = (value: Record<string, unknown>, fields: string[]) => expect(Object.keys(value).filter(key => !fields.includes(key))).toEqual([]);
   const event = (value: Record<string, unknown>) => only(value, eventFields);
   const task = (value: any) => {
@@ -149,14 +149,22 @@ test('sitter Today and Upcoming page data and task APIs contain only the public 
   const schedule = await (await returning.request('/api/plants/' + shared + '/tasks')).json();
   only(schedule, ['water', 'fertilize', 'clean_leaves', 'remove_dead', 'cut_back', 'repot', 'customTasks']);
   Object.entries(schedule).forEach(([key, value]) => key === 'customTasks' ? Object.values(value as object).forEach(task) : task(value));
+  // An undo carries the sitter's own projected lists, exactly as GET /api/tasks returns them.
+  const lists = async (undone: any) => expect({ today: undone.today, upcoming: undone.upcoming }).toEqual({
+    today: await (await returning.request('/api/tasks?view=today')).json(), upcoming: await (await returning.request('/api/tasks?view=upcoming')).json() });
   const completion = await (await returning.request(`/api/plants/${shared}/tasks/water/complete`, 'POST', { request_id: randomUUID() })).json();
-  only(completion, ['event', 'task']); event(completion.event); task(completion.task);
+  only(completion, ['event', 'task', 'linked_events']); event(completion.event); task(completion.task);
+  expect(completion.linked_events).toEqual([]);
   const undone = await (await returning.request('/api/care-events/' + completion.event.id + '/undo', 'POST')).json();
-  only(undone, ['event', 'task']); event(undone.event); task(undone.task);
+  only(undone, ['event', 'task', 'today', 'upcoming']); event(undone.event); task(undone.task);
+  await lists(undone);
   const batch = await (await returning.request(`/api/plants/${shared}/tasks/complete-all`, 'POST', { request_id: randomUUID() })).json();
   only(batch, ['events', 'tasks']); batch.events.forEach(event);
+  expect(batch.events.length).toBeGreaterThan(0);
+  for (const value of batch.events) expect(value).toMatchObject({ batch_action: 'complete-all', batch_task: null, linked_event_id: null });
   const batchUndo = await (await returning.request('/api/task-batches/' + batch.events[0].batch_id + '/undo', 'POST')).json();
-  only(batchUndo, ['batchId', 'undoneAt']);
+  only(batchUndo, ['batchId', 'undoneAt', 'today', 'upcoming']);
+  await lists(batchUndo);
   await owner.request('/api/care-events/' + repot.event.id + '/undo', 'POST');
 });
 
@@ -178,6 +186,42 @@ test('a former family member cannot undo their own repot after returning as a si
   }
   expect((await changed.request('/api/care-events/' + repot.event.id + '/undo', 'POST')).status).toBe(403);
   expect((await owner.request('/api/care-events/' + repot.event.id + '/undo', 'POST')).status).toBe(200);
+});
+
+test('owner, family and sitter task responses expose server receipt and postponement facts', async () => {
+  const invite = await (await owner.request('/api/household/invites', 'POST', { role: 'family' })).json();
+  const family = await harness.login('synthetic-receipt-family', {}, invite.link.split('/').at(-1));
+  const attributes = await (await owner.request('/api/plants/' + shared)).json();
+  expect((await owner.request('/api/plants/' + shared, 'PUT', { ...attributes, fertilizer_type: 'liquid' })).status).toBe(200);
+  expect((await owner.request('/api/plants/' + shared + '/care-settings', 'PUT', { customIntervals: { water: 1 } })).status).toBe(200);
+  for (const member of [owner, family, sitter]) {
+    const response = await member.request(`/api/plants/${shared}/tasks/fertilize/complete`, 'POST', { request_id: randomUUID() });
+    expect(response.status).toBe(200);
+    const done = await response.json();
+    expect(done.linked_events).toEqual([expect.objectContaining({ task_type: 'water', kind: 'completed', linked_event_id: done.event.id })]);
+    expect(done.task.postponed).toBeNull();
+    expect((await member.request('/api/care-events/' + done.event.id + '/undo', 'POST')).status).toBe(200);
+    for (const [action, postponed] of [['snooze', 'snoozed'], ['skip', 'skipped']]) {
+      const before = await (await member.request('/api/plants/' + shared + '/tasks')).json();
+      const targetDate = before.water.dueOn > '2030-06-01' ? before.water.dueOn : '2030-06-01';
+      await owner.request('/__test/clock', 'POST', { action: 'set', at: targetDate + 'T12:00:00Z' });
+      const acted = await member.request(`/api/plants/${shared}/tasks/water/${action}`, 'POST', { request_id: randomUUID() });
+      expect(acted.status).toBe(200);
+      const result = await acted.json();
+      expect(result.task.postponed).toBe(postponed);
+      expect(result.linked_events).toEqual([]);
+      const schedule = await (await member.request('/api/plants/' + shared + '/tasks')).json();
+      expect(schedule.water.postponed).toBe(postponed);
+      const upcoming = await (await member.request('/api/tasks?view=upcoming')).json();
+      expect(upcoming.groups.water).toContainEqual(expect.objectContaining({ plant_id: shared, postponed }));
+      await owner.request('/__test/clock', 'POST', { action: 'set', at: schedule.water.dueOn + 'T12:00:00Z' });
+      const today = await (await member.request('/api/tasks?view=today')).json();
+      expect(today.groups.water).toContainEqual(expect.objectContaining({ plant_id: shared, postponed }));
+      expect((await member.request('/api/care-events/' + result.event.id + '/undo', 'POST')).status).toBe(200);
+      await owner.request('/__test/clock', 'POST', { action: 'set', at: '2030-06-01T07:00:00Z' });
+    }
+  }
+  expect((await owner.request('/api/plants/' + shared + '/care-settings', 'PUT', { customIntervals: {} })).status).toBe(200);
 });
 
 test('unlisted pages fail closed and authorization metrics retain the response status', async () => {

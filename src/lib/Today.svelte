@@ -1,50 +1,53 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import { careEventLabel, taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
+  import { navigating } from '$app/state';
+  import { batchScope, careEventLabel, taskKey, taskPresentation, type CareEvent, type ListedTask, type TaskList } from '$lib/tasks';
   import type { Task } from '$lib/schedule/engine';
   let { list, sitter = false, memberId }: { list: TaskList; sitter?: boolean; memberId?: string } = $props();
-  let handled = $state<Record<string, { event: CareEvent; task: Task }>>({});
-  let restored = $state<Record<string, Task>>({});
+  // A result patches only the row acted on. Every load of the list starts again from the server's rows.
+  let results = $derived.by(() => {
+    void list;
+    return {} as Record<string, { event: CareEvent; task: Task }>;
+  });
   let requestIds = $state<Record<string, string>>({});
   let busy = $state<Record<string, boolean>>({});
   let message = $state('');
   let saved = $state('');
   let saving = $state(false);
   const title = $derived(list.view === 'upcoming' ? 'Upcoming' : 'Today');
+  const occurrence = (row: ListedTask) => row.completed_event?.id ?? [row.plant_id, taskKey(row), row.status === 'due' ? row.dueOn : '', row.postponed].join(':');
+  // invalidateAll aborts a navigation in flight, such as a plant link tapped right after Undo, so it runs once navigations settle.
+  function reload(settled: Promise<void> | null = null): Promise<void> {
+    const pending = navigating.complete;
+    if (!pending || pending === settled) return invalidateAll();
+    return pending.catch(() => {}).then(() => reload(pending));
+  }
   function actionFor(row: ListedTask) {
-    const id = row.plant_id + ':' + taskKey(row);
-    return handled[id] ?? (!restored[id] && row.completed_event ? { event: row.completed_event, task: row } : undefined);
+    return row.completed_event ? { event: row.completed_event, task: row } : results[occurrence(row)];
   }
   async function act(row: ListedTask, action: 'complete' | 'snooze' | 'skip' | 'undo') {
-    const id = row.plant_id + ':' + taskKey(row);
+    const id = occurrence(row);
     const done = actionFor(row);
-    const key = id + ':' + action;
+    const request = id + ':' + action;
     busy[id] = true;
     message = '';
-    requestIds[key] ??= crypto.randomUUID();
+    requestIds[request] ??= crypto.randomUUID();
     try {
       const response = await fetch(action === 'undo' && done ? done.event.batch_id ? '/api/task-batches/' + done.event.batch_id + '/undo' : '/api/care-events/' + done.event.id + '/undo' : '/api/plants/' + row.plant_id + '/tasks/' + taskKey(row) + '/' + action, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: action === 'undo' ? undefined : JSON.stringify({ request_id: requestIds[key] }),
+        body: action === 'undo' ? undefined : JSON.stringify({ request_id: requestIds[request] }),
       });
       const result = await response.json();
       if (!response.ok) { message = result.message ?? 'Could not update the task. Try again.'; return; }
       if (action === 'undo') {
-        if (done?.event.batch_id) {
-          handled = {}; restored = {}; requestIds = {};
-          await invalidateAll();
-          return;
-        }
-        restored[id] = result.task;
-        delete handled[id];
-        for (const command of ['complete', 'snooze', 'skip']) delete requestIds[id + ':' + command];
-        if (row.completed_event) await invalidateAll();
-      } else handled[id] = result;
-      if (row.task_type === 'fertilize' && (action === 'complete' || action === 'undo')) {
-        delete handled[row.plant_id + ':water'];
-        delete restored[row.plant_id + ':water'];
-        await invalidateAll();
+        const { [id]: _, ...others } = results;
+        results = others;
+        await reload();
+        return;
       }
+      delete requestIds[request];
+      results = { ...results, [id]: { event: result.event, task: result.task } };
+      if (row.task_type === 'fertilize' && action === 'complete') await reload();
     } catch { message = 'Could not reach Fytorium. Try again.'; }
     finally { busy[id] = false; }
   }
@@ -56,8 +59,7 @@
     try {
       const response = await fetch('/api/tasks/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sort: form.get('sort'), filter: form.get('filter'), show_completed: form.has('show_completed') }) });
       if (!response.ok) { message = 'Could not save the task view.'; return; }
-      await invalidateAll();
-      handled = {}; restored = {};
+      await reload();
       saved = 'Task view saved.';
     } catch { message = 'Could not reach Fytorium. Try again.'; }
     finally { saving = false; }
@@ -71,7 +73,7 @@
   <form onsubmit={saveView}>
     <label for="task-sort">Sort tasks</label><select id="task-sort" name="sort" value={list.settings.sort}><option value="task">Task type</option><option value="plant">Plant</option><option value="site">Site</option></select>
     <label for="task-filter">Filter location</label><select id="task-filter" name="filter" value={list.settings.filter}><option value="all">All</option><option value="indoor">Indoor</option><option value="outdoor">Outdoor</option></select>
-    <label class="check"><input name="show_completed" type="checkbox" checked={list.settings.show_completed} /> Show completed</label>
+    <label class="check"><input name="show_completed" type="checkbox" checked={list.settings.show_completed} /> Show others' completed tasks</label>
     <button disabled={saving}>Save task view</button>
   </form>
   {/if}
@@ -81,24 +83,26 @@
   {#each list.sections as section (section.key)}
     <h3>{section.label}</h3>
     {#if section.tasks.length === 0}<p>No tasks due today.</p>{/if}
-    {#each section.tasks as row (row.plant_id + ':' + taskKey(row))}
+    {#each section.tasks as row (occurrence(row))}
       {@const rules = taskPresentation(row)}
-      {@const id = row.plant_id + ':' + taskKey(row)}
+      {@const id = occurrence(row)}
       {@const done = actionFor(row)}
-      {@const task = done?.task ?? restored[id] ?? row}
+      {@const task = done?.task ?? row}
+      {@const batch = done?.event.batch_id ? batchScope(done.event, row.plant_name, row.custom_task_name ?? null) : null}
       <article data-task-type={taskKey(row)} aria-label={rules.label + ' for ' + row.plant_name}>
         <div>
           <a href={'/plants/' + row.plant_id}>{row.plant_name}</a>
           <p>{rules.label}{#if row.site_name} · {row.site_name}{/if}</p>
           {#if done}
             <p role="status">{careEventLabel(done.event.kind, 'Done')}{#if task.status === 'due'} · Next {rules.action}: {task.dueOn}{/if}</p>
+            {#if batch}<p>{batch.text}</p>{/if}
           {:else if task.status === 'due'}
             {#if task.lateDays > 0}<span class="late">{task.lateDays}d late</span>
             {:else}<span>{task.dueOn === list.today ? 'Due today' : 'Due ' + task.dueOn}</span>{/if}
           {/if}
         </div>
         <div class="actions">
-          {#if done}{#if !sitter || done.event.by_member === memberId}<button disabled={busy[id]} onclick={() => act(row, 'undo')}>Undo</button>{/if}
+          {#if done}{#if !sitter || done.event.by_member === memberId}<button disabled={busy[id]} onclick={() => act(row, 'undo')}>{batch ? 'Undo all ' + batch.count : 'Undo'}</button>{/if}
           {:else}
             <button disabled={busy[id]} onclick={() => act(row, 'complete')}>Done</button>
             {#if task.status === 'due' && task.dueOn <= list.today}<button disabled={busy[id]} onclick={() => act(row, 'snooze')}>Snooze 2 days</button>{/if}

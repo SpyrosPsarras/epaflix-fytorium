@@ -132,14 +132,15 @@ import org.json.JSONObject
                 if (result.candidates.isEmpty()) item { Text("No species found.") }
                 items(result.candidates, key = { it.key }) { candidate ->
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ReferencePhoto(imageApi, candidate.key, candidate.canonicalName, showName = true)
+                        ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
                         Column(Modifier.weight(1f)) {
-                            Heading(candidate.scientificName, style = MaterialTheme.typography.titleMedium)
-                            candidate.matchedName?.let { Text("Matched " + it + " · " + candidate.matchedLanguage.orEmpty()) }
-                            Text((candidate.matchType ?: "Stored species") + " · " + candidate.confidence?.let { "$it% confidence · " }.orEmpty() + candidate.rank)
+                            Heading(candidate.headline, style = MaterialTheme.typography.titleMedium)
+                            if (candidate.commonName != null) Text(candidate.canonicalName)
+                            candidate.matchNote?.let { Text(it) }
+                            if (candidate.matchType == "FUZZY" && candidate.confidence != null) Text("Close match, ${candidate.confidence}%")
                             OutlinedButton(onClick = {
                                 if (candidate.requiresConfirmation) selected = candidate else onSelect(candidate, result.id, false)
-                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.canonicalName) }
+                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.headline) }
                         }
                     }
                 }

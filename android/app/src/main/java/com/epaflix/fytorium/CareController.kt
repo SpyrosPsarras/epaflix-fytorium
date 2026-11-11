@@ -51,6 +51,9 @@ class CareController(context: Context, private val store: CredentialStore, val r
         }
     }
     fun act(task: CareTask, action: String) { scope.launch { if (repository.act(task, action)) feed?.refresh(repository.state.value.member) } }
+    fun open(occurrence: String?) = repository.open(occurrence)
+    fun clearReceipt(receipt: Receipt) = repository.clearReceipt(receipt)
+    fun undoReceipt(receipt: Receipt) { scope.launch { if (repository.undoReceipt(receipt)) feed?.refresh(repository.state.value.member) } }
     fun handleType(taskKey: String) { scope.launch { if (repository.handleType(taskKey)) feed?.refresh(repository.state.value.member) } }
     fun settings(settings: TaskSettings) { scope.launch { repository.saveSettings(settings) } }
     fun cancelRefresh() { work.cancelUniqueWork(WORK_NAME); work.cancelUniqueWork(com.epaflix.fytorium.notifications.PushRefresh.NAME) }

@@ -11,7 +11,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 internal const val importCandidate = """{"gbif_key":910002,"scientific_name":"Testoria nebulosa Inventor","canonical_name":"Testoria nebulosa","rank":"SPECIES","match_type":"FUZZY","confidence":96,"requires_confirmation":true,"matched_name":null,"matched_language":null}"""
-internal const val importFixture = """{"id":"staging-one","planta_plant_id":"synthetic-planta","mapped":{"nickname":"Synthetic imported fern","cultivar":"Invented stripe","scientific_name":"Testoria neblosa","site_name":"Synthetic nook","pot_type":"terracotta","pot_size_cm":18,"soil_type":"cactus","care":{"water":"2026-06-01"},"has_cover":true},"cover_error":null,"cover_status":"pending","candidates":[$importCandidate],"selected":null,"status":"review","plant_id":null,"can_commit":false,"can_review":true}"""
+internal const val importFixture = """{"id":"staging-one","planta_plant_id":"synthetic-planta","mapped":{"nickname":"Synthetic imported fern","cultivar":"Invented stripe","scientific_name":"Testoria neblosa","site_name":"Synthetic nook","pot_type":"terracotta","pot_size_cm":18,"soil_type":"cactus","care":{"water":"2026-06-01"},"has_cover":true},"cover_error":null,"cover_status":"pending","candidates":[$importCandidate],"selected":null,"status":"review","plant_id":null,"can_commit":false,"can_review":true,"display_name":"Synthetic imported fern"}"""
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -37,7 +37,7 @@ class PlantaRepositoryTest {
             assertTrue(repo.search("staging-one", "Testoria typo"))
             assertEquals("/api/species/search?q=Testoria%20typo", server.takeRequest().path)
             assertTrue(repo.state.value.search!!.candidates.single().requiresConfirmation)
-            val ready = JSONObject(importFixture).put("status", "confirmed").put("can_commit", true).put("selected", JSONObject(importCandidate))
+            val ready = JSONObject(importFixture).put("status", "confirmed").put("can_commit", true).put("selected", JSONObject(importCandidate).put("common_name", "Synthetic cloudleaf"))
             server.enqueue(MockResponse().setBody(ready.toString()))
             server.enqueue(MockResponse().setBody("[$ready]"))
             assertTrue(repo.confirm("staging-one", 910002, "search-one"))
@@ -46,6 +46,7 @@ class PlantaRepositoryTest {
             assertEquals("/api/import/planta/staging-one", confirm.path)
             assertEquals("""{"gbif_key":910002,"confirmed":true,"search_id":"search-one"}""", confirm.body.readUtf8())
             assertEquals("/api/import/planta", server.takeRequest().path)
+            assertEquals("Synthetic cloudleaf", repo.state.value.rows.single().selectedCommonName)
             assertNull(repo.state.value.search)
             val done = ready.put("status", "committed").put("can_commit", false).put("can_review", false).put("cover_status", "imported").put("plant_id", "plant-one")
             server.enqueue(MockResponse().setBody("[$done]"))
@@ -144,6 +145,16 @@ class PlantaRepositoryTest {
             assertTrue(repo.state.value.blocked)
             assertTrue(repo.state.value.error!!.startsWith("Fytorium isn't responding."))
             assertFalse(repo.state.value.toString().contains("synthetic-secret-code"))
+        }
+    }
+    @Test fun aReviewCardIsHeadedByTheNameTheServerSaysThePlantWillHave() {
+        MockWebServer().use { server ->
+            server.start()
+            val unnamed = JSONObject(importFixture).put("display_name", "Synthetic cloudleaf").apply { getJSONObject("mapped").put("nickname", JSONObject.NULL) }
+            server.enqueue(MockResponse().setBody("[$unnamed]"))
+            val repo = repository(server)
+            assertTrue(repo.refresh())
+            assertEquals("Synthetic cloudleaf", repo.state.value.rows.single().name)
         }
     }
     @Test fun aNewRepositoryResumesTheServerReviewWithoutACode() {
