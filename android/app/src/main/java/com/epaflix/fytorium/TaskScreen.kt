@@ -28,6 +28,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -73,7 +74,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     // A row the server no longer lists stays in place until then, without controls that would act on it again.
     val listed = live?.sections.orEmpty().flatMapTo(mutableSetOf()) { section -> section.tasks.map { it.occurrence } }
     val state = if (view == "upcoming") care.copy(upcoming = list) else care.copy(today = list)
-    val shownFeed = feed?.let { rememberHeld(it, view, moment) { shown, next -> next.keepingStripOf(shown) } }
+    var touched by remember { mutableStateOf(false) }
+    LaunchedEffect(scrollState) { snapshotFlow { scrollState.value != 0 }.first { it }; touched = true }
+    val shownFeed = feed?.let { rememberHeld(it, view, moment) { shown, next -> if (!shown.loaded && !touched) next else next.keepingStripOf(shown) } }
     val photoIds = remember(state.today, state.upcoming) {
         listOfNotNull(state.today, state.upcoming).flatMap { it.sections }.flatMap { it.tasks }.mapNotNull { it.coverPhotoId }.distinct()
     }
@@ -188,7 +191,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                         val by = if (dated) "day" else sort
                         section.tasks.forEach { task ->
                             key(task.plantId, task.key) { TaskRow(task, care, list.today, photos[task.coverPhotoId],
-                                onAction = { action -> onAction(task, action) }, onOpen = { onOpenTask(task) },
+                                onAction = { action -> touched = true; onAction(task, action) }, onOpen = { onOpenTask(task) },
                                 title = if (by == "plant") task.label else task.plantName,
                                 details = listOfNotNull(task.label.takeIf { by == "day" || by == "site" }, task.siteName.takeIf { by != "site" }),
                                 showPostponed = view == "upcoming" || sort != "task", listed = task.occurrence in listed, subtitleLine = subtitleLine,
@@ -200,7 +203,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                         if (view == "today" && editor && sort != "site" && (due || section.tasks.any { it.completedEvent != null })) {
                             val done = section.tasks.any { it.completedEvent?.kind == "completed" }
                             val handling = (if (sort == "plant") BusyKey.HandleAll(section.key) else BusyKey.Card(section.key)) in state.pending
-                            FilledTonalButton(onClick = { if (sort == "plant") onHandlePlant(section.key) else onHandleType(section.key) },
+                            FilledTonalButton(onClick = { touched = true; if (sort == "plant") onHandlePlant(section.key) else onHandleType(section.key) },
                                 enabled = due && state.writable && !handling,
                                 shape = RoundedCornerShape(50), modifier = Modifier.align(Alignment.CenterHorizontally)
                                     .padding(top = 12.dp, bottom = 16.dp).heightIn(min = 48.dp)

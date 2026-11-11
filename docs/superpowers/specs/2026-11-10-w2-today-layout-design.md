@@ -109,6 +109,10 @@ From `council-w2-opus-r2.md` (r2-1..r2-8) and `council-w2-sol-r2.md` (W2-sol-4).
 
 - A13i. (a) In a blocked task view sheet, every control and its label dim alike, including "Show others' completed tasks" (W2-opus-r3-1). (b) A tap that lands on the navigation bar within 500 ms after a receipt or explanation leaves it (timeout or swipe) is ignored, so a late tap on the receipt's action never switches tabs; the bar shows its items without a blank frame in between. The pause starts whenever a receipt or explanation finishes by timeout, swipe or its own Undo or Dismiss button, also when another one is queued behind it and appears at once; a receipt replaced because the user took a new action does not start it.
 
+## Owner follow-up (2026-11-11)
+
+- A14 (O2, decided by Spyros). When no feed has ever been cached for the member, the first feed result that has cards shows its strip at once instead of waiting for an apply moment, provided the list has not been scrolled and the user has not acted on a row since the screen appeared (nothing the user is looking at moves). Otherwise A1c's hold applies as before.
+
 ## Non-goals
 Plant page, add flow, More/settings, navigation model, web UI.
 

@@ -858,24 +858,19 @@ class TodayLayoutTest {
         }
     }
 
-    @Test fun aFirstEverStartShowsNoPlaceholderAndTheFirstFeedWaitsForAViewSwitch() {
+    @Test fun aFirstEverStartShowsNoPlaceholderAndTheFirstFeedAtOnceOnAnUntouchedScreen() {
         MockWebServer().use { server ->
             server.start()
             val member = Member("member-one", Role.owner)
             val feed = FeedRepository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply {
                 tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}, { true })
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(), feed = feed, deviceOnline = true) } }
-            val rows = rowTops()
             compose.onNodeWithTag("feed-loading").assertDoesNotExist()
             compose.onNodeWithTag("feed-strip").assertDoesNotExist()
             compose.onRoot().captureRoboImage("src/test/screenshots/today-first-start-light.png")
             server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
             feed.refresh(member)
             compose.waitForIdle()
-            compose.onNodeWithTag("feed-strip").assertDoesNotExist()
-            assertEquals("Rows moved when the first feed arrived", rows, rowTops())
-            compose.onNodeWithTag("view-upcoming").performClick()
-            compose.onNodeWithTag("view-today").performClick()
             compose.onNodeWithTag("feed-cold").assertIsDisplayed()
         }
     }
@@ -1045,12 +1040,18 @@ class TodayLayoutTest {
 
     @Test fun aStripArrivingAboveAShortListMovesNoRowUntilResume() = stripWaits(loadedFeed.copy(cards = emptyList()), loadedFeed, tasks = 2, Moment.Resume)
     @Test fun aStripGoingAtTheTopOfALongListMovesNoRowUntilAPull() = stripWaits(loadedFeed, loadedFeed.copy(cards = emptyList()), tasks = 12, Moment.Pull)
-    @Test fun aFirstEverStartShowsNoPlaceholderAndTheStripAfterAPull() = stripWaits(FeedState(member = owner), loadedFeed, tasks = 12, Moment.Pull)
-    private fun stripWaits(first: FeedState, next: FeedState, tasks: Int, moment: Moment) {
+    @Test fun aFirstEverFeedWaitsForAPullWhenTheListWasScrolledFirst() =
+        stripWaits(FeedState(member = owner), loadedFeed, tasks = 12, Moment.Pull) { scrollList(300f) }
+    @Test fun aFirstEverFeedWaitsForResumeWhenARowWasActedOnFirst() = stripWaits(FeedState(member = owner), loadedFeed, tasks = 12, Moment.Resume) {
+        compose.onNodeWithContentDescription("Mark Water done for Fern 1, Synthetic site").performClick()
+    }
+    private fun stripWaits(first: FeedState, next: FeedState, tasks: Int, moment: Moment, touch: () -> Unit = {}) {
         val screen = screen(state(tasks = rows(tasks)), first)
         compose.onNodeWithTag("feed-loading").assertDoesNotExist()
         val shown = first.cards.isNotEmpty()
         compose.onNodeWithTag("feed-strip").apply { if (shown) assertExists() else assertDoesNotExist() }
+        touch()
+        compose.waitForIdle()
         val before = rowTops()
         compose.runOnIdle { screen.feed.value = next }
         compose.waitForIdle()
