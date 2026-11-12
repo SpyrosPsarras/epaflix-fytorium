@@ -128,7 +128,7 @@ class TodayRedesignScreenTest {
         compose.onNodeWithContentDescription("No cover photo for Synthetic fern", useUnmergedTree = true).performTouchInput { click() }
         compose.onNodeWithText("Synthetic fern", useUnmergedTree = true).performTouchInput { click() }
         compose.runOnIdle { assertEquals(2, opened); assertTrue(actions.isEmpty()) }
-        compose.onNodeWithContentDescription("Snooze 2 days").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithContentDescription("Snooze Water for Synthetic fern, Synthetic site by 2 days").assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertHeightIsAtLeast(48.dp).performClick()
         compose.runOnIdle { assertEquals(2, opened); assertEquals(listOf("snooze", "complete"), actions) }
         compose.onNodeWithText("Skip").assertDoesNotExist()

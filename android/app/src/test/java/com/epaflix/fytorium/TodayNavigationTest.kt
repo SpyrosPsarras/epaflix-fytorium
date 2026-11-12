@@ -31,11 +31,11 @@ class TodayNavigationTest {
             detail = PlantDetail(plant, emptyList(), emptyMap()))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care) } }
         compose.onNodeWithContentDescription("Open Synthetic fern").performClick()
-        compose.onNodeWithText("Skip").assertIsDisplayed()
+        compose.onNodeWithContentDescription("More actions for Water on Synthetic fern").assertIsDisplayed()
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
         compose.onNodeWithText("Search plants").assertIsDisplayed()
-        compose.onNodeWithText("Skip").assertDoesNotExist()
-        compose.onNodeWithText("Edit plant").assertDoesNotExist()
+        compose.onNodeWithContentDescription("More actions for Water on Synthetic fern").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()
     }
 
     @Test fun openingEachOccurrenceOfOneTaskSelectsThatOccurrence() {
@@ -48,11 +48,13 @@ class TodayNavigationTest {
             upcoming = upcoming, detail = PlantDetail(plant, emptyList(), emptyMap()))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care) } }
         compose.onNodeWithTag("view-upcoming").performClick()
-        val card = hasAnyAncestor(hasTestTag("today-task:${plant.id}:water"))
+        val row = hasAnyAncestor(hasTestTag("task:${plant.id}:water"))
+        val undo = hasContentDescription("Water done for ${plant.displayName}, Synthetic site. Double tap to undo")
+        val skip = hasContentDescription("More actions for Water on Synthetic fern")
         for ((index, completed) in listOf(1 to false, 0 to true)) {
             compose.onAllNodesWithContentDescription("Open ${plant.displayName}")[index].performScrollTo().performClick()
-            compose.onNode(card and hasText(if (completed) "Undo" else "Skip")).assertExists()
-            compose.onNode(card and hasText(if (completed) "Skip" else "Undo")).assertDoesNotExist()
+            compose.onNode(if (completed) undo else row and skip).assertExists()
+            compose.onNode(if (completed) row and skip else undo).assertDoesNotExist()
             compose.onNodeWithContentDescription("Back").performClick()
         }
     }
@@ -69,22 +71,24 @@ class TodayNavigationTest {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
         compose.onNodeWithContentDescription("Open ${plant.displayName}").performClick()
-        val block = hasAnyAncestor(hasTestTag("today-task:${plant.id}:water"))
-        compose.onNode(block and hasText("Skip")).assertIsDisplayed()
+        val undo = hasContentDescription("Water done for ${plant.displayName}, Synthetic site. Double tap to undo")
+        compose.onNodeWithContentDescription("Mark Water done for ${plant.displayName}, Synthetic site").assertIsDisplayed()
         val event = parseEvent(JSONObject(eventFixture)).let { if (completedHere) it else it.copy(id = "event-other", byMember = "member-two") }
         val done = list.copy(sections = listOf(TaskSection("water", "Water", listOf(task.copy(completedEvent = event)))))
         // The server's rows arrive in the same state as the repository's moved selection, with no patched rows drawn in between.
         compose.runOnIdle { care.value = care.value.copy(today = done, upcoming = done.copy(view = "upcoming"),
-            openedOccurrence = if (completedHere) event.id else task.occurrence) }
+            openedOccurrence = if (completedHere) event.id else task.occurrence, transitions = if (completedHere) listOf(task.occurrence to event.id) else emptyList()) }
         if (completedHere) {
-            compose.onNode(block and hasText("Undo")).assertIsDisplayed()
+            compose.onNode(undo).assertIsDisplayed()
             // A restarted process keeps the server's rows and the saved selection, but not the repository's.
             compose.runOnIdle { care.value = care.value.copy(openedOccurrence = null) }
             restoration.emulateSavedInstanceStateRestore()
-            compose.onNode(block and hasText("Undo")).assertIsDisplayed()
+            compose.onNode(undo).assertIsDisplayed()
         } else {
-            compose.onNodeWithTag("today-task:${plant.id}:water").assertDoesNotExist()
-            compose.onNodeWithText(plant.displayName).assertIsDisplayed()
+            // Another member's completion waits for the next pull or visit; until then the row stays in place without its controls.
+            compose.onNodeWithContentDescription("Mark Water done for ${plant.displayName}, Synthetic site").assertIsDisplayed().assertIsNotEnabled()
+            compose.onNode(undo).assertDoesNotExist()
+            compose.onAllNodes(hasText(plant.displayName) and isHeading()).onFirst().assertIsDisplayed()
         }
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
@@ -149,24 +153,26 @@ class TodayNavigationTest {
         val scroll = compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
         assertTrue(scroll > 0f)
         compose.onNodeWithContentDescription("Open ${plant.displayName}").performClick()
-        compose.onNodeWithText("Skip").assertIsDisplayed().assertIsEnabled()
+        val label = if (custom) "Rotate" else "Water"
+        val mark = "Mark $label done for ${plant.displayName}, Synthetic site"
+        compose.onNodeWithContentDescription(mark).assertIsDisplayed().assertIsEnabled()
         if (restore) restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Skip").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithTag("today-task:${plant.id}:${if (custom) "synthetic-custom" else "water"}").assertIsDisplayed()
+        compose.onNodeWithContentDescription(mark).assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("task:${plant.id}:${if (custom) "synthetic-custom" else "water"}").assertIsDisplayed()
         if (custom) compose.onNodeWithText("Rotate").assertIsDisplayed()
         compose.onNodeWithTag("task-list").assertDoesNotExist()
         if (role == Role.sitter) {
-            compose.onNodeWithText("Edit plant").assertDoesNotExist()
-            compose.onNodeWithText("Care history").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()
+            compose.onNode(hasText("History") and isHeading()).assertDoesNotExist()
         }
         if (removeTask) {
             compose.runOnIdle {
                 val remaining = list.copy(sections = listOf(TaskSection("water", "Water", tasks.filter { it.plantId != plant.id })))
                 care.value = care.value.copy(today = remaining, upcoming = remaining.copy(view = "upcoming"))
             }
-            compose.onNodeWithTag("today-task:${plant.id}:${task.key}").assertDoesNotExist()
-            compose.onNodeWithText("Skip").assertDoesNotExist()
-            compose.onNodeWithText(plant.displayName).assertIsDisplayed()
+            compose.onNodeWithTag("task:${plant.id}:${task.key}").assertIsDisplayed()
+            compose.onNodeWithContentDescription(mark).assertIsNotEnabled()
+            compose.onAllNodes(hasText(plant.displayName) and isHeading()).onFirst().assertIsDisplayed()
         }
         if (systemBack) compose.runOnIdle { checkNotNull(backDispatcher).onBackPressed() }
         else compose.onNodeWithContentDescription("Back").performClick()
@@ -181,7 +187,7 @@ class TodayNavigationTest {
         }
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
         compose.onNodeWithText("Search plants").assertIsDisplayed()
-        compose.onNodeWithText("Skip").assertDoesNotExist()
-        compose.onNodeWithText("Edit plant").assertDoesNotExist()
+        compose.onNodeWithContentDescription(mark).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()
     }
 }

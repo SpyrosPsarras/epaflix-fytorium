@@ -20,7 +20,7 @@ data class CareEvent(val id: String, val plantId: String, val taskType: String?,
                      val byName: String, val batchId: String?, val undoneAt: String?, val previousPot: Boolean, val canUndo: Boolean,
                      val batchPlantCount: Int? = null, val batchEventCount: Int? = null,
                      val batchAction: String? = null, val batchTask: String? = null, val linkedEventId: String? = null,
-                     val linkedEventCount: Int = 0, val dueOn: String? = null) {
+                     val linkedEventCount: Int = 0, val dueOn: String? = null, val occurredAt: String? = null, val postponedUntil: String? = null) {
     val key get() = taskKey(customTaskId, taskType)
     val label get() = if (kind == "completed") "Done" else postponeLabel(kind) ?: "Skipped"
 }
@@ -57,7 +57,11 @@ data class Plant(val id: String, val displayName: String, val scientificName: St
                  val siteName: String?, val coverPhotoId: String?, val potType: String?, val potSizeCm: Int?, val soilType: String?,
                  val attributesJson: String = "{}")
 data class PlantDetail(val plant: Plant, val history: List<CareEvent>, val tasks: Map<String, CareTask>,
-                       val careSettingsJson: String? = null, val speciesChangesJson: String = "[]")
+                       val careSettingsJson: String? = null, val speciesChangesJson: String = "[]", val photoIds: List<String> = emptyList(), val refreshedAt: Long = 0) {
+    // The plant schedule leaves out the plant and built-in task types, which a row's occurrence needs.
+    fun scheduled(key: String) = tasks[key]?.let { it.copy(taskType = it.taskType ?: key.takeIf { _ -> it.customTaskId == null },
+        plantId = plant.id, plantName = plant.displayName, siteName = plant.siteName.orEmpty()) }
+}
 internal val taskNames = mapOf(
     "water" to "Water", "fertilize" to "Fertilize",
     "clean_leaves" to "Clean leaves", "remove_dead" to "Remove dead flowers and leaves",
@@ -66,7 +70,11 @@ internal val taskNames = mapOf(
 fun taskLabel(type: String?, custom: String? = null): String = taskNames[type] ?: custom ?: "Deleted custom task"
 
 private val receiptIds = AtomicLong()
-data class Receipt(val text: String, val undo: CareEvent? = null, val short: Boolean = false, val id: Long = receiptIds.incrementAndGet())
+data class Receipt(val text: String, val undo: CareEvent? = null, val short: Boolean = false, val restore: Restore? = null, val id: Long = receiptIds.incrementAndGet()) {
+    val undoable get() = undo != null || restore != null
+}
+// Moving a plant to the graveyard keeps its site, so restoring it there reverses the move.
+data class Restore(val plantId: String, val siteId: String, val plantName: String)
 data class BatchReceipt(val text: String, val scope: String, val count: Int, val undone: String)
 sealed interface BusyKey {
     data class Row(val occurrence: String) : BusyKey
@@ -78,6 +86,14 @@ internal val taskVerbs = mapOf(
     "water" to "Watered", "fertilize" to "Fertilized", "clean_leaves" to "Cleaned leaves of",
     "remove_dead" to "Removed dead flowers and leaves from", "cut_back" to "Cut back", "repot" to "Repotted"
 )
+private val taskDone = mapOf(
+    "water" to "Watered", "fertilize" to "Fertilized", "clean_leaves" to "Cleaned leaves",
+    "remove_dead" to "Removed dead flowers and leaves", "cut_back" to "Cut back", "repot" to "Repotted"
+)
+fun historyText(event: CareEvent): String = when (event.kind) {
+    "completed" -> taskDone[event.taskType] ?: "${taskLabel(event.taskType, event.customTaskName)} done"
+    else -> "${postponeLabel(event.kind) ?: "Skipped"} ${careWork(event.taskType, event.customTaskName, false)}"
+} + " \u00b7 " + event.byName
 private val taskActions = mapOf(
     "water" to "watering", "fertilize" to "fertilizing", "clean_leaves" to "leaf cleaning",
     "remove_dead" to "removing dead flowers and leaves", "cut_back" to "seasonal cut-back", "repot" to "repotting"
@@ -98,6 +114,28 @@ internal fun countLabel(n: Int, noun: String) = "$n $noun" + if (n == 1) "" else
 fun shortDate(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault()))
 fun longDate(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()))
 fun dayMonth(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
+fun dayMonthYear(date: String): String = LocalDate.parse(date).format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault()))
+fun historyDay(date: String, today: String?): String {
+    val day = LocalDate.parse(date)
+    val now = today?.let(LocalDate::parse)
+    return when (day) {
+        now -> "Today"
+        now?.minusDays(1) -> "Yesterday"
+        else -> shortDate(date) + if (day.year != now?.year) " ${day.year}" else ""
+    }
+}
+fun careStatus(task: CareTask, today: String): String? {
+    task.completedEvent?.let { return if (it.kind == "completed") "Done today" else null }
+    val due = task.dueOn?.takeIf { task.status == "due" } ?: return null
+    val days = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.parse(today), LocalDate.parse(due))
+    return when {
+        days < 0 -> countLabel(-days.toInt(), "day") + " late"
+        days == 0L -> "Due today"
+        task.postponed != null -> "${postponeLabel(task.postponed)} until ${shortDate(due)}"
+        days == 1L -> "Due tomorrow"
+        else -> "Due in $days days"
+    }
+}
 // Undo reverses the whole server batch, so every device words it from the server's batch fields, never from the visible rows.
 internal fun batchReceipt(event: CareEvent, plantName: String, customTaskName: String? = null): BatchReceipt? =
     batchReceipt(event.batchAction, event.batchPlantCount, event.batchEventCount, plantName, event.batchTask, customTaskName)
@@ -123,7 +161,8 @@ internal fun parseEvent(j: JSONObject) = CareEvent(j.getString("id"), j.getStrin
     j.nullable("custom_task_id"), j.nullable("custom_task_name"), j.getString("kind"), j.getString("occurred_on"),
     j.nullable("by_member"), j.optString("by_name"), j.nullable("batch_id"), j.nullable("undone_at"), !j.isNull("previous_pot"), j.getBoolean("can_undo"),
     if (j.isNull("batch_plant_count")) null else j.getInt("batch_plant_count"), if (j.isNull("batch_event_count")) null else j.getInt("batch_event_count"),
-    j.nullable("batch_action"), j.nullable("batch_task"), j.nullable("linked_event_id"), j.optJSONArray("linked_events")?.length() ?: 0, j.nullable("due_on"))
+    j.nullable("batch_action"), j.nullable("batch_task"), j.nullable("linked_event_id"), j.optJSONArray("linked_events")?.length() ?: 0, j.nullable("due_on"),
+    j.nullable("occurred_at"), j.nullable("postponed_until"))
 internal fun parseTask(j: JSONObject) = CareTask(j.getString("status"), j.nullable("dueOn"),
     if (j.isNull("intervalDays")) null else j.getInt("intervalDays"), j.optInt("lateDays"),
     j.getJSONArray("basedOn").mapObjects { b -> Basis(b.getString("input"), b.opt("value").takeUnless { it == JSONObject.NULL },

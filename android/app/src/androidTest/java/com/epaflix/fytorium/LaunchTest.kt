@@ -222,7 +222,7 @@ class LaunchTest {
             val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.first { it.plantId == plantId && it.dueOn!! > "2030-06-02" }
             val futureTag = "task:$plantId:${future.key}"
             compose.waitForNode(hasTestTag(futureTag)).performScrollTo()
-            button(futureTag, hasContentDescription("Snooze 2 days")).assertDoesNotExist()
+            button(futureTag, hasContentDescription("by 2 days", substring = true)).assertDoesNotExist()
             compose.onNodeWithTag("view-today").waitForAction("view-today").performClick()
             device.executeShellCommand("cmd connectivity airplane-mode enable")
             app.care.refresh()
@@ -233,7 +233,7 @@ class LaunchTest {
                 }.getOrDefault(false)
             }
             button(waterTag, completeWater).assertIsNotEnabled()
-            button(waterTag, hasContentDescription("Snooze 2 days")).assertIsNotEnabled()
+            button(waterTag, hasContentDescription("by 2 days", substring = true)).assertIsNotEnabled()
             // This negative-control click must stay disabled to prove it cannot queue a write.
             button(waterTag, completeWater).performScrollTo().performClick()
             assertEquals("Cached Today was lost in airplane mode", "Synthetic A04 fern", app.repository.state.value.today!!.sections.flatMap { it.tasks }.first { it.plantId == plantId }.plantName)

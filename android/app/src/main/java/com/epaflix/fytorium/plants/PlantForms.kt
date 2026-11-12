@@ -1,15 +1,24 @@
 package com.epaflix.fytorium.plants
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.mapSaver
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextStyle
@@ -19,10 +28,14 @@ import java.time.LocalDate
 import java.time.Instant
 import java.time.ZoneOffset
 import com.epaflix.fytorium.ApiClient
+import com.epaflix.fytorium.CareTask
 import com.epaflix.fytorium.ReferencePhoto
 import com.epaflix.fytorium.Plant
+import com.epaflix.fytorium.countLabel
+import com.epaflix.fytorium.dayMonthYear
 import com.epaflix.fytorium.nullable
 import com.epaflix.fytorium.taskLabel
+import com.epaflix.fytorium.taskNames
 import org.json.JSONObject
 
 @Composable private fun savedFields(key: String?, initial: () -> Map<String, String>): androidx.compose.runtime.snapshots.SnapshotStateMap<String, String> =
@@ -30,8 +43,11 @@ import org.json.JSONObject
         save = { fields: androidx.compose.runtime.snapshots.SnapshotStateMap<String, String> -> fields.toMap() },
         restore = { values -> values.map { it.key to it.value.toString() }.toMutableStateMap() })) { initial().toList().toMutableStateMap() }
 
-@Composable internal fun Heading(text: String, style: TextStyle = MaterialTheme.typography.titleLarge) {
-    Text(text, style = style, modifier = Modifier.semantics { heading() })
+internal val numberKeys = KeyboardOptions(keyboardType = KeyboardType.Number)
+internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstChar(Char::uppercase)
+
+@Composable internal fun Heading(text: String, style: TextStyle = MaterialTheme.typography.titleLarge, modifier: Modifier = Modifier) {
+    Text(text, style = style, modifier = modifier.semantics { heading() })
 }
 @Composable internal fun PlantError(message: String?) {
     message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
@@ -40,7 +56,7 @@ import org.json.JSONObject
 @Composable internal fun Choice(label: String, value: String, options: Map<String, String>, enabled: Boolean = true, onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded && enabled, onExpandedChange = { if (enabled) expanded = it }) {
-        OutlinedTextField(value = options[value] ?: value.replace('_', ' '), onValueChange = {}, readOnly = true,
+        OutlinedTextField(value = options[value] ?: choiceLabel(value), onValueChange = {}, readOnly = true,
             label = { Text(label) }, enabled = enabled,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled).fillMaxWidth())
@@ -49,14 +65,20 @@ import org.json.JSONObject
         }
     }
 }
+// The server refuses a birthday after its UTC date, so the picker offers no later day.
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun Birthday(value: String, enabled: Boolean, error: String?, onChange: (String) -> Unit) {
+@Composable private fun Birthday(value: String, enabled: Boolean, error: String?, today: LocalDate, onChange: (String) -> Unit) {
     var choosing by remember { mutableStateOf(false) }
-    OutlinedButton(onClick = { choosing = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Birthday: " + value.ifBlank { "Not set" }) }
+    val shown = value.takeIf { it.isNotBlank() }?.let { runCatching { dayMonthYear(it) }.getOrNull() ?: it } ?: "Not set"
+    OutlinedButton(onClick = { choosing = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Birthday: $shown") }
     PlantError(error)
     if (choosing) {
         val initial = remember(value) { runCatching { LocalDate.parse(value).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull() }
-        val picker = rememberDatePickerState(initialSelectedDateMillis = initial)
+        val latest = maxOf(today.year, runCatching { LocalDate.parse(value).year }.getOrDefault(today.year))
+        val picker = rememberDatePickerState(initialSelectedDateMillis = initial, yearRange = 1900..latest, selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long) = !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(today)
+            override fun isSelectableYear(year: Int) = year <= today.year
+        })
         DatePickerDialog(onDismissRequest = { choosing = false },
             confirmButton = { TextButton(onClick = { onChange(picker.selectedDateMillis?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString() }.orEmpty()); choosing = false }) { Text("Set birthday") } },
             dismissButton = { TextButton(onClick = { choosing = false }) { Text("Cancel") } }) { DatePicker(picker) }
@@ -72,44 +94,60 @@ import org.json.JSONObject
 @Composable internal fun PlantColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
 }
-@Composable fun PlantForm(plant: Plant?, options: PlantOptions, sites: List<PlantSite>, writable: Boolean, errors: Map<String, String> = emptyMap(), onSave: (JSONObject) -> Unit) {
+@Composable private fun Expander(label: String, open: Boolean, onToggle: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (open) "Hide $label" else "Show $label", onClick = onToggle)
+        .semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)
+    }
+}
+private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
+// Name and site lead; everything else waits under More details, which opens by itself when one of its fields has an error.
+@Composable fun PlantForm(plant: Plant?, options: PlantOptions, sites: List<PlantSite>, writable: Boolean, errors: Map<String, String> = emptyMap(),
+    onSave: (JSONObject) -> Unit, today: LocalDate = LocalDate.now(ZoneOffset.UTC), onDirty: (Boolean) -> Unit = {}) {
     val original = remember(plant?.id) { JSONObject(plant?.attributesJson ?: "{}") }
-    val texts = savedFields(plant?.id) { mutableMapOf<String, String>().apply {
-        (listOf("nickname", "cultivar", "birthday") + options.numbers).forEach { key -> put(key, if (original.isNull(key)) "" else original.optString(key)) }
-    } }
-    val choices = savedFields(plant?.id) { mutableMapOf<String, String>().apply {
-        options.choices.forEach { (key, values) -> put(key, original.nullable(key) ?: values.first()) }
-        put("health", if (original.isNull("health")) "" else original.optString("health"))
-        put("site_id", if (original.isNull("site_id")) "" else original.optString("site_id"))
-    } }
-    val flags = savedFields(plant?.id) { options.booleans.associateWith { original.optBoolean(it).toString() } }
+    val startTexts = remember(plant?.id) { (listOf("nickname", "cultivar", "birthday") + options.numbers).associateWith { key -> if (original.isNull(key)) "" else original.optString(key) } }
+    val startChoices = remember(plant?.id) { options.choices.mapValues { (key, values) -> original.nullable(key) ?: values.first() } +
+        mapOf("health" to (if (original.isNull("health")) "" else original.optString("health")), "site_id" to (if (original.isNull("site_id")) "" else original.optString("site_id"))) }
+    val startFlags = remember(plant?.id) { options.booleans.associateWith { original.optBoolean(it).toString() } }
+    val texts = savedFields(plant?.id) { startTexts }
+    val choices = savedFields(plant?.id) { startChoices }
+    val flags = savedFields(plant?.id) { startFlags }
+    val dirty = texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags
+    val currentDirty by rememberUpdatedState(onDirty)
+    LaunchedEffect(dirty) { currentDirty(dirty) }
+    var more by rememberSaveable(plant?.id) { mutableStateOf(false) }
+    LaunchedEffect(errors) { if (errors.keys.any { it !in leadingFields }) more = true }
     val validNumbers = options.numbers.all { texts[it].isNullOrBlank() || (texts[it]?.toIntOrNull()?.let { n -> n > 0 } == true) }
     PlantColumn {
-        Heading(if (plant == null) "Add plant details" else "Edit plant", style = MaterialTheme.typography.headlineSmall)
-        listOf("nickname" to "Nickname", "cultivar" to "Cultivar").forEach { (key, label) ->
-            OutlinedTextField(texts[key].orEmpty(), { texts[key] = it }, label = { Text(label) }, enabled = writable, singleLine = true,
-                isError = errors.containsKey(key), supportingText = errors[key]?.let { { PlantError(it) } }, modifier = Modifier.fillMaxWidth())
-        }
-        Birthday(texts["birthday"].orEmpty(), writable, errors["birthday"]) { texts["birthday"] = it }
-        Choice("Health", choices["health"].orEmpty(), mapOf("" to "Not set") + options.health.associateWith { it.replace('_', ' ') }, writable) { choices["health"] = it }
-        PlantError(errors["health"])
+        OutlinedTextField(texts["nickname"].orEmpty(), { texts["nickname"] = it }, label = { Text("Name") }, enabled = writable, singleLine = true,
+            placeholder = if (plant != null && original.isNull("nickname")) { { Text(plant.displayName) } } else null,
+            isError = errors.containsKey("nickname"), supportingText = { if (errors["nickname"] != null) PlantError(errors["nickname"]) else Text("Leave blank to use the species name") },
+            modifier = Modifier.fillMaxWidth())
         Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable) { choices["site_id"] = it }
         PlantError(errors["site_id"])
         PlantError(errors["gbif_key"])
         if (sites.isEmpty()) Text("Create a site under More before adding or restoring a plant.")
-        Heading("Pot and plant attributes")
-        options.choices.forEach { (key, values) ->
-            Choice(options.labels.getValue(key), choices[key].orEmpty(), values.associateWith { it.replace('_', ' ') }, writable) { choices[key] = it }
-            PlantError(errors[key])
-        }
-        options.numbers.forEach { key ->
-            OutlinedTextField(texts[key].orEmpty(), { texts[key] = it }, label = { Text(options.labels.getValue(key)) }, enabled = writable,
-                isError = errors.containsKey(key) || (!texts[key].isNullOrBlank() && texts[key]?.toIntOrNull()?.let { it > 0 } != true),
-                supportingText = { if (errors[key] != null) PlantError(errors[key]) else Text("Positive whole number, or blank for unknown") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        }
-        options.booleans.forEach { key ->
-            Toggle(options.labels.getValue(key), flags[key].toBoolean(), writable) { flags[key] = it.toString() }
-            PlantError(errors[key])
+        Expander("More details", more) { more = !more }
+        if (more) {
+            OutlinedTextField(texts["cultivar"].orEmpty(), { texts["cultivar"] = it }, label = { Text("Cultivar") }, enabled = writable, singleLine = true,
+                isError = errors.containsKey("cultivar"), supportingText = errors["cultivar"]?.let { { PlantError(it) } }, modifier = Modifier.fillMaxWidth())
+            Birthday(texts["birthday"].orEmpty(), writable, errors["birthday"], today) { texts["birthday"] = it }
+            Choice("Health", choices["health"].orEmpty(), mapOf("" to "Not set") + options.health.associateWith(::choiceLabel), writable) { choices["health"] = it }
+            PlantError(errors["health"])
+            options.choices.forEach { (key, values) ->
+                Choice(options.labels.getValue(key), choices[key].orEmpty(), values.associateWith(::choiceLabel), writable) { choices[key] = it }
+                PlantError(errors[key])
+            }
+            options.numbers.forEach { key ->
+                OutlinedTextField(texts[key].orEmpty(), { texts[key] = it }, label = { Text(options.labels.getValue(key)) }, enabled = writable, keyboardOptions = numberKeys,
+                    isError = errors.containsKey(key) || (!texts[key].isNullOrBlank() && texts[key]?.toIntOrNull()?.let { it > 0 } != true),
+                    supportingText = { if (errors[key] != null) PlantError(errors[key]) else Text("Positive whole number, or blank for unknown") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+            options.booleans.forEach { key ->
+                Toggle(options.labels.getValue(key), flags[key].toBoolean(), writable) { flags[key] = it.toString() }
+                PlantError(errors[key])
+            }
         }
         Button(onClick = {
             val body = JSONObject()
@@ -155,30 +193,59 @@ import org.json.JSONObject
         item { Text("Names from GBIF, CC BY 4.0") }
     }
 }
-@Composable fun PlantCareSettings(json: String, writable: Boolean, onSave: (JSONObject) -> Unit) {
-    val settings = remember(json) { JSONObject(json) }
-    val types = listOf("water", "fertilize", "clean_leaves", "remove_dead", "cut_back", "repot")
-    val intervals = remember(json) { mutableStateMapOf<String, String>().apply {
-        val current = settings.getJSONObject("customIntervals")
-        types.forEach { put(it, if (current.isNull(it)) "" else current.optString(it)) }
-    } }
-    PlantColumn {
-        Heading("Care settings", style = MaterialTheme.typography.headlineSmall)
-        Heading("Custom intervals", style = MaterialTheme.typography.titleLarge)
-        Text("Whole days from 1 to 365. Clear to use the computed interval. Season and applicability rules still apply.")
-        types.forEach { key ->
-            OutlinedTextField(intervals[key].orEmpty(), { intervals[key] = it }, label = { Text("${taskLabel(key)} interval in days") }, enabled = writable,
-                isError = !intervals[key].isNullOrBlank() && intervals[key]?.toIntOrNull() !in 1..365, singleLine = true, modifier = Modifier.fillMaxWidth())
-            TextButton(onClick = { intervals[key] = "" }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Clear ${taskLabel(key)} interval") }
+// The plant's own intervals. Each task says how often it is due now and where that comes from, so a blank field means something.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable fun PlantCareSettings(json: String, writable: Boolean, onSave: (JSONObject) -> Unit, tasks: Map<String, CareTask> = emptyMap(),
+    plantName: String = "", onSpeciesCare: (() -> Unit)? = null, onBack: (() -> Unit)? = null, notice: @Composable () -> Unit = {}) {
+    val custom = remember(json) { JSONObject(json).getJSONObject("customIntervals") }
+    val types = taskNames.keys.toList()
+    val intervals = remember(json) { mutableStateMapOf<String, String>().apply { types.forEach { put(it, if (custom.isNull(it)) "" else custom.optString(it)) } } }
+    val valid = intervals.values.all { it.isBlank() || it.toIntOrNull() in 1..365 }
+    fun current(type: String): String? {
+        val task = tasks[type] ?: return null
+        if (task.status != "due") return "Not scheduled for this plant now"
+        val days = task.intervalDays ?: return null
+        val source = when {
+            !custom.isNull(type) -> "your setting for this plant"
+            task.basedOn.firstOrNull()?.source == "rule" -> "from Fytorium's estimate"
+            else -> "from species care"
         }
-        Button(onClick = {
-            val custom = JSONObject(); intervals.forEach { (key, value) -> value.toIntOrNull()?.let { custom.put(key, it) } }
-            onSave(JSONObject().put("customIntervals", custom))
-        }, enabled = writable && intervals.values.all { it.isBlank() || it.toIntOrNull() in 1..365 }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save care settings") }
+        return "Every ${countLabel(days, "day")}, $source"
+    }
+    Column(Modifier.fillMaxSize()) {
+        TopAppBar(title = { Heading("This plant's schedule") }, navigationIcon = {
+            onBack?.let { IconButton(onClick = it) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } }
+        }, actions = {
+            TextButton(onClick = {
+                val saved = JSONObject(); intervals.forEach { (key, value) -> value.toIntOrNull()?.let { saved.put(key, it) } }
+                onSave(JSONObject().put("customIntervals", saved))
+            }, enabled = writable && valid, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save") }
+        })
+        notice()
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Changes here apply only to ${plantName.ifBlank { "this plant" }}. Care defaults for this species change every plant of its species.")
+            onSpeciesCare?.let { TextButton(onClick = it, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp)) { Text("Care defaults for this species") } }
+            types.forEach { key ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Heading(taskLabel(key), MaterialTheme.typography.titleMedium)
+                    current(key)?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    val value = intervals[key].orEmpty()
+                    val invalid = value.isNotBlank() && value.toIntOrNull() !in 1..365
+                    OutlinedTextField(value, { intervals[key] = it }, label = { Text("${taskLabel(key)} interval in days") }, enabled = writable, keyboardOptions = numberKeys,
+                        isError = invalid, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        supportingText = { Text(if (invalid) "Whole days from 1 to 365" else "Blank uses the computed interval") },
+                        trailingIcon = { if (value.isNotEmpty()) IconButton(onClick = { intervals[key] = "" }, enabled = writable) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear ${taskLabel(key)} interval for ${plantName.ifBlank { "this plant" }}") } })
+                }
+            }
+            Text("Season and applicability rules still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
+private val nameSources = mapOf("owner" to "Added by your household", "wikidata" to "Wikidata", "gbif" to "GBIF", "nortaxa" to "NorTaxa")
 @Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject) -> Unit) {
-    var name by remember(species.key) { mutableStateOf("") }
+    // The draft clears only when the species reloads after a successful add, so a failed add keeps the text.
+    var name by remember(species) { mutableStateOf("") }
     var language by remember { mutableStateOf("en") }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Heading(species.scientificName, style = MaterialTheme.typography.headlineSmall); Text("GBIF key: " + species.key) }
@@ -187,16 +254,17 @@ import org.json.JSONObject
             val names = species.names.filter { it.language == code }
             if (names.isEmpty()) item { Text("No names stored yet.") }
             items(names, key = { it.id }) { entry ->
-                Text(entry.name + " · Source: " + entry.source)
+                Text(entry.name + " \u00b7 " + (nameSources[entry.source] ?: entry.source))
                 if (entry.source == "owner") TextButton(onClick = { onCommand(entry.id, JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove " + entry.name) }
             }
         }
         item {
-            Heading("Add an owner name")
-            OutlinedTextField(name, { name = it }, label = { Text("Owner name") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Heading("Common name for this species")
+            Text("Plants of this species without a name of their own show this name. To rename one plant, edit its name instead.")
+            OutlinedTextField(name, { name = it }, label = { Text("Common name") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
             Choice("Language", language, options.languages, writable) { language = it }
-            Button(onClick = { onCommand("add", JSONObject().put("name", name).put("language", language)); name = "" }, enabled = writable && name.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add name") }
-            Text("Owner names survive external-name refreshes.")
+            Button(onClick = { onCommand("add", JSONObject().put("name", name.trim()).put("language", language)) }, enabled = writable && name.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add name") }
+            Text("Names added here survive name refreshes.")
             OutlinedButton(onClick = { onCommand("refresh", JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh names") }
             if (species.fetching) Text("Fetching names in the background. Failed sources retry with backoff, up to eight attempts.")
             if (species.failed) Text("A name source stopped after eight failures. Refresh names to try again. Stored names remain available.")

@@ -561,7 +561,7 @@ class TodayLayoutTest {
             state(tasks = tasks).copy(serverUnavailable = true) to "Changes need Fytorium to respond.",
             state(tasks = tasks).copy(updateRequired = true) to "Update Fytorium to make changes.")) {
             compose.runOnIdle { current.value = blocked }
-            for (control in listOf("Mark Water done for Fern 0, Synthetic site", "Snooze 2 days", "Water done for Fern 1, Synthetic site",
+            for (control in listOf("Mark Water done for Fern 0, Synthetic site", "Snooze Water for Fern 0, Synthetic site by 2 days", "Water done for Fern 1, Synthetic site",
                 "Undo watering snooze for Fern 2, Synthetic site")) {
                 compose.onNodeWithContentDescription(control).assertIsNotEnabled()
                     .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, message)).performClick()
@@ -1602,7 +1602,7 @@ class TodayLayoutTest {
                 .restoring(restoredJson("event-postponed", "2030-06-01"))
             assertTrue(repository.act(repository.state.value.upcoming!!.sections.flatMap { it.tasks }.single { it.completedEvent?.id == "event-postponed" }, "undo"))
             compose.waitForIdle()
-            compose.onNodeWithContentDescription("Snooze 2 days").assertIsEnabled()
+            compose.onNode(hasContentDescription("by 2 days", substring = true)).assertIsEnabled()
             assertEquals("The future row changed when the overdue occurrence came back into it at ${fontScale}x text", before, layout())
         }
     }

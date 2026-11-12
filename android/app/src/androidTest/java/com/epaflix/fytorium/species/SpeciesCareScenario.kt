@@ -37,8 +37,10 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         compose.waitForState("Species plant settings visible", 30_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() }
     }
     fun openCare() {
-        compose.onNodeWithContentDescription("Plant settings").performClick()
-        compose.onNodeWithText("Species care").performClick()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Details"))
+        if (compose.onAllNodesWithText("Care defaults for this species").fetchSemanticsNodes().isEmpty()) compose.onNodeWithText("Details").performClick()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Care defaults for this species"))
+        compose.onNodeWithText("Care defaults for this species").performClick()
         enabled("Refresh care data")
     }
     fun showTodayRow() {
@@ -50,6 +52,8 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
     }
     fun showPlantBasis() {
         openPlant()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Details"))
+        if (compose.onAllNodesWithTag("basis:water").fetchSemanticsNodes().isEmpty()) compose.onNodeWithText("Details").performClick()
         compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("basis:water"))
         compose.onNode(hasAnyAncestor(hasTestTag("basis:water")) and hasText("Based on")).performScrollTo().performClick()
     }
@@ -79,7 +83,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         openPlant()
         openCare()
         compose.waitForNode(hasText("Override watering interval in days") and isEnabled()).performScrollTo().performClick()
-        compose.onNodeWithText("Value").performTextReplacement("9")
+        compose.onNodeWithText("Days").performTextReplacement("9")
         compose.onNodeWithText("Save override").performClick()
         compose.waitForState("Watering override applied to Today", 30_000) { waterBasis()?.source == "override" && (waterBasis()?.value as? Number)?.toInt() == 9 }
         showTodayRow()

@@ -71,7 +71,7 @@ import org.json.JSONObject
         onClear = repository::clearMessage, onSpecies = onSpecies, unmatched = speciesKey == null)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun SpeciesCareScreen(state: SpeciesCareState, online: Boolean = true, canEdit: Boolean = true,
     onBack: () -> Unit = {}, onRefresh: () -> Unit = {}, onRefreshCare: () -> Unit = {},
     onOverride: suspend (String, Any) -> Boolean = { _, _ -> false }, onReset: suspend (String) -> Boolean = { false },
@@ -83,7 +83,7 @@ import org.json.JSONObject
     val enabled = canEdit && online && state.writable && !submitting
     BackHandler(onBack = onBack)
     Scaffold(topBar = {
-        TopAppBar(title = { Text(if (unmatched) "Unmatched species" else "Species care") }, navigationIcon = {
+        TopAppBar(title = { Text(if (unmatched) "Unmatched species" else "Care defaults for this species") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         })
     }) { padding ->
@@ -99,6 +99,7 @@ import org.json.JSONObject
                 CareMessage(state.message, error = false)
                 state.card?.let { card ->
                     Text(card.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                    Text("These values set the starting care for every plant of ${card.name} in your household. To change one plant only, use its schedule on the plant page.")
                     Text("GBIF key: ${card.key}")
                     Text("Starting estimates. Check the plant and soil before following a watering interval.")
                     for (fetch in card.fetches) {
@@ -120,9 +121,9 @@ import org.json.JSONObject
                                 Text(displayCareValue(field, item?.opt("value")))
                                 Text("Source: ${item?.optString("source") ?: "unknown"}${item?.optString("ruleId")?.takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" }.orEmpty()}")
                                 Text("Fetch time: ${item?.optString("fetchedAt")?.takeIf { it.isNotBlank() && it != "null" } ?: "not fetched"}")
-                                OutlinedButton(onClick = { onClear(); editing = field }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Override ${label.lowercase()}") }
+                                OutlinedButton(onClick = { onClear(); editing = field }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Override ${lower(label)}") }
                                 if (item?.optString("source") == "override") OutlinedButton(onClick = { onClear(); resetting = field }, enabled = enabled,
-                                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove override for ${label.lowercase()}") }
+                                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove override for ${lower(label)}") }
                             }
                         }
                     }
@@ -144,37 +145,56 @@ import org.json.JSONObject
         }
     }
     if (canEdit) editing?.let { field ->
-        var draft by remember(field) { mutableStateOf("") }
+        val current = state.card?.profile?.optJSONObject(field)?.opt("value")
+        var draft by remember(field) { mutableStateOf(draftOf(field, current)) }
+        var low by remember(field) { mutableStateOf((current as? JSONObject)?.opt("min")?.toString().orEmpty()) }
+        var high by remember(field) { mutableStateOf((current as? JSONObject)?.opt("max")?.toString().orEmpty()) }
+        val months = remember(field) { mutableStateListOf<Int>().apply { (current as? JSONArray)?.takeIf { field == "pruningMonths" }?.let { a -> (0 until a.length()).forEach { add(a.getInt(it)) } } } }
         var invalid by remember(field) { mutableStateOf<String?>(null) }
+        // Temperatures can be below zero, which number pads without a minus key cannot type.
+        val numberKeys = KeyboardOptions(keyboardType = if (field in setOf("temperatureRangeC", "hardinessC")) KeyboardType.Text else KeyboardType.Decimal)
         AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             onDismissRequest = { if (!submitting) { editing = null; onClear() } },
-            title = { Text("Override ${careLabels.getValue(field).lowercase()}") },
+            title = { Text("Override ${lower(careLabels.getValue(field))}") },
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val label = "Override value for ${careLabels.getValue(field).lowercase()}"
-                careChoices[field]?.let { options ->
-                    Choice(label, draft, listOf("" to "Choose a value") + options.map { it to it.replace('_', ' ') }, enabled) { draft = it; invalid = null }
-                } ?: run {
-                    Text(label)
-                    OutlinedTextField(draft, { draft = it; invalid = null }, label = { Text("Value") }, enabled = enabled, maxLines = 5,
-                        keyboardOptions = KeyboardOptions(keyboardType = if (field in listOf("wateringIntervalDays", "fertilizingIntervalDays")) KeyboardType.Decimal else KeyboardType.Text),
-                        modifier = Modifier.fillMaxWidth())
+                val label = "Override value for ${lower(careLabels.getValue(field))}"
+                // Each kind of value gets its own control, so nobody types JSON.
+                when {
+                    field in careChoices -> Choice(label, draft, listOf("" to "Choose a value") + careChoices.getValue(field).map { it to choiceText(it) }, enabled) { draft = it; invalid = null }
+                    field in careRanges -> {
+                        Text(label)
+                        OutlinedTextField(low, { low = it; invalid = null }, label = { Text("Minimum") }, enabled = enabled, singleLine = true, keyboardOptions = numberKeys, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(high, { high = it; invalid = null }, label = { Text("Maximum") }, enabled = enabled, singleLine = true, keyboardOptions = numberKeys, modifier = Modifier.fillMaxWidth())
+                    }
+                    field == "pruningMonths" -> {
+                        Text(label)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            monthNames.forEachIndexed { index, name ->
+                                val month = index + 1
+                                FilterChip(selected = month in months, onClick = { if (month in months) months.remove(month) else months.add(month); invalid = null },
+                                    label = { Text(name.take(3)) }, enabled = enabled, modifier = Modifier.semantics { contentDescription = name })
+                            }
+                        }
+                    }
+                    else -> {
+                        Text(label)
+                        OutlinedTextField(draft, { draft = it; invalid = null }, label = { Text(when (field) { "careText" -> "Care text"; "pests" -> "Pests"; "hardinessC" -> "Temperature in \u00b0C"; else -> "Days" }) },
+                            supportingText = if (field == "pests") ({ Text("Separate pests with commas") }) else null, enabled = enabled, maxLines = 5,
+                            keyboardOptions = if (field in careNumbers) numberKeys else KeyboardOptions.Default, modifier = Modifier.fillMaxWidth())
+                    }
                 }
-                careExamples[field]?.let { Text("JSON format: $it") }
                 CareMessage(invalid ?: state.error)
                 if (state.blocked) TextButton(onClick = onRefresh, enabled = online && !state.loading && !submitting) { Text("Retry loading species") }
             } },
             confirmButton = { TextButton(onClick = {
-                val value = runCatching {
-                    if (field in listOf("light", "cycle")) draft.also { require(it.isNotBlank()) }
-                    else JSONArray("[$draft]").also { require(it.length() == 1) }.get(0)
-                }.getOrElse { invalid = "Enter a valid value. Ranges and lists use the JSON format shown."; return@TextButton }
+                val value = overrideValue(field, draft, low, high, months.sorted()) ?: run { invalid = "Enter a value for every field."; return@TextButton }
                 scope.launch { submitting = true; try { if (onOverride(field, value)) editing = null } finally { submitting = false } }
             }, enabled = enabled) { Text("Save override") } },
             dismissButton = { TextButton(onClick = { editing = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
     if (canEdit) resetting?.let { field ->
-        AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { Text("Remove override?") },
-            text = { Column { Text("Remove override for ${careLabels.getValue(field).lowercase()}? The value will use its source data or Fytorium rule."); CareMessage(state.error) } },
+        AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { Text("Remove override for ${lower(careLabels.getValue(field))}?") },
+            text = { Column { Text("Every plant of this species goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },
             confirmButton = { TextButton(onClick = { scope.launch { submitting = true; try { if (onReset(field)) resetting = null } finally { submitting = false } } }, enabled = enabled) { Text("Confirm reset") } },
             dismissButton = { TextButton(onClick = { resetting = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
@@ -204,7 +224,23 @@ import org.json.JSONObject
     }
 }
 
-// Input examples mirror the web card. Validation belongs to the server.
-private val careExamples = mapOf("careText" to "\"Synthetic care advice\"", "soilMoistureRangePercent" to "{\"min\":20,\"max\":60}",
-    "hardinessC" to "-5", "temperatureRangeC" to "{\"min\":15,\"max\":28}", "hardiness" to "{\"min\":9,\"max\":11}",
-    "dimensions" to "{\"min\":30,\"max\":100,\"unit\":\"cm\"}", "pruningMonths" to "[3,4]", "pests" to "[\"Scale insects\"]")
+private fun lower(label: String) = label.replaceFirstChar(Char::lowercase)
+private fun choiceText(value: String) = when (value) { "true" -> "Yes"; "false" -> "No"; else -> value.replace('_', ' ').replaceFirstChar(Char::uppercase) }
+private val careRanges = setOf("temperatureRangeC", "soilMoistureRangePercent", "hardiness", "dimensions")
+private val careNumbers = setOf("wateringIntervalDays", "fertilizingIntervalDays", "hardinessC")
+private fun draftOf(field: String, value: Any?): String = when {
+    value == null || value == JSONObject.NULL || value is JSONObject -> ""
+    value is JSONArray -> if (field == "pests") (0 until value.length()).joinToString(", ") { value.getString(it) } else ""
+    else -> value.toString()
+}
+private fun number(text: String): Number? = text.trim().replace(',', '.').toDoubleOrNull()?.let { if (it % 1.0 == 0.0 && kotlin.math.abs(it) < Int.MAX_VALUE) it.toInt() else it }
+private fun overrideValue(field: String, draft: String, low: String, high: String, months: List<Int>): Any? = when {
+    field in setOf("indoor", "poisonousToPets", "poisonousToHumans") -> draft.toBooleanStrictOrNull()
+    field in careChoices -> draft.takeIf { it.isNotBlank() }
+    field in careRanges -> number(low)?.let { min -> number(high)?.let { max ->
+        JSONObject().put("min", min).put("max", max).apply { if (field == "dimensions") put("unit", "cm") } } }
+    field == "pruningMonths" -> months.takeIf { it.isNotEmpty() }?.let { JSONArray(it) }
+    field == "pests" -> JSONArray(draft.split(',').map { it.trim() }.filter { it.isNotEmpty() })
+    field in careNumbers -> number(draft)
+    else -> draft.trim().takeIf { it.isNotEmpty() }
+}

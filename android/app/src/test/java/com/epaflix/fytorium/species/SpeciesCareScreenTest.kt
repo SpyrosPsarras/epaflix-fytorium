@@ -58,7 +58,7 @@ class SpeciesCareScreenTest {
         compose.onNodeWithText("Source: rules · water.base@1").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
         compose.onNodeWithText("Override value for watering interval in days").assertIsDisplayed()
-        compose.onNodeWithText("Value").performTextReplacement("9")
+        compose.onNodeWithText("Days").performTextReplacement("9")
         capture("species-override")
         compose.onNodeWithText("Save override").performClick()
         compose.runOnIdle {
@@ -86,13 +86,13 @@ class SpeciesCareScreenTest {
             state.value = state.value.copy(loading = false, blocked = true, error = "Invalid value for wateringIntervalDays"); false
         }, onRefresh = { state.value = state.value.copy(blocked = false, error = null) }) } }
         compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
-        compose.onNodeWithText("Value").performTextReplacement("9")
+        compose.onNodeWithText("Days").performTextReplacement("9")
         compose.runOnIdle { state.value = state.value.copy(loading = true) }
         compose.onNodeWithText("Save override").assertIsEnabled().performClick()
         compose.onNodeWithText("Invalid value for wateringIntervalDays").assertIsDisplayed()
-        compose.onNodeWithText("Value").assertTextContains("9")
+        compose.onNodeWithText("Days").assertTextContains("9")
         compose.onNodeWithText("Retry loading species").performClick()
-        compose.onNodeWithText("Value").assertTextContains("9")
+        compose.onNodeWithText("Days").assertTextContains("9")
         compose.onNodeWithText("Save override").assertIsEnabled()
     }
     @Test fun onlyOwnerAndFamilySeeUnmatchedSpeciesUnderMore() {

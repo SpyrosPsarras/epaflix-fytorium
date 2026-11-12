@@ -98,7 +98,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         app.repository.refreshPlants()
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
         click("Synthetic A06 sprout")
-        click("View all updates")
+        click("See all")
         click("Add a photo update")
         chooseInjectedPhoto()
         compose.waitUntil(30_000) { runCatching { compose.onNodeWithText("Selected photos: 1").assertExists(); true }.getOrDefault(false) }
@@ -127,7 +127,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.onNode(hasText("Journal") and hasClickAction()).performClick()
         compose.waitUntil(30_000) { runCatching { scroll(hasText("Synthetic A06 photo note")).assertIsDisplayed(); true }.getOrDefault(false) }
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-        click("Add plant")
+        compose.onNodeWithContentDescription("Add plant").performClick()
         click("Identify from photos")
         chooseInjectedPhoto()
         takeInjectedPhoto()
@@ -135,7 +135,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         click("Choose Testoria picta")
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Confirm Testoria picta")
-        scroll(hasText("Nickname")).performTextReplacement("Synthetic A06 identified sprout")
+        scroll(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic A06 identified sprout")
         click("Site")
         compose.onNodeWithText("Synthetic A06 site").performClick()
         click("Save plant")

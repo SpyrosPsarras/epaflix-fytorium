@@ -50,22 +50,25 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         } }
         siteId = JSONObject(json("/api/sites", "POST", JSONObject("""{"name":"Synthetic A05 site","location":"indoor","light":"part_shade","humidity":"normal","grow_light":false,"draft":false}"""))).getString("id")
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-        click("Add plant")
+        compose.waitForState("Add plant enabled", 30_000) { compose.onAllNodes(hasContentDescription("Add plant") and !hasStateDescription("Adding a plant needs a connection.")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Add plant").performClick()
         input("Species name", "Testoria neblosa")
         click("Search species")
         click("Choose Testoria nebulosa")
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Confirm Testoria nebulosa")
-        input("Nickname", "Synthetic A05 sprout")
+        input("Name", "Synthetic A05 sprout")
         click("Site")
         compose.onNodeWithText("Synthetic A05 site").performClick()
         click("Save plant")
         compose.waitForState("Added plant detail", 30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 sprout" && !app.repository.state.value.busy }
         val plantId = app.repository.state.value.detail!!.plant.id
-        click("Edit plant")
-        input("Nickname", "Synthetic A05 edited sprout")
+        compose.waitForState("Edit plant enabled", 30_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Edit plant").performClick()
+        input("Name", "Synthetic A05 edited sprout")
+        click("More details")
         click("Pot type")
-        compose.onNodeWithText("ceramic").performClick()
+        compose.onNodeWithText("Ceramic").performClick()
         input("Pot size in cm", "23")
         input("Window distance in cm", "90")
         click("Near AC")
@@ -76,11 +79,12 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         assertEquals(90, edited.getInt("window_distance_cm")); assertTrue(edited.getBoolean("near_ac")); assertEquals(siteId, edited.getString("site_id"))
         settings()
         click("Move to graveyard")
+        compose.onNode(hasText("Move to graveyard") and hasAnyAncestor(isDialog())).performClick()
         compose.waitForState("Plant moved to graveyard", 30_000) { app.repository.state.value.detail?.plant?.status == "graveyard" && !app.repository.state.value.busy }
         compose.onNodeWithText("Handle all tasks").assertDoesNotExist()
         settings()
         click("Restore plant")
-        click("Restore to active plants")
+        click("Restore Synthetic A05 edited sprout to Synthetic A05 site")
         compose.waitForState("Plant restored to active", 30_000) { app.repository.state.value.detail?.plant?.status == "active" && !app.repository.state.value.busy }
         assertEquals("active", JSONObject(json("/api/plants/$plantId")).getString("status"))
         settings()

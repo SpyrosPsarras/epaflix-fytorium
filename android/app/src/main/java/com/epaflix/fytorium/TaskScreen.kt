@@ -61,14 +61,10 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
                            } }, feed: FeedState? = null, feedContent: @Composable (FeedState) -> Unit = {}) {
     val pullState = rememberPullToRefreshState()
-    // Layout changes wait for a moment the user picked: the end of a pull, the app coming back to the foreground, a view switch or a return to Today.
-    var moment by remember { mutableIntStateOf(0) }
     // Zero-duration device animations can leave the refresh indicator at its shown offset.
-    LaunchedEffect(refreshing) { if (!refreshing) { pullState.snapTo(0f); moment++ } }
-    LifecycleStartEffect(Unit) { moment++; onStopOrDispose {} }
+    val moment = rememberApplyMoment(refreshing) { pullState.snapTo(0f) }
     val live = if (view == "upcoming") care.upcoming else care.today
-    val since = remember(view, moment, care.member) { care.transitions.size }
-    val list = rememberHeld(live, view, moment, care.member) { shown, next -> next?.keepingLayoutOf(shown, care.transitions.drop(since).toMap()) }
+    val list = rememberHeldList(live, care, view, moment)
     // Losing the last plant or share removes the toggle and every row, so it waits for the same moment.
     val noPlants = rememberHeld(care.plants.isEmpty().takeIf { care.today != null }, view, moment, care.member) { shown, next -> shown ?: next } == true
     // A row the server no longer lists stays in place until then, without controls that would act on it again.
@@ -112,15 +108,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
     fun saveView(settings: TaskSettings) { scope.launch { onSettings(settings) } }
     var settingsOpen by remember { mutableStateOf(false) }
-    fun needs(action: String, update: String, retry: String = "", verb: String = "needs") = when {
-        !deviceOnline || state.offline -> "$action $verb a connection."
-        state.serverUnavailable -> "$action $verb Fytorium to respond.$retry"
-        !state.writable -> "Update Fytorium to $update."
-        else -> null
-    }
-    val viewBlocked = needs("Task view", "change the task view")
-    val blocked = needs("Adding a plant", "add plants", " Pull down to try again.")
-    val rowBlocked = if (state.writable) null else needs("Changes", "make changes", verb = "need")
+    val viewBlocked = state.needs("Task view", "change the task view", online = deviceOnline)
+    val blocked = state.needs("Adding a plant", "add plants", " Pull down to try again.", online = deviceOnline)
+    val rowBlocked = if (state.writable) null else state.needs("Changes", "make changes", verb = "need", online = deviceOnline)
     val subtitleLine = subtitleLineHeight()
     val canAdd = editor && blocked == null
     // The sheet has no pull, so while it waits for Fytorium it asks again by itself.
@@ -195,7 +185,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                                 title = if (by == "plant") task.label else task.plantName,
                                 details = listOfNotNull(task.label.takeIf { by == "day" || by == "site" }, task.siteName.takeIf { by != "site" }),
                                 showPostponed = view == "upcoming" || sort != "task", listed = task.occurrence in listed, subtitleLine = subtitleLine,
-                                blocked = if (task.occurrence in listed) rowBlocked else "This task changed elsewhere. Pull to refresh.", onBlocked = ::explain,
+                                blocked = if (task.occurrence in listed) rowBlocked else ChangedElsewhere, onBlocked = ::explain,
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
                         val due = section.tasks.any { task -> task.status == "due" && task.dueOn != null && task.dueOn <= list.today && task.completedEvent == null }
@@ -220,7 +210,20 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     }
 }
 
-@Composable private fun <T> rememberHeld(live: T, vararg keys: Any?, keep: (shown: T, live: T) -> T): T {
+// Layout changes wait for a moment the user picked: the end of a pull, the app coming back to the foreground, or a return to the screen.
+@Composable internal fun rememberApplyMoment(refreshing: Boolean, settle: suspend () -> Unit = {}): Int {
+    var moment by remember { mutableIntStateOf(0) }
+    LaunchedEffect(refreshing) { if (!refreshing) { settle(); moment++ } }
+    LifecycleStartEffect(Unit) { moment++; onStopOrDispose {} }
+    return moment
+}
+
+@Composable internal fun rememberHeldList(live: TaskList?, care: CareState, vararg keys: Any?): TaskList? {
+    val since = remember(*keys, care.member) { care.transitions.size }
+    return rememberHeld(live, *keys, care.member) { shown, next -> next?.keepingLayoutOf(shown, care.transitions.drop(since).toMap()) }
+}
+
+@Composable internal fun <T> rememberHeld(live: T, vararg keys: Any?, keep: (shown: T, live: T) -> T): T {
     val shown = remember(*keys) { mutableStateOf(live) }
     val next = keep(shown.value, live)
     SideEffect { shown.value = next }
@@ -240,7 +243,7 @@ private fun Modifier.steadyScroll(state: ScrollState) = verticalScroll(state).la
     LaunchedEffect(receipt) {
         if (receipt == null) return@LaunchedEffect
         try {
-            val result = host.showSnackbar(receipt.text, actionLabel = if (receipt.undo != null) "Undo" else null, withDismissAction = !receipt.short,
+            val result = host.showSnackbar(receipt.text, actionLabel = if (receipt.undoable) "Undo" else null, withDismissAction = !receipt.short,
                 duration = if (receipt.short) SnackbarDuration.Short else SnackbarDuration.Long)
             gone()
             if (result == SnackbarResult.ActionPerformed) undo(receipt) else done(receipt)

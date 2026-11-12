@@ -116,7 +116,7 @@ class AppShellRestorationTest {
             "Plants" -> compose.onNodeWithTag("plant:${plant.id}").assertIsDisplayed()
             "More" -> compose.onNodeWithText("Log out").assertIsDisplayed()
             "About" -> compose.onNodeWithText("Copy diagnostics").assertIsDisplayed()
-            "detail" -> compose.onNodeWithText("Care tasks are on Today and Upcoming.").assertIsDisplayed()
+            "detail" -> compose.onNodeWithText("No care tasks yet.").assertIsDisplayed()
             "upcoming" -> compose.onNodeWithTag("view-upcoming").assertIsSelected()
         }
     }
@@ -180,7 +180,7 @@ class AppShellRestorationTest {
             when (route) {
                 "identify" -> {
                     compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-                    compose.onNodeWithText("Add plant").performScrollTo().performClick()
+                    compose.onNodeWithContentDescription("Add plant").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("Identify from photos").fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Identify from photos").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications remaining today.").fetchSemanticsNodes().isNotEmpty() }
@@ -194,8 +194,8 @@ class AppShellRestorationTest {
                 }
                 "photo-form" -> {
                     compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
-                    compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("View all updates"))
-                    compose.onNodeWithText("View all updates").performClick()
+                    compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("See all"))
+                    compose.onNodeWithText("See all").performClick()
                     compose.onNodeWithText("Add a photo update").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodes(hasText("Note") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Note").performTextInput("Unsaved photo note")
@@ -236,8 +236,10 @@ class AppShellRestorationTest {
                 else -> {
                     compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
                     if (route == "plant-species") {
-                        compose.onNodeWithContentDescription("Plant settings").performClick()
-                        compose.onNodeWithText("Species care").performClick()
+                        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Details"))
+                        compose.onNodeWithText("Details").performClick()
+                        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Care defaults for this species"))
+                        compose.onNodeWithText("Care defaults for this species").performClick()
                     }
                 }
             }
@@ -291,10 +293,10 @@ class AppShellRestorationTest {
                         compose.onNodeWithText("Take photo").assertIsEnabled()
                         compose.onNodeWithText("Choose photos").assertIsEnabled()
                     }
-                    "journal-plant" -> compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
-                    "species", "plant-species" -> compose.onNodeWithText("Species care").assertIsDisplayed()
+                    "journal-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
+                    "species", "plant-species" -> compose.onNodeWithText("Care defaults for this species").assertIsDisplayed()
                     "feed-settings" -> compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
-                    "feed-plant" -> compose.onNodeWithText("Edit plant").assertIsDisplayed().assertIsEnabled()
+                    "feed-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
                 }
             } else {
                 if (reset == "sitter") {
@@ -310,8 +312,8 @@ class AppShellRestorationTest {
                 compose.onNodeWithText("Identify plant").assertDoesNotExist()
                 compose.onNodeWithText("Create invite").assertDoesNotExist()
                 compose.onNodeWithText("Save my feed").assertDoesNotExist()
-                compose.onNodeWithText("Edit plant").assertDoesNotExist()
-                compose.onNodeWithText("Species care").assertDoesNotExist()
+                compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()
+                compose.onNodeWithText("Care defaults for this species").assertDoesNotExist()
                 compose.onNode(hasText("More") and hasClickAction()).performClick()
                 compose.onNodeWithText("Log out").assertIsDisplayed()
                 compose.onNodeWithText("Open Plantbook unmatched species").assertDoesNotExist()

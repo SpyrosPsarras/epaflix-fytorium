@@ -161,8 +161,8 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             compose.onNode(row and hasContentDescription("Open ${task.plantName}")).performScrollTo()
             val position = compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
             compose.onNode(row and hasContentDescription("Open ${task.plantName}")).performClick()
-            val block = "today-task:${task.plantId}:${task.key}"
-            compose.waitForNode(hasTestTag(block)).assertIsDisplayed()
+            val block = "task:${task.plantId}:${task.key}"
+            compose.waitForNode(hasTestTag(block) and !hasAnyAncestor(hasTestTag("task-list"))).assertIsDisplayed()
             compose.onNode(hasText("Plants") and hasClickAction()).assertIsSelected()
             compose.onNode(hasText(task.label) and hasAnyAncestor(hasTestTag(block))).assertIsDisplayed()
             return position
@@ -175,27 +175,32 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         }
         val tapped = app.repository.state.value.today!!.sections.flatMap { it.tasks }.last { it.plantId in ids && it.taskType == "water" }
         val todayPosition = openTask(tapped)
-        val block = hasAnyAncestor(hasTestTag("today-task:${tapped.plantId}:${tapped.key}"))
-        compose.onNode(block and hasText("Based on")).performScrollTo().performClick()
-        compose.onNode(block and hasText("Skip")).performScrollTo().assertIsEnabled().performClick()
-        compose.waitForNode(block and hasText("Skipped")).assertIsDisplayed()
-        compose.onNode(block and hasText("Skip")).assertDoesNotExist()
+        val block = hasAnyAncestor(hasTestTag("task:${tapped.plantId}:${tapped.key}"))
+        val menu = hasContentDescription("More actions for ${tapped.label} on ${tapped.plantName}")
+        val undoSkip = block and hasContentDescription("Undo watering skip", substring = true)
+        compose.onNode(block and menu).performScrollTo().performClick()
+        compose.onNodeWithText("Skip").assertIsEnabled().performClick()
+        compose.waitForNode(undoSkip).assertIsDisplayed()
+        compose.onNode(block and menu).assertDoesNotExist()
         compose.waitForState("Tapped task care action settled") { app.repository.state.value.pending.isEmpty() }
-        compose.onNode(block and hasText("Undo")).performScrollTo().assertIsEnabled().performClick()
-        compose.waitForNode(block and hasText("Skip")).assertIsDisplayed()
+        compose.onNode(undoSkip).performScrollTo().assertIsEnabled().performClick()
+        compose.waitForNode(block and menu).assertIsDisplayed()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Details"))
+        compose.onNodeWithText("Details").performClick()
+        compose.onNode(hasAnyAncestor(hasTestTag("basis:${tapped.key}")) and hasText("Based on")).performScrollTo().performClick()
         val skipped = rows("/api/plants/${tapped.plantId}/history").filter { it.optString("task_type") == "water" && it.optString("kind") == "skipped" }
         assertTrue(skipped.any { !it.isNull("undone_at") })
         backToTasks("today", todayPosition)
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
         compose.onNodeWithText("Search plants").assertIsDisplayed()
-        compose.onNodeWithText("Skip").assertDoesNotExist()
+        compose.onNodeWithContentDescription("More actions for ${tapped.label} on ${tapped.plantName}").assertDoesNotExist()
         compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
         compose.onNodeWithTag("view-upcoming").performScrollTo().performClick()
         compose.waitForNode(hasTestTag("view-upcoming") and isSelected()).assertIsDisplayed()
         capture("upcoming", false); capture("upcoming", true)
         val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.last { it.plantId in ids && it.dueOn!! > "2030-06-26" }
         val upcomingPosition = openTask(future)
-        compose.onNode(hasText("Snooze 2 days") and hasAnyAncestor(hasTestTag("today-task:${future.plantId}:${future.key}"))).assertDoesNotExist()
+        compose.onNode(hasContentDescription("by 2 days", substring = true) and hasAnyAncestor(hasTestTag("task:${future.plantId}:${future.key}"))).assertDoesNotExist()
         backToTasks("upcoming", upcomingPosition)
         for (id in ids) json("/api/plants/$id/tasks/complete-all", "POST", JSONObject().put("request_id", UUID.randomUUID().toString()))
         refresh()

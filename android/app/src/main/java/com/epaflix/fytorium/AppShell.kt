@@ -65,11 +65,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var plantaImport by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
     var addPlant by rememberSaveable { mutableStateOf(false) }
+    var plantsSearch by rememberSaveable { mutableStateOf(false) }
     var taskView by rememberSaveable { mutableStateOf("today") }
     var notifications by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(homeRequest) {
         if (homeRequest > 0) {
-            tab = "Today"; taskView = "today"; addPlant = false; notifications = false; sites = false; household = null
+            tab = "Today"; taskView = "today"; addPlant = false; plantsSearch = false; notifications = false; sites = false; household = null
             plantaImport = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null
         }
     }
@@ -117,7 +118,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             NavigationBar(modifier) {
                 listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                     "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                    NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null },
+                    NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null },
                         icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
                 }
             }
@@ -210,8 +211,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     onAction = { task, action -> controller?.act(task, action) },
                     onHandleType = { controller?.handleType(it) }, onHandlePlant = { controller?.handleAll(it) }, onSettings = { controller?.settings(it) == true }, thumbnails = thumbnails,
                     onUndoReceipt = { controller?.undoReceipt(it) }, onReceiptDone = { controller?.clearReceipt(it) },
-                    onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; tab = "Plants" },
-                    onAddPlant = { addPlant = true; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
+                    onSearch = { addPlant = false; feedPlant = null; journalPlantId = null; plantsSearch = true; tab = "Plants" },
+                    onAddPlant = { addPlant = true; plantsSearch = false; tab = "Plants" }, onImport = { tab = "More"; plantaImport = true }, deviceOnline = deviceOnline,
                     onRetry = { controller?.refresh() }, receipts = receipts, onReceiptGone = { receiptsGone++ },
                     feed = feedState, feedContent = { shown ->
                         HomeFeed(shown, careState.today?.today, sites = careState.plants.associate { it.id to it.siteName },
@@ -221,11 +222,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } })
                     })
                 else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
-                    onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false },
+                    onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false; plantsSearch = false },
                     initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,
                     onTaskAction = { task, action -> controller?.act(task, action) },
                     photosApi = sitesApi, photosConnected = sitesConnected,
-                    speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() }) }
+                    speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() },
+                    receipts = receipts, onReceiptGone = { receiptsGone++ }, focusSearch = plantsSearch) }
             }
             return@Scaffold
         }
