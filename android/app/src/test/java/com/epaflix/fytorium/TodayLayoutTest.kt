@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -14,7 +15,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -255,9 +256,11 @@ class TodayLayoutTest {
         compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
         if (swiped) compose.onNodeWithText("Watered Fern 1").performTouchInput { swipeRight() } else compose.mainClock.advanceTimeBy(10_000)
         compose.onNodeWithText("Watered Fern 1").assertDoesNotExist()
+        compose.onNodeWithTag("bar-paused").assertExists()
         compose.onRoot().performTouchInput { click(more) }
         compose.onNodeWithTag("task-list").assertIsDisplayed()
         compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithTag("bar-paused").assertDoesNotExist()
         compose.onRoot().performTouchInput { click(more) }
         compose.onNodeWithTag("task-list").assertDoesNotExist()
         compose.onNode(hasText("More") and !hasClickAction()).assertIsDisplayed()
@@ -629,14 +632,13 @@ class TodayLayoutTest {
             val offline = state().copy(offline = true, lastUpdated = java.time.LocalDate.now().atTime(8, 12).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = offline, feed = feed, deviceOnline = false) } }
             val time = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(offline.lastUpdated!!))
-            compose.onNodeWithText("Offline. Showing tasks from $time. Changes need a connection.").assertIsDisplayed()
+            compose.explains("Offline \u00b7 updated $time", "You can still see the tasks from the last update. Changes need a connection.\nWeather and tips need a connection")
             compose.onNode(hasText("Feed is offline", substring = true)).assertDoesNotExist()
             compose.onNode(hasText("Actions are unavailable offline", substring = true)).assertDoesNotExist()
-            compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
             assertTrue("The cached cards stay", compose.onAllNodes(feedCard).fetchSemanticsNodes().isNotEmpty())
             compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled().performClick()
             compose.onNodeWithText("Adding a plant needs a connection.").assertIsDisplayed()
-            compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
+            compose.onNode(hasText("Today") and isSelectable() and !hasTestTag("view-today")).assertIsSelected()
         }
     }
 
@@ -878,8 +880,7 @@ class TodayLayoutTest {
     @Test fun anOfflineColdStartSaysWeatherAndTipsNeedAConnection() {
         val feed = FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}, { false })
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = state().copy(offline = true), feed = feed, deviceOnline = false) } }
-        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
-        compose.onNode(hasText("Offline.", substring = true)).assertIsDisplayed()
+        compose.explains(state().copy(offline = true).connectionLine()!!, "Weather and tips need a connection", "This phone can't reach Fytorium.")
         compose.onAllNodes(feedCard).assertCountEquals(0)
     }
 
@@ -1013,6 +1014,32 @@ class TodayLayoutTest {
     private val loadedFeed = FeedState(member = owner, loaded = true, weather = parseWeather(JSONObject(weatherFixture)),
         cards = JSONObject(feedFixture).getJSONArray("cards").mapObjects { parseFeedCard(it) }.filterNotNull())
 
+    @Test fun aPullWhoseRefreshEndsWhileTheIndicatorStillMovesShowsTheNewRows() {
+        val screen = screen(state(tasks = rows(1)))
+        compose.runOnIdle { screen.care.value = state(tasks = rows(2)) }
+        compose.onNodeWithText("Fern 1").assertDoesNotExist()
+        compose.mainClock.autoAdvance = false
+        fun refreshing(value: Boolean) = compose.runOnUiThread { screen.refreshing.value = value; Snapshot.sendApplyNotifications() }
+        refreshing(true)
+        repeat(2) { compose.mainClock.advanceTimeByFrame() }
+        refreshing(false)
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("Fern 1").assertIsDisplayed()
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertCountEquals(0)
+    }
+
+    @Test fun theFirstPlantArrivingWithANewDayShowsTheToggleWithItsRows() = firstPlantApplies { it.copy(today = "2030-06-03") }
+    @Test fun theFirstPlantArrivingWithANewTaskViewShowsTheToggleWithItsRows() = firstPlantApplies { it.copy(settings = TaskSettings(showCompleted = true)) }
+    private fun firstPlantApplies(change: (TaskList) -> TaskList) {
+        val screen = screen(state(tasks = emptyList()).copy(plants = emptyList()))
+        compose.onNodeWithText("Add plant").assertIsDisplayed()
+        compose.onNodeWithTag("view-today").assertDoesNotExist()
+        compose.runOnIdle { screen.care.value = state(tasks = rows(1)).let { it.copy(today = change(it.today!!)) } }
+        compose.onNodeWithText("Fern 0").assertIsDisplayed()
+        compose.onNodeWithTag("view-today").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Task view").assertIsDisplayed()
+    }
+
     @Test fun aSnoozeInUpcomingMovesNoRowUntilAViewSwitch() = postponedOccurrenceWaits(Moment.Switch)
     @Test fun aSnoozeInUpcomingMovesNoRowUntilAPull() = postponedOccurrenceWaits(Moment.Pull)
     private fun postponedOccurrenceWaits(moment: Moment) {
@@ -1134,7 +1161,7 @@ class TodayLayoutTest {
         compose.onNodeWithTag("feed-strip").assertDoesNotExist()
         server.enqueue(MockResponse().setResponseCode(500))
         feed.refresh(owner)
-        compose.onNodeWithText("Fytorium isn't responding. Refresh to try again.").assertIsDisplayed()
+        compose.explains("Fytorium isn't responding", "Fytorium isn't responding. Refresh to try again.")
         server.enqueue(MockResponse().setResponseCode(422).setBody("""{"message":"Synthetic feed failure"}"""))
         feed.refresh(owner)
         compose.onNodeWithText("Synthetic feed failure").assertIsDisplayed()
@@ -1181,6 +1208,76 @@ class TodayLayoutTest {
         server.enqueue(MockResponse().setBody(body)); server.enqueue(MockResponse().setBody(weatherFixture))
         FeedRepository(api, { true }, cache = cache).refresh(owner)
         return FeedRepository(api, { true }, cache = cache).apply { restore() }
+    }
+
+    // C1: going offline and back adds a line under the title, in a bar that keeps its height, so mid-list no row or control moves or is covered.
+    @Test fun connectionChangesMoveNoRowOnToday() = connectionChangesMoveNoRow(1f)
+    @Test fun connectionChangesMoveNoRowOnTodayAtLargeText() = connectionChangesMoveNoRow(1.3f)
+    private fun connectionChangesMoveNoRow(fontScale: Float) = withCache { cache, api, server ->
+        val feed = cachedFeed(api, server, cache, feedFixture)
+        val care = mutableStateOf(state(tasks = rows(8)))
+        val online = mutableStateOf(true)
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+            FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed, deviceOnline = online.value) } } }
+        compose.onNodeWithTag("feed-strip").assertIsDisplayed()
+        scrollList(200f)
+        compose.waitUntil(5_000) { compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f }
+        val controls = hasAnyAncestor(hasTestTag("task-list")) and hasClickAction()
+        fun places() = compose.onAllNodes(controls).fetchSemanticsNodes().map { it.boundsInRoot } + bounds(hasTestTag("task-list"))
+        val before = places()
+        compose.runOnIdle { feed.connectivityChanged(false); online.value = false; care.value = care.value.copy(offline = true) }
+        val line = care.value.connectionLine()!!
+        assertTrue("The line sits above the list", bounds(hasText(line) and hasClickAction()).bottom <= bounds(hasTestTag("task-list")).top + 0.5f)
+        assertEquals("A row or control moved when the connection went at ${fontScale}x text", before, places())
+        compose.explains(line, care.value.todayConnectionNotice()!!, "Weather and tips need a connection")
+        compose.runOnIdle { feed.connectivityChanged(true); online.value = true; care.value = care.value.copy(offline = false) }
+        compose.onNode(hasText("Offline", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("Weather and tips need a connection", substring = true)).assertDoesNotExist()
+        assertEquals("A row or control moved when the connection came back at ${fontScale}x text", before, places())
+    }
+
+    // C1b: Today's care and feed messages show in the line under the title, so no card or row moves as one starts or ends.
+    @Test fun aRefusedRefreshMovesNoRow() = messageMovesNoRow(1f, rain = false)
+    @Test fun aRefusedRefreshMovesNoRowAtLargeText() = messageMovesNoRow(1.3f, rain = false)
+    // Try again refreshes, which would not resend a feed write, so a feed message offers none; tapping Mark watered again resends it.
+    @Test fun aRainWateringConflictMovesNoRowAndOffersNoTryAgain() = messageMovesNoRow(1f, rain = true)
+    @Test fun aRainWateringConflictMovesNoRowAndOffersNoTryAgainAtLargeText() = messageMovesNoRow(1.3f, rain = true)
+    @Test fun aSavedMessageMovesNoRowAndOffersNoTryAgain() = messageMovesNoRow(1f, rain = false, saved = true)
+    @Test fun aSavedMessageMovesNoRowAndOffersNoTryAgainAtLargeText() = messageMovesNoRow(1.3f, rain = false, saved = true)
+    private fun messageMovesNoRow(fontScale: Float, rain: Boolean, saved: Boolean = false) = withCache { cache, api, server ->
+        val feed = cachedFeed(api, server, cache, feedFixture)
+        val care = mutableStateOf(state(tasks = rows(8)))
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+            FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed, deviceOnline = true) } } }
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsDisplayed()
+        scrollList(120f)
+        compose.waitUntil(5_000) { compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f }
+        val controls = hasAnyAncestor(hasTestTag("task-list")) and hasClickAction()
+        fun places() = compose.onAllNodes(controls).fetchSemanticsNodes().map { it.boundsInRoot } + bounds(hasTestTag("task-list"))
+        val before = places()
+        // The repository keeps a refused refresh's message for Today; a 409 to Mark watered leaves the feed's.
+        val message = if (saved) "Feed settings saved." else if (rain) "Rain watering is not ready. Try again in a moment." else "Synthetic refusal"
+        if (saved) {
+            server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+            assertTrue(feed.saveSettings(feed.state.value.settings!!))
+        } else if (rain) {
+            server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready"}"""))
+            assertFalse(feed.water())
+        } else compose.runOnIdle { care.value = care.value.copy(message = message) }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isNotEmpty() }
+        assertEquals("A card or row moved when the message showed at ${fontScale}x text", before, places())
+        assertTrue("The line sits above the list", bounds(hasText(message) and hasClickAction()).bottom <= bounds(hasTestTag("task-list")).top + 0.5f)
+        compose.onNode(hasText(message) and hasClickAction()).performClick()
+        compose.onNode(hasText(message) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        val retry = compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog()))
+        if (saved || rain) retry.assertDoesNotExist() else retry.assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        if (rain || saved) {
+            server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+            feed.refresh(owner)
+        } else compose.runOnIdle { care.value = care.value.copy(message = null) }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isEmpty() }
+        assertEquals("A card or row moved when the message cleared at ${fontScale}x text", before, places())
     }
 
     @Test fun aColdStartWithACachedEmptyFeedShowsNoStripUntilAViewSwitch() = withCache { cache, api, server ->

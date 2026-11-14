@@ -2,13 +2,41 @@ package com.epaflix.fytorium
 
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.core.view.drawToBitmap
+import com.github.takahirom.roborazzi.captureRoboImage
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 
 internal fun inRow(plant: String, key: String = "water") = hasAnyAncestor(hasTestTag("task:$plant:$key"))
+
+internal fun SemanticsNodeInteractionsProvider.explains(line: String, vararg explanation: String) {
+    onNode(hasText(line) and hasClickAction()).assertIsDisplayed().performClick()
+    explanation.forEach { onNode(hasText(it, substring = true) and hasAnyAncestor(isDialog())).assertIsDisplayed() }
+    // The explanation says what the line means and what still works, so only the dialog's title carries the line's time.
+    Regex("\\d{1,2}:\\d{2}").find(line)?.value?.let { time ->
+        org.junit.Assert.assertEquals("The explanation repeats $time", 1,
+            onAllNodes(hasText(time, substring = true) and hasAnyAncestor(isDialog()), useUnmergedTree = true).fetchSemanticsNodes().size)
+    }
+    onNodeWithText("Close").performClick()
+}
+
+// Roborazzi 1.44's window fallback misses Compose dialogs. Draw their owning view directly.
+internal fun ComposeTestRule.captureDialog(file: String) {
+    val layout = onNode(isDialog()).fetchSemanticsNode().layoutInfo
+    val owner = layout.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layout) as android.view.View
+    runOnIdle { owner.drawToBitmap().captureRoboImage(file) }
+}
 
 internal fun SemanticsNode.textLayout(): TextLayoutResult =
     mutableListOf<TextLayoutResult>().also { config[SemanticsActions.GetTextLayoutResult].action!!(it) }.single()

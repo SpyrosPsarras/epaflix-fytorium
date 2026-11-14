@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.Thumbnails
+import com.epaflix.fytorium.dayMonthYear
 import com.epaflix.fytorium.plants.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -70,7 +71,7 @@ import java.time.ZoneOffset
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun TakenDate(value: String, today: String?, enabled: Boolean, onChange: (String) -> Unit) {
     var showing by remember { mutableStateOf(false) }
-    OutlinedButton(onClick = { showing = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Taken on: $value") }
+    OutlinedButton(onClick = { showing = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Taken on: " + (value.takeIf { it.isNotBlank() }?.let(::dayMonthYear) ?: "not set")) }
     if (showing) {
         val initial = remember(value) { runCatching { LocalDate.parse(value).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull() }
         val picker = rememberDatePickerState(initialSelectedDateMillis = initial, selectableDates = object : SelectableDates {
@@ -92,10 +93,11 @@ import java.time.ZoneOffset
     var date by rememberSaveable { mutableStateOf("") }
     var deleting by remember { mutableStateOf<PhotoUpdate?>(null) }
     val enabled = online && !state.blocked && !state.saving && !state.updateRequired
-    fun back() { if (state.original != null) onCloseOriginal() else if (form) form = false else onBack() }
-    BackHandler(onBack = ::back)
+    // A lambda, not ::back: equal function references let Back keep the first composition's state, which skipped an open original.
+    val back = { if (state.original != null) onCloseOriginal() else if (form) form = false else onBack() }
+    BackHandler(onBack = back)
     Column(Modifier.fillMaxSize()) {
-        PhotoBar(if (form) "Add a photo update" else if (state.original != null) "Photo" else plantName?.let { "$it updates" } ?: "Plant journal", ::back)
+        PhotoBar(if (form) "Add a photo update" else if (state.original != null) "Photo" else plantName?.let { "$it updates" } ?: "Plant journal", back)
         val scroll = rememberScrollState()
         Column(Modifier.weight(1f).then(if (form || state.original != null) Modifier.verticalScroll(scroll) else Modifier).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             PhotoNotice(state, online, onRefresh)
@@ -121,7 +123,7 @@ import java.time.ZoneOffset
                             else Heading(photo.plantName)
                             PhotoThumbnail(photo, thumbnails)
                             OutlinedButton(onClick = { onOriginal(photo.id) }, enabled = online && !state.saving, modifier = Modifier.heightIn(min = 48.dp)) { Text("Open original photo of ${photo.plantName}") }
-                            Text(photo.takenOn + if (photo.cover) " · Cover photo" else "")
+                            Text(dayMonthYear(photo.takenOn) + if (photo.cover) " · Cover photo" else "")
                             photo.health?.let { Text("Health: ${it.replace('_', ' ')}") }
                             if (photo.note.isNotEmpty()) Text(photo.note)
                             if (!photo.cover) OutlinedButton(onClick = { onChange(photo.id, "cover") }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use as cover") }

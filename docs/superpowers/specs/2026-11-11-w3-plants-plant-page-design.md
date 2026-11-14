@@ -46,3 +46,35 @@ Anything that moves a row under the user's finger (W2 A1 family applies to the p
 
 ## Constraints
 Kotlin + Compose + Material 3; reuse TaskRow, receipts and held-layout rules from W1/W2; no new dependencies; screenshot tests updated, not deleted; lab runs as in W2.
+
+## Council round 1 amendments (2026-11-12)
+
+From the live council round 1 (council-w3-sol.md, council-w3-opus.md). C1-C17 are required for 10/10.
+
+### Plant page
+- C1 (W3-sol-1, Opus obs. 4; placement decided by Spyros 2026-11-12). Connection changes never move or cover content. The offline / server-unavailable notice on Today, the Plants and Graveyard grids and the plant page becomes a second line under the top bar title ("Offline · updated 13:29", "Fytorium isn't responding"), inside a top bar whose height does not change; tapping it shows the full explanation. On the plant page the line sits under whatever the bar shows (C3). The feed's "Weather and tips need a connection" line moves into the same subtitle explanation. Disabled Edit and overflow icons explain why on tap, like the rows.
+  - C1b (gate, 2026-11-12; scope clarified 2026-11-13). The same subtitle carries every page-level status message that would otherwise appear above or inside scrolling content, on Today, the Plants and Graveyard grids, the plant page and the plant form pages (Edit, Repot, This plant's schedule, Restore, Change species, Species names, Species care): connection and server-unavailable states, plant-request refusals (read or write; the explanation offers Try again), and Today's care and feed messages (e.g. a refused refresh, a rain-watering conflict). Nothing is inserted above or inside the scrolling content when such a state starts or ends. Field-level validation and the result of a save the user just tapped stay inside the form, next to its fields. The full-screen "Update Fytorium" stop for an app the server no longer accepts (W1) is unchanged and is not a subtitle state.
+- C2 (W3-sol-4). Entering the page applies its first fresh read once: when the page opens from cache, the first successful plant read after entry sets the held Care, header and history, provided the user has not scrolled or acted on the page since it appeared (the W2 A14 rule). Otherwise the existing hold applies.
+- C3 (W3-opus-3). The name shows once at rest: the headline under the cover; the top bar title appears only after the headline scrolls out of view.
+- C4 (W3-opus-4). Lateness uses the same late colour and pill style as Today. Due dates more than 14 days away read as a date ("Due 3 Mar 2027"); 14 days or less keep "Due in N days".
+- C5 (Opus obs. 5). With nothing due today, Handle all reads "Nothing due today" instead of "All done" unless every task due today is done.
+- C6 (W3-opus-5). Skip and snooze receipts and their Undo confirmations name the task, on the plant page and Today: "Skipped cleaning leaves for Spider Plant until Tue 15 Dec", "Undid skip of cleaning leaves for Spider Plant".
+- C7 (W3-opus-6). A Based on entry never repeats the same sentence; drop the reason line when it equals the explanation.
+- C8 (W3-opus-1). Plants and Graveyard tiles never clip their text: clip only the cover.
+- C9 (W3-opus-2). A new or changed search query scrolls the grid to the top.
+
+### Photos
+- C10 (W3-sol-2). System Back from an original photo returns to the updates gallery, like the toolbar arrow.
+- C11 (W3-sol-3). Photo update cards show readable dates ("15 Nov 2026").
+
+### Forms
+- C12 (W3-opus-7). "This plant's schedule" and the Repot form ask before discarding typed changes on Back, with the same dialog as Edit plant.
+- C13 (W3-opus-8). Edit plant's Name field shows the current display name as a muted placeholder when no nickname is set, with "Leave empty to keep using the species name" under it. The field's value stays empty: TalkBack reads it as empty with the current name as guidance, and typing starts from an empty field.
+- C14 (W3-opus-12). The delete confirmation ignores case and outer spaces, and its hint says what to type ("Type Opus W3 plant to confirm").
+- C15 (W3-opus-13). A graveyard plant's page shows a "Restore <name>" button where Care would be. "Create a site" in Restore opens the create-site form directly and returns to Restore after saving.
+
+### Species
+- C16 (W3-opus-9). Change species review shows common names first on both sides ("Jade Plant (Crassula ovata)" -> "Snake plant (Dracaena trifasciata)"), no author citations outside Details; saving gives a receipt "Changed <plant> to <species>"; the history line uses common names.
+- C17 (W3-opus-10, W3-opus-11). Species names: the top shows the name plants of this species use now and why (household name, or chosen source name), then the household name form; household names can be removed with a confirmation that says how many plants it renames; add and remove give receipts; the list keeps its scroll position. Names from sources are folded under "Other names from sources (N)". Species care: leads with the effective care values; source, GBIF key, fetch status and Refresh/Retry fold under a collapsed "Sources"; fetch times read as dates; field cards show their source only when known; range validation reads "Minimum must be lower than maximum" and clears as soon as the values are valid; the title is the common name with the scientific name (no author) under it.
+
+Out of scope, noted by the council: species search keyboard (W4); tab navigation and cross-device list refresh (W6); Sites and More (W5); junk source names in the data (a later data-quality task).

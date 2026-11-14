@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import androidx.room.Room
@@ -22,7 +22,6 @@ import org.junit.Assert.*
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import androidx.core.view.drawToBitmap
 import org.robolectric.annotation.Config
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -140,7 +139,9 @@ class PlantsScreenTest {
             val task = list.sections.single().tasks.single()
             compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(member = Member("member-one", role), today = list, offline = true,
                 detail = PlantDetail(plant, emptyList(), emptyMap())), repository, initialPlant = plant.id, initialTask = task) } }
-            compose.onAllNodesWithText("Actions are unavailable", substring = true).assertCountEquals(1)
+            compose.onNode(hasText("Offline") and hasClickAction()).performClick()
+            compose.onAllNodesWithText("can't reach Fytorium", substring = true).assertCountEquals(1)
+            compose.onNodeWithText("Close").performClick()
             compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
             assertFalse(skipEnabled())
         }
@@ -161,8 +162,10 @@ class PlantsScreenTest {
         val task = list.sections.single().tasks.single()
         compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(today = list, serverUnavailable = true,
             detail = PlantDetail(plant, emptyList(), emptyMap())), null, initialPlant = plant.id, initialTask = task) } }
-        compose.onAllNodesWithText("Fytorium isn't responding.", substring = true).assertCountEquals(1)
+        compose.onNode(hasText("Fytorium isn't responding") and hasClickAction()).performClick()
+        compose.onAllNodesWithText("Fytorium didn't answer.", substring = true).assertCountEquals(1)
         compose.onAllNodesWithText("Actions are unavailable until Fytorium responds.", substring = true).assertCountEquals(1)
+        compose.onNodeWithText("Close").performClick()
         assertFalse(skipEnabled())
     }
     @Test fun tappedTaskUsesRefreshedRowsAndDisablesWritesOffline() {
@@ -297,10 +300,10 @@ class PlantsScreenTest {
     @Test fun plantPageShowsTheCareReceiptWithUndo() {
         val list = parseTaskList(taskListFixture("today"))
         val task = list.sections.single().tasks.single()
-        val receipt = Receipt("Skipped Synthetic fern until Tue 4 Jun", parseEvent(JSONObject(eventFixture).put("kind", "skipped")))
+        val receipt = Receipt("Skipped watering for Synthetic fern until Tue 4 Jun", parseEvent(JSONObject(eventFixture).put("kind", "skipped")))
         compose.setContent { FytoriumTheme { PlantsScreen(owner.copy(today = list, receipt = receipt, detail = PlantDetail(plant, emptyList(), emptyMap())), null,
             initialPlant = plant.id, initialTask = task) } }
-        compose.onNodeWithText("Skipped Synthetic fern until Tue 4 Jun").assertIsDisplayed()
+        compose.onNodeWithText("Skipped watering for Synthetic fern until Tue 4 Jun").assertIsDisplayed()
         compose.onNode(hasText("Undo") and hasClickAction() and !hasAnyAncestor(hasTestTag("today-task:${task.plantId}:${task.key}"))).assertIsDisplayed()
     }
     @Test fun plantPageCareWriteBusiesOnlyItsOwnControl() {
@@ -418,7 +421,7 @@ class PlantsScreenTest {
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
-        compose.onNodeWithText("Type the plant name to confirm").performTextInput("Synthetic fern")
+        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fern")
         compose.onNodeWithText("Permanently delete plant").assertIsEnabled().performClick()
         assertEquals("Synthetic fern", deleted)
     }
@@ -492,7 +495,7 @@ class PlantsScreenTest {
             compose.onNodeWithContentDescription("Plant settings").performClick()
             compose.onNodeWithText("Change species").performClick()
             compose.waitUntil(5_000) { runCatching { compose.onNodeWithText("Species name").assertExists(); true }.getOrDefault(false) }
-            compose.onNodeWithText("Synthetic fern is currently Testoria lucida Inventor. Care history, photos and custom intervals will stay. The schedule will use the new species.").assertExists()
+            compose.onNodeWithText("Synthetic fern is currently Testoria lucida. Care history, photos and custom intervals will stay. The schedule will use the new species.").assertExists()
             compose.onNodeWithText("Species name").performTextInput("Testoria prior")
             scroll("Search species").performClick()
             compose.waitUntil(5_000) { runCatching { scroll("Choose Testoria prior").assertExists(); true }.getOrDefault(false) }
@@ -524,12 +527,6 @@ class PlantsScreenTest {
         scroll("Invalid soil").assertExists()
         scroll("Invalid size").assertExists()
     }
-    private fun captureDialog(file: String) {
-        // Roborazzi 1.44's window fallback misses Compose dialogs. Draw their owning view directly.
-        val layout = compose.onNode(isDialog()).fetchSemanticsNode().layoutInfo
-        val owner = layout.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layout) as android.view.View
-        compose.runOnIdle { owner.drawToBitmap().captureRoboImage(file) }
-    }
     @Test fun nativePlantsLight() = screenshots(false)
     @Test fun nativePlantsDark() = screenshots(true)
     private fun screenshots(dark: Boolean) {
@@ -545,7 +542,7 @@ class PlantsScreenTest {
         val pageState = owner.copy(today = today)
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme(dark) { Scaffold(topBar = {
-            if (screen.value !in listOf("detail", "history", "delete", "menu", "list", "graveyard", "care", "graveyard-page", "details", "bury")) TopAppBar(title = { Heading(when(screen.value) { "list" -> "Plants"; "form" -> "Edit plant"; "add", "search" -> "Add plant"; "detail", "history", "delete" -> plant.displayName; else -> screen.value.replaceFirstChar { it.uppercase() } }) },
+            if (screen.value !in listOf("detail", "history", "delete", "menu", "list", "graveyard", "care", "graveyard-page", "details", "bury")) TopAppBar(title = { Heading(when(screen.value) { "list" -> "Plants"; "form", "unnamed" -> "Edit plant"; "add", "search" -> "Add plant"; "detail", "history", "delete" -> plant.displayName; else -> screen.value.replaceFirstChar { it.uppercase() } }) },
                 navigationIcon = { IconButton(onClick = {}) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
         }) { padding -> Surface(Modifier.fillMaxSize().padding(padding)) {
             when (screen.value) {
@@ -562,11 +559,14 @@ class PlantsScreenTest {
                     onSave = {}, today = java.time.LocalDate.of(2030, 1, 15))
                 "form" -> PlantForm(plant, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
                 "care" -> PlantCareSettings("""{"customIntervals":{"fertilize":9}}""", true, {}, tasks = page.tasks, plantName = plant.displayName, onSpeciesCare = {}, onBack = {})
-                else -> SpeciesNames(Species(910001, "Testoria lucida Inventor", listOf(SpeciesName("name-one", "Synthetic flower", "en", "owner")), false, false), syntheticOptions(), true, { _, _ -> })
+                "unnamed" -> PlantForm(plant.copy(displayName = "Synthetic trialleaf", attributesJson = JSONObject(plant.attributesJson).put("nickname", JSONObject.NULL).toString()),
+                    syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
+                else -> SpeciesNames(Species(910001, "Testoria lucida Inventor", listOf(SpeciesName("name-one", "Synthetic flower", "en", "owner", 2),
+                    SpeciesName("name-two", "Trialleaf", "en", "gbif")), false, false, "Testoria lucida", "Synthetic flower"), syntheticOptions(), true, { _, _ -> })
             }
         } } } }
         for (name in listOf("list", "graveyard", "detail", "search", "form", "care", "names", "restore", "repot", "add", "delete", "history", "birthday", "menu",
-            "graveyard-page", "details", "bury", "more-details")) {
+            "graveyard-page", "details", "bury", "more-details", "unnamed")) {
             compose.runOnIdle { screen.value = if (name == "more-details") "form" else name }
             if (name == "menu") {
                 compose.onNodeWithContentDescription("Plant settings").performClick()
@@ -583,7 +583,7 @@ class PlantsScreenTest {
             compose.mainClock.advanceTimeBy(1000)
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             val file = "src/test/screenshots/native-plants-$name-${if (dark) "dark" else "light"}.png"
-            if (name in listOf("delete", "birthday", "bury")) captureDialog(file)
+            if (name in listOf("delete", "birthday", "bury")) compose.captureDialog(file)
             else compose.onRoot().captureRoboImage(file)
             if (name == "delete") compose.onNodeWithText("Cancel deletion").performClick()
             if (name == "birthday" || name == "bury") compose.onNodeWithText("Cancel").performClick()

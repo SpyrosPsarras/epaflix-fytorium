@@ -3850,6 +3850,11 @@ components:
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
         display_name:
           type: string
+        common_name:
+          description: The species' common name in the request language, else English; null when it has none.
+          anyOf:
+            - type: string
+            - type: "null"
         scientific_name:
           type: string
         canonical_name:
@@ -3903,6 +3908,7 @@ components:
         - health
         - id
         - display_name
+        - common_name
         - scientific_name
         - canonical_name
         - status
@@ -3926,6 +3932,11 @@ components:
           type: string
         rank:
           type: string
+        common_name:
+          description: Species care only. The species' common name in the request language, else English.
+          anyOf:
+            - type: string
+            - type: "null"
         fetched_at:
           type: string
           pattern: ^\d{4}-\d{2}-\d{2}T
@@ -3956,6 +3967,9 @@ components:
             - wikidata
             - nortaxa
             - owner
+        renamed_plant_count:
+          description: GET /api/species/{gbifKey} household names only. The household's plants without a nickname that would show another name, in any language, if this name were removed.
+          type: integer
       required:
         - id
         - name
@@ -3981,6 +3995,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Name"
+        common_name:
+          description: The name plants of this species without a nickname show, in the request language, else English.
+          anyOf:
+            - type: string
+            - type: "null"
       required:
         - gbif_key
         - scientific_name
@@ -3989,6 +4008,7 @@ components:
         - name_fetch_needed
         - name_fetch_failed
         - names
+        - common_name
       additionalProperties: false
     Candidate:
       type: object
@@ -4820,9 +4840,15 @@ components:
           type: integer
         previous_name:
           type: string
+        previous_display_name:
+          description: The name a plant of the previous species without a nickname shows.
+          type: string
         next_gbif_key:
           type: integer
         next_name:
+          type: string
+        next_display_name:
+          description: The name a plant of the next species without a nickname shows.
           type: string
         changed_at:
           type: string
@@ -4836,8 +4862,10 @@ components:
         - id
         - previous_gbif_key
         - previous_name
+        - previous_display_name
         - next_gbif_key
         - next_name
+        - next_display_name
         - changed_at
         - changed_on
         - by_name

@@ -58,7 +58,7 @@ internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refr
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).heightIn(min = 56.dp).then(onOpen?.let { open -> Modifier.clickable(onClickLabel = openLabel, onClick = open)
                 .semantics { contentDescription = openLabel } } ?: Modifier), verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) TaskIcon(icon) else TaskPhoto(task, photo, event == null, photoLoading)
+                if (icon != null) TaskIcon(icon, if (event == null && today != null) task.lateDays else 0) else TaskPhoto(task, photo, event == null, photoLoading)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                     val padding = with(LocalDensity.current) { emptyLine?.let { Modifier.padding(top = (it / 2).toDp(), bottom = (it - it / 2).toDp()) } ?: Modifier }
@@ -139,11 +139,21 @@ internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refr
 }
 
 // The plant page names the task in each row, so its circle shows the task, not the plant's photo, at the photo's size.
-@Composable private fun TaskIcon(icon: ImageVector) {
+@Composable private fun TaskIcon(icon: ImageVector, late: Int) {
     Box(Modifier.width(56.dp).height(62.dp), contentAlignment = Alignment.TopCenter) {
         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(56.dp)) {
             Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(28.dp)) }
         }
+        LatePill(late)
+    }
+}
+
+@Composable private fun BoxScope.LatePill(days: Int) {
+    if (days > 0) Surface(shape = CircleShape, color = MaterialTheme.colorScheme.error,
+        modifier = Modifier.align(Alignment.BottomCenter).requiredWidth(IntrinsicSize.Max)) {
+        Text(lateLabel(days), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onError,
+            maxLines = 1, softWrap = false, textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
     }
 }
 
@@ -155,11 +165,6 @@ internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refr
             else Box(contentAlignment = Alignment.Center) { Text(task.plantName.take(1).uppercase(), style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.semantics { contentDescription = "No cover photo for ${task.plantName}" }) }
         }
-        if (pending && task.lateDays > 0) Surface(shape = CircleShape, color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.align(Alignment.BottomCenter).requiredWidth(IntrinsicSize.Max)) {
-            Text(lateLabel(task.lateDays), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onError,
-                maxLines = 1, softWrap = false, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-        }
+        LatePill(if (pending) task.lateDays else 0)
     }
 }

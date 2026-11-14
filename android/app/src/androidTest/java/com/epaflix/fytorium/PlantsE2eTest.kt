@@ -49,12 +49,13 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
             json("/api/sites/${it.getString("id")}", "DELETE")
         } }
         siteId = JSONObject(json("/api/sites", "POST", JSONObject("""{"name":"Synthetic A05 site","location":"indoor","light":"part_shade","humidity":"normal","grow_light":false,"draft":false}"""))).getString("id")
-        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        val nebulosa = if (compose.waitForSpeciesNames(app, 910002)) "Synthetic cloudleaf" else "Testoria nebulosa"
+        compose.selectTab("Plants")
         compose.waitForState("Add plant enabled", 30_000) { compose.onAllNodes(hasContentDescription("Add plant") and !hasStateDescription("Adding a plant needs a connection.")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Add plant").performClick()
         input("Species name", "Testoria neblosa")
         click("Search species")
-        click("Choose Testoria nebulosa")
+        click("Choose $nebulosa")
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Confirm Testoria nebulosa")
         input("Name", "Synthetic A05 sprout")
@@ -90,7 +91,7 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         settings()
         click("Delete plant")
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
-        compose.onNodeWithText("Type the plant name to confirm").performTextInput("Synthetic A05 edited sprout")
+        compose.onNodeWithText("Type Synthetic A05 edited sprout to confirm").performTextInput("Synthetic A05 edited sprout")
         compose.onNodeWithText("Permanently delete plant").performClick()
         compose.waitForState("Plant deleted and detail cleared", 30_000) { app.repository.state.value.plants.none { it.id == plantId } && app.repository.state.value.detail == null && !app.repository.state.value.busy }
         println("A05 E2E PASS: typo search, explicit confirmation, native add/edit with pot and placement, graveyard/restore, confirmed permanent deletion")
@@ -107,5 +108,5 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         }
         if (failure == null) cleanup.getOrThrow()
     }
-    compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
+    compose.selectTab("Today")
 }

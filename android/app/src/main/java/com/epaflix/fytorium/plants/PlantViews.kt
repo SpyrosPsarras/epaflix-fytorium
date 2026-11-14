@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -49,6 +51,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -57,7 +60,7 @@ import org.json.JSONObject
 @Composable fun PlantsList(state: CareState, plants: List<Plant>, graveyard: Boolean, onPlant: (String) -> Unit,
     onAdd: () -> Unit, onGraveyard: () -> Unit, onRefresh: () -> Unit, thumbnails: Thumbnails? = null, enabled: Boolean = true,
     search: MutableState<String>? = null, focusSearch: Boolean = false, onFocused: () -> Unit = {}, onBack: () -> Unit = {},
-    refreshing: Boolean = false, addBlocked: String? = null, onBlocked: (String) -> Unit = {}, notice: @Composable () -> Unit = {}) {
+    refreshing: Boolean = false, addBlocked: String? = null, onBlocked: (String) -> Unit = {}, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {}) {
     val query = search ?: rememberSaveable { mutableStateOf("") }
     val editor = state.member?.role != Role.sitter
     val canAdd = enabled && addBlocked == null
@@ -76,9 +79,12 @@ import org.json.JSONObject
     }
     val focus = remember { FocusRequester() }
     LaunchedEffect(focusSearch) { if (focusSearch) { focus.requestFocus(); onFocused() } }
+    val grid = rememberLazyGridState()
+    // Results for a new query start at their first match, not at the old offset.
+    LaunchedEffect(wanted) { grid.scrollToItem(0) }
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Heading(if (graveyard) "Graveyard" else "Plants") }, navigationIcon = {
+        TopAppBar(title = { PlantBarTitle(state, request, onRetry) { Heading(if (graveyard) "Graveyard" else "Plants") } }, expandedHeight = barHeight(), navigationIcon = {
             if (graveyard) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         }, actions = {
             if (editor && !graveyard) {
@@ -93,7 +99,6 @@ import org.json.JSONObject
                 }
             }
         })
-        notice()
         OutlinedTextField(query.value, { query.value = it }, label = { Text("Search plants") }, singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             trailingIcon = { if (query.value.isNotEmpty()) IconButton(onClick = { query.value = "" }) { Icon(Icons.Default.Close, contentDescription = "Clear search") } },
@@ -117,7 +122,7 @@ import org.json.JSONObject
                     }
                     else -> Text("Nothing is shared with you yet. Ask the household owner to share plants.", textAlign = TextAlign.Center)
                 }
-            } else LazyVerticalGrid(GridCells.Fixed(2), Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+            } else LazyVerticalGrid(GridCells.Fixed(2), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 val headed = groups.size > 1 || groups.firstOrNull()?.first != null
                 groups.forEach { (site, members) ->
@@ -135,7 +140,7 @@ import org.json.JSONObject
 }
 
 @Composable private fun PlantTile(plant: Plant, late: Int, subtitle: String?, thumbnails: Thumbnails?, onOpen: () -> Unit) {
-    Column(Modifier.fillMaxWidth().testTag("plant:${plant.id}").clip(RoundedCornerShape(16.dp))
+    Column(Modifier.fillMaxWidth().testTag("plant:${plant.id}")
         .clickable(onClickLabel = "Open ${plant.displayName}", onClick = onOpen), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
             PlantCover(plant, thumbnails, Modifier.matchParentSize().clip(RoundedCornerShape(16.dp)), MaterialTheme.typography.displaySmall)
@@ -210,7 +215,8 @@ private fun timeline(detail: PlantDetail): List<Moment> {
     val changes = JSONArray(detail.speciesChangesJson).mapObjects { it }.mapIndexed { index, change ->
         val day = change.getString("changed_on")
         Moment("change:${change.optString("id", index.toString())}", day, time(change.nullable("changed_at"), day), null,
-            "Species changed from ${change.getString("previous_name")} to ${change.getString("next_name")} \u00b7 ${change.getString("by_name")}")
+            "Species changed from ${change.nullable("previous_display_name") ?: change.getString("previous_name")} to " +
+                "${change.nullable("next_display_name") ?: change.getString("next_name")} \u00b7 ${change.getString("by_name")}")
     }
     return (events + changes).sortedByDescending { it.at }
 }
@@ -237,15 +243,23 @@ private fun aboutLines(a: JSONObject): List<String> {
 @Composable fun PlantDetailScreen(state: CareState, detail: PlantDetail, onEdit: () -> Unit,
     onCommand: (String, JSONObject) -> Unit, onSpecies: () -> Unit, onUndo: (CareEvent) -> Unit, thumbnails: Thumbnails? = null,
     enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null,
-    todayTask: CareTask? = null, onTask: (CareTask, String) -> Unit = { _, _ -> }, onBlocked: (String) -> Unit = {}, notice: @Composable () -> Unit = {},
-    refreshing: Boolean = false, onRefresh: () -> Unit = {}, writeBlocked: String? = null) {
+    todayTask: CareTask? = null, onTask: (CareTask, String) -> Unit = { _, _ -> }, onBlocked: (String) -> Unit = {},
+    refreshing: Boolean = false, onRefresh: () -> Unit = {}, writeBlocked: String? = null, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {}) {
     val plant = detail.plant
     val owner = state.member?.role != Role.sitter
     val active = plant.status == "active"
     val today = state.today?.today ?: state.upcoming?.today
     val opened = todayTask?.takeIf { it.plantId == plant.id }?.let { state.currentTask(it.occurrence) ?: it }
     val live = TaskList(today.orEmpty(), "plant", TaskSettings(), emptyMap(), listOf(TaskSection(plant.id, plant.displayName, careRows(state, detail, opened, today))))
-    val moment = rememberApplyMoment(refreshing)
+    val list = rememberLazyListState()
+    var touched by remember(plant.id) { mutableStateOf(false) }
+    LaunchedEffect(list) { snapshotFlow { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }.first { it }; touched = true }
+    // A page opened from the cache takes its first fresh read once, unless the user has scrolled or acted since it appeared (W2 A14).
+    val entry = remember(plant.id) { detail.refreshedAt }
+    val refreshed by rememberUpdatedState(detail.refreshedAt)
+    var firstRead by remember(plant.id) { mutableIntStateOf(0) }
+    LaunchedEffect(plant.id) { snapshotFlow { refreshed }.first { it > entry }; if (!touched) firstRead++ }
+    val moment = rememberApplyMoment(refreshing) + firstRead
     val rows = rememberHeldList(live, state, plant.id, moment)!!.sections.single().tasks
     val since = remember(plant.id, moment, state.member) { state.ownPlantFields.size }
     val undoSince = remember(plant.id, moment, state.member) { state.ownUndoFlags.size }
@@ -272,14 +286,25 @@ private fun aboutLines(a: JSONObject): List<String> {
     var burying by remember(plant.id) { mutableStateOf(false) }
     var confirmation by remember(plant.id) { mutableStateOf("") }
     val rowBlocked = if (state.writable) null else state.needs("Changes", "make changes", verb = "need")
+    val acting: (() -> Unit) -> Unit = { touched = true; it() }
+    // The name shows once: the bar takes it only after the headline under the cover has scrolled away.
+    val titled by remember { derivedStateOf { list.firstVisibleItemIndex > 0 && list.layoutInfo.visibleItemsInfo.none { it.key == "headline" } } }
+    // Like the rows, a top bar control that is off says why on tap.
+    fun gated(open: () -> Unit) { if (enabled) open() else writeBlocked?.let(onBlocked) }
+    val gate = Modifier.semantics { if (!enabled) { disabled(); writeBlocked?.let { stateDescription = it } } }
+    val gateTint = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Text(header.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { heading() }) }, navigationIcon = {
+        TopAppBar(title = { PlantBarTitle(state, request, onRetry) {
+            if (titled) Text(header.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { heading() })
+        } }, expandedHeight = barHeight(), navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         }, actions = {
             if (owner) {
-                IconButton(onClick = onEdit, enabled = enabled) { Icon(Icons.Default.Edit, contentDescription = "Edit plant") }
+                IconButton(onClick = { gated(onEdit) }, enabled = enabled || writeBlocked != null, modifier = gate) { Icon(Icons.Default.Edit, contentDescription = "Edit plant", tint = gateTint) }
                 Box {
-                    IconButton(onClick = { menu = true }, enabled = enabled) { Icon(Icons.Default.MoreVert, contentDescription = "Plant settings") }
+                    IconButton(onClick = { gated { menu = true } }, enabled = enabled || writeBlocked != null, modifier = gate) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Plant settings", tint = gateTint)
+                    }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Change species") }, onClick = { menu = false; onCommand("change-species", JSONObject()) }, enabled = enabled)
                         DropdownMenuItem(text = { Text("This plant's schedule") }, onClick = { menu = false; onCommand("care-form", JSONObject()) }, enabled = enabled && detail.careSettingsJson != null)
@@ -292,16 +317,15 @@ private fun aboutLines(a: JSONObject): List<String> {
                 }
             }
         })
-        notice()
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), list, contentPadding = PaddingValues(bottom = 24.dp)) {
                 item("cover") {
                     PlantCover(plant, thumbnails, Modifier.fillMaxWidth().aspectRatio(4f / 3f).then(
                         if (owner) Modifier.clickable(onClickLabel = "Open photo updates") { onCommand("photos", JSONObject()) } else Modifier), MaterialTheme.typography.displayLarge)
                 }
+                item("headline") { Heading(header.displayName, MaterialTheme.typography.headlineMedium, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp)) }
                 item("identity") {
-                    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Heading(header.displayName, MaterialTheme.typography.headlineMedium)
+                    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         val species = attributes.nullable("canonical_name") ?: header.scientificName
                         if (!species.equals(header.displayName, ignoreCase = true)) Text(species, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         header.siteName?.let { site ->
@@ -316,25 +340,38 @@ private fun aboutLines(a: JSONObject): List<String> {
                 }
                 item("care-heading") { SectionHeading("Care") }
                 if (buried) item("care-paused") {
-                    Text("Care pauses in the graveyard. Restore ${header.displayName} to bring its tasks back.", Modifier.padding(horizontal = 16.dp))
+                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Care pauses in the graveyard. Restore ${header.displayName} to bring its tasks back.")
+                        // A plant restored elsewhere keeps the held button in place, off, until the next pull.
+                        val restoreBlocked = if (active) ChangedElsewhere else writeBlocked.takeIf { !enabled }
+                        val canRestore = enabled && !active
+                        if (owner) Button(onClick = { if (canRestore) acting { onCommand("restore", JSONObject()) } else restoreBlocked?.let(onBlocked) },
+                            enabled = canRestore || restoreBlocked != null,
+                            colors = ButtonDefaults.buttonColors().let { if (canRestore) it else ButtonDefaults.buttonColors(containerColor = it.disabledContainerColor, contentColor = it.disabledContentColor) },
+                            modifier = Modifier.heightIn(min = 48.dp).semantics { if (!canRestore) { disabled(); restoreBlocked?.let { stateDescription = it } } }) {
+                            Text("Restore ${header.displayName}")
+                        }
+                    }
                 } else {
                     if (applicable.isEmpty()) item("care-none") { Text("No care tasks yet.", Modifier.padding(horizontal = 16.dp)) }
                     else item("care") {
                         Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(24.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                            applicable.forEach { task -> key(task.key) { CareRow(task, state, today, task.occurrence in listed, rowBlocked, onTask, onCommand, onBlocked) } }
+                            applicable.forEach { task -> key(task.key) { CareRow(task, state, today, task.occurrence in listed, rowBlocked, { row, action -> acting { onTask(row, action) } },
+                                { action, body -> acting { onCommand(action, body) } }, onBlocked) } }
                             val dueTasks = applicable.dueNow()
                             val due = dueTasks.isNotEmpty()
                             // A handled plant keeps the button's place, so nothing below moves under the next tap.
                             if (owner && (due || applicable.any { it.completedEvent != null })) {
-                                val done = applicable.any { it.completedEvent?.kind == "completed" }
+                                // Done early for a later date is not done for today, so only a completion of something due by today reads All done.
+                                val done = applicable.any { task -> task.completedEvent?.takeIf { it.kind == "completed" }?.let { it.dueOn ?: task.dueOn }?.let { today != null && it <= today } == true }
                                 val handling = BusyKey.HandleAll(plant.id) in state.pending
                                 // The server handles what its schedule says is due now, so a shown set that differs would name other tasks than it handles.
                                 val serverDue = liveRows.mapNotNull { if (it.occurrence in listed) it else detail.scheduled(it.key)?.takeIf { active } }.dueNow()
                                 val changed = dueTasks.mapTo(mutableSetOf()) { it.occurrence } != serverDue.mapTo(mutableSetOf()) { it.occurrence }
                                 val canHandle = due && state.writable && enabled && !handling && !changed
                                 val handleBlocked = if (!due || handling) null else if (changed) ChangedElsewhere else writeBlocked ?: rowBlocked
-                                FilledTonalButton(onClick = { if (canHandle) onCommand("handle-all", JSONObject()) else handleBlocked?.let(onBlocked) }, enabled = canHandle || handleBlocked != null,
+                                FilledTonalButton(onClick = { if (canHandle) acting { onCommand("handle-all", JSONObject()) } else handleBlocked?.let(onBlocked) }, enabled = canHandle || handleBlocked != null,
                                     colors = ButtonDefaults.filledTonalButtonColors().let { if (canHandle) it else ButtonDefaults.filledTonalButtonColors(containerColor = it.disabledContainerColor, contentColor = it.disabledContentColor) },
                                     shape = RoundedCornerShape(50), modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp, bottom = 16.dp).heightIn(min = 48.dp)
                                         .semantics { contentDescription = if (due) "Handle all ${plant.displayName} tasks: " + dueTasks.joinToString(", ") { it.label }
@@ -360,10 +397,10 @@ private fun aboutLines(a: JSONObject): List<String> {
                             Text(historyDay(moment.day, today), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp).semantics { heading() })
                         }
-                        item(moment.key) { HistoryEntry(moment, heldEvents, plant.displayName, state, enabled, freshByKey[moment.key] != moment, writeBlocked ?: rowBlocked, onUndo, onBlocked) }
+                        item(moment.key) { HistoryEntry(moment, heldEvents, plant.displayName, state, enabled, freshByKey[moment.key] != moment, writeBlocked ?: rowBlocked, { acting { onUndo(it) } }, onBlocked) }
                     }
                     if (shown.size < moments.size) item("history-all") {
-                        TextButton(onClick = { allHistory = true }, modifier = Modifier.padding(horizontal = 4.dp).heightIn(min = 48.dp)) { Text("Show all history (${moments.size})") }
+                        TextButton(onClick = { acting { allHistory = true } }, modifier = Modifier.padding(horizontal = 4.dp).heightIn(min = 48.dp)) { Text("Show all history (${moments.size})") }
                     }
                     item("photos") {
                         Column {
@@ -405,7 +442,7 @@ private fun aboutLines(a: JSONObject): List<String> {
                 }
                 item("details") {
                     Column(Modifier.padding(top = 16.dp)) {
-                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (details) "Hide details" else "Show details") { details = !details }
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (details) "Hide details" else "Show details") { acting { details = !details } }
                             .padding(horizontal = 16.dp).semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
                             Text("Details", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                             Icon(if (details) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)
@@ -441,10 +478,12 @@ private fun aboutLines(a: JSONObject): List<String> {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
-                OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type the plant name to confirm") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type ${plant.displayName} to confirm") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
-        confirmButton = { TextButton(onClick = { onCommand("delete", JSONObject().put("confirm_name", confirmation)); deleting = false }, enabled = enabled && confirmation == plant.displayName) { Text("Permanently delete plant") } },
+        // The server checks the exact name, so a match that ignores case and outer spaces sends the name itself.
+        confirmButton = { TextButton(onClick = { onCommand("delete", JSONObject().put("confirm_name", plant.displayName)); deleting = false },
+            enabled = enabled && confirmation.trim().equals(plant.displayName.trim(), ignoreCase = true)) { Text("Permanently delete plant") } },
         dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel deletion") } })
 }
 
@@ -500,7 +539,7 @@ private fun aboutLines(a: JSONObject): List<String> {
     }
 }
 
-@Composable internal fun RestoreForm(plant: Plant, sites: List<PlantSite>, writable: Boolean, onSave: (JSONObject) -> Unit, onCreateSite: () -> Unit = {}) {
+@Composable internal fun RestoreForm(plant: Plant, sites: List<PlantSite>, writable: Boolean, onSave: (JSONObject) -> Unit, onCreateSite: () -> Unit = {}, error: String? = null) {
     val attributes = remember(plant.attributesJson) { JSONObject(plant.attributesJson) }
     var site by remember(plant.id) { mutableStateOf(attributes.nullable("site_id").orEmpty()) }
     val chosen = sites.firstOrNull { it.id == site }
@@ -508,15 +547,21 @@ private fun aboutLines(a: JSONObject): List<String> {
         Text("${plant.displayName} returns to Today and Upcoming with its care tasks. Its history and photos stay.")
         Choice("Site", site, mapOf("" to "Choose a site") + sites.associate { it.id to it.name }, writable) { site = it }
         TextButton(onClick = onCreateSite, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") }
+        PlantError(error)
         Button(onClick = { onSave(JSONObject().put("site_id", site)) }, enabled = writable && chosen != null, modifier = Modifier.heightIn(min = 48.dp)) {
             Text(chosen?.let { "Restore ${plant.displayName} to ${it.name}" } ?: "Restore ${plant.displayName}")
         }
     }
 }
-@Composable internal fun PlantRepotForm(plant: Plant, options: PlantOptions, writable: Boolean, errors: Map<String, String> = emptyMap(), onSave: (JSONObject) -> Unit) {
-    var pot by remember(plant.id) { mutableStateOf(plant.potType.orEmpty()) }
-    var soil by remember(plant.id) { mutableStateOf(plant.soilType.orEmpty()) }
-    var size by remember(plant.id) { mutableStateOf(plant.potSizeCm?.toString().orEmpty()) }
+@Composable internal fun PlantRepotForm(plant: Plant, options: PlantOptions, writable: Boolean, errors: Map<String, String> = emptyMap(),
+    onSave: (JSONObject) -> Unit, onDirty: (Boolean) -> Unit = {}) {
+    val start = remember(plant.id) { listOf(plant.potType.orEmpty(), plant.soilType.orEmpty(), plant.potSizeCm?.toString().orEmpty()) }
+    var pot by remember(plant.id) { mutableStateOf(start[0]) }
+    var soil by remember(plant.id) { mutableStateOf(start[1]) }
+    var size by remember(plant.id) { mutableStateOf(start[2]) }
+    val dirty = listOf(pot, soil, size) != start
+    val currentDirty by rememberUpdatedState(onDirty)
+    LaunchedEffect(dirty) { currentDirty(dirty) }
     PlantColumn {
         Heading("New pot and soil for ${plant.displayName}", style = MaterialTheme.typography.headlineSmall)
         Choice(options.labels.getValue("pot_type"), pot, options.choices.getValue("pot_type").associateWith(::choiceLabel), writable) { pot = it }
@@ -525,6 +570,7 @@ private fun aboutLines(a: JSONObject): List<String> {
         PlantError(errors["soil_type"])
         OutlinedTextField(size, { size = it }, label = { Text(options.labels.getValue("pot_size_cm")) }, keyboardOptions = numberKeys,
             isError = errors.containsKey("pot_size_cm"), supportingText = { if (errors["pot_size_cm"] != null) PlantError(errors["pot_size_cm"]) else Text("Positive whole number, or blank for unknown") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
+        PlantError(errors["_form"])
         Button(onClick = { onSave(JSONObject().put("pot_type", pot).put("soil_type", soil).put("pot_size_cm", size.toIntOrNull() ?: JSONObject.NULL)) },
             enabled = writable && (size.isBlank() || size.toIntOrNull()?.let { it > 0 } == true), modifier = Modifier.heightIn(min = 48.dp)) { Text("Repot ${plant.displayName}") }
     }

@@ -21,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@Composable fun SitesRoute(api: ApiClient, care: CareState, connected: () -> Boolean, onBack: () -> Unit) {
+@Composable fun SitesRoute(api: ApiClient, care: CareState, connected: () -> Boolean, onBack: () -> Unit, creating: Boolean = false) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
@@ -32,7 +32,7 @@ import kotlinx.coroutines.withContext
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    SitesScreen(state, connected() && !care.updateRequired, onBack = onBack,
+    SitesScreen(state, connected() && !care.updateRequired, onBack = onBack, creating = creating,
         onRefresh = { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } },
         onClear = repository::clearErrors,
         onSave = { withContext(Dispatchers.IO) { repository.save(it) } },
@@ -41,13 +41,13 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun SitesScreen(state: SiteState, online: Boolean = true, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
-    onClear: () -> Unit = {}, onSave: suspend (Site) -> Boolean = { false }, onDelete: suspend (String) -> Boolean = { false }) {
-    var editor by remember { mutableStateOf<Site?>(null) }
+    onClear: () -> Unit = {}, onSave: suspend (Site) -> Boolean = { false }, onDelete: suspend (String) -> Boolean = { false }, creating: Boolean = false) {
+    var editor by remember { mutableStateOf<Site?>(if (creating) Site() else null) }
     var confirming by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val writable = online && state.loaded && !state.busy && !state.blocked && !state.updateRequired && !submitting
-    fun closeEditor() { editor = null; onClear() }
+    fun closeEditor() { editor = null; onClear(); if (creating) onBack() }
     BackHandler { if (editor != null) closeEditor() else onBack() }
     Scaffold(topBar = {
         TopAppBar(title = { Text(editor?.let { if (it.id == null) "New site" else "Edit site" } ?: "Sites") },
@@ -67,7 +67,7 @@ import kotlinx.coroutines.withContext
                     SiteForm(editor!!, state.errors, writable, onCancel = ::closeEditor, onSave = { input ->
                         scope.launch {
                             submitting = true
-                            try { if (onSave(input)) editor = null } finally { submitting = false }
+                            try { if (onSave(input)) { editor = null; if (creating) onBack() } } finally { submitting = false }
                         }
                     })
                 }

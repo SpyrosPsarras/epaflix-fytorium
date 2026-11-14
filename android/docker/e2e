@@ -91,10 +91,12 @@ boot_ready() {
   [ "$(timeout 10 adb shell -n getprop sys.boot_completed | tr -d '\r')" = 1 ]
 }
 package_manager_ready() {
-  timeout 10 adb shell -n pm path android | grep -q '^package:'
+  timeout 10 adb shell -n pm path android | grep -q '^package:' || return 1
+  # svc data below needs the phone service, which can register after the package manager answers.
+  timeout 10 adb shell -n service check phone | grep -q ': found'
 }
 wait_ready "$E2E_BOOT_TIMEOUT" 'Emulator boot: sys.boot_completed=1' boot_ready
-wait_ready "$E2E_PM_TIMEOUT" 'Package manager: pm path android succeeds' package_manager_ready
+wait_ready "$E2E_PM_TIMEOUT" 'Package manager: pm path android succeeds and the phone service is registered' package_manager_ready
 # Only this disposable guest uses captive_portal_mode=0: public probes are unreachable.
 # Keep the real app/oidc HTTP readiness checks below; this does not bypass API checks.
 adb shell settings put global window_animation_scale 0
@@ -108,6 +110,8 @@ adb shell svc data disable
 adb shell svc wifi enable
 adb shell svc data enable
 adb shell settings put global animator_duration_scale 0
+# Only this disposable guest hides crash and ANR dialogs, so a busy image app cannot cover Chrome or Fytorium.
+adb shell settings put global hide_error_dialogs 1
 adb shell input keyevent 82
 # Bypass the emulator's intermittent 10.0.2.3 DNS proxy, not Docker DNS or hostname checks.
 # These rules exist only inside this disposable guest; the ready forwarder is container-local.
@@ -154,7 +158,16 @@ if [ "$E2E_LOGIN" = 1 ]; then
   login=true
   curl --fail -H 'Content-Type: application/json' -d '{"action":"set","at":"2030-06-01T10:00:00Z"}' http://app:3000/__test/clock
 fi
-./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" -Pandroid.testInstrumentationRunnerArguments.guestNetworkTimeoutSeconds="$E2E_GUEST_NETWORK_TIMEOUT" connectedDebugAndroidTest
+rm -rf /work/.scratch/e2e-failures
+status=0
+./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 -Pandroid.testInstrumentationRunnerArguments.login="$login" -Pandroid.testInstrumentationRunnerArguments.guestNetworkTimeoutSeconds="$E2E_GUEST_NETWORK_TIMEOUT" connectedDebugAndroidTest || status=$?
+if [ "$status" != 0 ]; then
+  # A failed test leaves a screenshot and window dump in shared storage, which Gradle's uninstall keeps.
+  mkdir -p /work/.scratch/e2e-failures
+  adb pull /sdcard/Pictures/e2e-failures/. /work/.scratch/e2e-failures/ || true
+  adb pull /sdcard/Download/e2e-failures/. /work/.scratch/e2e-failures/ || true
+  exit "$status"
+fi
 if [ "$login" = true ]; then
   mkdir -p /work/.scratch/a15-emulator
   adb pull /sdcard/Pictures/a15-emulator/. /work/.scratch/a15-emulator/

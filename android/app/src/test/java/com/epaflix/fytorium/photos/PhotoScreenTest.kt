@@ -5,7 +5,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import androidx.core.view.drawToBitmap
@@ -54,6 +54,13 @@ class PhotoScreenTest {
         compose.onNodeWithText("Identify plant").assertIsNotEnabled()
         compose.onNodeWithText("Actions are unavailable offline. Reconnect and refresh to make changes.").performScrollTo().assertIsDisplayed()
     }
+    // C11: photo updates show readable dates.
+    @Test fun photoUpdatesShowReadableDates() {
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo, photo.copy(id = "photo-two", cover = true)), loaded = true), true, "Synthetic sprout", 0) } }
+        compose.onNodeWithText("13 Oct 2026").assertExists()
+        compose.onNodeWithText("13 Oct 2026 \u00b7 Cover photo").assertExists()
+        compose.onAllNodes(hasText("2026-10-13", substring = true)).assertCountEquals(0)
+    }
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
     private fun screens(dark: Boolean) {
@@ -101,7 +108,7 @@ class PhotoScreenTest {
         compose.onNodeWithText("Refresh photos").performScrollTo().performClick()
         compose.onNodeWithText("Note").performScrollTo().assertTextContains("Synthetic unsaved note")
         compose.onNodeWithText("Add photo update").performScrollTo().assertIsEnabled()
-        compose.onNodeWithText("Taken on: 2026-10-13").performScrollTo().performClick()
+        compose.onNodeWithText("Taken on: 13 Oct 2026").performScrollTo().performClick()
         compose.onNodeWithText("Tuesday, October 13, 2026").assertIsEnabled().performClick().assertIsSelected()
         compose.onNodeWithText("Wednesday, October 14, 2026", substring = true).assertIsNotEnabled()
         // Calendar mode marks the real current day, making its screenshot date-dependent.

@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.selectTab
 import com.epaflix.fytorium.waitForNode
 import com.epaflix.fytorium.waitForState
 import org.json.JSONArray
@@ -31,7 +32,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
     fun waterBasis() = app.repository.state.value.today?.sections?.flatMap { it.tasks }
         ?.firstOrNull { it.plantId == plantId && it.taskType == "water" }?.basedOn?.firstOrNull { it.input == "wateringIntervalDays" }
     fun openPlant() {
-        compose.onNodeWithText("Plants").performClick()
+        compose.selectTab("Plants")
         compose.waitForState("Species fixture plant row visible", 30_000) { compose.onAllNodesWithTag("plant:$plantId").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("plant:$plantId").performScrollTo().performClick()
         compose.waitForState("Species plant settings visible", 30_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() }
@@ -41,10 +42,10 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         if (compose.onAllNodesWithText("Care defaults for this species").fetchSemanticsNodes().isEmpty()) compose.onNodeWithText("Details").performClick()
         compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Care defaults for this species"))
         compose.onNodeWithText("Care defaults for this species").performClick()
-        enabled("Refresh care data")
+        enabled("Override watering interval in days")
     }
     fun showTodayRow() {
-        compose.onNodeWithText("Today").performClick()
+        compose.selectTab("Today")
         val task = hasAnyAncestor(hasTestTag("task:$plantId:water"))
         compose.waitForNode(task and hasContentDescription("Open $plantName")).performScrollTo().assertHasClickAction().performClick()
         compose.onNode(task and hasText("Based on")).assertDoesNotExist()

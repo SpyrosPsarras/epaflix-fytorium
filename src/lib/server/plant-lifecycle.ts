@@ -73,8 +73,11 @@ export async function changeSpecies(id: string, identity: Identity, input: Recor
   return getPlant(id, household, identity.language);
 }
 
-export async function speciesChanges(id: string, household: string): Promise<PlantSpeciesChange[]> {
-  await getPlant(id, household, 'en');
-  const result = await db().query('SELECT id, previous_gbif_key, previous_name, next_gbif_key, next_name, changed_at, by_name FROM plant_species_changes WHERE plant_id = $1 AND household_id = $2 ORDER BY changed_at DESC, id DESC', [id, household]);
+// The display names are what a plant of each species without a nickname shows, so history reads like the rest of the app.
+export async function speciesChanges(id: string, household: string, language: 'en' | 'nb' | 'el' = 'en'): Promise<PlantSpeciesChange[]> {
+  await getPlant(id, household, language);
+  const result = await db().query(`SELECT id, previous_gbif_key, previous_name, plant_display_name(NULL, previous_gbif_key, $3) AS previous_display_name,
+    next_gbif_key, next_name, plant_display_name(NULL, next_gbif_key, $3) AS next_display_name, changed_at, by_name
+    FROM plant_species_changes WHERE plant_id = $1 AND household_id = $2 ORDER BY changed_at DESC, id DESC`, [id, household, language]);
   return result.rows.map(row => ({ ...row, changed_on: calendarDate(row.changed_at) }));
 }

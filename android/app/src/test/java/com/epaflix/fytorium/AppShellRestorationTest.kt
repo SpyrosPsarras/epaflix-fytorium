@@ -3,7 +3,7 @@ package com.epaflix.fytorium
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import okhttp3.mockwebserver.*
 import com.epaflix.fytorium.feed.*
 import com.epaflix.fytorium.species.careFixture
@@ -301,7 +301,7 @@ class AppShellRestorationTest {
             } else {
                 if (reset == "sitter") {
                     val tab = when (route) { "journal" -> "Today"; "feed-plant", "plant-species", "photo-form", "journal-plant", "identify" -> "Plants"; else -> "More" }
-                    compose.onNode(hasText(tab) and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
+                    compose.onNode(hasText(tab) and isSelectable() and !hasTestTag("view-today")).assertIsSelected()
                 } else if (reset == "family" && route == "planta") compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
                 else compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
                 compose.onNodeWithText("One-time app code").assertDoesNotExist()

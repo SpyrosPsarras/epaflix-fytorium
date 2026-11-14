@@ -165,7 +165,7 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
                 failure.offline -> null
                 error is FeedFailure && error.status == 409 && error.reason == "rain_report_not_ready" -> "Rain watering is not ready. Try again in a moment."
                 error is FeedFailure -> error.message
-                error is IOException -> "Could not reach Fytorium. Retry uses the same request."
+                error is IOException -> "Could not reach Fytorium. Try again."
                 else -> "Fytorium isn't responding. Refresh to try again."
             })
     }

@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { PoolClient } from 'pg';
-import { careNames, validCareValue, type CareProfile } from '$lib/care';
+import { careLabels, careNames, validCareValue, type CareName, type CareProfile } from '$lib/care';
 import type { ScheduleInput } from '$lib/schedule/engine';
 import { careRuleDefaults } from '$lib/schedule/rules';
 import { db, withTransaction } from '../db';
@@ -35,13 +35,14 @@ export async function effectiveCareProfiles(gbifKeys: number[], household: strin
   for (const row of overrides.rows) if (validCareValue(row.field, row.value)) profiles.get(row.gbif_key)![row.field] = { value: row.value, source: 'override', fetchedAt: row.updated_at.toISOString() };
   return profiles;
 }
-export async function speciesCare(key: string, household: string) {
+export async function speciesCare(key: string, household: string, language: 'en' | 'nb' | 'el' = 'en') {
   const species = await getCareSpecies(key, household);
-  const [profiles, jobs, states, plantbookMatch] = await Promise.all([
+  const [profiles, jobs, states, plantbookMatch, common] = await Promise.all([
     effectiveCareProfiles([species.gbif_key], household),
     db().query('SELECT source, status, attempts, next_at FROM care_fetch_jobs WHERE gbif_key = $1', [species.gbif_key]),
     db().query('SELECT source, status FROM care_source_limits'),
     db().query('SELECT status, pid, checked_at FROM open_plantbook_matches WHERE gbif_key = $1', [species.gbif_key]),
+    db().query<{ name: string | null }>('SELECT species_common_name($1, $2) AS name', [species.gbif_key, language]),
   ]);
   const profile = Object.fromEntries(careNames.map(field => [field, { value: null, source: 'unknown', fetchedAt: null }])) as CareProfile;
   for (const [field, rule] of Object.entries(careRuleDefaults)) profile[field as keyof CareProfile] = { ...rule, fetchedAt: null };
@@ -51,7 +52,7 @@ export async function speciesCare(key: string, household: string) {
     const state = states.rows.find(row => row.source === name);
     return { ...job, source: name, matchStatus: matchesByName ? plantbookMatch.rows[0]?.status as string | undefined : undefined, pid: matchesByName ? plantbookMatch.rows[0]?.pid as string | null | undefined : undefined, status: !source.configured ? 'disabled' : state?.status === 'auth_failed' ? 'auth_failed' : job?.status ?? 'not_queued' };
   });
-  return { species, profile, fetches, fetch: fetches[0] ?? null, openPlantbookMatch: plantbookMatch.rows[0] ?? null };
+  return { species: { ...species, common_name: common.rows[0].name }, profile, fetches, fetch: fetches[0] ?? null, openPlantbookMatch: plantbookMatch.rows[0] ?? null };
 }
 export async function unmatchedSpecies(household: string) {
   const result = await db().query("SELECT s.gbif_key, s.canonical_name, m.status FROM open_plantbook_matches m JOIN species s USING (gbif_key) WHERE m.status IN ('no_match', 'ambiguous') AND EXISTS (SELECT 1 FROM plants p WHERE p.gbif_key = s.gbif_key AND p.household_id = $1) ORDER BY s.canonical_name, s.gbif_key", [household]);
@@ -69,11 +70,11 @@ export async function retryPlantbookMatch(key: string, household: string) {
     await client.query("UPDATE care_source_limits SET status = 'active' WHERE source = 'open_plantbook' AND status = 'auth_failed'");
   });
 }
-export async function setCareOverride(key: string, field: string, value: unknown, household: string) {
+export async function setCareOverride(key: string, field: string, value: unknown, household: string, language: 'en' | 'nb' | 'el' = 'en') {
   const species = await getCareSpecies(key, household);
-  if (!validCareValue(field, value)) error(422, 'Invalid value for ' + field);
+  if (!validCareValue(field, value)) error(422, 'Enter a valid value for ' + (careLabels[field as CareName] ?? field).replace(/^./, c => c.toLowerCase()) + '.');
   await db().query('INSERT INTO care_overrides (household_id, gbif_key, field, value, updated_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (household_id, gbif_key, field) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at', [household, species.gbif_key, field, JSON.stringify(value), now()]);
-  return speciesCare(key, household);
+  return speciesCare(key, household, language);
 }
 export async function removeCareOverride(key: string, field: string, household: string) {
   const species = await getCareSpecies(key, household);

@@ -18,7 +18,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class PlantRepositoryTest {
-    private var online = true
+    @Volatile private var online = true
     private fun repository(block: (Repository, MockWebServer) -> Unit) {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
         MockWebServer().use { server ->
@@ -42,7 +42,8 @@ class PlantRepositoryTest {
         assertFalse(repo.state.value.offline)
         assertFalse(repo.plantState.value.blocked)
         assertTrue(repo.plantState.value.enabled(repo.state.value.member, false))
-        assertNotNull(repo.plantState.value.errors["_form"])
+        assertNotNull(repo.plantState.value.reads["search"])
+        assertNull(repo.plantState.value.errors["_form"])
         server.enqueue(MockResponse().setBody("""{"search_id":"s","candidates":[]}"""))
         repo.searchSpecies("fern")
         server.enqueue(MockResponse().setResponseCode(400).setBody("""{"errors":{"nickname":"Too long","pot_size_cm":"Invalid size"}}"""))
@@ -102,12 +103,29 @@ class PlantRepositoryTest {
             server.enqueue(MockResponse().setResponseCode(status))
             repo.openPlant("plant-one", full = true)
             assertTrue(repo.plantState.value.enabled(repo.state.value.member, false))
-            assertNotNull(repo.plantState.value.errors["_form"])
+            assertNotNull(repo.plantState.value.reads["plant/plant-one"])
+            assertEquals(emptyMap<String, String>(), repo.plantState.value.errors)
         }
         server.enqueue(MockResponse().setResponseCode(403))
         assertNull(repo.savePlant("plant-one", JSONObject()))
         assertFalse(repo.plantState.value.enabled(repo.state.value.member, false))
         assertTrue(repo.plantState.value.errors.getValue("_form").contains("permissions"))
+    }
+    // A forbidden save keeps plant changes off through reads that fail, offline or unanswered, until a read succeeds.
+    @Test fun aFailedReadKeepsAForbiddenSavesLock() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(403))
+        assertNull(repo.savePlant("plant-one", JSONObject()))
+        assertTrue(repo.plantState.value.blocked)
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertNull(repo.searchSpecies("fern"))
+        assertTrue(repo.plantState.value.blocked)
+        online = false
+        assertNull(repo.plantSites())
+        assertTrue(repo.plantState.value.blocked)
+        online = true
+        server.enqueue(MockResponse().setBody("""[{"id":"site-one","name":"Synthetic site"}]"""))
+        assertNotNull(repo.plantSites())
+        assertFalse(repo.plantState.value.blocked)
     }
     @Test fun requestGatesIgnoreBackgroundReadsButRespectSavingConnectivityAndSession() {
         val owner = Member("member-one", Role.owner)
@@ -145,6 +163,51 @@ class PlantRepositoryTest {
         assertEquals(online, repo.openPlant("plant-one", full = true))
         assertFalse(repo.undoHistory(online.history.single()))
         assertEquals(6, server.requestCount)
+    }
+    // C1: offline shows under the top bar title, so an offline plant read leaves no form error that would stay after the connection returns.
+    @Test fun anOfflinePlantReadLeavesNoFormError() = repository { repo, _ ->
+        online = false
+        repo.connectivityChanged(false)
+        repo.openPlant("plant-one", full = true)
+        assertFalse(repo.plantState.value.online)
+        assertNull(repo.plantState.value.errors["_form"])
+        assertEquals(true, repo.plantState.value.reads["plant/plant-one"]?.offline)
+    }
+    // Not every plant write reloads the plant, so the write's own answer ends a plant not-responding state.
+    @Test fun aPlantWriteFytoriumAnswersEndsItsNotRespondingState() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertFalse(repo.speciesNameCommand(910001, "add", JSONObject().put("name", "Synthetic fern").put("language", "en")))
+        assertTrue(repo.plantState.value.serverUnavailable)
+        server.enqueue(MockResponse().setBody("{}"))
+        assertTrue(repo.speciesNameCommand(910001, "add", JSONObject().put("name", "Synthetic fern").put("language", "en")))
+        assertFalse(repo.plantState.value.serverUnavailable)
+        assertEquals(2, server.requestCount)
+    }
+    // A read's failure stays with what it read: another read's success leaves it, and only its own next load clears it.
+    @Test fun aReadFailureClearsOnlyWhenItsOwnReadLoads() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Synthetic read refusal"}"""))
+        assertNull(repo.species(910001))
+        server.enqueue(MockResponse().setBody("""[{"id":"site-one","name":"Synthetic site"}]"""))
+        assertNotNull(repo.plantSites())
+        val failure = repo.plantState.value.reads.getValue("species/910001")
+        assertEquals("Synthetic read refusal", failure.message)
+        assertTrue(failure.refused)
+        assertEquals(setOf("species/910001"), repo.plantState.value.reads.keys)
+        server.enqueue(MockResponse().setBody("""{"gbif_key":910001,"scientific_name":"Testoria lucida","names":[]}"""))
+        assertNotNull(repo.species(910001))
+        assertEquals(emptySet<String>(), repo.plantState.value.reads.keys)
+    }
+    // The open form is the only place a failed save shows, so a save whose connection drops mid-request keeps its form error.
+    @Test fun aSaveThatLosesTheConnectionKeepsItsFormError() = repository { repo, server ->
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                online = false
+                return MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)
+            }
+        }
+        assertNull(repo.savePlant("plant-one", JSONObject().put("nickname", "Synthetic fern")))
+        assertFalse(repo.plantState.value.online)
+        assertEquals("Could not reach Fytorium. Try again.", repo.plantState.value.errors["_form"])
     }
     private fun serve(server: MockWebServer, writes: MutableList<String> = mutableListOf(), responses: (String) -> String?) {
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {

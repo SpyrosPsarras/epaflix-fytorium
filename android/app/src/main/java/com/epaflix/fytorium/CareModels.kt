@@ -95,7 +95,7 @@ fun historyText(event: CareEvent): String = when (event.kind) {
     else -> "${postponeLabel(event.kind) ?: "Skipped"} ${careWork(event.taskType, event.customTaskName, false)}"
 } + " \u00b7 " + event.byName
 private val taskActions = mapOf(
-    "water" to "watering", "fertilize" to "fertilizing", "clean_leaves" to "leaf cleaning",
+    "water" to "watering", "fertilize" to "fertilizing", "clean_leaves" to "cleaning leaves",
     "remove_dead" to "removing dead flowers and leaves", "cut_back" to "seasonal cut-back", "repot" to "repotting"
 )
 // Undoing an event also undoes the water linked to it, unless that water was undone on its own.
@@ -106,7 +106,10 @@ fun undoLabel(event: CareEvent, history: List<CareEvent>): String {
 fun List<CareEvent>.hasLinkedWater(event: CareEvent) = any { it.linkedEventId == event.id && it.undoneAt == null }
 private fun careWork(type: String?, custom: String?, watered: Boolean) = (taskActions[type] ?: custom ?: "custom task") + if (watered) " and watering" else ""
 fun undoneText(event: CareEvent, plantName: String, watered: Boolean) =
-    "Undid ${postponeNouns[event.kind] ?: careWork(event.taskType, event.customTaskName, watered)} for $plantName"
+    "Undid " + (postponeNouns[event.kind]?.let { "$it of " + careWork(event.taskType, event.customTaskName, false) } ?: careWork(event.taskType, event.customTaskName, watered)) + " for $plantName"
+// A plant page lists several tasks for one plant, so a postponement names its task as well as the plant.
+fun postponedText(kind: String, type: String?, custom: String?, plantName: String, until: String?) =
+    "${postponeLabel(kind)} ${careWork(type, custom, false)} for $plantName" + until?.let { " until " + shortDate(it) }.orEmpty()
 fun doneText(type: String?, custom: String?, subject: String, watered: Boolean = false): String =
     if (watered && type == "fertilize") "Fertilized and watered $subject"
     else taskVerbs[type]?.let { "$it $subject" } ?: "${taskLabel(type, custom)} done for $subject"
@@ -133,6 +136,7 @@ fun careStatus(task: CareTask, today: String): String? {
         days == 0L -> "Due today"
         task.postponed != null -> "${postponeLabel(task.postponed)} until ${shortDate(due)}"
         days == 1L -> "Due tomorrow"
+        days > 14 -> "Due " + dayMonthYear(due)
         else -> "Due in $days days"
     }
 }

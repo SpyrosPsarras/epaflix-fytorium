@@ -40,13 +40,17 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
     private fun updatedTime() = lastUpdated?.let {
         DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(it))
     }
-    fun offlineBanner(): String = updatedTime()?.let { "Offline, last updated $it" } ?: "Offline, not updated yet"
-    fun serverBanner(): String = "Fytorium isn't responding. " + (updatedTime()?.let { "Showing data from $it" } ?: "Not updated yet")
     private fun updatedDay() = lastUpdated?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }
         ?.takeIf { it != LocalDate.now() }?.let { shortDate(it.toString()) + " " }.orEmpty()
-    fun todayBanner(): String? {
-        val shown = updatedTime()?.let { "Showing tasks from ${updatedDay()}$it. " }.orEmpty()
-        return if (offline) "Offline. ${shown}Changes need a connection." else if (serverUnavailable) "Fytorium isn't responding. ${shown}Pull down to try again." else null
+    fun connectionLine(online: Boolean = true): String? = when {
+        offline || !online -> "Offline" + (updatedTime()?.let { " \u00b7 updated ${updatedDay()}$it" } ?: "")
+        serverUnavailable -> "Fytorium isn't responding"
+        else -> null
+    }
+    // The line under the title already names the time, so the explanation says what the state means and what still works.
+    fun todayConnectionNotice(): String? {
+        val kept = if (lastUpdated == null) "Tasks have not loaded yet." else "You can still see the tasks from the last update."
+        return if (offline) "This phone can't reach Fytorium. $kept Changes need a connection." else if (serverUnavailable) "Fytorium didn't answer. $kept Pull down to try again." else null
     }
     fun needs(action: String, update: String, retry: String = "", verb: String = "needs", online: Boolean = true) = when {
         !online || offline -> "$action $verb a connection."
@@ -76,17 +80,23 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     private val plantMutable = MutableStateFlow(PlantsRequestState(online = connected()))
     val plantState = plantMutable.asStateFlow()
     fun clearPlantErrors() = synchronized(monitor) { plantMutable.value = plantMutable.value.copy(errors = emptyMap()) }
-    private fun plantFailed(error: Exception, epoch: Int, writing: Boolean = false) = synchronized(monitor) {
+    fun clearRead(read: String) = synchronized(monitor) { plantMutable.value = plantMutable.value.let { it.copy(reads = it.reads - read) } }
+    // A read's failure stays with what it reads and shows only in the line of the pages that show it; only a save's own failure goes into its form.
+    private fun plantFailed(error: Exception, epoch: Int, read: String? = null) = synchronized(monitor) {
         if (epoch != generation) return@synchronized
         val failure = classifyNetworkFailure(connected(), (error as? ApiFailure)?.status)
-        plantMutable.value = plantMutable.value.copy(online = !failure.offline,
-            blocked = error is ApiFailure && (error.status in listOf(401, 426) || (writing && error.status == 403)),
-            errors = (error as? ApiFailure)?.errors?.takeIf { it.isNotEmpty() }
-                ?: mapOf("_form" to if (writing && error is ApiFailure && error.status == 403)
-                    "Your permissions no longer allow this change. Refresh your account before editing."
-                    else (error.message ?: "Could not reach Fytorium. Try again.")))
-        if (error is ApiFailure && error.status == 426) mutable.value = mutable.value.copy(updateRequired = true)
+        val message = (error as? ApiFailure)?.message ?: "Could not reach Fytorium. Try again."
+        val shown = plantMutable.value
+        val refused = error is ApiFailure && error.status < 500
+        val blocked = error is ApiFailure && (error.status in listOf(401, 426) || (read == null && error.status == 403))
+        plantMutable.value = if (read != null) shown.copy(online = !failure.offline, blocked = shown.blocked || blocked, reads = shown.reads + (read to ReadFailure(message, refused, failure.offline)))
+            else shown.copy(online = !failure.offline, serverUnavailable = failure.serverUnavailable, blocked = blocked, refused = refused,
+                errors = (error as? ApiFailure)?.errors?.takeIf { it.isNotEmpty() }
+                    ?: mapOf("_form" to if (error is ApiFailure && error.status == 403) "Your permissions no longer allow this change. Refresh your account before editing." else message))
+        if (error is ApiFailure && error.status == 426) requireUpdate()
     }
+    private fun plantLoaded(read: String) { plantMutable.value = plantMutable.value.let { it.copy(blocked = false, serverUnavailable = false, refused = false, reads = it.reads - read) } }
+    fun requireUpdate() = synchronized(monitor) { mutable.value = mutable.value.copy(updateRequired = true) }
     private fun read(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
         api.request(path, method = method, body = body, query = query).use {
             val text = it.body?.string().orEmpty()
@@ -209,10 +219,10 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             val json = snapshot.toString()
             synchronized(monitor) { if (epoch == generation) {
                 cache.save(member.id, mapOf(resource to json), clock())
-                plantMutable.value = plantMutable.value.copy(blocked = false, errors = emptyMap())
+                plantLoaded(resource)
                 fresh = true
             } }
-        } catch (error: Exception) { plantFailed(error, epoch) }
+        } catch (error: Exception) { plantFailed(error, epoch, resource) }
         finally { synchronized(monitor) { if (epoch == generation) plantMutable.value = plantMutable.value.copy(refreshing = false) } }
         synchronized(monitor) {
             if (epoch != generation) return null
@@ -264,7 +274,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 patchEvents(listOf(saved), next?.let { mapOf(task.key to it) } ?: emptyMap(), linked)
                 requestIds.remove(request)
                 val text = if (action == "complete") doneText(task.taskType, task.customTaskName, task.plantName, watered = watered)
-                    else (if (action == "snooze") "Snoozed " else "Skipped ") + task.plantName + next?.nullable("dueOn")?.let { " until " + shortDate(it) }.orEmpty()
+                    else postponedText(saved.getString("kind"), task.taskType, task.customTaskName, task.plantName, next?.nullable("dueOn"))
                 mutable.value = mutable.value.copy(receipt = Receipt(text, parseEvent(saved)),
                     createdHere = mutable.value.createdHere + saved.getString("id") + linked.map { it.getString("id") })
             }.also { success -> if (success) { reloadOpenPlant { it.plant.id == task.plantId }; if (!listed) refreshSchedules(epoch) } }
@@ -442,9 +452,14 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
         try {
             val result = read(path, method, body)
-            synchronized(monitor) { if (epoch != generation) return false; applied(result) }
+            synchronized(monitor) {
+                if (epoch != generation) return false
+                applied(result)
+                // Not every plant write reloads the plant, so its own answer ends a not-responding state.
+                if (plantsScreen) plantMutable.value = plantMutable.value.copy(serverUnavailable = false)
+            }
         } catch (error: Exception) {
-            if (plantsScreen) plantFailed(error, epoch, writing = true) else failed(error, epoch)
+            if (plantsScreen) plantFailed(error, epoch) else failed(error, epoch)
             if (receipts) synchronized(monitor) { if (epoch == generation) {
                 mutable.value = mutable.value.copy(message = null, receipt = Receipt((error as? ApiFailure)?.message ?: "Could not reach Fytorium. Try again."))
                 if (plantsScreen) plantMutable.value = plantMutable.value.copy(errors = plantMutable.value.errors - "_form")
@@ -461,16 +476,16 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
         true
     }
-    private fun <T> plantRead(path: String, query: Map<String, String> = emptyMap(), parse: (String) -> T): T? = synchronized(workLock) {
+    private fun <T> plantRead(path: String, resource: String, query: Map<String, String> = emptyMap(), parse: (String) -> T): T? = synchronized(workLock) {
         val epoch = synchronized(monitor) { generation }
         if (state.value.member == null || state.value.member?.role == Role.sitter) return null
         try {
             if (!connected()) throw OfflineFailure()
             val result = parse(read(path, query = query))
             synchronized(monitor) {
-                if (epoch != generation) null else { plantMutable.value = plantMutable.value.copy(blocked = false, errors = emptyMap()); result }
+                if (epoch != generation) null else { plantLoaded(resource); result }
             }
-        } catch (error: Exception) { plantFailed(error, epoch); null }
+        } catch (error: Exception) { plantFailed(error, epoch, resource); null }
     }
     fun refreshPlants() = synchronized(workLock) {
         val member = state.value.member ?: return@synchronized
@@ -482,29 +497,29 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             synchronized(monitor) { if (epoch == generation) {
                 cache.save(member.id, mapOf("plants" to json), clock())
                 mutable.value = mutable.value.copy(plants = plants)
-                plantMutable.value = plantMutable.value.copy(blocked = false, errors = emptyMap())
+                plantLoaded("plants")
             } }
-        } catch (error: Exception) { plantFailed(error, epoch) }
+        } catch (error: Exception) { plantFailed(error, epoch, "plants") }
         finally { synchronized(monitor) { if (epoch == generation) plantMutable.value = plantMutable.value.copy(refreshing = false) } }
     }
     fun plantOptions(): PlantOptions? = synchronized(workLock) {
         val member = state.value.member ?: return@synchronized null
         val epoch = synchronized(monitor) { generation }
-        val json = plantRead("/api/choices") { text -> parsePlantOptions(text); text }
+        val json = plantRead("/api/choices", "choices") { text -> parsePlantOptions(text); text }
         synchronized(monitor) {
             if (epoch != generation) return@synchronized null
             if (json != null) cache.save(member.id, mapOf("plant-choices" to json), clock())
             cache.get(member.id, "plant-choices")?.let { parsePlantOptions(it.json) }
         }
     }
-    fun plantSites(): List<PlantSite>? = plantRead("/api/sites") { JSONArray(it).mapObjects { site -> PlantSite(site.getString("id"), site.getString("name")) } }
-    fun searchSpecies(query: String): SpeciesSearch? = plantRead("/api/species/search", mapOf("q" to query), ::parseSpeciesSearch)
-    fun species(key: Long): Species? { require(key > 0); return plantRead("/api/species/$key", parse = ::parseSpecies) }
+    fun plantSites(): List<PlantSite>? = plantRead("/api/sites", "sites") { JSONArray(it).mapObjects { site -> PlantSite(site.getString("id"), site.getString("name")) } }
+    fun searchSpecies(query: String): SpeciesSearch? = plantRead("/api/species/search", "search", mapOf("q" to query), ::parseSpeciesSearch)
+    fun species(key: Long): Species? { require(key > 0); return plantRead("/api/species/$key", "species/$key", parse = ::parseSpecies) }
     fun graveyard(): List<Plant> = synchronized(workLock) {
         val member = state.value.member ?: return emptyList()
         if (member.role == Role.sitter) return emptyList()
         val epoch = synchronized(monitor) { generation }
-        val json = plantRead("/api/plants", mapOf("status" to "graveyard")) { text -> JSONArray(text).mapObjects(::parsePlant); text }
+        val json = plantRead("/api/plants", "graveyard", mapOf("status" to "graveyard")) { text -> JSONArray(text).mapObjects(::parsePlant); text }
         synchronized(monitor) {
             if (epoch != generation) return emptyList()
             if (json != null) cache.save(member.id, mapOf("graveyard" to json), clock())
@@ -537,7 +552,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 "graveyard" -> Receipt("Moved $shown to the graveyard", restore = site?.let { Restore(id, it, shown) })
                 "restore" -> Receipt("Restored $shown", short = true)
                 "delete" -> Receipt("Deleted $shown", short = true)
-                "species" -> Receipt("Changed the species of $shown", short = true)
+                "species" -> JSONObject(it).let { saved -> Receipt("Changed $shown to " + (saved.nullable("common_name") ?: saved.getString("canonical_name")), short = true) }
                 "care-settings" -> Receipt("Saved $shown's schedule", short = true)
                 else -> JSONObject(it).optJSONObject("event")?.let(::parseEvent).let { event -> Receipt("Repotted $shown", event, short = event == null) }
             }
@@ -546,11 +561,13 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     }
     fun undoHistory(event: CareEvent): Boolean =
         undo(event, plantsScreen = true, busy = BusyKey.History(event.id)) { it.detail?.history.orEmpty().hasLinkedWater(event) }
-    fun speciesNameCommand(key: Long, action: String, body: JSONObject = JSONObject()): Boolean {
+    fun speciesNameCommand(key: Long, action: String, body: JSONObject = JSONObject(), receipt: String? = null): Boolean {
         if (state.value.member?.role == Role.sitter) return false
         require(key > 0)
         val suffix = when (action) { "add" -> ""; "refresh" -> "/refresh"; else -> "/${requireSafeId(action)}" }
-        return write("/api/species/$key/names$suffix", if (action in listOf("add", "refresh")) "POST" else "DELETE", body, plantsScreen = true) {}
+        return write("/api/species/$key/names$suffix", if (action in listOf("add", "refresh")) "POST" else "DELETE", body, plantsScreen = true) {
+            receipt?.let { mutable.value = mutable.value.copy(receipt = Receipt(it, short = true)) }
+        }
     }
     private fun requireSafeId(id: String): String {
         require(id.matches(Regex("[A-Za-z0-9_-]+")))

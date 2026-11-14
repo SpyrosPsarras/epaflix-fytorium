@@ -82,9 +82,11 @@ class TodayPresentationTest {
     @Test fun aBannerForTasksFromAnEarlierDayNamesTheDay() {
         val updated = java.time.LocalDateTime.of(2030, 6, 2, 8, 12).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         val state = CareState(lastUpdated = updated)
-        assertEquals("Offline. Showing tasks from Sun 2 Jun 08:12. Changes need a connection.", state.copy(offline = true).todayBanner())
-        assertEquals("Fytorium isn't responding. Showing tasks from Sun 2 Jun 08:12. Pull down to try again.", state.copy(serverUnavailable = true).todayBanner())
-        assertNull(state.todayBanner())
+        assertEquals("Offline \u00b7 updated Sun 2 Jun 08:12", state.copy(offline = true).connectionLine())
+        // The explanation under that line leaves the time to the line.
+        assertEquals("This phone can't reach Fytorium. You can still see the tasks from the last update. Changes need a connection.", state.copy(offline = true).todayConnectionNotice())
+        assertEquals("Fytorium didn't answer. You can still see the tasks from the last update. Pull down to try again.", state.copy(serverUnavailable = true).todayConnectionNotice())
+        assertNull(state.todayConnectionNotice())
     }
     @Test fun emptyDayUsesNextServerTaskAndNoPlantsHasItsOwnState() {
         val empty = parseTaskList(taskListFixture("today")).copy(sections = emptyList())

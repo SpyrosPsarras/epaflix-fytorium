@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.selectTab
 import com.epaflix.fytorium.waitForNode
 import com.epaflix.fytorium.waitForState
 import org.json.JSONArray
@@ -37,7 +38,7 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
             json("/api/plants/${it.getString("id")}", "DELETE", JSONObject().put("confirm_name", plantName))
         }
         rows(json("/api/sites")).filter { it.getString("name") in names }.forEach { json("/api/sites/${it.getString("id")}", "DELETE") }
-        compose.onNodeWithText("More").performClick()
+        compose.selectTab("More")
         compose.onNodeWithText("Sites").performClick()
         enabled("Create site")
         compose.onNodeWithText("Create site").performScrollTo().performClick()
@@ -100,7 +101,7 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         assertFalse(rows(json("/api/sites")).any { it.getString("id") == siteId })
         siteId = null
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Today").performClick()
+        compose.selectTab("Today")
         println("A07 E2E PASS: create with all fields, edit conditions, server plant count, delete refused with plant, delete after removal")
     } finally {
         if (plantId != null) json("/api/plants/$plantId", "DELETE", JSONObject().put("confirm_name", plantName))

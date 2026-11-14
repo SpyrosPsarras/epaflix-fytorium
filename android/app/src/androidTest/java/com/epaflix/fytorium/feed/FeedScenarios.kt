@@ -51,7 +51,8 @@ fun runFeedScenarios(app: FytoriumApplication, compose: ComposeContentTestRule) 
         compose.waitForState("Cold weather alert loaded", 45_000) { !app.feed.state.value.refreshing && !app.feed.state.value.saving && app.feed.state.value.cards.any { it.plant == nickname && it.kind == "weather_alerts" } }
         val cold = app.feed.state.value.cards.first { it.plant == nickname && it.kind == "weather_alerts" }
         compose.waitForNode(hasTestTag("feed-${cold.id}")).performScrollTo()
-        compose.onNode(hasText("$nickname: ", substring = true) and hasText(", bring inside", substring = true) and hasAnyAncestor(hasTestTag("feed-${cold.id}"))).assertIsDisplayed()
+        // The card is one tappable node that holds its title.
+        compose.onNode(hasTestTag("feed-${cold.id}") and hasText("$nickname: ", substring = true) and hasText(", bring inside", substring = true)).assertIsDisplayed()
         val rainCard = app.feed.state.value.cards.last { it.rain }
         compose.waitForNode(hasTestTag("feed-${rainCard.id}")).performScrollTo()
         val count = app.feed.state.value.weather!!.rain!!.plantCount

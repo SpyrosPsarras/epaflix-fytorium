@@ -140,7 +140,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             // Until the receipt has faded in, taps go to an invisible copy of the bar, so a tab the user still sees switches.
             if (receipt != null && receiptFadedIn != receipt) tabBar(Modifier.alpha(0f).clearAndSetSemantics {})
             // A tap meant for a receipt that has just gone must not switch tabs.
-            if (barPaused) Box(Modifier.matchParentSize().pointerInput(Unit) {})
+            if (barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
     }) { padding ->
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
@@ -172,7 +172,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 key(careSpecies) {
                     com.epaflix.fytorium.species.SpeciesCareRoute(sitesApi, careSpecies, careState, sitesConnected,
                         onBack = { if (careSpecies != null) careSpecies = null else unmatched = false },
-                        onChanged = { controller?.refresh() }, onSpecies = { careSpecies = it })
+                        onChanged = { controller?.refresh() }, onSpecies = { careSpecies = it }, onUpdateRequired = { controller?.repository?.requireUpdate() })
                 }
             }
             return@Scaffold
@@ -216,7 +216,6 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     onRetry = { controller?.refresh() }, receipts = receipts, onReceiptGone = { receiptsGone++ },
                     feed = feedState, feedContent = { shown ->
                         HomeFeed(shown, careState.today?.today, sites = careState.plants.associate { it.id to it.siteName },
-                            offline = shown.offline || careState.offline, connectionNotice = !careState.offline && !careState.serverUnavailable,
                             onOpen = { href -> if (href.startsWith("/plants/")) { feedPlant = href.removePrefix("/plants/"); tab = "Plants" } else openFeedSettings() },
                             onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.rainWatered(feed.state.value.weather?.lastBatchId) } },
                             onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } })

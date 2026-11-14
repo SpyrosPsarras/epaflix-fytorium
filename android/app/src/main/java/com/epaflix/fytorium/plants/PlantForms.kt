@@ -19,15 +19,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import java.time.LocalDate
 import java.time.Instant
 import java.time.ZoneOffset
 import com.epaflix.fytorium.ApiClient
+import com.epaflix.fytorium.barHeight
 import com.epaflix.fytorium.CareTask
 import com.epaflix.fytorium.ReferencePhoto
 import com.epaflix.fytorium.Plant
@@ -94,11 +103,32 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
 @Composable internal fun PlantColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
 }
-@Composable private fun Expander(label: String, open: Boolean, onToggle: () -> Unit) {
+@Composable internal fun Expander(label: String, open: Boolean, onToggle: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (open) "Hide $label" else "Show $label", onClick = onToggle)
         .semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)
+    }
+}
+// Material floats the label only over text, so the decoration gets the current name while the field's own value stays empty.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun NameField(value: String, onChange: (String) -> Unit, current: String?, enabled: Boolean, errorText: String?, hint: String) {
+    val source = remember { MutableInteractionSource() }
+    val colors = OutlinedTextFieldDefaults.colors()
+    val focused by source.collectIsFocusedAsState()
+    val standIn = current?.takeIf { value.isEmpty() }
+    BasicTextField(value, onChange, Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}
+        .padding(top = with(LocalDensity.current) { (MaterialTheme.typography.bodySmall.lineHeight / 2).toDp() })
+        .semantics { standIn?.let { stateDescription = "Empty, shows $it" }; errorText?.let { error(it) } }
+        .defaultMinSize(OutlinedTextFieldDefaults.MinWidth, OutlinedTextFieldDefaults.MinHeight), enabled = enabled, singleLine = true, interactionSource = source,
+        textStyle = LocalTextStyle.current.copy(color = when { !enabled -> colors.disabledTextColor; errorText != null -> colors.errorTextColor
+            focused -> colors.focusedTextColor; else -> colors.unfocusedTextColor }),
+        cursorBrush = SolidColor(if (errorText != null) colors.errorCursorColor else colors.cursorColor)) { inner ->
+        OutlinedTextFieldDefaults.DecorationBox(value = standIn ?: value, innerTextField = { Box {
+            standIn?.let { Text(it, color = if (enabled) colors.unfocusedPlaceholderColor else colors.disabledPlaceholderColor, modifier = Modifier.clearAndSetSemantics {}) }
+            inner()
+        } }, enabled = enabled, singleLine = true, visualTransformation = VisualTransformation.None, interactionSource = source, isError = errorText != null,
+            label = { Text("Name") }, supportingText = { if (errorText != null) PlantError(errorText) else Text(hint) }, colors = colors)
     }
 }
 private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
@@ -120,10 +150,9 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
     LaunchedEffect(errors) { if (errors.keys.any { it !in leadingFields }) more = true }
     val validNumbers = options.numbers.all { texts[it].isNullOrBlank() || (texts[it]?.toIntOrNull()?.let { n -> n > 0 } == true) }
     PlantColumn {
-        OutlinedTextField(texts["nickname"].orEmpty(), { texts["nickname"] = it }, label = { Text("Name") }, enabled = writable, singleLine = true,
-            placeholder = if (plant != null && original.isNull("nickname")) { { Text(plant.displayName) } } else null,
-            isError = errors.containsKey("nickname"), supportingText = { if (errors["nickname"] != null) PlantError(errors["nickname"]) else Text("Leave blank to use the species name") },
-            modifier = Modifier.fillMaxWidth())
+        val shownName = plant?.displayName?.takeIf { original.isNull("nickname") }
+        NameField(texts["nickname"].orEmpty(), { texts["nickname"] = it }, shownName, writable, errors["nickname"],
+            if (shownName != null) "Leave empty to keep using the species name" else "Leave empty to use the species name")
         Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable) { choices["site_id"] = it }
         PlantError(errors["site_id"])
         PlantError(errors["gbif_key"])
@@ -149,6 +178,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
                 PlantError(errors[key])
             }
         }
+        PlantError(errors["_form"])
         Button(onClick = {
             val body = JSONObject()
             choices.forEach { (key, value) -> body.put(key, value.ifBlank { null } ?: JSONObject.NULL) }
@@ -196,10 +226,15 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 // The plant's own intervals. Each task says how often it is due now and where that comes from, so a blank field means something.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantCareSettings(json: String, writable: Boolean, onSave: (JSONObject) -> Unit, tasks: Map<String, CareTask> = emptyMap(),
-    plantName: String = "", onSpeciesCare: (() -> Unit)? = null, onBack: (() -> Unit)? = null, notice: @Composable () -> Unit = {}) {
+    plantName: String = "", onSpeciesCare: (() -> Unit)? = null, onBack: (() -> Unit)? = null,
+    barTitle: @Composable (@Composable () -> Unit) -> Unit = { it() }, error: String? = null, onDirty: (Boolean) -> Unit = {}) {
     val custom = remember(json) { JSONObject(json).getJSONObject("customIntervals") }
     val types = taskNames.keys.toList()
-    val intervals = remember(json) { mutableStateMapOf<String, String>().apply { types.forEach { put(it, if (custom.isNull(it)) "" else custom.optString(it)) } } }
+    val stored = remember(json) { types.associateWith { if (custom.isNull(it)) "" else custom.optString(it) } }
+    val intervals = remember(json) { stored.toList().toMutableStateMap() }
+    val dirty = intervals.toMap() != stored
+    val currentDirty by rememberUpdatedState(onDirty)
+    LaunchedEffect(dirty) { currentDirty(dirty) }
     val valid = intervals.values.all { it.isBlank() || it.toIntOrNull() in 1..365 }
     fun current(type: String): String? {
         val task = tasks[type] ?: return null
@@ -213,7 +248,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
         return "Every ${countLabel(days, "day")}, $source"
     }
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Heading("This plant's schedule") }, navigationIcon = {
+        TopAppBar(title = { barTitle { Heading("This plant's schedule") } }, expandedHeight = barHeight(), navigationIcon = {
             onBack?.let { IconButton(onClick = it) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } }
         }, actions = {
             TextButton(onClick = {
@@ -221,8 +256,8 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
                 onSave(JSONObject().put("customIntervals", saved))
             }, enabled = writable && valid, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save") }
         })
-        notice()
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            PlantError(error)
             Text("Changes here apply only to ${plantName.ifBlank { "this plant" }}. Care defaults for this species change every plant of its species.")
             onSpeciesCare?.let { TextButton(onClick = it, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp)) { Text("Care defaults for this species") } }
             types.forEach { key ->
@@ -243,32 +278,78 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
     }
 }
 private val nameSources = mapOf("owner" to "Added by your household", "wikidata" to "Wikidata", "gbif" to "GBIF", "nortaxa" to "NorTaxa")
-@Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject) -> Unit) {
+@Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject) -> Unit,
+    list: LazyListState = rememberLazyListState(), error: String? = null) {
     // The draft clears only when the species reloads after a successful add, so a failed add keeps the text.
     var name by remember(species) { mutableStateOf("") }
     var language by remember { mutableStateOf("en") }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Heading(species.scientificName, style = MaterialTheme.typography.headlineSmall); Text("GBIF key: " + species.key) }
-        options.languages.forEach { (code, label) ->
-            item { Heading(label) }
-            val names = species.names.filter { it.language == code }
-            if (names.isEmpty()) item { Text("No names stored yet.") }
-            items(names, key = { it.id }) { entry ->
-                Text(entry.name + " \u00b7 " + (nameSources[entry.source] ?: entry.source))
-                if (entry.source == "owner") TextButton(onClick = { onCommand(entry.id, JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove " + entry.name) }
+    var others by rememberSaveable(species.key) { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<SpeciesName?>(null) }
+    val shown = species.commonName
+    val household = species.names.filter { it.source == "owner" }
+    val sourced = species.names.filter { it.source != "owner" && it.language in options.languages }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    LazyColumn(Modifier.fillMaxSize(), list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item("title") {
+            Column {
+                Heading(shown ?: species.canonicalName, style = MaterialTheme.typography.headlineSmall)
+                if (shown != null) Text(species.canonicalName, color = muted)
             }
         }
-        item {
-            Heading("Common name for this species")
-            Text("Plants of this species without a name of their own show this name. To rename one plant, edit its name instead.")
-            OutlinedTextField(name, { name = it }, label = { Text("Common name") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Choice("Language", language, options.languages, writable) { language = it }
-            Button(onClick = { onCommand("add", JSONObject().put("name", name.trim()).put("language", language)) }, enabled = writable && name.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add name") }
-            Text("Names added here survive name refreshes.")
-            OutlinedButton(onClick = { onCommand("refresh", JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh names") }
-            if (species.fetching) Text("Fetching names in the background. Failed sources retry with backoff, up to eight attempts.")
-            if (species.failed) Text("A name source stopped after eight failures. Refresh names to try again. Stored names remain available.")
-            Text("Species and names from GBIF, CC BY 4.0. Wikidata names are CC0.")
+        item("in-use") {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(if (shown != null) "Plants of this species without a name of their own show \u201c$shown\u201d."
+                    else "Plants of this species without a name of their own show its scientific name, ${species.canonicalName}.")
+                Text(when {
+                    shown == null -> "No source has a common name for it yet."
+                    household.any { sameName(it.name, shown) } -> "Your household added this name."
+                    else -> "Fytorium chose it from the names sources give."
+                }, color = muted)
+            }
         }
+        item("household") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Heading("Your household's name")
+                Text("A name added here shows on every plant of this species without a name of its own, and wins over names from sources. To rename one plant, edit its name instead.")
+                OutlinedTextField(name, { name = it }, label = { Text("Common name") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Choice("Language", language, options.languages, writable) { language = it }
+                Button(onClick = { onCommand("add", JSONObject().put("name", name.trim()).put("language", language)) }, enabled = writable && name.trim().length in 1..200,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Add name") }
+                PlantError(error)
+            }
+        }
+        items(household, key = { it.id }) { entry ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(entry.name + " \u00b7 " + (options.languages[entry.language] ?: entry.language), Modifier.weight(1f))
+                TextButton(onClick = { removing = entry }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove " + entry.name) }
+            }
+        }
+        item("others") { Expander("Other names from sources (${sourced.size})", others) { others = !others } }
+        if (others) options.languages.forEach { (code, label) ->
+            val names = sourced.filter { it.language == code }
+            if (names.isNotEmpty()) {
+                item("language:$code") { Heading(label, MaterialTheme.typography.titleSmall) }
+                items(names, key = { it.id }) { entry -> Text(entry.name + " \u00b7 " + (nameSources[entry.source] ?: entry.source)) }
+            }
+        }
+        item("refresh") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = { onCommand("refresh", JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh names") }
+                if (species.fetching) Text("Fetching names in the background. Failed sources retry with backoff, up to eight attempts.")
+                if (species.failed) Text("A name source stopped after eight failures. Refresh names to try again. Stored names remain available.")
+                Text("Species and names from GBIF, CC BY 4.0. Wikidata names are CC0.", style = MaterialTheme.typography.bodySmall, color = muted)
+            }
+        }
+    }
+    removing?.let { entry ->
+        val renames = entry.renamedPlants
+        AlertDialog(onDismissRequest = { removing = null }, title = { Text("Remove \u201c${entry.name}\u201d?") },
+            text = { Text(when (renames) {
+                0 -> "No plant shows this name now, so removing it renames none."
+                1 -> "1 plant without a name of its own shows it now and will show another name for this species."
+                else -> "$renames plants without a name of their own show it now and will show another name for this species."
+            }) },
+            confirmButton = { TextButton(onClick = { removing = null; onCommand(entry.id, JSONObject()) }, enabled = writable) { Text("Remove name") } },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })
     }
 }

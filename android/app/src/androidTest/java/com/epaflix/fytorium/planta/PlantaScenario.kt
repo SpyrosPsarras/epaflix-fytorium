@@ -5,6 +5,8 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.selectTab
+import com.epaflix.fytorium.waitForSpeciesNames
 import com.epaflix.fytorium.waitForNode
 import com.epaflix.fytorium.waitForState
 import org.json.JSONArray
@@ -33,7 +35,8 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
     fun action(label: String) = compose.waitForNode(hasText(label) and isEnabled()).performScrollTo()
     try {
         cleanup()
-        compose.onNodeWithText("More").performClick()
+        val existed = compose.waitForSpeciesNames(app, 910002)
+        compose.selectTab("More")
         compose.waitForNode(hasText("Import from Planta") and hasClickAction()).performScrollTo().performClick()
         action("One-time app code").performTextInput("synthetic-browser-import")
         action("Fetch Planta plants").performClick()
@@ -47,11 +50,12 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         assertFalse(fuzzy.getBoolean("can_commit"))
         assertEquals("pending", fuzzy.getString("cover_status"))
         assertTrue(rows(fuzzy.getJSONArray("candidates").toString()).any { it.getLong("gbif_key") == 910002L && it.getBoolean("requires_confirmation") })
+        val nebulosa = "This is " + if (existed) "Synthetic cloudleaf" else "Testoria nebulosa"
         compose.onNodeWithText("Import confirmed plants").performScrollTo().assertIsNotEnabled()
         // Actual Activity restoration re-fetches server staging without another code exchange.
         compose.activityRule.scenario.recreate()
         compose.waitForState("A11 review resumed after recreation", 30_000) {
-            compose.onAllNodes(hasContentDescription("This is Testoria nebulosa") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(hasContentDescription(nebulosa) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
         val unmatched = staged.single { it.getJSONObject("mapped").getString("nickname") == "Test import unmatched" }
@@ -64,7 +68,7 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         compose.onNode(hasText("Search for another species") and hasAnyAncestor(hasTestTag("import:${fuzzy.getString("id")}"))).performScrollTo().assertIsEnabled()
         compose.onAllNodesWithText("This is my plant").onFirst().performScrollTo().assertIsDisplayed()
         assertEquals(staged.map { it.getString("id") }, rows(json("/api/import/planta")).map { it.getString("id") })
-        compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().performClick()
+        compose.onNodeWithContentDescription(nebulosa).performScrollTo().performClick()
         compose.waitForState("A11 fuzzy species confirmed", 30_000) {
             compose.onAllNodesWithTag("import-ready:${fuzzy.getString("id")}").fetchSemanticsNodes().isNotEmpty()
         }

@@ -57,6 +57,13 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         app.feed.refresh(app.repository.state.value.member)
         compose.waitForState("A15 refreshed from the local stack", 30_000) { !app.repository.state.value.busy && !app.repository.state.value.serverUnavailable }
     }
+    // Exactly to the top: a scroll past it would hand its remainder to pull-to-refresh, whose indicator has no release to hide it.
+    fun scrollListToTop() {
+        val list = compose.onNodeWithTag("task-list")
+        val offset = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        list.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, -offset) }
+        assertEquals(0f, list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value(), 0f)
+    }
     val output = File(app.getExternalFilesDir(null), "a15-emulator").apply { mkdirs() }
     fun capture(name: String, dark: Boolean) {
         device.executeShellCommand("cmd uimode night ${if (dark) "yes" else "no"}")
@@ -79,10 +86,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
                 .filter { it.boundsInRoot.overlaps(viewport) }.map { it.config.getOrNull(SemanticsProperties.ContentDescription) }
             assertTrue("No control outside the list may sit over its rows: $covering", covering.isEmpty())
         } else {
-            val list = compose.onNodeWithTag("task-list")
-            val offset = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-            list.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollBy) { it(0f, -offset) }
-            assertEquals(0f, list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value(), 0f)
+            scrollListToTop()
             compose.onNode(hasText(if (name == "upcoming") "Upcoming" else "Today") and !hasClickAction()).assertIsDisplayed()
         }
         val progress = SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
@@ -149,7 +153,7 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         }
         clock("2030-06-26T18:00:00Z")
         refresh()
-        compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
+        compose.selectTab("Today")
         compose.onNodeWithTag("view-today").performClick()
         val first = app.repository.state.value.today!!.sections.flatMap { it.tasks }.first { it.plantId in ids && it.taskType == "water" }
         assertEquals(25, first.lateDays); assertNotNull(first.coverPhotoId)
@@ -162,7 +166,8 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             val position = compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
             compose.onNode(row and hasContentDescription("Open ${task.plantName}")).performClick()
             val block = "task:${task.plantId}:${task.key}"
-            compose.waitForNode(hasTestTag(block) and !hasAnyAncestor(hasTestTag("task-list"))).assertIsDisplayed()
+            // The plant page leads with its cover photo, so a later Care row starts below the fold.
+            compose.waitForNode(hasTestTag(block) and !hasAnyAncestor(hasTestTag("task-list"))).performScrollTo().assertIsDisplayed()
             compose.onNode(hasText("Plants") and hasClickAction()).assertIsSelected()
             compose.onNode(hasText(task.label) and hasAnyAncestor(hasTestTag(block))).assertIsDisplayed()
             return position
@@ -191,11 +196,12 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val skipped = rows("/api/plants/${tapped.plantId}/history").filter { it.optString("task_type") == "water" && it.optString("kind") == "skipped" }
         assertTrue(skipped.any { !it.isNull("undone_at") })
         backToTasks("today", todayPosition)
-        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        compose.selectTab("Plants")
         compose.onNodeWithText("Search plants").assertIsDisplayed()
         compose.onNodeWithContentDescription("More actions for ${tapped.label} on ${tapped.plantName}").assertDoesNotExist()
-        compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
-        compose.onNodeWithTag("view-upcoming").performScrollTo().performClick()
+        compose.selectTab("Today")
+        scrollListToTop()
+        compose.onNodeWithTag("view-upcoming").performClick()
         compose.waitForNode(hasTestTag("view-upcoming") and isSelected()).assertIsDisplayed()
         capture("upcoming", false); capture("upcoming", true)
         val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.last { it.plantId in ids && it.dueOn!! > "2030-06-26" }
@@ -203,8 +209,11 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.onNode(hasContentDescription("by 2 days", substring = true) and hasAnyAncestor(hasTestTag("task:${future.plantId}:${future.key}"))).assertDoesNotExist()
         backToTasks("upcoming", upcomingPosition)
         for (id in ids) json("/api/plants/$id/tasks/complete-all", "POST", JSONObject().put("request_id", UUID.randomUUID().toString()))
+        // Your own completions stay listed as done rows for the rest of their day, so the empty day is the next one.
+        clock("2030-06-27T18:00:00Z")
         refresh()
-        compose.onNodeWithTag("view-today").performScrollTo().performClick().assertIsSelected()
+        scrollListToTop()
+        compose.onNodeWithTag("view-today").performClick().assertIsSelected()
         assertTrue(app.repository.state.value.today!!.sections.all { it.tasks.isEmpty() })
         compose.waitForNode(hasText("Nothing to do today")).assertIsDisplayed()
         compose.onNode(hasText("Next:", substring = true)).assertIsDisplayed()

@@ -7,7 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.*
@@ -203,13 +203,14 @@ class FeedScreenTest {
         compose.onNodeWithText("Ask the owner to set the household location for frost alerts").performScrollTo().performClick()
         compose.runOnIdle { assertEquals("/settings#weather-location-title", opened) }
     }
-    @Test fun offlineTheStripKeepsItsCardsAndSaysWeatherAndTipsNeedAConnection() {
+    @Test fun offlineTheStripKeepsItsCardsAndLeavesWeatherAndTipsToTodaysLine() {
         val current = mutableStateOf(state().copy(offline = true))
-        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01", connectionNotice = false) } }
-        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
+        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01") } }
+        assertEquals("Weather and tips need a connection", current.value.connectionText(offline = true, connectionNotice = false))
+        compose.onNode(hasText("Weather and tips", substring = true)).assertDoesNotExist()
         compose.onNodeWithTag("feed-cold").assertExists()
         compose.runOnIdle { current.value = FeedState(member = Member("synthetic-member", Role.owner), offline = true) }
-        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
+        compose.onNode(hasText("Weather and tips", substring = true)).assertDoesNotExist()
         compose.onAllNodes(hasAnyAncestor(hasTestTag("feed-strip"))).assertCountEquals(0)
     }
     @Test fun theRainCardComesFirstWithItsCountedReceipt() {
@@ -250,17 +251,14 @@ class FeedScreenTest {
     }
     @Test fun theFeedLeavesConnectionNoticesToTodaysBanner() {
         val current = mutableStateOf(state().copy(offline = true))
-        val notice = mutableStateOf(false)
-        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01", connectionNotice = notice.value) } }
+        compose.setContent { Screen(false) { HomeFeed(current.value, today = "2030-06-01") } }
+        compose.onNodeWithTag("feed-cold").assertExists()
         compose.onNode(hasText("offline", substring = true, ignoreCase = true)).assertDoesNotExist()
         compose.runOnIdle { current.value = state().copy(unavailable = true) }
         compose.onNode(hasText("isn't responding", substring = true)).assertDoesNotExist()
-        compose.runOnIdle { notice.value = true }
-        compose.onNodeWithText("Fytorium isn't responding. Showing last loaded cards. Refresh to try again.").assertIsDisplayed()
-        compose.runOnIdle { current.value = state().copy(offline = true) }
-        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
-        compose.runOnIdle { notice.value = false; current.value = state().copy(message = "Synthetic feed failure") }
-        compose.onNodeWithText("Synthetic feed failure").assertIsDisplayed()
+        compose.runOnIdle { current.value = state().copy(message = "Synthetic feed failure") }
+        compose.onNodeWithTag("feed-cold").assertExists()
+        compose.onNodeWithText("Synthetic feed failure").assertDoesNotExist()
     }
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
@@ -300,6 +298,7 @@ class FeedScreenTest {
         capture("feed-rain-watered")
         compose.runOnIdle { current.value = current.value.copy(offline = true) }
         compose.onNodeWithContentDescription("Undo rain watering").assertIsNotEnabled()
+        compose.onNode(hasText("offline", substring = true, ignoreCase = true)).assertDoesNotExist()
         capture("feed-offline")
         compose.runOnIdle { current.value = state().let { it.copy(weather = it.weather!!.copy(lastBatchId = "batch-old", lastBatchPlantCount = 2)) } }
         compose.onNodeWithText("Watered 2 outdoor plants").assertIsDisplayed()
@@ -333,7 +332,7 @@ class FeedScreenTest {
         compose.onNodeWithTag("feed-warnings-too_dark").assertDoesNotExist()
         capture("feed-sitter")
         compose.runOnIdle { current.value = FeedState(member = Member("synthetic-member", Role.owner), offline = true) }
-        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
+        compose.onNode(hasText("offline", substring = true, ignoreCase = true)).assertDoesNotExist()
         capture("feed-unavailable-offline")
     }
 }
