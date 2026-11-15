@@ -513,6 +513,8 @@ class PlantPageTest {
         compose.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = card, loaded = true), onOverride = { field, value -> values += field to value; true }) } }
         compose.onNodeWithText("Care defaults for this species").assertIsDisplayed()
         reveal(hasText("every plant of Testoria nebulosa", substring = true)).assertIsDisplayed()
+        // Fields without a value fold under No value yet, each still open to a value of your own.
+        reveal(hasText("No value yet (13)")).performClick()
         reveal(hasText("Override temperature range in °C")).performClick()
         compose.onAllNodes(hasText("JSON", substring = true)).assertCountEquals(0)
         compose.onNode(hasText("Minimum") and hasSetTextAction()).performTextReplacement("15")
@@ -1123,8 +1125,9 @@ class PlantPageTest {
     private fun midList(repo: Repository, showing: State<Boolean>, paths: List<String>, fontScale: Float = 1f, page: Boolean = true): () -> List<androidx.compose.ui.geometry.Rect> {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
             if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id.takeIf { page }) } } }
+        // The grid's resume reload reads the sites after a hop to the main thread, when no read is running, so the wait counts both sites reads.
         compose.waitUntil(5_000) { Running.count.get() == 0 && synchronized(paths) { "/api/sites" in paths &&
-            if (page) paths.count { it == "/api/plants/plant-one/photos" } == 2 else "/api/plants" in paths && repo.state.value.plants.size == 10 } }
+            if (page) paths.count { it == "/api/plants/plant-one/photos" } == 2 else paths.count { it == "/api/sites" } == 2 && repo.state.value.plants.size == 10 } }
         val list = compose.onAllNodes(hasScrollAction()).onFirst()
         list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 300f) }
         return { compose.onAllNodes(hasAnyAncestor(hasScrollAction()) and hasClickAction()).fetchSemanticsNodes().map { it.boundsInRoot }.filter { !it.isEmpty } +
@@ -1381,6 +1384,8 @@ class PlantPageTest {
             searchChangeSpecies()
             compose.waitUntil(5_000) { compose.onAllNodes(notResponding).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Back").performClick()
+            // Leaving with the typed query asks first (C19).
+            compose.onNodeWithText("Discard").performClick()
             compose.onNodeWithContentDescription("Plant settings").performClick()
             compose.onNodeWithText("Change species").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic fern is currently", substring = true).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
@@ -1463,27 +1468,48 @@ class PlantPageTest {
         }
     }
 
-    // W1, C1b: the first 426 arriving through Species care, from the plant page or from More, stops the whole app with the full-screen Update Fytorium.
-    @Test fun aSpeciesCare426FromThePlantPageStopsTheApp() = speciesCareUpdateStop(fromMore = false)
-    @Test fun aSpeciesCare426FromMoreStopsTheApp() = speciesCareUpdateStop(fromMore = true)
-    private fun speciesCareUpdateStop(fromMore: Boolean) = withPlantServer({ if (it.startsWith("/api/species/")) """{"error":"update_required","minAppVersion":"9.9.9"}""" else null },
-        status = { if (it.startsWith("/api/species/")) 426 else 200 }) { repo, showing ->
+    // W1, C1b: the first 426 arriving through Species care, Sites or a photo request, from a plant page, a plant form or More, stops the whole app with the full-screen Update Fytorium.
+    @Test fun aSpeciesCare426FromThePlantPageStopsTheApp() = updateStop({ it.startsWith("/api/species/") }) {
+        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        reveal(hasText("Details")).performClick()
+        reveal(hasText("Care defaults for this species")).performClick()
+    }
+    @Test fun aSpeciesCare426FromMoreStopsTheApp() = updateStop({ it.startsWith("/api/species/") }) {
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Unmatched species").performClick()
+    }
+    @Test fun aSites426FromMoreStopsTheApp() = updateStop({ it == "/api/sites" }) {
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Sites").performClick()
+    }
+    // Restore reads the sites through the plant repository too, so only Create a site's own save gets the 426.
+    @Test fun aSiteSave426FromRestoreStopsTheApp() = updateStop({ it == "/api/sites" }, post = true, served = ::restoreServed) {
+        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        openCreateASite()
+        compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic porch")
+        compose.onNodeWithText("Save site").performScrollTo().performClick()
+    }
+    @Test fun aJournal426StopsTheApp() = updateStop({ it == "/api/journal" }) {
+        compose.onNode(hasText("Journal") and hasClickAction()).performClick()
+    }
+    @Test fun anIdentify426FromAddPlantStopsTheApp() = updateStop({ it == "/api/identification" }) {
+        compose.onNodeWithContentDescription("Add plant").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify from photos") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Identify from photos").performClick()
+    }
+    private fun updateStop(refused: (String) -> Boolean, post: Boolean = false, served: (String) -> String? = { null }, open: () -> Unit) = withPlantServer(served,
+        respond = { request -> MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}""")
+            .takeIf { refused(request.requestUrl!!.encodedPath) && (request.method == "POST") == post } }) { repo, showing ->
         val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
         try {
             compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
                 AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
-            // The controller's first refresh ends before any species request, so its success cannot lift a later stop.
+            // The controller's first refresh ends before any of these requests, so its success cannot lift a later stop.
             compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
-            if (fromMore) {
-                compose.onNodeWithText("More").performClick()
-                compose.onNodeWithText("Unmatched species").performClick()
-            } else {
-                compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-                compose.onNodeWithTag("plant:plant-one").performClick()
-                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-                reveal(hasText("Details")).performClick()
-                reveal(hasText("Care defaults for this species")).performClick()
-            }
+            open()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("This server needs a newer app. Install the latest Fytorium release.").fetchSemanticsNodes().isNotEmpty() }
             compose.runOnIdle { assertTrue(repo.state.value.updateRequired) }
             compose.onNodeWithText("Care defaults for this species").assertDoesNotExist()
@@ -1685,6 +1711,169 @@ class PlantPageTest {
         assertEquals("Undid skip of cleaning leaves for Spider Plant", undoneText(skip, "Spider Plant", false))
     }
 
+    // C18: skipping moves a task to today plus its interval, so Skip is not offered where that is the date the task already has.
+    @Test fun skipIsOfferedOnlyWhereItWouldMoveTheDueDate() {
+        val same = JSONObject(scheduleFixture).apply { getJSONObject("fertilize").put("dueOn", "2030-06-11") }
+        val state = owner.copy(today = today, detail = PlantDetail(plant, emptyList(), parseSchedule(same)))
+        compose.setContent { FytoriumTheme { PlantDetailScreen(state, state.detail!!, {}, { _, _ -> }, {}, {}) } }
+        reveal(hasTestTag("task:plant-one:fertilize")).assertExists()
+        compose.onAllNodes(hasContentDescription("More actions for Fertilize on Synthetic fern")).assertCountEquals(0)
+        assertEquals(listOf("complete"), state.detail!!.scheduled("fertilize")!!.actions("2030-06-02", Member("member-one", Role.owner)))
+        reveal(hasContentDescription("More actions for Water on Synthetic fern")).performClick()
+        compose.onNode(hasContentDescription("Skip Water for Synthetic fern")).assertIsEnabled()
+    }
+
+    // C18: undoing this device's skip brings its row back, also when the skip had kept the date the task already had.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun undoingASkipThatKeptTheDueDateBringsTheRowBack() {
+        val skip = JSONObject(eventFixture).put("id", "event-skip").put("task_type", "fertilize").put("kind", "skipped").put("due_on", "2030-06-11")
+            .put("postponed_until", "2030-06-11").put("occurred_at", "2030-06-02T10:00:00.000Z")
+        val undone = AtomicBoolean(false)
+        fun schedule() = JSONObject(scheduleFixture).apply { getJSONObject("fertilize").put("dueOn", "2030-06-11").put("postponed", if (undone.get()) JSONObject.NULL else "skipped") }
+        // The server names the unpostponed occurrence at the same date as the one this Undo brought back.
+        val restored = """[{"event_id":"event-skip","occurrence":{"plant_id":"plant-one","task_type":"fertilize","custom_task_id":null,"due_on":"2030-06-11"}}]"""
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one/tasks" -> schedule().toString()
+            "/api/plants/plant-one/history" -> "[${if (undone.get()) JSONObject(skip.toString()).put("undone_at", "2030-06-02T10:05:00Z").put("can_undo", false) else skip}]"
+            "/api/care-events/event-skip/undo" -> { undone.set(true)
+                """{"event":$skip,"task":${schedule().getJSONObject("fertilize")},"restored":$restored,"today":${taskListFixture("today")},"upcoming":${taskListFixture("upcoming")}}""" }
+            else -> null
+        } }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, onTaskAction = { task, action -> repo.act(task, action) }) } }
+            val undo = hasContentDescription("Undo fertilizing skip for Synthetic fern, Synthetic site")
+            compose.waitUntil(5_000) { compose.onAllNodes(undo and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            reveal(undo).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Mark Fertilize done for Synthetic fern, Synthetic site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(undo).assertDoesNotExist()
+            compose.onAllNodesWithText(ChangedElsewhere).assertCountEquals(0)
+        }
+    }
+
+    // C18: a snooze's Undo brings back its row as this device's own later writes left the task: here a liquid fertilizing watered the snoozed occurrence.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun undoingASnoozeAfterAnOwnLiquidFertilizingShowsTheWateringInItsRow() {
+        fun event(id: String, type: String, kind: String, due: String) = JSONObject(eventFixture).put("id", id).put("task_type", type).put("kind", kind)
+            .put("due_on", due).put("occurred_at", "2030-06-02T10:00:00.000Z")
+        val snooze = event("event-snooze", "water", "snoozed", "2030-06-01").put("postponed_until", "2030-06-04")
+        val fertilized = event("event-fertilize", "fertilize", "completed", "2030-06-07")
+        val watered = event("event-water", "water", "completed", "2030-06-04").put("linked_event_id", "event-fertilize")
+        fun task(type: String, due: String, postponed: String? = null) = JSONObject(scheduleFixture).getJSONObject(type).put("dueOn", due).put("lateDays", 0)
+            .put("postponed", postponed ?: JSONObject.NULL)
+        fun row(type: String, due: String, postponed: String? = null, done: JSONObject? = null) = task(type, due, postponed).put("task_type", type)
+            .put("custom_task_id", JSONObject.NULL).put("plant_id", "plant-one").put("plant_name", "Synthetic fern").put("site_name", "Synthetic site")
+            .apply { if (done != null) put("postponed", JSONObject.NULL).put("completed_event", done).put("postponed_until", done.opt("postponed_until")) }
+        fun list(view: String, vararg sections: Pair<String, List<JSONObject>>) = JSONObject(taskListFixture(view)).put("view", view)
+            .put("sections", JSONArray(sections.map { (key, rows) -> JSONObject().put("key", key).put("label", key).put("tasks", JSONArray(rows))
+                .apply { if (view == "upcoming") put("day", key.substringBefore(":")) } }))
+        val snoozed = row("water", "2030-06-04", done = snooze)
+        val wateredRow = row("water", "2030-06-09", done = watered)
+        val fertilizedRow = row("fertilize", "2030-06-11", done = fertilized)
+        val step = AtomicInteger(0)
+        val lists = listOf(
+            list("today", "water" to listOf(row("water", "2030-06-01"))) to list("upcoming", "2030-06-02:water" to listOf(row("water", "2030-06-01")), "2030-06-07:fertilize" to listOf(row("fertilize", "2030-06-07"))),
+            list("today", "water" to listOf(snoozed)) to list("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-04:water" to listOf(row("water", "2030-06-04", "snoozed")),
+                "2030-06-07:fertilize" to listOf(row("fertilize", "2030-06-07"))),
+            list("today", "water" to listOf(snoozed, wateredRow), "fertilize" to listOf(fertilizedRow)) to list("upcoming", "2030-06-02:water" to listOf(snoozed),
+                "2030-06-04:water" to listOf(wateredRow), "2030-06-07:fertilize" to listOf(fertilizedRow)),
+            list("today", "water" to listOf(wateredRow), "fertilize" to listOf(fertilizedRow)) to list("upcoming", "2030-06-04:water" to listOf(wateredRow),
+                "2030-06-07:fertilize" to listOf(fertilizedRow)))
+        val schedules = listOf(JSONObject(scheduleFixture), JSONObject(scheduleFixture).put("water", task("water", "2030-06-04", "snoozed")),
+            JSONObject(scheduleFixture).put("water", task("water", "2030-06-09")).put("fertilize", task("fertilize", "2030-06-11")))
+        val undoneSnooze = JSONObject(snooze.toString()).put("undone_at", "2030-06-02T10:05:00Z").put("can_undo", false)
+        val histories = listOf("[]", "[$snooze]", "[$watered,$fertilized,$snooze]", "[$watered,$fertilized,$undoneSnooze]")
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one/tasks" -> schedules[minOf(step.get(), 2)].toString()
+            "/api/plants/plant-one/history" -> histories[step.get()]
+            "/api/plants/plant-one/tasks/water/snooze" -> { step.set(1); JSONObject().put("event", snooze).put("linked_events", JSONArray()).put("task", task("water", "2030-06-04", "snoozed")).toString() }
+            "/api/plants/plant-one/tasks/fertilize/complete" -> { step.set(2)
+                JSONObject().put("event", fertilized).put("linked_events", JSONArray().put(watered)).put("task", task("fertilize", "2030-06-11")).toString() }
+            // Nothing is pending after the Undo, because the fertilizing's water completed the occurrence the snooze had postponed.
+            "/api/care-events/event-snooze/undo" -> { step.set(3)
+                JSONObject().put("event", snooze).put("task", task("water", "2030-06-09")).put("today", lists[3].first).put("upcoming", lists[3].second)
+                    .put("restored", JSONArray().put(JSONObject().put("event_id", "event-snooze").put("occurrence", JSONObject.NULL))).toString() }
+            else -> null
+        } }, lists = lists[0].first.toString(), views = { view -> lists[step.get()].let { if (view == "today") it.first else it.second }.toString() }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, onTaskAction = { task, action -> repo.act(task, action) }) } }
+            val undoSnooze = hasContentDescription("Undo watering snooze for Synthetic fern, Synthetic site")
+            val snoozeWater = hasContentDescription("Snooze Water for Synthetic fern, Synthetic site by 2 days")
+            compose.waitUntil(5_000) { compose.onAllNodes(snoozeWater and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            val place = reveal(hasTestTag("task:plant-one:water")).fetchSemanticsNode().boundsInRoot
+            compose.onNode(snoozeWater).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(undoSnooze and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            reveal(hasContentDescription("Mark Fertilize done for Synthetic fern, Synthetic site")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Fertilize and water done for Synthetic fern", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { repo.state.value.pending.isEmpty() }
+            compose.onNode(undoSnooze).assertIsEnabled().performClick()
+            val water = hasContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo")
+            compose.waitUntil(5_000) { compose.onAllNodes(water and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(undoSnooze).assertDoesNotExist()
+            assertEquals(place, compose.onNodeWithTag("task:plant-one:water").fetchSemanticsNode().boundsInRoot)
+        }
+    }
+
+    // C18: after this device completed the occurrence its snooze had postponed, undoing the snooze shows that occurrence done in the row, once.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun undoingASnoozeWhoseOccurrenceThisDeviceCompletedShowsItDoneOnce() {
+        fun event(id: String, kind: String, due: String) = JSONObject(eventFixture).put("id", id).put("task_type", "water").put("kind", kind)
+            .put("due_on", due).put("occurred_at", "2030-06-02T10:00:00.000Z")
+        val snooze = event("event-snooze", "snoozed", "2030-06-01").put("postponed_until", "2030-06-04")
+        val completion = event("event-postponed", "completed", "2030-06-04")
+        fun task(due: String, postponed: String? = null) = JSONObject(scheduleFixture).getJSONObject("water").put("dueOn", due).put("lateDays", 0)
+            .put("postponed", postponed ?: JSONObject.NULL)
+        fun row(due: String, postponed: String? = null, done: JSONObject? = null) = task(due, postponed).put("task_type", "water")
+            .put("custom_task_id", JSONObject.NULL).put("plant_id", "plant-one").put("plant_name", "Synthetic fern").put("site_name", "Synthetic site")
+            .apply { if (done != null) put("postponed", JSONObject.NULL).put("completed_event", done).put("postponed_until", done.opt("postponed_until")) }
+        fun list(view: String, vararg sections: Pair<String, List<JSONObject>>) = JSONObject(taskListFixture(view)).put("view", view)
+            .put("sections", JSONArray(sections.map { (key, rows) -> JSONObject().put("key", key).put("label", key).put("tasks", JSONArray(rows))
+                .apply { if (view == "upcoming") put("day", key.substringBefore(":")) } }))
+        val snoozed = row("2030-06-04", done = snooze)
+        val completed = row("2030-06-11", done = completion)
+        val step = AtomicInteger(0)
+        val lists = listOf(
+            list("today", "water" to listOf(row("2030-06-01"))) to list("upcoming", "2030-06-02:water" to listOf(row("2030-06-01"))),
+            list("today", "water" to listOf(snoozed)) to list("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-04:water" to listOf(row("2030-06-04", "snoozed"))),
+            list("today", "water" to listOf(snoozed, completed)) to list("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-04:water" to listOf(completed),
+                "2030-06-11:water" to listOf(row("2030-06-11"))),
+            list("today", "water" to listOf(completed)) to list("upcoming", "2030-06-04:water" to listOf(completed), "2030-06-11:water" to listOf(row("2030-06-11"))))
+        val schedules = listOf(JSONObject(scheduleFixture), JSONObject(scheduleFixture).put("water", task("2030-06-04", "snoozed")),
+            JSONObject(scheduleFixture).put("water", task("2030-06-11")))
+        val undoneSnooze = JSONObject(snooze.toString()).put("undone_at", "2030-06-02T10:05:00Z").put("can_undo", false)
+        val histories = listOf("[]", "[$snooze]", "[$completion,$snooze]", "[$completion,$undoneSnooze]")
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one/tasks" -> schedules[minOf(step.get(), 2)].toString()
+            "/api/plants/plant-one/history" -> histories[step.get()]
+            "/api/plants/plant-one/tasks/water/snooze" -> { step.set(1); JSONObject().put("event", snooze).put("linked_events", JSONArray()).put("task", task("2030-06-04", "snoozed")).toString() }
+            "/api/plants/plant-one/tasks/water/complete" -> { step.set(2); JSONObject().put("event", completion).put("linked_events", JSONArray()).put("task", task("2030-06-11")).toString() }
+            // Nothing is pending after the Undo, because this device completed the occurrence the snooze had postponed.
+            "/api/care-events/event-snooze/undo" -> { step.set(3)
+                JSONObject().put("event", snooze).put("task", task("2030-06-11")).put("today", lists[3].first).put("upcoming", lists[3].second)
+                    .put("restored", JSONArray().put(JSONObject().put("event_id", "event-snooze").put("occurrence", JSONObject.NULL))).toString() }
+            else -> null
+        } }, lists = lists[0].first.toString(), views = { view -> lists[step.get()].let { if (view == "today") it.first else it.second }.toString() }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, onTaskAction = { task, action -> repo.act(task, action) }) } }
+            val undoSnooze = hasContentDescription("Undo watering snooze for Synthetic fern, Synthetic site")
+            val snoozeWater = hasContentDescription("Snooze Water for Synthetic fern, Synthetic site by 2 days")
+            compose.waitUntil(5_000) { compose.onAllNodes(snoozeWater and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            val place = reveal(hasTestTag("task:plant-one:water")).fetchSemanticsNode().boundsInRoot
+            compose.onNode(snoozeWater).performClick()
+            fun postponed() = repo.state.value.upcoming?.sections.orEmpty().flatMap { it.tasks }.singleOrNull { it.postponed == "snoozed" }
+            compose.waitUntil(5_000) { compose.onAllNodes(undoSnooze and isEnabled()).fetchSemanticsNodes().isNotEmpty() && repo.state.value.pending.isEmpty() && postponed() != null }
+            // This device completes the postponed occurrence from Upcoming.
+            assertTrue(repo.act(postponed()!!, "complete"))
+            compose.waitUntil(5_000) { compose.onAllNodes(undoSnooze and isEnabled()).fetchSemanticsNodes().isNotEmpty() && repo.state.value.pending.isEmpty() }
+            compose.onNode(undoSnooze).performClick()
+            val done = hasContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo")
+            compose.waitUntil(5_000) { compose.onAllNodes(done and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(undoSnooze).assertDoesNotExist()
+            compose.onAllNodesWithTag("task:plant-one:water").assertCountEquals(1)
+            compose.onAllNodes(hasText("Undone") and hasAnyAncestor(hasTestTag("task:plant-one:water"))).assertCountEquals(0)
+            assertEquals(place, compose.onNodeWithTag("task:plant-one:water").fetchSemanticsNode().boundsInRoot)
+        }
+    }
+
     // C7: a Based on entry never repeats its sentence.
     @Test fun basedOnDropsAReasonThatRepeatsTheExplanation() {
         val sentence = "Synthetic pots need a root-space check every two years."
@@ -1768,6 +1957,486 @@ class PlantPageTest {
         }
     }
 
+    // C19: a link inside a form asks first, and Back from the page it opened returns to the form with what was typed.
+    @Test fun careDefaultsFromTheScheduleAskFirstAndBackReturnsWithTheTypedValue() = withPlantServer({ path -> when (path) {
+        "/api/species/910001/care" -> careFixture.replace("pending", "done")
+        "/api/species/910001/outdoor-months" -> outdoorFixture
+        else -> null
+    } }) { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNode(hasText("This plant's schedule") and hasAnyAncestor(isPopup())).performClick()
+        val water = hasText("Water interval in days") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(water).performTextReplacement("9")
+        compose.onNode(hasText("Care defaults for this species") and hasClickAction()).performClick()
+        compose.onNodeWithText("Open care defaults for this species?").assertIsDisplayed()
+        compose.onNodeWithText("Keep editing").performClick()
+        compose.onNode(water).assertTextContains("9")
+        compose.onNode(hasText("Care defaults for this species") and hasClickAction()).performClick()
+        compose.onNodeWithText("Open care defaults").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Override watering interval in days") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(water).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(water).assertTextContains("9")
+        // The form still holds what was typed, so its own Back still asks.
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+    }
+
+    // C19: Back from Identify from photos returns to the species search with what was typed there.
+    @Test fun backFromIdentifyReturnsToTheSpeciesSearchWithItsQuery() = withPlantServer { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Change species").performClick()
+        val query = hasText("Species name") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(query).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(query).performTextInput("nova")
+        compose.onNode(hasText("Identify from photos") and hasClickAction()).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(query).fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(query).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(query).assertTextContains("nova")
+    }
+
+    // C19: leaving a plant form through the navigation bar asks first, as its Back does.
+    @Test fun leavingAFormThroughTheNavigationBarAsksFirst() = withPlantServer { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNode(hasText("This plant's schedule") and hasAnyAncestor(isPopup())).performClick()
+            val water = hasText("Water interval in days") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(water).performTextReplacement("9")
+            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(water).assertTextContains("9")
+            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+        } finally { controller.close() }
+    }
+
+    // C19: a notification tap that opens Home asks first too, with the same question as Back.
+    @Test fun aNotificationTapFromAFormWithChangesAsksFirst() = withPlantServer { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        val home = mutableIntStateOf(0)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }, homeRequest = home.intValue) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Edit plant").performClick()
+            val name = hasText("Name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).performTextReplacement("Fern")
+            compose.runOnIdle { home.intValue++ }
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(name).assertTextContains("Fern")
+            compose.runOnIdle { home.intValue++ }
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).assertDoesNotExist()
+        } finally { controller.close() }
+    }
+
+    // C19: a notification tap from the override dialog in Care defaults for this species, opened from the plant page, asks first with the dialog's question.
+    @Test fun aNotificationTapFromTheOverrideDialogOnThePlantPageAsksFirst() = withPlantServer({ path -> when (path) {
+        "/api/species/910001/care" -> careFixture.replace("pending", "done")
+        "/api/species/910001/outdoor-months" -> outdoorFixture
+        else -> null
+    } }) { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        val home = mutableIntStateOf(0)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }, homeRequest = home.intValue) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Care defaults for this species")).performClick()
+            val open = hasText("Override watering interval in days") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(open).performScrollTo().performClick()
+            compose.onNodeWithText("Days").performTextReplacement("9")
+            val question = hasText("Discard your watering interval for ", substring = true)
+            compose.runOnIdle { home.intValue++ }
+            compose.onNode(question).assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNodeWithText("Days").assertTextContains("9")
+            compose.runOnIdle { home.intValue++ }
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Days").assertDoesNotExist()
+        } finally { controller.close() }
+    }
+
+    // C19: Discard from the navigation bar drops the form even when the tap stays on Plants, so Log out under More never follows unsaved changes.
+    @Test fun logOutNeverFollowsAnEditWithChangesWithoutAsking() = withPlantServer { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Edit plant").performClick()
+            val name = hasText("Name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).performTextReplacement("Fern")
+            compose.onNode(hasText("More") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(name).assertTextContains("Fern")
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isEmpty() }
+            compose.onNode(hasText("More") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+            compose.onNodeWithText("Log out").assertIsDisplayed()
+        } finally { controller.close() }
+    }
+
+    // C19: Add plant asks before Back drops a typed species query or a species chosen only through Identify from photos.
+    @Config(shadows = [com.epaflix.fytorium.photos.JvmImageSources::class])
+    @Test fun addPlantAsksBeforeDroppingATypedQueryOrASpeciesChosenThroughIdentify() {
+        val file = java.io.File(RuntimeEnvironment.getApplication().cacheDir, "synthetic-identify.png")
+        android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888).let { bitmap ->
+            file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
+        // The photo picker answers at once with the synthetic image.
+        val picker = object : androidx.activity.result.ActivityResultRegistryOwner {
+            override val activityResultRegistry = object : androidx.activity.result.ActivityResultRegistry() {
+                override fun <I, O> onLaunch(requestCode: Int, contract: androidx.activity.result.contract.ActivityResultContract<I, O>, input: I,
+                    options: androidx.core.app.ActivityOptionsCompat?) { dispatchResult(requestCode, listOf(android.net.Uri.fromFile(file))) }
+            }
+        }
+        val identified = """{"search_id":"synthetic-search","remaining":20,"candidates":[{"gbif_key":900001,"scientific_name":"Testoria nebulosa","canonical_name":"Testoria nebulosa","rank":"SPECIES","match_type":null,"confidence":null,"requires_confirmation":true,"source":"identification","score":0.91,"identification_name":"Testoria nebulosa","common_names":["Synthetic cloud plant"]}]}"""
+        withPlantServer({ path -> if (path == "/api/identification") """{"remaining":20}""" else null },
+            posted = { path -> if (path == "/api/identification") identified else null }) { repo, showing ->
+            compose.setContent { if (showing.value) CompositionLocalProvider(androidx.activity.compose.LocalActivityResultRegistryOwner provides picker) { FytoriumTheme {
+                val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialAdd = true, photosApi = api, photosConnected = { true }) } } }
+            val query = hasText("Species name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(query).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(query).performTextInput("nova")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard this new plant?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(query).assertTextContains("nova")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard").performClick()
+            val add = hasContentDescription("Add plant") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(add).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(query).assertDoesNotExist()
+            compose.onNode(add).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify from photos") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Identify from photos").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose photos") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Choose photos").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Identify plant").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose Testoria nebulosa") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Choose Testoria nebulosa").performScrollTo().performClick()
+            compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+            val name = hasText("Name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard this new plant?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(name).assertIsDisplayed()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(add).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).assertDoesNotExist()
+        }
+    }
+
+    // C19: Species names and Change species ask before Back drops a typed name or query.
+    @Test fun speciesNamesAndChangeSpeciesAskBeforeDroppingWhatWasTyped() = withPlantServer({ path -> if (path == "/api/species/910001") speciesNamesFixture else null }) { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+        val settings = hasContentDescription("Plant settings") and isEnabled()
+        compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+        val pages = listOf(
+            { reveal(hasText("Details")).performClick(); reveal(hasText("Species names")).performClick() } to (hasText("Common name") and hasSetTextAction()),
+            { compose.onNode(settings).performClick(); compose.onNode(hasText("Change species") and hasAnyAncestor(isPopup())).performClick() } to (hasText("Species name") and hasSetTextAction()))
+        for ((open, field) in pages) {
+            open()
+            compose.waitUntil(5_000) { compose.onAllNodes(field).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(field).performTextInput("Synthetic star")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(field).assertTextContains("Synthetic star")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(field).assertDoesNotExist()
+        }
+    }
+
+    // C19: Restore asks before Back drops a site chosen there.
+    @Test fun restoreAsksBeforeDroppingAChosenSite() {
+        val buried = JSONObject(plantFixture).put("status", "graveyard").put("graveyard_on", "2030-06-02").toString()
+        val sites = """[{"id":"site-one","name":"Synthetic site"},{"id":"site-porch","name":"Synthetic porch"}]"""
+        withPlantServer({ path -> when (path) { "/api/plants/plant-one" -> buried; "/api/sites" -> sites; else -> null } }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            val settings = hasContentDescription("Plant settings") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(settings).performClick()
+            compose.onNodeWithText("Restore plant").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasText("Site") and hasText("Synthetic site")).performClick()
+            compose.onNode(hasText("Synthetic porch") and hasAnyAncestor(isPopup())).performClick()
+            val porch = hasText("Restore Synthetic fern to Synthetic porch")
+            compose.onNode(porch).assertIsEnabled()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(porch).assertIsEnabled()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(porch).assertDoesNotExist()
+        }
+    }
+
+    // C20: a site created from Restore is the site Restore then uses.
+    @Test fun aSiteCreatedFromRestoreIsSelectedWhenTheFormReturns() {
+        val buried = JSONObject(plantFixture).put("status", "graveyard").put("graveyard_on", "2030-06-02").toString()
+        val site = """{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":1}"""
+        val porch = """{"id":"site-porch","name":"Synthetic porch","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":0}"""
+        val created = AtomicBoolean(false)
+        withPlantServer({ path -> when (path) { "/api/plants/plant-one" -> buried; "/api/sites" -> if (created.get()) "[$porch,$site]" else "[$site]"; else -> null } },
+            posted = { path -> if (path == "/api/sites") { created.set(true); porch } else null }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNodeWithText("Restore plant").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Create a site").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic porch")
+            compose.onNodeWithText("Save site").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic porch") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        }
+    }
+
+    // C21: once Fytorium answers another plant request, the list loads what it left unanswered and its line clears without a tap.
+    @Test fun theListLoadsAReadFytoriumLeftUnansweredOnceItAnswersAgain() {
+        val down = AtomicBoolean(true)
+        val paths = java.util.Collections.synchronizedList(mutableListOf<String>())
+        withPlantServer(paths = paths, status = { path -> if (down.get() && path == "/api/plants") 503 else 200 }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo) } }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Fytorium isn't responding").fetchSemanticsNodes().isNotEmpty() }
+            down.set(false)
+            compose.onNodeWithContentDescription("More options").performClick()
+            compose.onNodeWithText("Graveyard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Graveyard") and isHeading()).fetchSemanticsNodes().isNotEmpty() && !repo.plantState.value.refreshing }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Fytorium isn't responding").fetchSemanticsNodes().isEmpty() }
+            compose.runOnIdle { assertEquals(emptyMap<String, ReadFailure>(), repo.plantState.value.reads) }
+        }
+    }
+
+    // C21: Species care loads what Fytorium left unanswered once Fytorium answers another request, clears its line without a tap and polls again.
+    @Test fun speciesCareLoadsWhatFytoriumLeftUnansweredOnceItAnswersAgain() {
+        val down = AtomicBoolean(false)
+        val care = "/api/species/910001/care"
+        withPlantServer({ path -> when (path) { care -> careFixture; "/api/species/910001/outdoor-months" -> outdoorFixture; else -> null } },
+            status = { path -> if (down.get() && path.startsWith("/api/species/")) 503 else 200 }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val state by repo.state.collectAsState()
+                PlantsScreen(state, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            down.set(true)
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Care defaults for this species")).performClick()
+            val failure = "Could not reach the server. Try again."
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText(failure) and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+            down.set(false)
+            repo.refresh()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Override watering interval in days") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodes(hasText(failure)).assertCountEquals(0)
+            val reads = synchronized(paths()) { paths().count { it == care } }
+            compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == care } } > reads }
+        }
+    }
+
+    // C22: the names page says only that names are still loading while a fetch runs, with no job or retry wording, and nothing once it gives up.
+    @Test fun speciesNamesSayOnlyThatSomeNamesAreStillLoading() {
+        fun species(fetching: Boolean, failed: Boolean) = parseSpecies("""{"gbif_key":910001,"scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida",
+            "rank":"SPECIES","name_fetch_needed":$fetching,"name_fetch_failed":$failed,"common_name":null,"names":[]}""")
+        val state = mutableStateOf(species(fetching = true, failed = false))
+        compose.setContent { FytoriumTheme { SpeciesNames(state.value, syntheticOptions(), true, { _, _ -> }) } }
+        val jobWords = listOf("background", "backoff", "attempt", "retry", "failure")
+        reveal(hasText("Some names are still loading.")).assertIsDisplayed()
+        for (word in jobWords) compose.onAllNodes(hasText(word, substring = true, ignoreCase = true)).assertCountEquals(0)
+        compose.runOnIdle { state.value = species(fetching = false, failed = true) }
+        compose.onNodeWithText("Some names are still loading.").assertDoesNotExist()
+        for (word in jobWords) compose.onAllNodes(hasText(word, substring = true, ignoreCase = true)).assertCountEquals(0)
+    }
+
+    // C23: a failed save's message appears under its button, so the button stays where the finger is.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aFailedSavesMessageNeverMovesItsButton() {
+        val errors = mutableStateOf(emptyMap<String, String>())
+        val form = mutableStateOf("edit")
+        compose.setContent { FytoriumTheme { when (form.value) {
+            "edit" -> PlantForm(plant, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, errors = errors.value, onSave = {})
+            "repot" -> PlantRepotForm(plant, syntheticOptions(), true, errors = errors.value, onSave = {})
+            else -> RestoreForm(plant.copy(status = "graveyard"), listOf(PlantSite("site-one", "Synthetic site")), true, {}, error = errors.value["_form"])
+        } } }
+        val failure = "Could not reach Fytorium. Try again."
+        for ((name, button) in listOf("edit" to "Save plant", "repot" to "Repot Synthetic fern", "restore" to "Restore Synthetic fern to Synthetic site")) {
+            compose.runOnIdle { form.value = name; errors.value = emptyMap() }
+            val before = compose.onNodeWithText(button).fetchSemanticsNode().boundsInRoot
+            compose.runOnIdle { errors.value = mapOf("_form" to failure) }
+            val message = compose.onNodeWithText(failure).fetchSemanticsNode().boundsInRoot
+            assertEquals("$name moved its button", before, compose.onNodeWithText(button).fetchSemanticsNode().boundsInRoot)
+            assertTrue("$name shows the message under its button", message.top >= before.bottom)
+        }
+    }
+
+    // C23: the same holds for a species change Fytorium does not accept.
+    @Test fun aFailedSpeciesChangeLeavesItsButtonInPlace() {
+        val search = """{"search_id":"search-one","candidates":[{"gbif_key":910019,"scientific_name":"Testoria nova Inventor","canonical_name":"Testoria nova","rank":"SPECIES","match_type":"EXACT","confidence":99,"requires_confirmation":false,"matched_name":null,"matched_language":null,"common_name":"Synthetic star"}]}"""
+        withPlantServer({ path -> if (path == "/api/species/search") search else null }, status = { if (it == "/api/plants/plant-one/species") 503 else 200 }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNodeWithText("Change species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Species name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
+            compose.onNodeWithText("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+            val change = hasText("Change Synthetic fern to Synthetic star")
+            val before = compose.onNode(change).fetchSemanticsNode().boundsInRoot
+            compose.onNode(change).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Could not update Fytorium. Try again.").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(change and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(before, compose.onNode(change).fetchSemanticsNode().boundsInRoot)
+            assertTrue(compose.onNodeWithText("Could not update Fytorium. Try again.").fetchSemanticsNode().boundsInRoot.top >= before.bottom)
+        }
+    }
+
+    // C23: a site that vanished before Save shows next to Site, in space kept for it, so Save stays where it was.
+    @Test fun aSiteThatVanishedBeforeSaveShowsNextToSiteWithoutMovingSave() {
+        val vanished = AtomicBoolean(false)
+        val message = "Choose a site in your household."
+        withPlantServer(status = { path -> if (vanished.get() && path == "/api/plants/plant-one") 422 else 200 },
+            posted = { path -> if (path == "/api/plants/plant-one") JSONObject().put("errors", JSONObject().put("site_id", message)).toString() else null }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Edit plant").performClick()
+            val save = hasText("Save plant")
+            compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            val before = compose.onNode(save).fetchSemanticsNode().boundsInRoot
+            val site = compose.onNode(hasText("Site") and hasText("Synthetic site")).fetchSemanticsNode().boundsInRoot
+            vanished.set(true)
+            compose.onNode(save).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isNotEmpty() }
+            assertEquals("Save moved", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+            val error = compose.onNode(hasText(message)).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue("The message sits at Site", error.top >= site.top && error.bottom <= compose.onNodeWithText("More details").fetchSemanticsNode().boundsInRoot.top)
+        }
+    }
+
+    // C23: a refused field under More details opens it next to its field, below Save, so Save stays where it was.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aRefusedDetailsFieldOpensMoreDetailsWithoutMovingSave() {
+        val refused = AtomicBoolean(false)
+        val message = "Enter a valid date that is not in the future."
+        withPlantServer(status = { path -> if (refused.get() && path == "/api/plants/plant-one") 422 else 200 },
+            posted = { path -> if (path == "/api/plants/plant-one") JSONObject().put("errors", JSONObject().put("birthday", message)).toString() else null }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Edit plant").performClick()
+            val save = hasText("Save plant")
+            compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(hasText("Birthday", substring = true) and hasClickAction()).assertDoesNotExist()
+            val before = compose.onNode(save).fetchSemanticsNode().boundsInRoot
+            refused.set(true)
+            compose.onNode(save).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isNotEmpty() }
+            assertEquals("Save moved", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+            val error = compose.onNode(hasText(message)).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val birthday = compose.onNode(hasText("Birthday", substring = true) and hasClickAction()).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue("The message sits under Birthday", error.top >= birthday.bottom && error.top - birthday.bottom < 48f)
+        }
+    }
+
+    // C24: species care leads with known values and folds the rest, says Your value, answers overrides with bar receipts; Unmatched reads plainly.
+    @Test fun speciesCareLeadsWithKnownValuesAndAnswersYourValuesWithReceipts() {
+        val overridden = AtomicBoolean(false)
+        fun care() = JSONObject(careFixture.replace("pending", "done")).apply {
+            getJSONObject("species").put("canonical_name", "Testoria nebulosa").put("common_name", "Synthetic mistleaf")
+            if (overridden.get()) getJSONObject("profile").put("wateringIntervalDays", JSONObject("""{"value":9,"source":"override","fetchedAt":"2030-06-02T12:00:00Z"}"""))
+        }.toString()
+        val unmatched = """[{"gbif_key":910002,"canonical_name":"Testoria nebulosa","common_name":"Synthetic mistleaf","status":"no_match"}]"""
+        withPlantServer({ path -> when (path) {
+            "/api/species/unmatched" -> unmatched
+            "/api/species/910002/care" -> care()
+            "/api/species/910002/outdoor-months" -> outdoorFixture
+            "/api/species/910002/care/overrides/wateringIntervalDays" -> { overridden.set(!overridden.get()); "{}" }
+            else -> null
+        } }) { repo, showing ->
+            val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+            try {
+                compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                    AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+                compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+                compose.onNodeWithText("More").performClick()
+                compose.onNodeWithText("Unmatched species").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Synthetic mistleaf") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Testoria nebulosa").assertIsDisplayed()
+                compose.onNodeWithText("No care data found yet").assertIsDisplayed()
+                for (gone in listOf("Open Plantbook", "no match", "no_match")) compose.onAllNodes(hasText(gone, substring = true)).assertCountEquals(0)
+                compose.onNodeWithText("Species care for Synthetic mistleaf").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Override watering interval in days") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithTag("care:light").assertExists()
+                compose.onNodeWithTag("care:temperatureRangeC").assertDoesNotExist()
+                for (gone in listOf("Source:", "water.base@1", "unknown", "fetched")) compose.onAllNodes(hasText(gone, substring = true)).assertCountEquals(0)
+                compose.onNodeWithText("No value yet (13)").performScrollTo().performClick()
+                compose.onNodeWithText("Override temperature range in \u00b0C").performScrollTo().assertIsEnabled()
+                compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
+                compose.onNode(hasText("Days") and hasSetTextAction()).performTextReplacement("9")
+                compose.onNodeWithText("Save override").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Saved watering interval for Synthetic mistleaf").fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Your value") and hasAnyAncestor(hasTestTag("care:wateringIntervalDays"))).fetchSemanticsNodes().isNotEmpty() }
+                compose.onAllNodes(hasText("Override saved", substring = true)).assertCountEquals(0)
+                compose.onAllNodes(hasText("fetched", substring = true)).assertCountEquals(0)
+                compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
+                compose.onNodeWithText("Confirm reset").performClick()
+                compose.waitUntil(10_000) { compose.onAllNodesWithText("Removed your watering interval for Synthetic mistleaf").fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Your value").fetchSemanticsNodes().isEmpty() }
+                compose.onNodeWithText("Sources").performScrollTo().performClick()
+                compose.onNodeWithText("Watering interval in days: rules \u00b7 water.base@1").performScrollTo().assertIsDisplayed()
+                compose.onNodeWithText("Light: open plantbook \u00b7 fetched 1 Jun 2030").performScrollTo().assertIsDisplayed()
+            } finally { controller.close() }
+        }
+    }
+
     // C13: an empty Name shows the name the plant uses now as a placeholder, never as its text, so TalkBack hears it as guidance and typing starts empty.
     @Test fun anEmptyNameShowsTheNameThePlantUsesNow() {
         val unnamed = plant.copy(displayName = "Synthetic trialleaf", attributesJson = JSONObject(plantFixture).put("nickname", JSONObject.NULL).put("display_name", "Synthetic trialleaf").toString())
@@ -1820,6 +2489,365 @@ class PlantPageTest {
         }
     }
 
+    // A graveyard plant and the full site the Sites screen reads, for Restore's Create a site.
+    private fun restoreServed(path: String) = when (path) {
+        "/api/plants/plant-one" -> JSONObject(plantFixture).put("status", "graveyard").put("graveyard_on", "2030-06-02").toString()
+        "/api/sites" -> """[{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":1}]"""
+        else -> null
+    }
+    private fun openCreateASite() {
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Restore plant").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Create a site").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Create a site").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    // C19: Create a site from Restore asks before system Back, the top bar's Back or Cancel drops a typed name, and Discard returns to Restore.
+    @Test fun createASiteFromRestoreAsksBeforeDroppingATypedName() = withPlantServer(::restoreServed) { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+        val name = hasText("Name") and hasSetTextAction()
+        val restore = hasText("Restore Synthetic fern to Synthetic site") and isEnabled()
+        for (leave in listOf<() -> Unit>({ compose.waitForIdle(); androidx.test.espresso.Espresso.pressBack() }, { compose.onNodeWithContentDescription("Back").performClick() },
+            { compose.onNodeWithText("Cancel").performScrollTo().performClick() })) {
+            if (compose.onAllNodes(restore).fetchSemanticsNodes().isEmpty()) openCreateASite() else {
+                compose.onNodeWithText("Create a site").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            }
+            compose.onNode(name).performTextInput("Synthetic porch")
+            leave()
+            compose.onNodeWithText("Discard this new site?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(name).assertTextContains("Synthetic porch")
+            leave()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(restore).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).assertDoesNotExist()
+        }
+    }
+
+    // C19: leaving Create a site through the navigation bar asks first, with the site form's question.
+    @Test fun leavingCreateASiteThroughTheNavigationBarAsksFirst() = withPlantServer(::restoreServed) { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            openCreateASite()
+            val name = hasText("Name") and hasSetTextAction()
+            compose.onNode(name).performTextInput("Synthetic porch")
+            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard this new site?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(name).assertTextContains("Synthetic porch")
+            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).assertDoesNotExist()
+        } finally { controller.close() }
+    }
+
+    // C19: tapping Plants again on an unchanged form keeps the navigation bar's question once something is typed, on Edit and on Create a site from Restore.
+    @Test fun typingAfterTappingPlantsAgainInEditStillAsks() = typingAfterTappingPlantsAgain(createSite = false)
+    @Test fun typingAfterTappingPlantsAgainInCreateASiteStillAsks() = typingAfterTappingPlantsAgain(createSite = true)
+    private fun typingAfterTappingPlantsAgain(createSite: Boolean) = withPlantServer({ if (createSite) restoreServed(it) else null }) { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            if (createSite) openCreateASite() else {
+                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Edit plant").performClick()
+            }
+            val name = hasText("Name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            // The page's own reads land first, so only the typing could make the screen draw again after the tap.
+            compose.waitUntil(5_000) { Running.count.get() == 0 }
+            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNode(name).performTextInput("Synthetic porch")
+            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNodeWithText(if (createSite) "Discard this new site?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(name).assertTextContains("Synthetic porch", substring = true)
+        } finally { controller.close() }
+    }
+
+    // C19: Back right after a keystroke, before the screen has drawn it, still asks, on Edit and on Create a site from Restore.
+    @Test fun backRightAfterTypingInEditAsks() = backRightAfterTyping(createSite = false)
+    @Test fun backRightAfterTypingInCreateASiteAsks() = backRightAfterTyping(createSite = true)
+    private fun backRightAfterTyping(createSite: Boolean) = withPlantServer({ if (createSite) restoreServed(it) else null }) { repo, showing ->
+        var back: androidx.activity.OnBackPressedDispatcher? = null
+        compose.setContent { if (showing.value) FytoriumTheme { back = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+            val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+        if (createSite) openCreateASite() else {
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Edit plant").performClick()
+        }
+        val name = hasText("Name") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        // No wait in between, so Back arrives before the typed name is composed.
+        compose.onNode(name).performTextInput("Synthetic porch")
+        compose.runOnUiThread { checkNotNull(back).onBackPressed() }
+        compose.onNodeWithText(if (createSite) "Discard this new site?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+        compose.onNodeWithText("Keep editing").performClick()
+        compose.onNode(name).assertTextContains("Synthetic porch", substring = true)
+    }
+
+    // C23: a site save from Restore that fails on its way, with the connection dropped or a 503, shows its message under Save, which stays where it was.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aFailedSiteSaveFromRestoreLeavesSaveInPlace() {
+        val failure = java.util.concurrent.atomic.AtomicReference<MockResponse>()
+        withPlantServer(::restoreServed,
+            respond = { request -> failure.get().takeIf { request.method == "POST" && request.requestUrl!!.encodedPath == "/api/sites" } }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+            openCreateASite()
+            compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic porch")
+            val save = hasText("Save site")
+            val before = compose.onNode(save).fetchSemanticsNode().boundsInRoot
+            for ((response, message) in listOf(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST) to "Could not reach the server. Try again.",
+                MockResponse().setResponseCode(503) to "Could not save the site. Try again.")) {
+                failure.set(response)
+                compose.onNode(save).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodes(hasText("Refresh sites") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Save moved after: $message", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+                assertTrue("The message sits under Save", compose.onNodeWithText(message).fetchSemanticsNode().boundsInRoot.top >= before.bottom)
+                compose.onNodeWithText("Refresh sites").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Save moved after Refresh sites", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+            }
+        }
+    }
+
+    // C23: Fytorium's refusal of a site's name or temperature shows under that field, in space kept for it, so Save site stays where it was, at 1.0x and 1.3x text.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aRefusedSiteFieldLeavesSaveSiteInPlace() = refusedSiteFieldLeavesSaveSiteInPlace(1f)
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aRefusedSiteFieldAtLargeTextLeavesSaveSiteInPlace() = refusedSiteFieldLeavesSaveSiteInPlace(1.3f)
+    private fun refusedSiteFieldLeavesSaveSiteInPlace(fontScale: Float) {
+        val refusal = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val posts = AtomicInteger()
+        withPlantServer(::restoreServed, respond = { request -> refusal.get()?.takeIf { request.method == "POST" && request.requestUrl!!.encodedPath == "/api/sites" }
+            ?.let { posts.incrementAndGet(); MockResponse().setResponseCode(422).setBody(it) } }) { repo, showing ->
+            compose.setContent { if (showing.value) CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) { FytoriumTheme {
+                val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } } }
+            openCreateASite()
+            val save = hasText("Save site")
+            val before = compose.onNode(save).fetchSemanticsNode().boundsInRoot
+            // The server's own messages: readSite in src/lib/server/sites.ts. Each field's message must end above the next control.
+            val whole = "Enter a whole number of °C or leave blank."
+            val exceeds = "Minimum must not exceed maximum."
+            val refusals = listOf(Triple("name", "Enter a site name.", "Location: indoor"), Triple("warm_min_c", exceeds, "Warm maximum °C"), Triple("cold_min_c", exceeds, "Cold maximum °C"),
+                Triple("warm_min_c", whole, "Warm maximum °C"), Triple("warm_max_c", whole, "Cold minimum °C"), Triple("cold_min_c", whole, "Cold maximum °C"), Triple("cold_max_c", whole, "Draft"))
+            refusals.forEachIndexed { index, (field, message, next) ->
+                refusal.set(JSONObject().put("errors", JSONObject().put(field, message)).toString())
+                compose.onNode(save).performClick()
+                compose.waitUntil(5_000) { posts.get() == index + 1 && compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Save site moved after the $field refusal '$message' at ${fontScale}x", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+                val shown = compose.onNodeWithText(message, useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+                assertTrue("The $field message ends above $next", shown.bottom <= compose.onNodeWithText(next).fetchSemanticsNode().boundsInRoot.top)
+            }
+        }
+    }
+
+    // C1b: a sites read that fails in Create a site from Restore shows only in the top bar's line, with Try again, which loads the sites; nothing is added to the form.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aFailedSitesReadInCreateASiteShowsInTheLineAndTryAgainLoadsIt() {
+        val down = AtomicBoolean(false)
+        withPlantServer(::restoreServed, status = { if (down.get() && it == "/api/sites") 503 else 200 }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNodeWithText("Restore plant").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            down.set(true)
+            compose.onNodeWithText("Create a site").performClick()
+            val line = hasText("Sites didn't load") and hasClickAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
+            val controls = listOf("Name", "Location: indoor", "Light level: part sun", "Humidity: normal", "Grow light", "Warm minimum °C", "Warm maximum °C",
+                "Cold minimum °C", "Cold maximum °C", "Draft", "Save site", "Cancel")
+            fun layout() = controls.associateWith { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+            val failed = layout()
+            compose.onNodeWithText("Save site").assertIsNotEnabled()
+            val failure = "Could not reach the server. Try again."
+            for (inserted in listOf(failure, "Refresh sites")) compose.onAllNodes(hasText(inserted)).assertCountEquals(0)
+            down.set(false)
+            compose.onNode(line).performClick()
+            compose.onNode(hasText(failure) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+            compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodes(line).assertCountEquals(0)
+            assertEquals("Loading the sites moved the form", failed, layout())
+        }
+    }
+
+    // C21: a sites read Fytorium left unanswered in Create a site from Restore loads again without a tap once Fytorium answers a plant request, also the reload after a reconnect; Save enables and the typed name stays.
+    @Test fun createASiteLoadsAnUnansweredSitesReadOnceFytoriumAnswersAgain() = createASiteLoadsAnUnansweredSitesRead(reconnect = false)
+    @Test fun createASiteLoadsAnUnansweredSitesReadOnceTheConnectionReturns() = createASiteLoadsAnUnansweredSitesRead(reconnect = true)
+    private fun createASiteLoadsAnUnansweredSitesRead(reconnect: Boolean) {
+        val down = AtomicBoolean(false)
+        val online = AtomicBoolean(true)
+        withPlantServer(::restoreServed, connected = { online.get() }, status = { if (down.get() && it == "/api/sites") 503 else 200 }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { online.get() }) } }
+            openCreateASite()
+            val name = hasText("Name") and hasSetTextAction()
+            compose.onNode(name).performTextInput("Synthetic porch")
+            down.set(true)
+            compose.onNodeWithText("Save site").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Refresh sites") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Refresh sites").performScrollTo().performClick()
+            val line = hasText("Sites didn't load") and hasClickAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
+            down.set(false)
+            if (reconnect) {
+                online.set(false)
+                repo.connectivityChanged(false)
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Offline") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+                online.set(true)
+                repo.connectivityChanged(true)
+            } else repo.refresh()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodes(line).assertCountEquals(0)
+            compose.onNode(name).assertTextContains("Synthetic porch")
+        }
+    }
+
+    // C1b: going offline and back while Create a site from Restore is open shows only in the top bar's line, so no field or button moves, at 1.0x and 1.3x text.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun goingOfflineAndBackInCreateASiteFromRestoreMovesNothing() {
+        val online = mutableStateOf(true)
+        val fontScale = mutableStateOf(1f)
+        withPlantServer(::restoreServed) { repo, showing ->
+            compose.setContent { if (showing.value) CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) { FytoriumTheme {
+                val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { online.value }) } } }
+            openCreateASite()
+            val controls = listOf("Name", "Location: indoor", "Light level: part sun", "Humidity: normal", "Grow light", "Warm minimum °C", "Warm maximum °C",
+                "Cold minimum °C", "Cold maximum °C", "Draft", "Save site", "Cancel")
+            fun layout() = controls.associateWith { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+            for (scale in listOf(1f, 1.3f)) {
+                compose.runOnIdle { fontScale.value = scale }
+                compose.waitForIdle()
+                val before = layout()
+                compose.runOnIdle { online.value = false }
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Offline at ${scale}x moved the form", before, layout())
+                compose.onNodeWithText("Offline").performClick()
+                compose.onNodeWithText("This phone can't reach Fytorium. Reconnect to make changes.").assertIsDisplayed()
+                compose.onNodeWithText("Close").performClick()
+                compose.runOnIdle { online.value = true }
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Reconnecting at ${scale}x moved the form", before, layout())
+                compose.onNodeWithText("Offline").assertDoesNotExist()
+            }
+        }
+    }
+
+    // C23: Fytorium's refusal of a pot type or soil type shows under that choice, in space kept for it, so Repot stays where it was, at 1.0x and 1.3x text.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aRefusedPotOrSoilTypeLeavesRepotInPlace() = refusedPotOrSoilTypeLeavesRepotInPlace(1f)
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun aRefusedPotOrSoilTypeAtLargeTextLeavesRepotInPlace() = refusedPotOrSoilTypeLeavesRepotInPlace(1.3f)
+    private fun refusedPotOrSoilTypeLeavesRepotInPlace(fontScale: Float) {
+        val refusal = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val path = "/api/plants/plant-one/repot"
+        // The server's own choices from src/lib/plants.ts, so the form keeps space for the refusal Fytorium really sends.
+        val choices = syntheticOptions().let { it.copy(choices = it.choices + mapOf("pot_type" to listOf("plastic", "terracotta", "ceramic", "glass", "metal", "wood", "fabric", "in_ground", "other"),
+            "soil_type" to listOf("all_purpose", "cactus", "orchid", "aroid", "other"))) }
+        withPlantServer({ if (it == "/api/choices") choicesJson(choices) else null },
+            status = { if (refusal.get() != null && it == path) 422 else 200 }, posted = { refusal.get()?.takeIf { _ -> it == path } }) { repo, showing ->
+            compose.setContent { if (showing.value) CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) { FytoriumTheme {
+                val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNode(hasText("Repot") and hasAnyAncestor(isPopup())).performClick()
+            val repot = hasText("Repot Synthetic fern")
+            compose.waitUntil(5_000) { compose.onAllNodes(repot and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            val before = compose.onNode(repot).fetchSemanticsNode().boundsInRoot
+            // The server's own messages: potErrors in src/lib/server/plants.ts with the choices in src/lib/plants.ts.
+            for ((field, message, next) in listOf(Triple("pot_type", "Choose one of: plastic, terracotta, ceramic, glass, metal, wood, fabric, in_ground, other.", "Soil type"),
+                Triple("soil_type", "Choose one of: all_purpose, cactus, orchid, aroid, other.", "Pot size in cm"))) {
+                refusal.set(JSONObject().put("errors", JSONObject().put(field, message)).toString())
+                compose.onNode(repot).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText(message, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodes(repot and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                assertEquals("Repot moved after the $field refusal", before, compose.onNode(repot).fetchSemanticsNode().boundsInRoot)
+                val shown = compose.onNodeWithText(message, useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+                val choice = compose.onNode(hasText(if (field == "pot_type") "Pot type" else "Soil type")).fetchSemanticsNode().boundsInRoot
+                val below = compose.onNode(hasText(next)).fetchSemanticsNode().boundsInRoot
+                assertTrue("The $field message sits under its choice", shown.top >= choice.top && shown.bottom <= below.top)
+            }
+        }
+    }
+
+    // C23: at 1.3x text, Fytorium's messages for Name and Site show in space kept for them, so Save stays where it was.
+    @Config(qualifiers = "w360dp-h2400dp-mdpi")
+    @Test fun nameAndSiteRefusalsAtLargeTextLeaveSaveInPlace() {
+        val unnamed = plant.copy(id = "plant-unnamed", displayName = "Synthetic trialleaf",
+            attributesJson = JSONObject(plantFixture).put("id", "plant-unnamed").put("nickname", JSONObject.NULL).put("display_name", "Synthetic trialleaf").toString())
+        val shown = mutableStateOf(plant)
+        val errors = mutableStateOf(emptyMap<String, String>())
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 1.3f)) { FytoriumTheme {
+            PlantForm(shown.value, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, errors = errors.value, onSave = {}) } } }
+        // The server's own messages: readPlant and writeError in src/lib/server/plants.ts.
+        val refusals = listOf("nickname" to "Enter text or leave blank.", "site_id" to "Choose a site in your household.", "site_id" to "Active plants must have a site.")
+        for (form in listOf(plant, unnamed)) for ((field, message) in refusals) {
+            compose.runOnIdle { shown.value = form; errors.value = emptyMap() }
+            val before = compose.onNodeWithText("Save plant").fetchSemanticsNode().boundsInRoot
+            compose.runOnIdle { errors.value = mapOf(field to message) }
+            compose.onNodeWithText(message, useUnmergedTree = true).assertIsDisplayed()
+            assertEquals("${form.displayName}: '$message' moved Save", before, compose.onNodeWithText("Save plant").fetchSemanticsNode().boundsInRoot)
+        }
+    }
+
+    // C19: Discard from the navigation bar also drops the form's refused save, so a later Add plant shows nothing of it.
+    @Test fun discardFromTheNavigationBarDropsTheFormsRefusedSave() {
+        val refusing = AtomicBoolean(false)
+        val refused = "Plant data does not meet required constraints."
+        withPlantServer({ path -> if (path == "/api/species/search") speciesSearch else null },
+            status = { path -> if (refusing.get() && path == "/api/plants/plant-one") 422 else 200 },
+            posted = { path -> if (path == "/api/plants/plant-one") JSONObject().put("errors", JSONObject().put("_form", refused)).toString() else null }) { repo, showing ->
+            val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+            try {
+                compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                    AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+                compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+                compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+                compose.onNodeWithTag("plant:plant-one").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Edit plant").performClick()
+                val name = hasText("Name") and hasSetTextAction()
+                compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(name).performTextReplacement("Fern")
+                refusing.set(true)
+                compose.onNodeWithText("Save plant").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText(refused).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                refusing.set(false)
+                compose.onNode(hasText("Today") and hasClickAction()).performClick()
+                compose.onNodeWithText("Discard").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Add plant").performClick()
+                val query = hasText("Species name") and hasSetTextAction()
+                compose.waitUntil(5_000) { compose.onAllNodes(query and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(query).performTextInput("nova")
+                compose.onNodeWithText("Search species").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Save plant").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                compose.onAllNodes(hasText(refused, substring = true)).assertCountEquals(0)
+            } finally { controller.close() }
+        }
+    }
+
     // C16: species changes read by common names, give a receipt and say so in history.
     @Test fun aSpeciesChangeReadsByCommonNamesAndGivesAReceipt() {
         val changed = AtomicBoolean(false)
@@ -1858,7 +2886,7 @@ class PlantPageTest {
         val removed = AtomicBoolean(false)
         fun species() = JSONObject("""{"gbif_key":910001,"scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida","rank":"SPECIES",
             "name_fetch_needed":false,"name_fetch_failed":false,"common_name":"Synthetic lantern"}""").put("names", JSONArray().apply {
-            if (!removed.get()) put(JSONObject("""{"id":"name-house","name":"Synthetic lantern","language":"en","source":"owner","renamed_plant_count":2}"""))
+            if (!removed.get()) put(JSONObject("""{"id":"name-house","name":"Synthetic lantern","language":"en","source":"owner","renamed_plant_count":2,"renamed_to":"Testoria lucida"}"""))
             if (added.get()) put(JSONObject("""{"id":"name-added","name":"Synthetic star","language":"en","source":"owner"}"""))
             repeat(24) { put(JSONObject().put("id", "name-$it").put("name", "Synthetic source name $it").put("language", "en").put("source", "wikidata")) }
         }).toString()
@@ -1886,7 +2914,7 @@ class PlantPageTest {
             compose.waitForIdle()
             assertEquals("the list kept its place", refresh, compose.onNodeWithText("Refresh names").fetchSemanticsNode().boundsInRoot)
             reveal(hasText("Remove Synthetic lantern")).performClick()
-            compose.onNodeWithText("2 plants without a name of their own show it now and will show another name for this species.").assertIsDisplayed()
+            compose.onNodeWithText("2 plants show this name now and will show \u201cTestoria lucida\u201d instead.").assertIsDisplayed()
             compose.runOnIdle { assertFalse(removed.get()) }
             compose.onNodeWithText("Remove name").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Removed the name \u201cSynthetic lantern\u201d").fetchSemanticsNodes().isNotEmpty() }
@@ -1899,11 +2927,11 @@ class PlantPageTest {
         val species = parseSpecies("""{"gbif_key":910001,"scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida","rank":"SPECIES",
             "name_fetch_needed":false,"name_fetch_failed":false,"common_name":"Synthetic lantern","names":[
             {"id":"name-en","name":"Synthetic lantern","language":"en","source":"owner","renamed_plant_count":2},
-            {"id":"name-nb","name":"Syntetisk lykt","language":"nb","source":"owner","renamed_plant_count":2},
+            {"id":"name-nb","name":"Syntetisk lykt","language":"nb","source":"owner","renamed_plant_count":2,"renamed_to":"Syntetisk lampe"},
             {"id":"name-spare","name":"Syntetisk lampe","language":"nb","source":"owner","renamed_plant_count":0}]}""")
         compose.setContent { FytoriumTheme { SpeciesNames(species, syntheticOptions(), true, { _, _ -> }) } }
         reveal(hasText("Remove Syntetisk lykt")).performClick()
-        compose.onNodeWithText("2 plants without a name of their own show it now and will show another name for this species.").assertIsDisplayed()
+        compose.onNodeWithText("2 plants show this name now and will show \u201cSyntetisk lampe\u201d instead.").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
         reveal(hasText("Remove Syntetisk lampe")).performClick()
         compose.onNodeWithText("No plant shows this name now, so removing it renames none.").assertIsDisplayed()
@@ -1928,17 +2956,19 @@ class PlantPageTest {
     private lateinit var api: ApiClient
     private var recorded: MutableList<String> = mutableListOf()
     private fun paths() = recorded
+    private fun choicesJson(options: PlantOptions) = JSONObject().put("plant", JSONObject().put("choices", JSONObject(options.choices)).put("labels", JSONObject(options.labels))
+        .put("numbers", JSONArray(options.numbers)).put("booleans", JSONArray(options.booleans)).put("health", JSONArray(options.health)))
+        .put("nameLanguages", JSONObject(options.languages)).toString()
     private fun withPlantServer(served: (String) -> String? = { null }, lists: String = taskListFixture("today"),
         paths: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf()), connected: () -> Boolean = { true },
-        status: (String) -> Int = { 200 }, block: (Repository, MutableState<Boolean>) -> Unit) {
+        status: (String) -> Int = { 200 }, views: (String) -> String? = { null }, posted: (String) -> String? = { null },
+        respond: (RecordedRequest) -> MockResponse? = { null }, block: (Repository, MutableState<Boolean>) -> Unit) {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
         MockWebServer().use { server ->
-            val options = syntheticOptions()
-            val choices = JSONObject().put("plant", JSONObject().put("choices", JSONObject(options.choices)).put("labels", JSONObject(options.labels))
-                .put("numbers", JSONArray(options.numbers)).put("booleans", JSONArray(options.booleans)).put("health", JSONArray(options.health)))
-                .put("nameLanguages", JSONObject(options.languages)).toString()
+            val choices = choicesJson(syntheticOptions())
             server.dispatcher = object : Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse = request.requestUrl!!.encodedPath.also { paths += it }.let { path -> MockResponse().setResponseCode(status(path)).setBody(served(path) ?: when (path) {
+                override fun dispatch(request: RecordedRequest): MockResponse = request.requestUrl!!.encodedPath.also { paths += it }.let { path -> respond(request) ?: MockResponse().setResponseCode(status(path)).setBody((if (path == "/api/tasks") views(request.requestUrl!!.queryParameter("view") ?: "today") else null)
+                    ?: posted(path).takeIf { request.method != "GET" } ?: served(path) ?: when (path) {
                     "/api/me" -> """{"member":{"id":"member-one","role":"owner"}}"""
                     "/api/tasks" -> taskListFixture(request.requestUrl!!.queryParameter("view") ?: "today")
                     "/api/meta" -> """{"timezone":"Europe/Oslo"}"""

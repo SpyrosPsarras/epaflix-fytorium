@@ -11,12 +11,14 @@ import org.json.JSONObject
 
 data class CareCard(val key: Long, val name: String, val profile: JSONObject, val fetches: List<JSONObject>, val outdoor: JSONObject,
     val canonicalName: String = name, val commonName: String? = null)
-data class UnmatchedSpecies(val key: Long, val name: String, val status: String)
+data class UnmatchedSpecies(val key: Long, val name: String, val status: String, val commonName: String? = null)
 data class SpeciesCareState(val card: CareCard? = null, val unmatched: List<UnmatchedSpecies> = emptyList(),
     val loaded: Boolean = false, val loading: Boolean = false, val saving: Boolean = false,
     val blocked: Boolean = false, val updateRequired: Boolean = false, val error: String? = null, val message: String? = null,
     // A failed read, or a failed change that turned changes off, stays in the line until a species load succeeds; a dialog shows only its own save's error.
-    val pageError: String? = null) {
+    val pageError: String? = null,
+    // Kept apart from blocked, so a read that failed while changes were off still loads again once Fytorium answers.
+    val readFailed: Boolean = false) {
     val pendingFetch get() = error == null && pageError == null && !blocked && !updateRequired &&
         card?.fetches?.any { it.optString("status") in listOf("pending", "fetching") } == true
     val writable get() = loaded && !saving && !blocked && !updateRequired
@@ -41,21 +43,22 @@ class SpeciesCareRepository(private val api: ApiClient, private val key: Long?, 
     private fun load() {
         if (key == null) {
             val rows = JSONArray(request("/api/species/unmatched")).mapObjects {
-                UnmatchedSpecies(it.getLong("gbif_key"), it.getString("canonical_name"), it.getString("status"))
+                UnmatchedSpecies(it.getLong("gbif_key"), it.getString("canonical_name"), it.getString("status"), it.nullable("common_name"))
             }
-            if (allowed()) mutable.value = mutable.value.copy(unmatched = rows, loaded = true, blocked = false, pageError = null)
+            if (allowed()) mutable.value = mutable.value.copy(unmatched = rows, loaded = true, blocked = false, pageError = null, readFailed = false)
         } else {
             val json = JSONObject(request("/api/species/$key/care"))
             val outdoor = JSONObject(request("/api/species/$key/outdoor-months"))
             val species = json.getJSONObject("species")
             val card = CareCard(key, species.getString("scientific_name"), json.getJSONObject("profile"), json.getJSONArray("fetches").mapObjects { it }, outdoor,
                 species.optString("canonical_name", species.getString("scientific_name")), species.nullable("common_name"))
-            if (allowed()) mutable.value = mutable.value.copy(card = card, loaded = true, blocked = false, pageError = null)
+            if (allowed()) mutable.value = mutable.value.copy(card = card, loaded = true, blocked = false, pageError = null, readFailed = false)
         }
     }
     @Synchronized fun refresh() = run(write = false) { load() }
-    @Synchronized fun override(field: String, value: Any): Boolean = change("overrides/${safeField(field)}", "PUT", JSONObject().put("value", value), "Override saved.")
-    @Synchronized fun reset(field: String): Boolean = change("overrides/${safeField(field)}", "DELETE", null, "Override removed.")
+    // Saving or removing a value of your own answers with a receipt, so only the refresh and retry results go to the line.
+    @Synchronized fun override(field: String, value: Any): Boolean = change("overrides/${safeField(field)}", "PUT", JSONObject().put("value", value), null)
+    @Synchronized fun reset(field: String): Boolean = change("overrides/${safeField(field)}", "DELETE", null, null)
     @Synchronized fun refreshCare(): Boolean = change("refresh", "POST", null, "Refresh queued. Existing overrides are kept.")
     @Synchronized fun retryMatch(speciesKey: Long = requireNotNull(key)): Boolean {
         require(speciesKey in 1..2147483647L)
@@ -65,9 +68,9 @@ class SpeciesCareRepository(private val api: ApiClient, private val key: Long?, 
         }.also { if (it) refresh() }
     }
     private fun safeField(field: String): String { require(careLabels.containsKey(field)); return field }
-    private fun change(path: String, method: String, body: JSONObject?, message: String): Boolean = run(write = true) {
+    private fun change(path: String, method: String, body: JSONObject?, message: String?): Boolean = run(write = true) {
         request("/api/species/${requireNotNull(key)}/care/$path", method, body)
-        if (allowed()) mutable.value = mutable.value.copy(message = message)
+        if (allowed() && message != null) mutable.value = mutable.value.copy(message = message)
     }.also { if (it) refresh() }
     private fun run(write: Boolean, fallback: String? = null, action: () -> Unit): Boolean {
         if (!allowed()) { mutable.value = SpeciesCareState(); return false }
@@ -82,7 +85,7 @@ class SpeciesCareRepository(private val api: ApiClient, private val key: Long?, 
             // Only a failed change turns changes off, and only a species load turns them back on.
             val blocked = write && (error !is CareFailure || error.status >= 500 || error.status in listOf(401, 403, 426))
             if (allowed()) mutable.value = mutable.value.copy(error = text.takeIf { write }, pageError = text.takeIf { !write || blocked } ?: state.value.pageError,
-                blocked = blocked || state.value.blocked,
+                blocked = blocked || state.value.blocked, readFailed = !write || state.value.readFailed,
                 updateRequired = state.value.updateRequired || (error is CareFailure && error.status == 426))
             false
         } finally {

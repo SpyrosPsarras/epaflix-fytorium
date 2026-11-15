@@ -39,8 +39,10 @@ internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refr
     showPostponed: Boolean = false, listed: Boolean = true, blocked: String? = null, onBlocked: (String) -> Unit = {}, subtitleLine: Int = subtitleLineHeight(),
     icon: ImageVector? = null, openLabel: String = "Open ${task.plantName}") {
     val event = task.completedEvent
-    val postponed = event?.takeIf { it.kind != "completed" }
-    val actions = today?.let { day -> state.member?.let { task.actions(day, it, event) } }.orEmpty()
+    // A held row whose event this device's own Undo reversed, and which took back nothing still listed, says so instead of keeping its old label and controls.
+    val undone = !listed && event != null && state.transitions.any { it.first == event.id }
+    val postponed = event?.takeIf { it.kind != "completed" && !undone }
+    val actions = if (undone) emptyList() else today?.let { day -> state.member?.let { task.actions(day, it, event) } }.orEmpty()
     val busy = BusyKey.Row(task.occurrence) in state.pending
     val enabled = state.writable && !busy && listed
     // A control that is off for a connection, an app update or a held change still takes a tap, to say why.
@@ -51,7 +53,7 @@ internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refr
     val filled = IconButtonDefaults.filledIconButtonColors()
     val parts = details.filter { it.isNotBlank() }
     val until = task.postponedUntil
-    val status = postponed?.let { until?.let { "until " + shortDate(it) } ?: it.label } ?: task.postponedLabel?.takeIf { showPostponed && event == null }
+    val status = if (undone) "Undone" else postponed?.let { until?.let { "until " + shortDate(it) } ?: it.label } ?: task.postponedLabel?.takeIf { showPostponed && event == null }
     // An empty subtitle keeps its line's height, split around the centred name, so a label appearing later never changes the row's height.
     val emptyLine = subtitleLine.takeIf { parts.isEmpty() && status == null }
     Column(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}")) {
@@ -80,7 +82,7 @@ internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refr
                 Box(Modifier.size(48.dp).semantics { contentDescription = "Saving ${task.label} for ${task.plantAndSite}" }, contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
-            } else if (event != null) {
+            } else if (event != null && !undone) {
                 val undoable = "undo" in actions
                 val check = @Composable { Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Check, contentDescription = null, tint = if (undoable && !enabled) filled.disabledContentColor else filled.contentColor) } }

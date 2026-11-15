@@ -54,9 +54,9 @@ export async function speciesCare(key: string, household: string, language: 'en'
   });
   return { species: { ...species, common_name: common.rows[0].name }, profile, fetches, fetch: fetches[0] ?? null, openPlantbookMatch: plantbookMatch.rows[0] ?? null };
 }
-export async function unmatchedSpecies(household: string) {
-  const result = await db().query("SELECT s.gbif_key, s.canonical_name, m.status FROM open_plantbook_matches m JOIN species s USING (gbif_key) WHERE m.status IN ('no_match', 'ambiguous') AND EXISTS (SELECT 1 FROM plants p WHERE p.gbif_key = s.gbif_key AND p.household_id = $1) ORDER BY s.canonical_name, s.gbif_key", [household]);
-  return result.rows as { gbif_key: number; canonical_name: string; status: 'no_match' | 'ambiguous' }[];
+export async function unmatchedSpecies(household: string, language: 'en' | 'nb' | 'el' = 'en') {
+  const result = await db().query("SELECT s.gbif_key, s.canonical_name, species_common_name(s.gbif_key, $2) AS common_name, m.status FROM open_plantbook_matches m JOIN species s USING (gbif_key) WHERE m.status IN ('no_match', 'ambiguous') AND EXISTS (SELECT 1 FROM plants p WHERE p.gbif_key = s.gbif_key AND p.household_id = $1) ORDER BY COALESCE(species_common_name(s.gbif_key, $2), s.canonical_name), s.gbif_key", [household, language]);
+  return result.rows as { gbif_key: number; canonical_name: string; common_name: string | null; status: 'no_match' | 'ambiguous' }[];
 }
 export async function retryPlantbookMatch(key: string, household: string) {
   const species = await getCareSpecies(key, household);

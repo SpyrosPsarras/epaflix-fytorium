@@ -50,11 +50,12 @@ class TodayNavigationTest {
         compose.onNodeWithTag("view-upcoming").performClick()
         val row = hasAnyAncestor(hasTestTag("task:${plant.id}:water"))
         val undo = hasContentDescription("Water done for ${plant.displayName}, Synthetic site. Double tap to undo")
-        val skip = hasContentDescription("More actions for Water on Synthetic fern")
+        // Skipping again would keep this occurrence's date (C18), so its row is told apart by its pending check, not by Skip.
+        val pending = hasContentDescription("Mark Water done for ${plant.displayName}, Synthetic site")
         for ((index, completed) in listOf(1 to false, 0 to true)) {
             compose.onAllNodesWithContentDescription("Open ${plant.displayName}")[index].performScrollTo().performClick()
-            compose.onNode(if (completed) undo else row and skip).assertExists()
-            compose.onNode(if (completed) row and skip else undo).assertDoesNotExist()
+            compose.onNode(if (completed) undo else row and pending).assertExists()
+            compose.onNode(if (completed) row and pending else undo).assertDoesNotExist()
             compose.onNodeWithContentDescription("Back").performClick()
         }
     }

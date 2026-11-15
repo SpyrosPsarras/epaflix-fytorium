@@ -17,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.VisualTransformation
@@ -58,15 +59,20 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
 @Composable internal fun Heading(text: String, style: TextStyle = MaterialTheme.typography.titleLarge, modifier: Modifier = Modifier) {
     Text(text, style = style, modifier = modifier.semantics { heading() })
 }
-@Composable internal fun PlantError(message: String?) {
-    message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+// An invisible copy of the longest message keeps its space, so one appearing there moves nothing below it.
+@Composable internal fun PlantError(message: String?, keep: String? = null) {
+    if (message != null || keep != null) Box {
+        keep?.let { Text(it, Modifier.alpha(0f).clearAndSetSemantics {}) }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+    }
 }
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun Choice(label: String, value: String, options: Map<String, String>, enabled: Boolean = true, onChange: (String) -> Unit) {
+@Composable internal fun Choice(label: String, value: String, options: Map<String, String>, enabled: Boolean = true, supporting: (@Composable () -> Unit)? = null,
+    onChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded && enabled, onExpandedChange = { if (enabled) expanded = it }) {
         OutlinedTextField(value = options[value] ?: choiceLabel(value), onValueChange = {}, readOnly = true,
-            label = { Text(label) }, enabled = enabled,
+            label = { Text(label) }, enabled = enabled, supportingText = supporting,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled).fillMaxWidth())
         ExposedDropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
@@ -128,13 +134,13 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
             standIn?.let { Text(it, color = if (enabled) colors.unfocusedPlaceholderColor else colors.disabledPlaceholderColor, modifier = Modifier.clearAndSetSemantics {}) }
             inner()
         } }, enabled = enabled, singleLine = true, visualTransformation = VisualTransformation.None, interactionSource = source, isError = errorText != null,
-            label = { Text("Name") }, supportingText = { if (errorText != null) PlantError(errorText) else Text(hint) }, colors = colors)
+            label = { Text("Name") }, supportingText = { if (errorText == null) Text(hint) else PlantError(errorText, keep = hint) }, colors = colors)
     }
 }
 private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
-// Name and site lead; everything else waits under More details, which opens by itself when one of its fields has an error.
+// Name, site and Save lead; everything else waits under More details, below Save, which opens by itself when one of its fields has an error.
 @Composable fun PlantForm(plant: Plant?, options: PlantOptions, sites: List<PlantSite>, writable: Boolean, errors: Map<String, String> = emptyMap(),
-    onSave: (JSONObject) -> Unit, today: LocalDate = LocalDate.now(ZoneOffset.UTC), onDirty: (Boolean) -> Unit = {}) {
+    onSave: (JSONObject) -> Unit, today: LocalDate = LocalDate.now(ZoneOffset.UTC), onDirty: (() -> Boolean) -> Unit = {}) {
     val original = remember(plant?.id) { JSONObject(plant?.attributesJson ?: "{}") }
     val startTexts = remember(plant?.id) { (listOf("nickname", "cultivar", "birthday") + options.numbers).associateWith { key -> if (original.isNull(key)) "" else original.optString(key) } }
     val startChoices = remember(plant?.id) { options.choices.mapValues { (key, values) -> original.nullable(key) ?: values.first() } +
@@ -143,9 +149,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
     val texts = savedFields(plant?.id) { startTexts }
     val choices = savedFields(plant?.id) { startChoices }
     val flags = savedFields(plant?.id) { startFlags }
-    val dirty = texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags
-    val currentDirty by rememberUpdatedState(onDirty)
-    LaunchedEffect(dirty) { currentDirty(dirty) }
+    SideEffect { onDirty { texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags } }
     var more by rememberSaveable(plant?.id) { mutableStateOf(false) }
     LaunchedEffect(errors) { if (errors.keys.any { it !in leadingFields }) more = true }
     val validNumbers = options.numbers.all { texts[it].isNullOrBlank() || (texts[it]?.toIntOrNull()?.let { n -> n > 0 } == true) }
@@ -153,10 +157,21 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
         val shownName = plant?.displayName?.takeIf { original.isNull("nickname") }
         NameField(texts["nickname"].orEmpty(), { texts["nickname"] = it }, shownName, writable, errors["nickname"],
             if (shownName != null) "Leave empty to keep using the species name" else "Leave empty to use the species name")
-        Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable) { choices["site_id"] = it }
-        PlantError(errors["site_id"])
-        PlantError(errors["gbif_key"])
+        // A site removed elsewhere before Save is named in the line kept under Site, so Save stays where it was.
+        // shortcut: copies readPlant's "Choose a site in your household." wording to keep its space; upgrade when /api/plants sends its refusal texts or the server wording changes.
+        Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
+            supporting = { PlantError(errors["site_id"], keep = "Choose a site in your household.") }) { choices["site_id"] = it }
         if (sites.isEmpty()) Text("Create a site under More before adding or restoring a plant.")
+        Button(onClick = {
+            val body = JSONObject()
+            choices.forEach { (key, value) -> body.put(key, value.ifBlank { null } ?: JSONObject.NULL) }
+            texts.forEach { (key, value) -> body.put(key, if (key in options.numbers) value.toIntOrNull() ?: JSONObject.NULL else value.ifBlank { null } ?: JSONObject.NULL) }
+            flags.forEach { (key, value) -> body.put(key, value.toBoolean()) }
+            onSave(body)
+        }, enabled = writable && validNumbers && (plant?.status == "graveyard" || !choices["site_id"].isNullOrBlank()), modifier = Modifier.heightIn(min = 48.dp)) { Text("Save plant") }
+        // A failed save's message and every field error below this point go under the button, so the button stays where the finger is for another try.
+        PlantError(errors["_form"])
+        PlantError(errors["gbif_key"])
         Expander("More details", more) { more = !more }
         if (more) {
             OutlinedTextField(texts["cultivar"].orEmpty(), { texts["cultivar"] = it }, label = { Text("Cultivar") }, enabled = writable, singleLine = true,
@@ -178,18 +193,12 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
                 PlantError(errors[key])
             }
         }
-        PlantError(errors["_form"])
-        Button(onClick = {
-            val body = JSONObject()
-            choices.forEach { (key, value) -> body.put(key, value.ifBlank { null } ?: JSONObject.NULL) }
-            texts.forEach { (key, value) -> body.put(key, if (key in options.numbers) value.toIntOrNull() ?: JSONObject.NULL else value.ifBlank { null } ?: JSONObject.NULL) }
-            flags.forEach { (key, value) -> body.put(key, value.toBoolean()) }
-            onSave(body)
-        }, enabled = writable && validNumbers && (plant?.status == "graveyard" || !choices["site_id"].isNullOrBlank()), modifier = Modifier.heightIn(min = 48.dp)) { Text("Save plant") }
     }
 }
-@Composable fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit, onSelect: (SpeciesCandidate, String, Boolean) -> Unit, imageApi: ApiClient? = null) {
+@Composable fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit, onSelect: (SpeciesCandidate, String, Boolean) -> Unit, imageApi: ApiClient? = null,
+    onDirty: (() -> Boolean) -> Unit = {}) {
     var query by rememberSaveable { mutableStateOf("") }
+    SideEffect { onDirty { query.isNotBlank() } }
     var selected by remember(result) { mutableStateOf<SpeciesCandidate?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Heading("Species search", style = MaterialTheme.typography.headlineSmall) }
@@ -227,14 +236,12 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantCareSettings(json: String, writable: Boolean, onSave: (JSONObject) -> Unit, tasks: Map<String, CareTask> = emptyMap(),
     plantName: String = "", onSpeciesCare: (() -> Unit)? = null, onBack: (() -> Unit)? = null,
-    barTitle: @Composable (@Composable () -> Unit) -> Unit = { it() }, error: String? = null, onDirty: (Boolean) -> Unit = {}) {
+    barTitle: @Composable (@Composable () -> Unit) -> Unit = { it() }, error: String? = null, onDirty: (() -> Boolean) -> Unit = {}) {
     val custom = remember(json) { JSONObject(json).getJSONObject("customIntervals") }
     val types = taskNames.keys.toList()
     val stored = remember(json) { types.associateWith { if (custom.isNull(it)) "" else custom.optString(it) } }
-    val intervals = remember(json) { stored.toList().toMutableStateMap() }
-    val dirty = intervals.toMap() != stored
-    val currentDirty by rememberUpdatedState(onDirty)
-    LaunchedEffect(dirty) { currentDirty(dirty) }
+    val intervals = savedFields(json) { stored }
+    SideEffect { onDirty { intervals.toMap() != stored } }
     val valid = intervals.values.all { it.isBlank() || it.toIntOrNull() in 1..365 }
     fun current(type: String): String? {
         val task = tasks[type] ?: return null
@@ -279,9 +286,10 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 }
 private val nameSources = mapOf("owner" to "Added by your household", "wikidata" to "Wikidata", "gbif" to "GBIF", "nortaxa" to "NorTaxa")
 @Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject) -> Unit,
-    list: LazyListState = rememberLazyListState(), error: String? = null) {
+    list: LazyListState = rememberLazyListState(), error: String? = null, onDirty: (() -> Boolean) -> Unit = {}) {
     // The draft clears only when the species reloads after a successful add, so a failed add keeps the text.
     var name by remember(species) { mutableStateOf("") }
+    SideEffect { onDirty { name.isNotBlank() } }
     var language by remember { mutableStateOf("en") }
     var others by rememberSaveable(species.key) { mutableStateOf(false) }
     var removing by remember { mutableStateOf<SpeciesName?>(null) }
@@ -335,19 +343,19 @@ private val nameSources = mapOf("owner" to "Added by your household", "wikidata"
         item("refresh") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = { onCommand("refresh", JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh names") }
-                if (species.fetching) Text("Fetching names in the background. Failed sources retry with backoff, up to eight attempts.")
-                if (species.failed) Text("A name source stopped after eight failures. Refresh names to try again. Stored names remain available.")
+                if (species.fetching) Text("Some names are still loading.")
                 Text("Species and names from GBIF, CC BY 4.0. Wikidata names are CC0.", style = MaterialTheme.typography.bodySmall, color = muted)
             }
         }
     }
     removing?.let { entry ->
         val renames = entry.renamedPlants
+        val next = entry.renamedTo?.let { "\u201c$it\u201d" } ?: "another name for this species"
         AlertDialog(onDismissRequest = { removing = null }, title = { Text("Remove \u201c${entry.name}\u201d?") },
             text = { Text(when (renames) {
                 0 -> "No plant shows this name now, so removing it renames none."
-                1 -> "1 plant without a name of its own shows it now and will show another name for this species."
-                else -> "$renames plants without a name of their own show it now and will show another name for this species."
+                1 -> "1 plant shows this name now and will show $next instead."
+                else -> "$renames plants show this name now and will show $next instead."
             }) },
             confirmButton = { TextButton(onClick = { removing = null; onCommand(entry.id, JSONObject()) }, enabled = writable) { Text("Remove name") } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })

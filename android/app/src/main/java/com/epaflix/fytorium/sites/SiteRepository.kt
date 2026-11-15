@@ -33,7 +33,7 @@ private fun parseSite(json: JSONObject) = Site(json.getString("id"),
     }, json.getBoolean("grow_light"), json.getBoolean("draft"), json.optInt("plant_count"), json.optBoolean("imported_conditions_incomplete"))
 
 data class SiteState(val sites: List<Site> = emptyList(), val busy: Boolean = false, val loaded: Boolean = false,
-    val blocked: Boolean = false, val updateRequired: Boolean = false, val errors: Map<String, String> = emptyMap())
+    val blocked: Boolean = false, val updateRequired: Boolean = false, val errors: Map<String, String> = emptyMap(), val readError: String? = null)
 private class SiteFailure(val status: Int, val errors: Map<String, String>) : Exception()
 
 // In-memory only. The screen owns this repository for one member and discards it on exit.
@@ -60,12 +60,14 @@ class SiteRepository(private val api: ApiClient, private val allowed: () -> Bool
     private fun load() {
         val list = JSONArray(request("/api/sites"))
         val sites = (0 until list.length()).map { parseSite(list.getJSONObject(it)) }
-        if (allowed()) mutable.value = mutable.value.copy(sites = sites, loaded = true, blocked = false)
+        if (allowed()) mutable.value = mutable.value.copy(sites = sites, loaded = true, blocked = false, readError = null)
     }
     @Synchronized fun refresh() = run(write = false) { load() }
-    @Synchronized fun save(site: Site): Boolean = run(write = true) {
-        request(site.id?.let { "/api/sites/${requireSafeId(it)}" } ?: "/api/sites", if (site.id == null) "POST" else "PUT", site.json(),
+    @Synchronized fun save(site: Site, created: (String) -> Unit = {}): Boolean = run(write = true) {
+        val saved = request(site.id?.let { "/api/sites/${requireSafeId(it)}" } ?: "/api/sites", if (site.id == null) "POST" else "PUT", site.json(),
             fallback = "Could not save the site. Try again.")
+        // The site exists once the server accepted it, so a reply without its id only leaves it unselected.
+        if (site.id == null) runCatching { JSONObject(saved).getString("id") }.onSuccess(created)
     }.also { if (it) refresh() }
     @Synchronized fun delete(id: String): Boolean = run(write = true) {
         request("/api/sites/${requireSafeId(id)}", "DELETE", fallback = "Could not delete the site. Try again.")
@@ -79,8 +81,10 @@ class SiteRepository(private val api: ApiClient, private val allowed: () -> Bool
             action()
             allowed()
         } catch (error: Exception) {
-            if (allowed()) mutable.value = mutable.value.copy(
-                errors = if (error is SiteFailure) error.errors else mapOf("_form" to "Could not reach the server. Try again."),
+            val errors = if (error is SiteFailure) error.errors else mapOf("_form" to "Could not reach the server. Try again.")
+            // A failed read belongs to the page, so it stays until a read succeeds; only a write's failure goes into its form.
+            if (allowed()) mutable.value = mutable.value.copy(errors = if (write) errors else emptyMap(),
+                readError = if (write) state.value.readError else errors.values.firstOrNull() ?: "Could not reach the server. Try again.",
                 blocked = error !is SiteFailure || error.status >= 500 || error.status in listOf(401, 403, 426),
                 updateRequired = state.value.updateRequired || (error is SiteFailure && error.status == 426))
             false

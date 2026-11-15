@@ -45,7 +45,8 @@ data class CareTask(val status: String, val dueOn: String?, val intervalDays: In
             add("complete")
             // Today.svelte compares the server's household date, not the phone clock.
             if (dueOn != null && dueOn <= today) add("snooze")
-            add("skip")
+            // A skip moves the task to today plus its interval, which would change nothing where that is its date already.
+            if (intervalDays == null || dueOn != LocalDate.parse(today).plusDays(intervalDays.toLong()).toString()) add("skip")
             if (taskType == "repot" && member.role != Role.sitter) add("repot")
         }
     }

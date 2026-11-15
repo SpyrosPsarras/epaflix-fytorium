@@ -19,7 +19,7 @@ test('plants, species, species care and species changes name each species the wa
   expect((await owner.request('/api/species/910001/names', 'POST', { name: 'Synthetic trialleaf', language: 'en' })).status).toBe(201);
   expect(await read('/api/plants/' + named.id)).toMatchObject({ display_name: 'Synthetic named fern', common_name: 'Synthetic trialleaf' });
   expect(await read('/api/species/910001')).toMatchObject({ common_name: 'Synthetic trialleaf',
-    names: expect.arrayContaining([expect.objectContaining({ name: 'Synthetic trialleaf', source: 'owner', renamed_plant_count: 1 })]) });
+    names: expect.arrayContaining([expect.objectContaining({ name: 'Synthetic trialleaf', source: 'owner', renamed_plant_count: 1, renamed_to: 'Testoria lucida' })]) });
   expect((await read('/api/species/910001/care')).species).toMatchObject({ canonical_name: 'Testoria lucida', common_name: 'Synthetic trialleaf' });
 
   harness.setGbif({ usageKey: 910019, scientificName: 'Testoria correcta Inventor', canonicalName: 'Testoria correcta', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
@@ -54,7 +54,7 @@ test('each household name counts the plants it names in any language, blank nick
   expect(species.common_name).toBe('Synthetic lantern');
   expect(species.names).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: 'Synthetic lantern', language: 'en', renamed_plant_count: 2 }),
-    expect.objectContaining({ name: 'Syntetisk lykt', language: 'nb', renamed_plant_count: 2 }),
+    expect.objectContaining({ name: 'Syntetisk lykt', language: 'nb', renamed_plant_count: 2, renamed_to: 'Syntetisk lampe' }),
     expect.objectContaining({ name: 'Syntetisk lampe', language: 'nb', renamed_plant_count: 0 }),
   ]));
 });

@@ -68,13 +68,15 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var plantsSearch by rememberSaveable { mutableStateOf(false) }
     var taskView by rememberSaveable { mutableStateOf("today") }
     var notifications by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(homeRequest) {
-        if (homeRequest > 0) {
-            tab = "Today"; taskView = "today"; addPlant = false; plantsSearch = false; notifications = false; sites = false; household = null
-            plantaImport = false; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null
-        }
-    }
     var about by rememberSaveable { mutableStateOf(false) }
+    // A Plants, Sites or Species care form names its discard question here, read when a tab or a notification leaves it, so it asks the same as its Back.
+    var plantsDiscard by remember { mutableStateOf<() -> String?>({ null }) }
+    var leaving by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    // Discard drops the Plants form even when the tap stays on Plants, so no form keeps changes the shell no longer asks about.
+    var plantsDiscards by rememberSaveable { mutableIntStateOf(0) }
+    fun leave(go: () -> Unit) { val title = plantsDiscard(); if (title != null) leaving = title to go else go() }
+    fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null }
+    LaunchedEffect(homeRequest) { if (homeRequest > 0) leave { select("Today"); taskView = "today" } }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
     var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }
     LaunchedEffect(loggedIn, careState?.member) {
@@ -118,7 +120,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             NavigationBar(modifier) {
                 listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                     "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                    NavigationBarItem(selected = tab == title, onClick = { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null },
+                    NavigationBarItem(selected = tab == title, onClick = { leave { select(title) } },
                         icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
                 }
             }
@@ -142,6 +144,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             // A tap meant for a receipt that has just gone must not switch tabs.
             if (barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
+        leaving?.let { (title, go) -> com.epaflix.fytorium.plants.DiscardDialog(title, onKeep = { leaving = null }) {
+            leaving = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); go() } }
     }) { padding ->
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
@@ -172,7 +176,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 key(careSpecies) {
                     com.epaflix.fytorium.species.SpeciesCareRoute(sitesApi, careSpecies, careState, sitesConnected,
                         onBack = { if (careSpecies != null) careSpecies = null else unmatched = false },
-                        onChanged = { controller?.refresh() }, onSpecies = { careSpecies = it }, onUpdateRequired = { controller?.repository?.requireUpdate() })
+                        onChanged = { controller?.refresh() }, onSpecies = { careSpecies = it }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                        onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } },
+                        answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0, onFormDirty = { plantsDiscard = it })
                 }
             }
             return@Scaffold
@@ -190,7 +196,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && tab == "More" && sites && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false })
+                com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false }, onFormDirty = { plantsDiscard = it },
+                    onUpdateRequired = { controller?.repository?.requireUpdate() })
             }
             return@Scaffold
         }
@@ -198,7 +205,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 key(careState.member) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
                     onBack = { tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
-                    onChanged = { controller?.refresh() }) }
+                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }) }
             }
             return@Scaffold
         }
@@ -220,13 +227,13 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.rainWatered(feed.state.value.weather?.lastBatchId) } },
                             onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } })
                     })
-                else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
+                else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant, plantsDiscards) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
                     onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false; plantsSearch = false },
                     initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,
                     onTaskAction = { task, action -> controller?.act(task, action) },
                     photosApi = sitesApi, photosConnected = sitesConnected,
                     speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() },
-                    receipts = receipts, onReceiptGone = { receiptsGone++ }, focusSearch = plantsSearch) }
+                    receipts = receipts, onReceiptGone = { receiptsGone++ }, focusSearch = plantsSearch, onFormDirty = { plantsDiscard = it }) }
             }
             return@Scaffold
         }

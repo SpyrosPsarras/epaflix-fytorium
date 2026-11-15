@@ -539,39 +539,42 @@ private fun aboutLines(a: JSONObject): List<String> {
     }
 }
 
-@Composable internal fun RestoreForm(plant: Plant, sites: List<PlantSite>, writable: Boolean, onSave: (JSONObject) -> Unit, onCreateSite: () -> Unit = {}, error: String? = null) {
+@Composable internal fun RestoreForm(plant: Plant, sites: List<PlantSite>, writable: Boolean, onSave: (JSONObject) -> Unit, onCreateSite: () -> Unit = {}, error: String? = null,
+    chosen: () -> String? = { null }, onChoose: (String) -> Unit = {}, onDirty: (() -> Boolean) -> Unit = {}) {
     val attributes = remember(plant.attributesJson) { JSONObject(plant.attributesJson) }
-    var site by remember(plant.id) { mutableStateOf(attributes.nullable("site_id").orEmpty()) }
-    val chosen = sites.firstOrNull { it.id == site }
+    val stored = attributes.nullable("site_id").orEmpty()
+    val site = chosen() ?: stored
+    val target = sites.firstOrNull { it.id == site }
+    SideEffect { onDirty { (chosen() ?: stored) != stored } }
     PlantColumn {
         Text("${plant.displayName} returns to Today and Upcoming with its care tasks. Its history and photos stay.")
-        Choice("Site", site, mapOf("" to "Choose a site") + sites.associate { it.id to it.name }, writable) { site = it }
+        Choice("Site", site, mapOf("" to "Choose a site") + sites.associate { it.id to it.name }, writable, onChange = onChoose)
         TextButton(onClick = onCreateSite, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") }
-        PlantError(error)
-        Button(onClick = { onSave(JSONObject().put("site_id", site)) }, enabled = writable && chosen != null, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text(chosen?.let { "Restore ${plant.displayName} to ${it.name}" } ?: "Restore ${plant.displayName}")
+        Button(onClick = { onSave(JSONObject().put("site_id", site)) }, enabled = writable && target != null, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(target?.let { "Restore ${plant.displayName} to ${it.name}" } ?: "Restore ${plant.displayName}")
         }
+        PlantError(error)
     }
 }
 @Composable internal fun PlantRepotForm(plant: Plant, options: PlantOptions, writable: Boolean, errors: Map<String, String> = emptyMap(),
-    onSave: (JSONObject) -> Unit, onDirty: (Boolean) -> Unit = {}) {
+    onSave: (JSONObject) -> Unit, onDirty: (() -> Boolean) -> Unit = {}) {
     val start = remember(plant.id) { listOf(plant.potType.orEmpty(), plant.soilType.orEmpty(), plant.potSizeCm?.toString().orEmpty()) }
     var pot by remember(plant.id) { mutableStateOf(start[0]) }
     var soil by remember(plant.id) { mutableStateOf(start[1]) }
     var size by remember(plant.id) { mutableStateOf(start[2]) }
-    val dirty = listOf(pot, soil, size) != start
-    val currentDirty by rememberUpdatedState(onDirty)
-    LaunchedEffect(dirty) { currentDirty(dirty) }
+    SideEffect { onDirty { listOf(pot, soil, size) != start } }
+    // shortcut: copies potErrors' "Choose one of: ..." wording to keep its space; upgrade when /api/choices sends the refusal text or the server wording changes.
+    fun refusal(field: String) = "Choose one of: " + options.choices.getValue(field).joinToString(", ") + "."
     PlantColumn {
         Heading("New pot and soil for ${plant.displayName}", style = MaterialTheme.typography.headlineSmall)
-        Choice(options.labels.getValue("pot_type"), pot, options.choices.getValue("pot_type").associateWith(::choiceLabel), writable) { pot = it }
-        PlantError(errors["pot_type"])
-        Choice(options.labels.getValue("soil_type"), soil, options.choices.getValue("soil_type").associateWith(::choiceLabel), writable) { soil = it }
-        PlantError(errors["soil_type"])
+        Choice(options.labels.getValue("pot_type"), pot, options.choices.getValue("pot_type").associateWith(::choiceLabel), writable,
+            supporting = { PlantError(errors["pot_type"], keep = refusal("pot_type")) }) { pot = it }
+        Choice(options.labels.getValue("soil_type"), soil, options.choices.getValue("soil_type").associateWith(::choiceLabel), writable,
+            supporting = { PlantError(errors["soil_type"], keep = refusal("soil_type")) }) { soil = it }
         OutlinedTextField(size, { size = it }, label = { Text(options.labels.getValue("pot_size_cm")) }, keyboardOptions = numberKeys,
             isError = errors.containsKey("pot_size_cm"), supportingText = { if (errors["pot_size_cm"] != null) PlantError(errors["pot_size_cm"]) else Text("Positive whole number, or blank for unknown") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
-        PlantError(errors["_form"])
         Button(onClick = { onSave(JSONObject().put("pot_type", pot).put("soil_type", soil).put("pot_size_cm", size.toIntOrNull() ?: JSONObject.NULL)) },
             enabled = writable && (size.isBlank() || size.toIntOrNull()?.let { it > 0 } == true), modifier = Modifier.heightIn(min = 48.dp)) { Text("Repot ${plant.displayName}") }
+        PlantError(errors["_form"])
     }
 }

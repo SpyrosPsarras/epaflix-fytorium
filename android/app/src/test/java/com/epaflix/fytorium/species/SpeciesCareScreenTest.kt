@@ -1,5 +1,6 @@
 package com.epaflix.fytorium.species
 
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -63,7 +64,7 @@ class SpeciesCareScreenTest {
         // Source checks and refreshes wait under Sources.
         compose.onNodeWithText("Sources").performScrollTo().performClick()
         compose.onNodeWithText("Refresh care data").performScrollTo().assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithText("Source: rules · water.base@1").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Watering interval in days: rules · water.base@1").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
         compose.onNodeWithText("Override value for watering interval in days").assertIsDisplayed()
         compose.onNodeWithText("Days").performTextReplacement("9")
@@ -71,10 +72,12 @@ class SpeciesCareScreenTest {
         compose.onNodeWithText("Save override").performClick()
         compose.runOnIdle {
             assertEquals(9, value)
-            state.value.card!!.profile.put("wateringIntervalDays", JSONObject("""{"value":9,"source":"override","fetchedAt":"2030-06-02T12:00:00Z"}"""))
-            state.value = state.value.copy(message = "Override saved.")
+            val profile = JSONObject(state.value.card!!.profile.toString()).put("wateringIntervalDays", JSONObject("""{"value":9,"source":"override","fetchedAt":"2030-06-02T12:00:00Z"}"""))
+            state.value = state.value.copy(card = state.value.card!!.copy(profile = profile))
         }
-        compose.onNodeWithText("Source: override", substring = true).performScrollTo().assertIsDisplayed()
+        // A value of your own reads as yours, never as fetched.
+        compose.onNode(hasText("Your value") and hasAnyAncestor(hasTestTag("care:wateringIntervalDays"))).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Watering interval in days: your value").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
         capture("species-reset")
         compose.onNodeWithText("Confirm reset").performClick()
@@ -82,10 +85,11 @@ class SpeciesCareScreenTest {
         compose.onNodeWithText("Override watering interval in days").performScrollTo().assertIsNotEnabled()
         compose.onNode(hasText("Offline") and hasClickAction()).assertIsDisplayed()
         capture("species-offline")
-        compose.runOnIdle { online.value = true; state.value = SpeciesCareState(unmatched = listOf(UnmatchedSpecies(910002, "Testoria nebulosa", "ambiguous")), loaded = true) }
-        compose.onNodeWithText("Testoria nebulosa: ambiguous").assertIsDisplayed()
+        compose.runOnIdle { online.value = true; state.value = SpeciesCareState(unmatched = listOf(UnmatchedSpecies(910002, "Testoria nebulosa", "ambiguous", "Synthetic mistleaf")), loaded = true) }
+        compose.onNode(hasText("Synthetic mistleaf") and isHeading()).assertIsDisplayed()
+        compose.onNodeWithText("No clear care data match yet").assertIsDisplayed()
         capture("species-unmatched")
-        compose.onNodeWithText("Retry match").performClick()
+        compose.onNodeWithText("Look for care data again").performClick()
         compose.runOnIdle { assertEquals(910002L, retried) }
     }
     // C1b: the connection, a failure, a save's result and progress show in the bar, so no field or control moves as one starts or ends.
@@ -124,7 +128,7 @@ class SpeciesCareScreenTest {
         compose.onNode(hasText(error)).assertDoesNotExist()
         above(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo), "Progress")
         unmoved("the error cleared and progress showed")
-        val saved = "Override saved."
+        val saved = "Refresh queued. Existing overrides are kept."
         compose.runOnIdle { state.value = state.value.copy(saving = false, message = saved) }
         compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertDoesNotExist()
         above(hasText(saved) and hasClickAction(), "The result")
@@ -135,6 +139,99 @@ class SpeciesCareScreenTest {
         compose.runOnIdle { state.value = state.value.copy(message = null) }
         compose.onNode(hasText(saved)).assertDoesNotExist()
         unmoved("the result cleared")
+    }
+    // C23: a failed save's message in the override and reset dialogs never moves their buttons, also when it is long and changes are off until a reload.
+    @Test fun aFailedSaveInADialogLeavesItsButtonsInPlace() {
+        val overridden = card().let { it.copy(profile = JSONObject(it.profile.toString()).put("wateringIntervalDays", JSONObject("""{"value":9,"source":"override","fetchedAt":null}"""))) }
+        val state = mutableStateOf(SpeciesCareState(card = overridden, loaded = true))
+        compose.setContent { FytoriumTheme { SpeciesCareScreen(state.value) } }
+        for ((open, confirm) in listOf("Override watering interval in days" to "Save override", "Remove override for watering interval in days" to "Confirm reset")) {
+            compose.runOnIdle { state.value = state.value.copy(error = null, blocked = false) }
+            compose.onNodeWithText(open).performScrollTo().performClick()
+            val before = compose.onNodeWithText(confirm).fetchSemanticsNode().boundsInRoot
+            compose.runOnIdle { state.value = state.value.copy(error = longFailure, blocked = true) }
+            compose.onNode(hasText(longFailure) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+            assertEquals("$confirm moved", before, compose.onNodeWithText(confirm).fetchSemanticsNode().boundsInRoot)
+            compose.onNodeWithText("Cancel").performClick()
+        }
+    }
+    private val longFailure = "Fytorium could not store this value because the synthetic care service stopped answering while it saved. Your value is still here, so try again once it answers."
+    // C23: an override save that fails on its way (no connection, 503, a long message) shows its message and Retry without moving Save.
+    @Test fun aFailedOverrideSaveNeverMovesSave() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val failure = java.util.concurrent.atomic.AtomicReference<okhttp3.mockwebserver.MockResponse>()
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = when {
+                    request.method == "PUT" -> failure.get()
+                    request.path!!.endsWith("/outdoor-months") -> okhttp3.mockwebserver.MockResponse().setBody(outdoorFixture)
+                    else -> okhttp3.mockwebserver.MockResponse().setBody(careFixture.replace("pending", "done"))
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            compose.setContent { FytoriumTheme { SpeciesCareRoute(api, 910002, CareState(member = Member("owner", Role.owner)), { true }, {}) } }
+            val open = "Override watering interval in days"
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText(open) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText(open).performScrollTo().performClick()
+            compose.onNodeWithText("Days").performTextReplacement("9")
+            val save = hasText("Save override")
+            val before = compose.onNode(save).fetchSemanticsNode().boundsInRoot
+            val unreachable = "Could not reach the server. Try again."
+            for ((response, message) in listOf(
+                okhttp3.mockwebserver.MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST) to unreachable,
+                okhttp3.mockwebserver.MockResponse().setResponseCode(503) to unreachable,
+                okhttp3.mockwebserver.MockResponse().setResponseCode(503).setBody(JSONObject().put("message", longFailure).toString()) to longFailure)) {
+                failure.set(response)
+                compose.onNode(save).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Retry loading species")).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Save moved after: $message", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+                compose.onNode(hasText(message) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+                compose.onNodeWithText("Retry loading species").assertIsDisplayed().performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertEquals("Save moved after Retry", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+                compose.onNodeWithText("Days").assertTextContains("9")
+            }
+        }
+    }
+    // C21: a read that fails while a failed save has turned changes off loads again once Fytorium answers another request, and that load turns changes back on.
+    @Test fun aReadThatFailsWhileChangesAreOffLoadsOnceFytoriumAnswers() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val down = java.util.concurrent.atomic.AtomicBoolean(false)
+            val reads = java.util.concurrent.atomic.AtomicInteger()
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): okhttp3.mockwebserver.MockResponse {
+                    if (request.method == "GET" && request.path!!.endsWith("/care")) reads.incrementAndGet()
+                    return when {
+                        request.method == "PUT" || down.get() -> okhttp3.mockwebserver.MockResponse().setResponseCode(503)
+                        request.path!!.endsWith("/outdoor-months") -> okhttp3.mockwebserver.MockResponse().setBody(outdoorFixture)
+                        else -> okhttp3.mockwebserver.MockResponse().setBody(careFixture.replace("pending", "done"))
+                    }
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val answers = mutableIntStateOf(0)
+            compose.setContent { FytoriumTheme { SpeciesCareRoute(api, 910002, CareState(member = Member("owner", Role.owner)), { true }, {}, answers = answers.intValue) } }
+            val open = "Override watering interval in days"
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText(open) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText(open).performScrollTo().performClick()
+            compose.onNodeWithText("Days").performTextReplacement("9")
+            val save = hasText("Save override")
+            compose.onNode(save).performClick()
+            val retry = hasText("Retry loading species")
+            compose.waitUntil(5_000) { compose.onAllNodes(retry and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            down.set(true)
+            val before = reads.get()
+            compose.onNode(retry).performClick()
+            compose.waitUntil(5_000) { reads.get() > before && compose.onAllNodes(retry and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            down.set(false)
+            compose.runOnIdle { answers.intValue++ }
+            compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodes(retry).assertCountEquals(0)
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.onAllNodes(hasText("Could not reach the server. Try again.")).assertCountEquals(0)
+        }
     }
     @Test fun backgroundReadsKeepDraftsEnabledAndFailedWritesKeepTheEditor() {
         val state = mutableStateOf(SpeciesCareState(card = card(), loaded = true))
@@ -260,12 +357,59 @@ class SpeciesCareScreenTest {
             compose.waitUntil(5_000) { compose.onAllNodes(hasText(failure) and hasAnyAncestor(isDialog())).fetchSemanticsNodes().isNotEmpty() &&
                 compose.onAllNodes(hasText("Cancel") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithText("Discard").performClick()
             compose.onNode(isDialog()).assertDoesNotExist()
             failing.set(false)
             compose.onNode(hasText(failure) and hasClickAction()).assertIsDisplayed().performClick()
             compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText(failure)).fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithText(open).performScrollTo().assertIsEnabled()
+        }
+    }
+    // C19: the override dialog asks before Back, a tap outside it, Cancel or a notification tap drops a typed value, naming the field and species; Keep editing keeps it.
+    @Test fun theOverrideDialogAsksBeforeDroppingATypedValue() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val care = JSONObject(careFixture.replace("pending", "done")).apply {
+                getJSONObject("species").put("canonical_name", "Testoria nebulosa").put("common_name", "Synthetic mistleaf") }.toString()
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(when (request.path) {
+                    "/api/species/unmatched" -> """[{"gbif_key":910002,"canonical_name":"Testoria nebulosa","common_name":"Synthetic mistleaf","status":"no_match"}]"""
+                    "/api/species/910002/care" -> care
+                    "/api/species/910002/outdoor-months" -> outdoorFixture
+                    else -> "{}"
+                })
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val home = mutableIntStateOf(0)
+            compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("synthetic-member", Role.owner)), sitesApi = api,
+                sitesConnected = { true }, homeRequest = home.intValue) } }
+            compose.onNodeWithText("More").performClick()
+            compose.onNodeWithText("Unmatched species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Species care for Synthetic mistleaf").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Species care for Synthetic mistleaf").performClick()
+            val open = hasText("Override watering interval in days") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(open).performScrollTo().performClick()
+            compose.onNodeWithText("Days").performTextReplacement("9")
+            // Taken while the override dialog is the only one shown, so Back and the outside tap reach its window, not the discard question's.
+            val dialog = checkNotNull(org.robolectric.shadows.ShadowDialog.getLatestDialog().window).decorView
+            fun back() = compose.runOnIdle { checkNotNull(dialog.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher.onBackPressed() }
+            fun tapOutside() = compose.runOnIdle {
+                for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP))
+                    android.view.MotionEvent.obtain(0, 0, action, 1f, 1f, 0).let { dialog.dispatchTouchEvent(it); it.recycle() }
+            }
+            val question = "Discard your watering interval for Synthetic mistleaf?"
+            for (leave in listOf<() -> Unit>(::back, ::tapOutside, { compose.onNodeWithText("Cancel").performClick() }, { compose.runOnIdle { home.intValue++ } })) {
+                leave()
+                compose.onNodeWithText(question).assertIsDisplayed()
+                compose.onNodeWithText("Keep editing").performClick()
+                compose.onNodeWithText("Days").assertTextContains("9")
+            }
+            compose.runOnIdle { home.intValue++ }
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Days").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithText(question).assertDoesNotExist()
         }
     }
     @Test fun careFailuresNeverGateSpeciesAndSessionChangesHideControls() {
@@ -299,13 +443,14 @@ class SpeciesCareScreenTest {
             compose.onNode(hasText("Synthetic mistleaf") and isHeading()).assertIsDisplayed()
             compose.onNodeWithText("Testoria nebulosa").assertIsDisplayed()
             compose.onAllNodes(hasText("Inventor", substring = true)).assertCountEquals(0)
-            // Values lead; the source shows only where it is known, with a readable date.
-            compose.onNodeWithText("Source: open plantbook \u00b7 fetched 1 Jun 2030").performScrollTo().assertIsDisplayed()
-            for (gone in listOf("Source: unknown", "Fetch time", "GBIF key", "Retry match", "Refresh care data", "2030-06-01T")) compose.onAllNodes(hasText(gone, substring = true)).assertCountEquals(0)
+            // Values lead; each known source waits under Sources, with a readable date.
+            for (gone in listOf("Source: unknown", "Fetch time", "GBIF key", "Retry match", "Refresh care data", "2030-06-01T", "open plantbook")) compose.onAllNodes(hasText(gone, substring = true)).assertCountEquals(0)
             compose.onNodeWithText("Sources").performScrollTo().performClick()
+            compose.onNodeWithText("Light: open plantbook \u00b7 fetched 1 Jun 2030").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("GBIF key: 910002").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("Refresh care data").performScrollTo().assertIsDisplayed()
             // A minimum above the maximum says so while typing, blocks Save, and clears once the values are valid.
+            compose.onNodeWithText("No value yet (13)").performScrollTo().performClick()
             compose.onNodeWithText("Override temperature range in \u00b0C").performScrollTo().performClick()
             compose.onNode(hasText("Minimum") and hasSetTextAction()).performTextReplacement("30")
             compose.onNode(hasText("Maximum") and hasSetTextAction()).performTextReplacement("20")

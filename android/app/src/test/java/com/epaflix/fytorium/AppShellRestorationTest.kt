@@ -266,7 +266,7 @@ class AppShellRestorationTest {
                         compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertIsEnabled()
                     }
                     "sites-unmatched" -> {
-                        compose.onNodeWithText("Open Plantbook unmatched species").assertIsDisplayed()
+                        compose.onNodeWithText("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.").assertIsDisplayed()
                         compose.onNodeWithContentDescription("Back").performClick()
                         compose.onNodeWithText("A site groups plants that share the same conditions.").assertIsDisplayed()
                     }
@@ -316,7 +316,7 @@ class AppShellRestorationTest {
                 compose.onNodeWithText("Care defaults for this species").assertDoesNotExist()
                 compose.onNode(hasText("More") and hasClickAction()).performClick()
                 compose.onNodeWithText("Log out").assertIsDisplayed()
-                compose.onNodeWithText("Open Plantbook unmatched species").assertDoesNotExist()
+                compose.onNodeWithText("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.").assertDoesNotExist()
                 compose.onNodeWithText("A site groups plants that share the same conditions.").assertDoesNotExist()
             }
             } finally {

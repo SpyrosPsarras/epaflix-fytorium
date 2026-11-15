@@ -1332,7 +1332,7 @@ class TodayLayoutTest {
 
     @Test fun undoingASnoozeAndThenItsCompletedPostponedOccurrenceGivesThePendingRowOnlyToTheCompletionsSlot() = withCache { cache, api, server ->
         val pending = taskJson("2030-06-01", late = 1)
-        val snooze = eventJson("event-snooze", "snoozed")
+        val snooze = eventJson("event-snooze", "snoozed").put("postponed_until", "2030-06-04")
         val completion = eventJson("event-postponed").put("due_on", "2030-06-04")
         val snoozed = pending.acted(snooze, "2030-06-04")
         val postponed = taskJson("2030-06-04", postponed = "snoozed")
@@ -1364,7 +1364,12 @@ class TodayLayoutTest {
             served.responses["/api/care-events/event-snooze/undo"] = undoBody(snooze, nextJson("2030-06-11"), listOf(completed),
                 "2030-06-04:water" to listOf(completed), "2030-06-11:water" to listOf(next)).restoring(restoredJson("event-snooze", null))
             assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.first { it.completedEvent?.id == "event-snooze" }, "undo"))
-            compose.onNodeWithContentDescription(undoSnooze).assertIsNotEnabled()
+            // The snooze's row says it is undone, with no snooze label and no second control for the occurrence the completion's row holds.
+            val undone = hasText("Undone") and hasAnyAncestor(taskRow)
+            compose.onNode(undone).assertIsDisplayed()
+            compose.onNodeWithContentDescription(undoSnooze).assertDoesNotExist()
+            compose.onAllNodes(hasText("until", substring = true) and hasAnyAncestor(taskRow)).assertCountEquals(0)
+            compose.onAllNodes(hasAnyAncestor(taskRow) and hasClickAction() and isEnabled() and !hasContentDescription("Open ", substring = true)).assertCountEquals(1)
             compose.onNode(check).assertIsEnabled()
             // The completion's Undo brings back the occurrence due today, which is what the completion's row became.
             served.responses["/api/care-events/event-postponed/undo"] = undoBody(completion, nextJson("2030-06-01"), listOf(pending), "2030-06-02:water" to listOf(pending))
@@ -1372,9 +1377,80 @@ class TodayLayoutTest {
             assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.single(), "undo"))
             compose.waitForIdle()
             compose.onNode(check).assertDoesNotExist()
-            val held = compose.onNodeWithContentDescription(undoSnooze).assertIsNotEnabled().fetchSemanticsNode().boundsInRoot
+            val held = compose.onNode(undone).fetchSemanticsNode().boundsInRoot
             val restored = compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsEnabled().fetchSemanticsNode().boundsInRoot
             assertTrue("The pending row takes the completion's slot, below the snooze's", restored.top > held.bottom)
+            assertEquals("A row moved", tops, rowBounds())
+        }
+    }
+
+    // C18: an Undo that brought nothing back follows only this device's own writes, so another member's snooze to the same date stays theirs.
+    @Test fun undoingASnoozeLeavesAnotherMembersSnoozeToTheSameDateAlone() = withCache { cache, api, server ->
+        val pending = taskJson("2030-06-01", late = 1)
+        val snooze = eventJson("event-snooze", "snoozed").put("postponed_until", "2030-06-04")
+        val snoozed = pending.acted(snooze, "2030-06-04")
+        val theirs = taskJson("2030-06-04", postponed = "snoozed")
+        ServedLists(server, listJson("today", "water" to listOf(pending)), listJson("upcoming", "2030-06-02:water" to listOf(pending)), "[$plantFixture]").use { served ->
+            val repository = Repository(api, cache, { true })
+            repository.refresh()
+            compose.setContent { Themed { val care by repository.state.collectAsState(); TaskScreen(care, "upcoming") } }
+            served.responses["/api/plants/plant-one/tasks/water/snooze"] = actedBody(snooze, nextJson("2030-06-04", "snoozed"))
+            served.today = listJson("today", "water" to listOf(snoozed))
+            served.upcoming = listJson("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-04:water" to listOf(theirs))
+            assertTrue(repository.act(repository.state.value.upcoming!!.sections.single().tasks.single(), "snooze"))
+            served.await { repository.state.value.upcoming!!.sections.size == 2 }
+            val undoSnooze = "Undo watering snooze for Synthetic fern, Synthetic site"
+            compose.onNodeWithContentDescription(undoSnooze).assertIsEnabled()
+            // Another member then snoozed Water to the same date, so this Undo leaves it pending there and brings nothing back.
+            served.responses["/api/care-events/event-snooze/undo"] = undoBody(snooze, nextJson("2030-06-04", "snoozed"), emptyList(), "2030-06-04:water" to listOf(theirs))
+                .restoring(restoredJson("event-snooze", null))
+            assertTrue(repository.act(repository.state.value.upcoming!!.sections.first().tasks.single(), "undo"))
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription(undoSnooze).assertIsNotEnabled()
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, ChangedElsewhere))
+            compose.onAllNodesWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertCountEquals(0)
+        }
+    }
+
+    // C18: undoing this device's snooze gives its row what this device's liquid fertilizing made of the snoozed occurrence: the water it recorded.
+    @Test fun undoingASnoozeAfterAnOwnLiquidFertilizingShowsTheWateringInTheSnoozesRow() = withCache { cache, api, server ->
+        val water = taskJson("2030-06-01", late = 1)
+        val fertilize = taskJson("2030-06-02", type = "fertilize")
+        val snooze = eventJson("event-snooze", "snoozed").put("postponed_until", "2030-06-04")
+        val fertilized = eventJson("event-fertilize").put("task_type", "fertilize").put("due_on", "2030-06-02")
+        val watered = eventJson("event-water").put("due_on", "2030-06-04").put("linked_event_id", "event-fertilize")
+        val snoozed = water.acted(snooze, "2030-06-04")
+        val wateredRow = taskJson("2030-06-09").acted(watered)
+        val fertilizedRow = taskJson("2030-06-11", type = "fertilize").acted(fertilized)
+        ServedLists(server, listJson("today", "water" to listOf(water), "fertilize" to listOf(fertilize)),
+            listJson("upcoming", "2030-06-02:water" to listOf(water), "2030-06-02:fertilize" to listOf(fertilize)), "[$plantFixture]").use { served ->
+            val repository = Repository(api, cache, { true })
+            repository.refresh()
+            compose.setContent { Themed { val care by repository.state.collectAsState(); TaskScreen(care, "today") } }
+            served.responses["/api/plants/plant-one/tasks/water/snooze"] = actedBody(snooze, nextJson("2030-06-04", "snoozed"))
+            served.today = listJson("today", "water" to listOf(snoozed), "fertilize" to listOf(fertilize))
+            served.upcoming = listJson("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-02:fertilize" to listOf(fertilize),
+                "2030-06-04:water" to listOf(taskJson("2030-06-04", postponed = "snoozed")))
+            assertTrue(repository.act(repository.state.value.today!!.sections.first().tasks.single(), "snooze"))
+            served.await { repository.state.value.upcoming!!.sections.size == 3 }
+            served.responses["/api/plants/plant-one/tasks/fertilize/complete"] = JSONObject().put("event", fertilized)
+                .put("linked_events", JSONArray().put(watered)).put("task", nextJson("2030-06-11")).toString()
+            served.today = listJson("today", "water" to listOf(snoozed, wateredRow), "fertilize" to listOf(fertilizedRow))
+            served.upcoming = listJson("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-02:fertilize" to listOf(fertilizedRow), "2030-06-04:water" to listOf(wateredRow))
+            assertTrue(repository.act(repository.state.value.today!!.sections.last().tasks.single(), "complete"))
+            served.await { served.paths.count { it == "/api/tasks?view=upcoming" } == 3 }
+            val undoSnooze = "Undo watering snooze for Synthetic fern, Synthetic site"
+            compose.onNodeWithContentDescription(undoSnooze).assertIsEnabled()
+            val tops = rowBounds()
+            // Nothing is pending after the Undo, because the fertilizing's water completed the occurrence the snooze had postponed.
+            served.responses["/api/care-events/event-snooze/undo"] = JSONObject().put("event", snooze).put("task", nextJson("2030-06-09"))
+                .put("today", JSONObject(listJson("today", "water" to listOf(wateredRow), "fertilize" to listOf(fertilizedRow))))
+                .put("upcoming", JSONObject(listJson("upcoming", "2030-06-02:fertilize" to listOf(fertilizedRow), "2030-06-04:water" to listOf(wateredRow))))
+                .toString().restoring(restoredJson("event-snooze", null))
+            assertTrue(repository.act(repository.state.value.today!!.sections.first().tasks.first { it.completedEvent?.id == "event-snooze" }, "undo"))
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo").assertIsEnabled()
+            compose.onNodeWithContentDescription(undoSnooze).assertDoesNotExist()
             assertEquals("A row moved", tops, rowBounds())
         }
     }

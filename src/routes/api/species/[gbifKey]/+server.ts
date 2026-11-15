@@ -14,9 +14,9 @@ export const GET: RequestHandler = async ({ locals, params }) => {
   const chosen = (names: SpeciesName[], language: string) => pickCommonName(species.canonical_name, names.filter(name => name.language === language));
   // plant_display_name falls back from the reader's language to English, then to the canonical name.
   const displayed = (names: SpeciesName[], language: string) => chosen(names, language) ?? chosen(names, 'en') ?? species.canonical_name;
-  const renames = (name: SpeciesName) => {
-    const rest = species.names.filter(other => other !== name);
-    return commonNameLanguages.some(language => displayed(species.names, language) !== displayed(rest, language));
-  };
-  return json({ ...species, common_name, names: species.names.map(name => name.source === 'owner' ? { ...name, renamed_plant_count: renames(name) ? unnamed : 0 } : name) });
+  const without = (name: SpeciesName) => species.names.filter(other => other !== name);
+  const renames = (name: SpeciesName) => commonNameLanguages.some(language => displayed(species.names, language) !== displayed(without(name), language));
+  // The name those plants show instead, in the removed name's own language.
+  return json({ ...species, common_name, names: species.names.map(name => name.source === 'owner'
+    ? { ...name, renamed_plant_count: renames(name) ? unnamed : 0, renamed_to: displayed(without(name), name.language) } : name) });
 };

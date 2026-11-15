@@ -8,7 +8,7 @@ import org.json.JSONObject
 data class ReadFailure(val message: String, val refused: Boolean, val offline: Boolean)
 data class PlantsRequestState(val online: Boolean = true, val refreshing: Boolean = false, val saving: Boolean = false,
     val blocked: Boolean = false, val errors: Map<String, String> = emptyMap(), val serverUnavailable: Boolean = false, val refused: Boolean = false,
-    val reads: Map<String, ReadFailure> = emptyMap()) {
+    val reads: Map<String, ReadFailure> = emptyMap(), val answers: Int = 0) {
     fun enabled(member: com.epaflix.fytorium.Member?, updateRequired: Boolean) =
         online && member != null && member.role != com.epaflix.fytorium.Role.sitter && !updateRequired && !saving && !blocked
 }
@@ -44,14 +44,15 @@ fun parsePlantOptions(json: String): PlantOptions {
         labels(p.getJSONObject("labels")), strings("numbers"), strings("booleans"), strings("health"), labels(j.getJSONObject("nameLanguages")))
 }
 data class PlantSite(val id: String, val name: String)
-data class SpeciesName(val id: String, val name: String, val language: String, val source: String, val renamedPlants: Int = 0)
-data class Species(val key: Long, val scientificName: String, val names: List<SpeciesName>, val fetching: Boolean, val failed: Boolean,
+data class SpeciesName(val id: String, val name: String, val language: String, val source: String, val renamedPlants: Int = 0, val renamedTo: String? = null)
+data class Species(val key: Long, val scientificName: String, val names: List<SpeciesName>, val fetching: Boolean,
     val canonicalName: String = scientificName, val commonName: String? = null)
 fun parseSpecies(json: String): Species {
     val j = JSONObject(json)
     return Species(j.getLong("gbif_key"), j.getString("scientific_name"), j.getJSONArray("names").mapObjects {
-        SpeciesName(it.getString("id"), it.getString("name"), it.getString("language"), it.getString("source"), it.optInt("renamed_plant_count"))
-    }, j.optBoolean("name_fetch_needed"), j.optBoolean("name_fetch_failed"), j.optString("canonical_name", j.getString("scientific_name")),
+        SpeciesName(it.getString("id"), it.getString("name"), it.getString("language"), it.getString("source"), it.optInt("renamed_plant_count"),
+            it.optString("renamed_to").takeIf(String::isNotEmpty))
+    }, j.optBoolean("name_fetch_needed"), j.optString("canonical_name", j.getString("scientific_name")),
         j.nullable("common_name"))
 }
 internal fun speciesLabel(common: String?, canonical: String) = common?.takeIf { !it.equals(canonical, ignoreCase = true) }?.let { "$it ($canonical)" } ?: canonical

@@ -95,7 +95,9 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                     ?: mapOf("_form" to if (error is ApiFailure && error.status == 403) "Your permissions no longer allow this change. Refresh your account before editing." else message))
         if (error is ApiFailure && error.status == 426) requireUpdate()
     }
-    private fun plantLoaded(read: String) { plantMutable.value = plantMutable.value.let { it.copy(blocked = false, serverUnavailable = false, refused = false, reads = it.reads - read) } }
+    private fun plantLoaded(read: String) { plantMutable.value = plantMutable.value.let { it.copy(blocked = false, serverUnavailable = false, refused = false, reads = it.reads - read, answers = it.answers + 1) } }
+    // Pages whose own reads Fytorium left unanswered load them again once it answers anything else.
+    private fun answered() { plantMutable.value = plantMutable.value.let { it.copy(answers = it.answers + 1) } }
     fun requireUpdate() = synchronized(monitor) { mutable.value = mutable.value.copy(updateRequired = true) }
     private fun read(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): String =
         api.request(path, method = method, body = body, query = query).use {
@@ -172,6 +174,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                     cache.save(member.id, mapOf("today" to today, "upcoming" to upcoming, "plants" to plants, "meta" to meta), clock())
                     loadCached()
                     mutable.value = mutable.value.copy(offline = false, serverUnavailable = false, message = null, updateRequired = false)
+                    answered()
                 }
             }
         } catch (error: Exception) { failed(error, epoch) }
@@ -336,7 +339,12 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         saveLists(member, response.getJSONObject("today").toString(), response.getJSONObject("upcoming").toString())
         val named = response.optJSONArray("restored")?.mapObjects { it }.orEmpty()
         val restored = restoredIn(named, state.value.rows)
-        followed(restored)
+        // A snooze or skip whose Undo brought nothing back leaves its row to this device's own write on the occurrence it had postponed, never to that occurrence itself.
+        val postponed = response.optJSONObject("event")?.takeIf { event -> event.getString("kind") != "completed" &&
+            named.any { it.getString("event_id") == event.getString("id") && it.isNull("occurrence") } }
+            ?.let { event -> taskOccurrence(event.getString("plant_id"), event.taskKey(), event.nullable("postponed_until"), event.getString("kind"))
+                .let { left -> state.value.transitions.lastOrNull { it.first == left } }?.let { event.getString("id") to it.second } }
+        followed(restored + listOfNotNull(postponed))
         mutable.value = mutable.value.copy(openedOccurrence = mutable.value.openedOccurrence?.let { opened -> restored.toMap()[opened] ?: opened })
         return named.filter { reversed -> restored.none { it.first == reversed.getString("event_id") } }
     }
@@ -457,6 +465,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 applied(result)
                 // Not every plant write reloads the plant, so its own answer ends a not-responding state.
                 if (plantsScreen) plantMutable.value = plantMutable.value.copy(serverUnavailable = false)
+                answered()
             }
         } catch (error: Exception) {
             if (plantsScreen) plantFailed(error, epoch) else failed(error, epoch)

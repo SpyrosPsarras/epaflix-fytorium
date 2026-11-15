@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 @Composable fun PhotosRoute(api: ApiClient, care: CareState, connected: () -> Boolean, thumbnails: Thumbnails?,
     plantId: String? = null, plantName: String? = null, identifying: Boolean = false,
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
-    onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }) {
+    onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {}) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
         { member != null && member.role != Role.sitter && currentCare.member == member },
         { currentConnected() && !currentCare.updateRequired }, plantId) }
     val state by repository.state.collectAsState()
+    LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
     var selected by rememberSaveable(member, plantId, identifying) { mutableStateOf<List<String>>(emptyList()) }
     var localError by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }

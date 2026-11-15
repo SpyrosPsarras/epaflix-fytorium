@@ -15,7 +15,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
@@ -29,7 +32,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 @Composable fun SpeciesCareRoute(api: ApiClient, speciesKey: Long?, care: CareState, connected: () -> Boolean,
-    onBack: () -> Unit, onChanged: () -> Unit = {}, onSpecies: (Long) -> Unit = {}, onUpdateRequired: () -> Unit = {}) {
+    onBack: () -> Unit, onChanged: () -> Unit = {}, onSpecies: (Long) -> Unit = {}, onUpdateRequired: () -> Unit = {}, onReceipt: (String) -> Unit = {},
+    answers: Int = 0, onFormDirty: (() -> String?) -> Unit = {}) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
@@ -43,6 +47,11 @@ import org.json.JSONObject
     val scope = rememberCoroutineScope()
     val permitted = member != null && member.role != Role.sitter
     LaunchedEffect(repository, permitted) { if (permitted) withContext(Dispatchers.IO) { repository.refresh() } }
+    // Once Fytorium answers another request, a read it left unanswered here loads again without a tap, also while changes are off, and pending fetches poll again.
+    LaunchedEffect(answers) {
+        val failed = repository.state.value.run { readFailed && !loading }
+        if (permitted && failed) withContext(Dispatchers.IO) { repository.refresh() }
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // At most 60 reloads per route, including lifecycle restarts.
     var polls by remember(repository) { mutableStateOf(0) }
@@ -60,25 +69,27 @@ import org.json.JSONObject
         }
     }
     // Care commands invalidate task provenance, but task refresh state never gates this route.
-    suspend fun change(command: () -> Boolean): Boolean {
+    suspend fun change(receipt: String? = null, command: () -> Boolean): Boolean {
+        val species = state.card?.let { it.commonName ?: it.canonicalName }
         val success = withContext(Dispatchers.IO) { command() }
-        if (success) onChanged()
+        if (success) { onChanged(); receipt?.let { onReceipt("$it for $species") } }
         return success
     }
     SpeciesCareScreen(state, connected() && !care.updateRequired, permitted, onBack,
         onRefresh = { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } },
-        onRefreshCare = { scope.launch { change(repository::refreshCare) } },
-        onOverride = { field, value -> change { repository.override(field, value) } },
-        onReset = { field -> change { repository.reset(field) } },
+        onRefreshCare = { scope.launch { change { repository.refreshCare() } } },
+        onOverride = { field, value -> change("Saved " + shortLabel(field)) { repository.override(field, value) } },
+        onReset = { field -> change("Removed your " + shortLabel(field)) { repository.reset(field) } },
         onRetry = { key -> scope.launch { change { repository.retryMatch(key) } } },
-        onClear = repository::clearMessage, onSpecies = onSpecies, unmatched = speciesKey == null)
+        onClear = repository::clearMessage, onSpecies = onSpecies, unmatched = speciesKey == null, onFormDirty = onFormDirty)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun SpeciesCareScreen(state: SpeciesCareState, online: Boolean = true, canEdit: Boolean = true,
     onBack: () -> Unit = {}, onRefresh: () -> Unit = {}, onRefreshCare: () -> Unit = {},
     onOverride: suspend (String, Any) -> Boolean = { _, _ -> false }, onReset: suspend (String) -> Boolean = { false },
-    onRetry: (Long) -> Unit = {}, onClear: () -> Unit = {}, onSpecies: (Long) -> Unit = {}, unmatched: Boolean = state.card == null) {
+    onRetry: (Long) -> Unit = {}, onClear: () -> Unit = {}, onSpecies: (Long) -> Unit = {}, unmatched: Boolean = state.card == null,
+    onFormDirty: (() -> String?) -> Unit = {}) {
     var editing by remember { mutableStateOf<String?>(null) }
     var resetting by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
@@ -112,29 +123,28 @@ import org.json.JSONObject
                     if (card.commonName != null) Text(card.canonicalName, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("These values set the starting care for every plant of $title in your household. To change one plant only, use its schedule on the plant page.")
                     Text("Starting estimates. Check the plant and soil before following a watering interval.")
-                    for ((field, label) in careLabels) {
-                        val item = card.profile.optJSONObject(field)
-                        Card(Modifier.fillMaxWidth().testTag("care:$field")) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-                                Text(displayCareValue(field, item?.opt("value")))
-                                item?.known("source")?.takeIf { it != "unknown" }?.let { source ->
-                                    Text("Source: ${source.replace('_', ' ')}" + item.known("ruleId")?.let { " \u00b7 $it" }.orEmpty() +
-                                        item.known("fetchedAt")?.let { " \u00b7 fetched ${readableDate(it)}" }.orEmpty(),
-                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                OutlinedButton(onClick = { onClear(); editing = field }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Override ${lower(label)}") }
-                                if (item?.optString("source") == "override") OutlinedButton(onClick = { onClear(); resetting = field }, enabled = enabled,
-                                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove override for ${lower(label)}") }
-                            }
-                        }
-                    }
+                    // The values Fytorium knows lead; a field without one waits in its own fold, still open to a value of your own.
+                    val (known, unknown) = careLabels.entries.partition { (field) -> card.profile.optJSONObject(field)?.isNull("value") == false }
+                    val edit = { field: String -> onClear(); editing = field }
+                    val reset = { field: String -> onClear(); resetting = field }
+                    known.forEach { (field, label) -> CareField(card.profile.optJSONObject(field), field, label, enabled, edit, reset) }
                     OutdoorMonths(card.outdoor)
+                    var missing by rememberSaveable(card.key) { mutableStateOf(false) }
+                    if (unknown.isNotEmpty()) com.epaflix.fytorium.plants.Expander("No value yet (${unknown.size})", missing) { missing = !missing }
+                    if (missing) unknown.forEach { (field, label) -> CareField(null, field, label, enabled, edit, reset) }
                     // Where the values come from is for checking a source, so it waits behind its own heading.
                     var sources by rememberSaveable(card.key) { mutableStateOf(false) }
                     com.epaflix.fytorium.plants.Expander("Sources", sources) { sources = !sources }
                     if (sources) {
                         Text("GBIF key: ${card.key}")
+                        known.forEach { (field, label) ->
+                            val item = card.profile.getJSONObject(field)
+                            val source = item.known("source")?.takeIf { it != "unknown" }
+                            if (source == "override") Text("$label: your value")
+                            else source?.let { Text("$label: ${it.replace('_', ' ')}" + item.known("ruleId")?.let { rule -> " \u00b7 $rule" }.orEmpty() +
+                                item.known("fetchedAt")?.let { at -> " \u00b7 fetched ${readableDate(at)}" }.orEmpty()) }
+                        }
+                        OutdoorSources(card.outdoor)
                         for (fetch in card.fetches) {
                             if (fetch.has("matchStatus")) {
                                 val status = fetch.getString("matchStatus")
@@ -152,14 +162,16 @@ import org.json.JSONObject
                     if (unmatched) {
                     OutlinedButton(onClick = onRefresh, enabled = online && !state.loading && !state.saving && !submitting,
                         modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh species") }
-                    Text("Open Plantbook unmatched species", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-                    Text("Rule estimates and other sources still apply. Open a species card to retry its match.")
-                    if (state.loaded && state.unmatched.isEmpty()) Text("No unmatched species.")
+                    Text("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.")
+                    if (state.loaded && state.unmatched.isEmpty()) Text("Every species of yours has care data.")
                     for (species in state.unmatched) Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("${species.name}: ${species.status.replace('_', ' ')}")
-                            TextButton(onClick = { onSpecies(species.key) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Species care for ${species.name}") }
-                            OutlinedButton(onClick = { onRetry(species.key) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Retry match") }
+                            val title = species.commonName ?: species.name
+                            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                            if (species.commonName != null) Text(species.name, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (species.status == "ambiguous") "No clear care data match yet" else "No care data found yet")
+                            TextButton(onClick = { onSpecies(species.key) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Species care for $title") }
+                            OutlinedButton(onClick = { onRetry(species.key) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Look for care data again") }
                         }
                     }
                     }
@@ -174,14 +186,24 @@ import org.json.JSONObject
         var high by remember(field) { mutableStateOf((current as? JSONObject)?.opt("max")?.toString().orEmpty()) }
         val months = remember(field) { mutableStateListOf<Int>().apply { (current as? JSONArray)?.takeIf { field == "pruningMonths" }?.let { a -> (0 until a.length()).forEach { add(a.getInt(it)) } } } }
         var invalid by remember(field) { mutableStateOf<String?>(null) }
+        val opened = remember(field) { listOf(draft, low, high, months.toList()) }
+        // Read at the moment something leaves the dialog, so Back right after a keystroke still asks.
+        fun changed() = opened != listOf(draft, low, high, months.toList())
+        var discarding by remember(field) { mutableStateOf(false) }
+        val question = "Discard your ${shortLabel(field)} for ${state.card?.let { it.commonName ?: it.canonicalName } ?: "this species"}?"
+        // The shell asks the same question before a notification leaves the dialog with a typed value.
+        SideEffect { onFormDirty { question.takeIf { changed() } } }
+        DisposableEffect(field) { onDispose { onFormDirty { null } } }
+        fun close() { discarding = false; editing = null; onClear() }
+        fun leave() { if (changed()) discarding = true else close() }
         // The server refuses a minimum above the maximum, so the dialog says so as the values are typed.
         val order = if (field !in careRanges) null else number(low)?.let { min -> number(high)?.let { max -> "Minimum must be lower than maximum".takeIf { min.toDouble() > max.toDouble() } } }
         // Temperatures can be below zero, which number pads without a minus key cannot type.
         val numberKeys = KeyboardOptions(keyboardType = if (field in setOf("temperatureRangeC", "hardinessC")) KeyboardType.Text else KeyboardType.Decimal)
         AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-            onDismissRequest = { if (!submitting) { editing = null; onClear() } },
+            onDismissRequest = { if (!submitting) leave() },
             title = { Text("Override ${lower(careLabels.getValue(field))}") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            text = { DialogBody {
                 val label = "Override value for ${lower(careLabels.getValue(field))}"
                 // Each kind of value gets its own control, so nobody types JSON.
                 when {
@@ -208,26 +230,57 @@ import org.json.JSONObject
                             keyboardOptions = if (field in careNumbers) numberKeys else KeyboardOptions.Default, modifier = Modifier.fillMaxWidth())
                     }
                 }
-                CareMessage(order ?: invalid ?: state.error)
-                if (state.blocked) TextButton(onClick = onRefresh, enabled = online && !state.loading && !submitting) { Text("Retry loading species") }
+                CareMessage(order ?: invalid ?: state.error, retry = if (!state.blocked) null else ({
+                    TextButton(onClick = onRefresh, enabled = online && !state.loading && !submitting) { Text("Retry loading species") } }))
             } },
             confirmButton = { TextButton(onClick = {
                 val value = overrideValue(field, draft, low, high, months.sorted()) ?: run { invalid = "Enter a value for every field."; return@TextButton }
                 scope.launch { submitting = true; try { if (onOverride(field, value)) editing = null } finally { submitting = false } }
             }, enabled = enabled && order == null) { Text("Save override") } },
-            dismissButton = { TextButton(onClick = { editing = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
+            dismissButton = { TextButton(onClick = { leave() }, enabled = !submitting) { Text("Cancel") } })
+        if (discarding) com.epaflix.fytorium.plants.DiscardDialog(question, onKeep = { discarding = false }) { close() }
     }
     if (canEdit) resetting?.let { field ->
         AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { Text("Remove override for ${lower(careLabels.getValue(field))}?") },
-            text = { Column { Text("Every plant of this species goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },
+            text = { DialogBody { Text("Every plant of this species goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },
             confirmButton = { TextButton(onClick = { scope.launch { submitting = true; try { if (onReset(field)) resetting = null } finally { submitting = false } } }, enabled = enabled) { Text("Confirm reset") } },
             dismissButton = { TextButton(onClick = { resetting = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
 }
 
-@Composable private fun CareMessage(message: String?) {
-    message?.let { Text(it, color = MaterialTheme.colorScheme.error,
-        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+@Composable private fun CareField(item: JSONObject?, field: String, label: String, enabled: Boolean, onEdit: (String) -> Unit, onReset: (String) -> Unit) {
+    val own = item?.optString("source") == "override"
+    Card(Modifier.fillMaxWidth().testTag("care:$field")) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+            if (item?.isNull("value") == false) Text(displayCareValue(field, item.opt("value")))
+            if (own) Text("Your value", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = { onEdit(field) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Override ${lower(label)}") }
+            if (own) OutlinedButton(onClick = { onReset(field) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove override for ${lower(label)}") }
+        }
+    }
+}
+
+// The message keeps two lines from the start; a longer one or Retry scrolls into view inside the dialog body.
+@Composable private fun CareMessage(message: String?, retry: (@Composable () -> Unit)? = null) {
+    val requester = remember { BringIntoViewRequester() }
+    LaunchedEffect(message, retry != null) { if (message != null) requester.bringIntoView() }
+    Column(Modifier.bringIntoViewRequester(requester)) {
+        Text(message.orEmpty(), color = MaterialTheme.colorScheme.error, minLines = 2,
+            modifier = if (message == null) Modifier.clearAndSetSemantics {} else Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        retry?.invoke()
+    }
+}
+
+// A dialog body keeps the height it opened with and scrolls inside it, so a failed save's message never moves the dialog's buttons.
+@Composable private fun DialogBody(content: @Composable ColumnScope.() -> Unit) {
+    val opened = remember { IntArray(1) { -1 } }
+    Column(Modifier.layout { measurable, constraints ->
+        val held = opened[0].takeIf { it >= 0 }?.coerceAtMost(constraints.maxHeight)
+        val body = measurable.measure(held?.let { constraints.copy(minHeight = it, maxHeight = it) } ?: constraints)
+        // Recorded when placed, as intrinsic measurements of the dialog also run this block.
+        layout(body.width, body.height) { if (opened[0] < 0) opened[0] = body.height; body.place(0, 0) }
+    }.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
 }
 
 @Composable private fun OutdoorMonths(months: JSONObject) {
@@ -240,16 +293,22 @@ import org.json.JSONObject
         Text("Pot: ${show("pot")}"); Text("Ground: ${show("ground")}")
         Text("Ground hardiness: ${months.get("groundThresholdC")} °C. Potted hardiness: ${months.get("potThresholdC")} °C.")
         Text("Monthly mean minimum must be at least hardiness plus ${months.get("marginC")} °C. This estimate does not rule out frost.")
-        val hardiness = months.getJSONObject("hardiness")
-        Text("Hardiness source: ${hardiness.getString("source").replace('_', ' ')} · ${hardiness.get("value")} °C${hardiness.optString("ruleId").takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" }.orEmpty()}")
-        if (hardiness.optString("ruleId") == "hardiness.usda_uncertain@1") Text("USDA zone conversion is uncertain. Perenual does not name its hardiness scale.")
-        Text("Rules: ${months.getString("potRuleId")} · ${months.getString("ruleId")}")
-        Text("Climate from Open-Meteo, CMCC_CM2_VHR4 model, 1991 to 2020 daily minimum averages. Fetched: ${months.known("fetchedAt")?.let(::readableDate) ?: "not fetched"}.")
         if (!months.isNull("unavailableSince")) Text("Climate unavailable since ${readableDate(months.getString("unavailableSince"))}. Last good values remain.")
     }
 }
 
+@Composable private fun OutdoorSources(months: JSONObject) {
+    if (!months.optBoolean("locationSet")) return
+    val hardiness = months.getJSONObject("hardiness")
+    Text("Hardiness source: ${hardiness.getString("source").replace('_', ' ')} · ${hardiness.get("value")} °C${hardiness.optString("ruleId").takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" }.orEmpty()}")
+    if (hardiness.optString("ruleId") == "hardiness.usda_uncertain@1") Text("USDA zone conversion is uncertain. Perenual does not name its hardiness scale.")
+    Text("Rules: ${months.getString("potRuleId")} · ${months.getString("ruleId")}")
+    Text("Climate from Open-Meteo, CMCC_CM2_VHR4 model, 1991 to 2020 daily minimum averages. Fetched: ${months.known("fetchedAt")?.let(::readableDate) ?: "not fetched"}.")
+}
+
 private fun lower(label: String) = label.replaceFirstChar(Char::lowercase)
+// A receipt names the field without its unit: "Saved watering interval for Spider Plant".
+private fun shortLabel(field: String) = lower(careLabels.getValue(field).substringBefore(" in "))
 private fun JSONObject.known(name: String) = optString(name).takeIf { it.isNotBlank() && it != "null" }
 private fun readableDate(value: String) = runCatching { dayMonthYear(java.time.Instant.parse(value).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()) }
     .recoverCatching { dayMonthYear(value.take(10)) }.getOrDefault(value)

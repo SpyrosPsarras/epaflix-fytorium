@@ -35,7 +35,6 @@ import java.time.ZoneOffset
 }
 @Composable private fun PhotoNotice(state: PhotoState, online: Boolean, onRefresh: () -> Unit, refreshLabel: String = "Refresh photos") {
     if (!online) Text("Actions are unavailable offline. Reconnect and refresh to make changes.")
-    if (state.updateRequired) Text("Update Fytorium. This server needs a newer app.")
     PlantError(state.error)
     if (state.saving) {
         if (state.progress != null) LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth())
