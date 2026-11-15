@@ -75,7 +75,8 @@ class SiteRepository(private val api: ApiClient, private val allowed: () -> Bool
     private fun run(write: Boolean, action: () -> Unit): Boolean {
         if (!allowed()) { mutable.value = SiteState(); return false }
         if (write && (!state.value.loaded || state.value.blocked || state.value.updateRequired)) return false
-        mutable.value = mutable.value.copy(busy = true, errors = emptyMap())
+        // A read, also the retry once Fytorium answers again, leaves the form's field and save errors to the next save.
+        mutable.value = mutable.value.copy(busy = true, errors = if (write) emptyMap() else mutable.value.errors)
         return try {
             if (!connected()) throw IOException()
             action()
@@ -83,7 +84,7 @@ class SiteRepository(private val api: ApiClient, private val allowed: () -> Bool
         } catch (error: Exception) {
             val errors = if (error is SiteFailure) error.errors else mapOf("_form" to "Could not reach the server. Try again.")
             // A failed read belongs to the page, so it stays until a read succeeds; only a write's failure goes into its form.
-            if (allowed()) mutable.value = mutable.value.copy(errors = if (write) errors else emptyMap(),
+            if (allowed()) mutable.value = mutable.value.copy(errors = if (write) errors else mutable.value.errors,
                 readError = if (write) state.value.readError else errors.values.firstOrNull() ?: "Could not reach the server. Try again.",
                 blocked = error !is SiteFailure || error.status >= 500 || error.status in listOf(401, 403, 426),
                 updateRequired = state.value.updateRequired || (error is SiteFailure && error.status == 426))

@@ -240,11 +240,12 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
 }
 
 // Layout changes wait for a moment the user picked: the end of a pull, the app coming back to the foreground, or a return to the screen.
-@Composable internal fun rememberApplyMoment(refreshing: Boolean, settle: suspend () -> Unit = {}): Int {
+@Composable internal fun rememberApplyMoment(refreshing: Boolean, onStart: () -> Unit = {}, settle: suspend () -> Unit = {}): Int {
     var moment by remember { mutableIntStateOf(0) }
+    val started by rememberUpdatedState(onStart)
     // The moment comes first: the indicator's own hide animation can interrupt settle(), which cancels this effect.
     LaunchedEffect(refreshing) { if (!refreshing) { moment++; settle() } }
-    LifecycleStartEffect(Unit) { moment++; onStopOrDispose {} }
+    LifecycleStartEffect(Unit) { moment++; started(); onStopOrDispose {} }
     return moment
 }
 

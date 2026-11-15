@@ -176,13 +176,14 @@ private val taskIcons = mapOf("water" to Icons.Outlined.WaterDrop, "fertilize" t
 // One row per task in schedule order, so acting on one row never moves another.
 internal fun careRows(state: CareState, detail: PlantDetail, opened: CareTask?, today: String?): List<CareTask> {
     val plant = detail.plant
-    val listed = state.rows.filter { it.plantId == plant.id }
+    // A listed row this schedule and history show changed gives way to them, so an apply moment shows the plant's fresh state.
+    val listed = state.rows.filter { it.plantId == plant.id && detail.current(it, state) }
     return (detail.tasks.keys + listed.map { it.key } + listOfNotNull(opened?.key)).distinct().mapNotNull { key ->
         val mine = listed.filter { it.key == key }
         val scheduled = detail.scheduled(key)
         // A location filter can hide the plant from the lists, so its history still says what this member did today.
         val own = detail.history.firstOrNull { it.key == key }?.takeIf { it.undoneAt == null && it.occurredOn == today && it.byMember == state.member?.id }
-        opened?.takeIf { it.key == key && (it in mine || mine.isEmpty()) }
+        opened?.takeIf { it.key == key && (it in mine || mine.isEmpty()) && detail.current(it, state) }
             ?: mine.firstOrNull { it.completedEvent != null }
             ?: own?.let { event -> (scheduled ?: mine.firstOrNull())?.copy(completedEvent = event, postponedUntil = event.postponedUntil) }
             ?: mine.firstOrNull() ?: scheduled
@@ -253,20 +254,23 @@ private fun aboutLines(a: JSONObject): List<String> {
     val live = TaskList(today.orEmpty(), "plant", TaskSettings(), emptyMap(), listOf(TaskSection(plant.id, plant.displayName, careRows(state, detail, opened, today))))
     val list = rememberLazyListState()
     var touched by remember(plant.id) { mutableStateOf(false) }
-    LaunchedEffect(list) { snapshotFlow { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }.first { it }; touched = true }
-    // A page opened from the cache takes its first fresh read once, unless the user has scrolled or acted since it appeared (W2 A14).
-    val entry = remember(plant.id) { detail.refreshedAt }
+    // Only the user's own scroll counts, not the place a return restores or the page clamping that place.
+    LaunchedEffect(list) { snapshotFlow { list.isScrollInProgress }.collect { if (it) touched = true } }
+    // Each entry, return and resume takes its first fresh read once, unless the user has scrolled or acted since (W2 A14).
+    var entry by remember(plant.id) { mutableLongStateOf(detail.refreshedAt) }
     val refreshed by rememberUpdatedState(detail.refreshedAt)
     var firstRead by remember(plant.id) { mutableIntStateOf(0) }
-    LaunchedEffect(plant.id) { snapshotFlow { refreshed }.first { it > entry }; if (!touched) firstRead++ }
-    val moment = rememberApplyMoment(refreshing) + firstRead
-    val rows = rememberHeldList(live, state, plant.id, moment)!!.sections.single().tasks
+    LaunchedEffect(plant.id, entry) { snapshotFlow { refreshed }.first { it > entry }; if (!touched) firstRead++ }
+    val moment = rememberApplyMoment(refreshing, onStart = { entry = refreshed; touched = false }) + firstRead
+    val held = rememberHeldList(live, state, plant.id, moment)!!.sections.single().tasks
     val since = remember(plant.id, moment, state.member) { state.ownPlantFields.size }
     val undoSince = remember(plant.id, moment, state.member) { state.ownUndoFlags.size }
     val own = state.ownPlantFields.drop(since).filter { it.first == plant.id }
     // A longer name or site, or a graveyard move from elsewhere, would otherwise push the held rows down or replace them.
     val header = rememberHeld(plant, plant.id, moment, state.member) { held, _ -> own.fold(held) { shown, (_, fields) -> shown.withFields(JSONObject(fields)) } }
     val buried = header.status != "active"
+    // The rows' controls name the plant and site the headline shows, so this device's own rename reaches them at once.
+    val rows = held.map { it.copy(plantName = header.displayName, siteName = header.siteName.orEmpty()) }
     val liveRows = live.sections.single().tasks
     val listed = if (active) liveRows.filter { detail.current(it, state) }.mapTo(mutableSetOf()) { it.occurrence } else emptySet()
     val applicable = rows.filter { it.completedEvent != null || it.status == "due" }
@@ -563,18 +567,16 @@ private fun aboutLines(a: JSONObject): List<String> {
     var soil by remember(plant.id) { mutableStateOf(start[1]) }
     var size by remember(plant.id) { mutableStateOf(start[2]) }
     SideEffect { onDirty { listOf(pot, soil, size) != start } }
-    // shortcut: copies potErrors' "Choose one of: ..." wording to keep its space; upgrade when /api/choices sends the refusal text or the server wording changes.
-    fun refusal(field: String) = "Choose one of: " + options.choices.getValue(field).joinToString(", ") + "."
     PlantColumn {
         Heading("New pot and soil for ${plant.displayName}", style = MaterialTheme.typography.headlineSmall)
-        Choice(options.labels.getValue("pot_type"), pot, options.choices.getValue("pot_type").associateWith(::choiceLabel), writable,
-            supporting = { PlantError(errors["pot_type"], keep = refusal("pot_type")) }) { pot = it }
-        Choice(options.labels.getValue("soil_type"), soil, options.choices.getValue("soil_type").associateWith(::choiceLabel), writable,
-            supporting = { PlantError(errors["soil_type"], keep = refusal("soil_type")) }) { soil = it }
+        Choice(options.labels.getValue("pot_type"), pot, options.choices.getValue("pot_type").associateWith(::choiceLabel), writable) { pot = it }
+        Choice(options.labels.getValue("soil_type"), soil, options.choices.getValue("soil_type").associateWith(::choiceLabel), writable) { soil = it }
         OutlinedTextField(size, { size = it }, label = { Text(options.labels.getValue("pot_size_cm")) }, keyboardOptions = numberKeys,
             isError = errors.containsKey("pot_size_cm"), supportingText = { if (errors["pot_size_cm"] != null) PlantError(errors["pot_size_cm"]) else Text("Positive whole number, or blank for unknown") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
         Button(onClick = { onSave(JSONObject().put("pot_type", pot).put("soil_type", soil).put("pot_size_cm", size.toIntOrNull() ?: JSONObject.NULL)) },
             enabled = writable && (size.isBlank() || size.toIntOrNull()?.let { it > 0 } == true), modifier = Modifier.heightIn(min = 48.dp)) { Text("Repot ${plant.displayName}") }
+        // The choices come from /api/choices, so a refusal of one is rare and waits under the button instead of keeping space under each choice.
+        for (field in listOf("pot_type", "soil_type")) PlantError(errors[field]?.let { "${options.labels.getValue(field)}: $it" })
         PlantError(errors["_form"])
     }
 }

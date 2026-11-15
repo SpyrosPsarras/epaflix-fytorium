@@ -90,3 +90,14 @@ From council-w3-opus-r2.md (Sol scored every item 10 in round 2). C18-C24 are re
 - C22 (W3-opus-18). Species names speaks plainly: no job or retry wording (e.g. "Some names are still loading." only while a fetch runs, nothing after it gives up); the remove confirmation names the name plants will show instead ("1 plant will show Spider Plant instead").
 - C23 (W3-opus-19). A failed save's message inside a form never moves the Save button: it appears below the button or in space reserved for it.
 - C24 (W3-opus-20). Species care leads with the care values Fytorium knows, in plain words, with no rule IDs or source labels outside the folded Sources; fields with no value are folded under "No value yet (N)", each still overridable there. A household override reads as "Your value" (not "fetched"). Saving or removing an override gives the standard receipt over the bar ("Saved watering interval for Spider Plant"), not a top-bar status. More -> Unmatched species follows the same rules: common name first with the scientific name under it, plain status ("No care data found yet"), no source-service headings.
+
+## Council round 3 amendments (2026-11-15)
+
+From council-w3-sol-r3.md and council-w3-opus-r3.md on 508297f. C25-C30 are required for 10/10.
+
+- C25 (W3-sol-4, S2). At an apply moment (entering or returning to the plant page, resume, pull), Care rows take the plant's fresh schedule and history: a listed completion, skip or snooze that the fresh history shows undone or changed elsewhere is replaced by the fresh state for that task (e.g. Water "until Fri 20 Nov" becomes "Due today"), on every entry route including the selected-task route from Today. Between apply moments the existing hold applies (disabled in place, "changed elsewhere").
+- C26 (W3-sol-5). Every link that leaves a form with unsaved values asks first, like This plant's schedule -> Care defaults: Restore -> Create a site included. Returning keeps the form's values.
+- C27 (W3-opus-21). Back to the plant page from a page it opened (Care defaults, Species names, photos, forms) returns to the same scroll position with Details folded or unfolded as the user left it.
+- C28 (W3-opus-22). This device's own rename shows at once everywhere on the page, including the Care rows' and other controls' spoken names.
+- C29 (W3-opus-23). Repot shows a refused pot or soil type under the Repot button (C23 allows below the button); no space is reserved under the choices.
+- C30 (gate carry-over). An automatic retry of a failed sites read never clears a field or save error the user has not acted on (retry only reads that left Save disabled, or keep the form's errors through the retry).

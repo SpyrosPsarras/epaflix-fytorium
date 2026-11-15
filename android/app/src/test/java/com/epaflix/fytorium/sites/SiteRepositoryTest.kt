@@ -128,6 +128,15 @@ class SiteRepositoryTest {
             }
         }
     }
+    // C30: a sites read, like the retry once Fytorium answers again, keeps the form's field and save errors, whether it loads or fails.
+    @Test fun aSitesReadKeepsTheFormsErrors() = withSites { repository, server ->
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"errors":{"name":"Enter a site name."}}"""))
+        assertFalse(repository.save(Site()))
+        for (response in listOf(MockResponse().setResponseCode(503).setBody("{}"), MockResponse().setBody("[$siteFixture]"))) {
+            server.enqueue(response); repository.refresh()
+            assertEquals(mapOf("name" to "Enter a site name."), repository.state.value.errors)
+        }
+    }
     @Test fun listReadsServerCountsAndEveryCondition() {
         MockWebServer().use { server ->
             server.start()

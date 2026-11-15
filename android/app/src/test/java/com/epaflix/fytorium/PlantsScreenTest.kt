@@ -523,8 +523,9 @@ class PlantsScreenTest {
         scroll("Invalid birthday").assertExists()
         scroll("Invalid switch").assertExists()
         compose.runOnIdle { repot.value = true }
-        scroll("Invalid pot").assertExists()
-        scroll("Invalid soil").assertExists()
+        // C29: Repot shows a refused pot or soil type under its button, named by its field.
+        scroll("Pot type: Invalid pot").assertExists()
+        scroll("Soil type: Invalid soil").assertExists()
         scroll("Invalid size").assertExists()
     }
     @Test fun nativePlantsLight() = screenshots(false)
