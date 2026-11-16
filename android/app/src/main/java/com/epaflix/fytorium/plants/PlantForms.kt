@@ -285,10 +285,10 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
     }
 }
 private val nameSources = mapOf("owner" to "Added by your household", "wikidata" to "Wikidata", "gbif" to "GBIF", "nortaxa" to "NorTaxa")
-@Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject) -> Unit,
-    list: LazyListState = rememberLazyListState(), error: String? = null, onDirty: (() -> Boolean) -> Unit = {}) {
-    // The draft clears only when the species reloads after a successful add, so a failed add keeps the text.
-    var name by remember(species) { mutableStateOf("") }
+@Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject, onSuccess: () -> Unit) -> Unit,
+    list: LazyListState = rememberLazyListState(), error: String? = null, target: String? = null, onDirty: (() -> Boolean) -> Unit = {}) {
+    // A read landing while the user types, or a failed add, must not drop the draft; only a successful add clears it.
+    var name by remember(species.key) { mutableStateOf("") }
     SideEffect { onDirty { name.isNotBlank() } }
     var language by remember { mutableStateOf("en") }
     var others by rememberSaveable(species.key) { mutableStateOf(false) }
@@ -307,7 +307,7 @@ private val nameSources = mapOf("owner" to "Added by your household", "wikidata"
         item("in-use") {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(if (shown != null) "Plants of this species without a name of their own show \u201c$shown\u201d."
-                    else "Plants of this species without a name of their own show its scientific name, ${species.canonicalName}.")
+                    else "Plants of this species without a name of their own show its scientific name, ${endSentence(species.canonicalName)}")
                 Text(when {
                     shown == null -> "No source has a common name for it yet."
                     household.any { sameName(it.name, shown) } -> "Your household added this name."
@@ -321,8 +321,8 @@ private val nameSources = mapOf("owner" to "Added by your household", "wikidata"
                 Text("A name added here shows on every plant of this species without a name of its own, and wins over names from sources. To rename one plant, edit its name instead.")
                 OutlinedTextField(name, { name = it }, label = { Text("Common name") }, enabled = writable, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Choice("Language", language, options.languages, writable) { language = it }
-                Button(onClick = { onCommand("add", JSONObject().put("name", name.trim()).put("language", language)) }, enabled = writable && name.trim().length in 1..200,
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text("Add name") }
+                Button(onClick = { onCommand("add", JSONObject().put("name", name.trim()).put("language", language)) { name = "" } }, enabled = writable && name.trim().length in 1..200,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text(target?.let { "Add name to $it" } ?: "Add name") }
                 PlantError(error)
             }
         }
@@ -342,7 +342,7 @@ private val nameSources = mapOf("owner" to "Added by your household", "wikidata"
         }
         item("refresh") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { onCommand("refresh", JSONObject()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh names") }
+                OutlinedButton(onClick = { onCommand("refresh", JSONObject()) {} }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh names") }
                 if (species.fetching) Text("Some names are still loading.")
                 Text("Species and names from GBIF, CC BY 4.0. Wikidata names are CC0.", style = MaterialTheme.typography.bodySmall, color = muted)
             }
@@ -357,7 +357,7 @@ private val nameSources = mapOf("owner" to "Added by your household", "wikidata"
                 1 -> "1 plant shows this name now and will show $next instead."
                 else -> "$renames plants show this name now and will show $next instead."
             }) },
-            confirmButton = { TextButton(onClick = { removing = null; onCommand(entry.id, JSONObject()) }, enabled = writable) { Text("Remove name") } },
+            confirmButton = { TextButton(onClick = { removing = null; onCommand(entry.id, JSONObject()) {} }, enabled = writable) { Text("Remove name") } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })
     }
 }

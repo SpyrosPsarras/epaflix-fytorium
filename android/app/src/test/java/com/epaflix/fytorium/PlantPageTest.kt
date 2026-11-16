@@ -2632,7 +2632,7 @@ class PlantPageTest {
         fun species(fetching: Boolean, failed: Boolean) = parseSpecies("""{"gbif_key":910001,"scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida",
             "rank":"SPECIES","name_fetch_needed":$fetching,"name_fetch_failed":$failed,"common_name":null,"names":[]}""")
         val state = mutableStateOf(species(fetching = true, failed = false))
-        compose.setContent { FytoriumTheme { SpeciesNames(state.value, syntheticOptions(), true, { _, _ -> }) } }
+        compose.setContent { FytoriumTheme { SpeciesNames(state.value, syntheticOptions(), true, { _, _, _ -> }) } }
         val jobWords = listOf("background", "backoff", "attempt", "retry", "failure")
         reveal(hasText("Some names are still loading.")).assertIsDisplayed()
         for (word in jobWords) compose.onAllNodes(hasText(word, substring = true, ignoreCase = true)).assertCountEquals(0)
@@ -3228,6 +3228,209 @@ class PlantPageTest {
         }
     }
 
+    // C31: after a species change, Species names shows the new species' names, not the chosen species without names.
+    @Test fun speciesNamesAfterASpeciesChangeShowTheNewSpeciesNames() {
+        val changed = AtomicBoolean(false)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val after = JSONObject(plantFixture).put("gbif_key", 910019).put("scientific_name", "Testoria nova Inventor").put("canonical_name", "Testoria nova").put("common_name", "Synthetic star")
+        val nova = speciesNamesFixture.replace("910001", "910019").replace("Testoria lucida", "Testoria nova").replace("Synthetic lantern", "Synthetic star")
+        try {
+            withPlantServer({ path -> when (path) {
+                "/api/plants/plant-one" -> if (changed.get()) after.toString() else null
+                "/api/species/search" -> speciesSearch
+                "/api/plants/plant-one/species" -> { changed.set(true); after.toString() }
+                "/api/species/910001" -> speciesNamesFixture
+                "/api/species/910019" -> { release.await(10, java.util.concurrent.TimeUnit.SECONDS); nova }
+                else -> null
+            } }) { repo, showing ->
+                compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+                val settings = hasContentDescription("Plant settings") and isEnabled()
+                fun shows(name: String) = compose.onAllNodesWithText("Plants of this species without a name of their own show \u201c$name\u201d.").fetchSemanticsNodes().isNotEmpty()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                reveal(hasText("Details")).performClick()
+                reveal(hasText("Species names")).performClick()
+                compose.waitUntil(5_000) { shows("Synthetic lantern") }
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(settings).performClick()
+                compose.onNodeWithText("Change species").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Species name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
+                compose.onNodeWithText("Search species").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+                compose.onNodeWithText("Change Synthetic fern to Synthetic star").performClick()
+                val receipt = "Changed Synthetic fern to Synthetic star"
+                compose.waitUntil(5_000) { compose.onAllNodesWithText(receipt).fetchSemanticsNodes().isNotEmpty() }
+                // The receipt covers the bottom of the page, where the link scrolls into view.
+                compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss) and hasAnyDescendant(hasText(receipt))).performSemanticsAction(SemanticsActions.Dismiss)
+                compose.waitUntil(5_000) { compose.onAllNodesWithText(receipt).fetchSemanticsNodes().isEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                reveal(hasText("Species names") and hasClickAction()).performClick()
+                compose.waitUntil(5_000) { synchronized(paths()) { "/api/species/910019" in paths() } }
+                assertFalse("the old species' names show", shows("Synthetic lantern"))
+                compose.onNodeWithText("No source has a common name for it yet.").assertDoesNotExist()
+                compose.onNodeWithText("Loading names\u2026").assertIsDisplayed()
+                release.countDown()
+                compose.waitUntil(5_000) { shows("Synthetic star") }
+                compose.onNodeWithText("No source has a common name for it yet.").assertDoesNotExist()
+            }
+        } finally { release.countDown() }
+    }
+
+    // C31: Species names reads the species on every open, so names changed elsewhere show when the page opens again.
+    @Test fun speciesNamesReadTheSpeciesEachTimeTheyOpen() {
+        val changed = AtomicBoolean(false)
+        withPlantServer({ path -> if (path != "/api/species/910001") null
+            else if (changed.get()) speciesNamesFixture.replace("Synthetic lantern", "Synthetic beacon") else speciesNamesFixture }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            val settings = hasContentDescription("Plant settings") and isEnabled()
+            fun shows(name: String) = compose.onAllNodesWithText("Plants of this species without a name of their own show \u201c$name\u201d.").fetchSemanticsNodes().isNotEmpty()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Species names")).performClick()
+            compose.waitUntil(5_000) { shows("Synthetic lantern") }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+            changed.set(true)
+            reveal(hasText("Species names") and hasClickAction()).performClick()
+            compose.waitUntil(5_000) { shows("Synthetic beacon") }
+        }
+    }
+
+    // C19: a names read that lands while a household name is typed keeps the name, Back still asks, and only a successful add clears it.
+    @Test fun speciesNamesKeepATypedNameWhenTheirReadLands() {
+        val holding = AtomicBoolean(false)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            withPlantServer({ path -> when (path) {
+                "/api/species/910001" -> if (!holding.get()) speciesNamesFixture
+                    else { release.await(10, java.util.concurrent.TimeUnit.SECONDS); speciesNamesFixture.replace("Synthetic lantern", "Synthetic beacon") }
+                "/api/species/910001/names" -> """{"id":"name-added","name":"Synthetic star","language":"en","source":"owner"}"""
+                else -> null
+            } }) { repo, showing ->
+                compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+                val settings = hasContentDescription("Plant settings") and isEnabled()
+                val field = hasText("Common name") and hasSetTextAction()
+                fun shows(name: String) = compose.onAllNodesWithText("Plants of this species without a name of their own show \u201c$name\u201d.").fetchSemanticsNodes().isNotEmpty()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                reveal(hasText("Details")).performClick()
+                reveal(hasText("Species names")).performClick()
+                compose.waitUntil(5_000) { shows("Synthetic lantern") }
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+                holding.set(true)
+                reveal(hasText("Species names") and hasClickAction()).performClick()
+                compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/species/910001" } >= 2 } && compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                assertTrue(shows("Synthetic lantern"))
+                compose.onNode(field).performTextInput("Synthetic star")
+                release.countDown()
+                compose.waitUntil(5_000) { shows("Synthetic beacon") }
+                compose.onNode(field).assertTextContains("Synthetic star")
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+                compose.onNodeWithText("Keep editing").performClick()
+                compose.onNodeWithText("Add name").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic star\u201d").fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodes(field and hasText("Synthetic star")).fetchSemanticsNodes().isEmpty() }
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+            }
+        } finally { release.countDown() }
+    }
+
+    // C19: a species change made elsewhere keeps a typed household name on the species it was typed for, and says why, until it is added or cleared.
+    @Test fun aSpeciesChangeElsewhereKeepsATypedNameUntilItIsAdded() = typedNameDuringASpeciesChangeElsewhere(add = true)
+    @Test fun aSpeciesChangeElsewhereKeepsATypedNameUntilItIsCleared() = typedNameDuringASpeciesChangeElsewhere(add = false)
+    // C19, C1b: when a refusal takes the line, the add control and receipt still name the species and the explanation keeps the note.
+    @Test fun aSpeciesChangeElsewhereNamesTheAddTargetWhenItsNamesReadIsRefused() = typedNameDuringASpeciesChangeElsewhere(add = true, refuse = true)
+
+    private fun typedNameDuringASpeciesChangeElsewhere(add: Boolean, refuse: Boolean = false) {
+        val changed = AtomicBoolean(false)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val after = JSONObject(plantFixture).put("gbif_key", 910019).put("scientific_name", "Testoria nova Inventor").put("canonical_name", "Testoria nova").put("common_name", "Synthetic star")
+        val nova = speciesNamesFixture.replace("910001", "910019").replace("Testoria lucida", "Testoria nova").replace("Synthetic lantern", "Synthetic star")
+        val app = object : androidx.lifecycle.LifecycleOwner {
+            val registry = androidx.lifecycle.LifecycleRegistry(this)
+            override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
+        }
+        fun plantReads() = synchronized(paths()) { paths().count { it == "/api/plants/plant-one" } }
+        try {
+            withPlantServer({ path -> when (path) {
+                "/api/plants/plant-one" -> if (!changed.get()) null else { release.await(10, java.util.concurrent.TimeUnit.SECONDS); after.toString() }
+                "/api/plants" -> if (changed.get()) "[$after]" else null
+                "/api/species/910001" -> if (refuse && changed.get()) """{"message":"Synthetic names refusal"}""" else speciesNamesFixture
+                "/api/species/910019" -> nova
+                "/api/species/910001/names" -> """{"id":"name-added","name":"Synthetic glow","language":"en","source":"owner"}"""
+                else -> null
+            } }, status = { path -> if (refuse && changed.get() && path == "/api/species/910001") 403 else 200 }) { repo, showing ->
+                compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+                compose.setContent { CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides app) {
+                    if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } } }
+                val settings = hasContentDescription("Plant settings") and isEnabled()
+                val field = hasText("Common name") and hasSetTextAction()
+                val note = "This plant is now Synthetic star. You're adding a name for Synthetic lantern."
+                val line = if (refuse) refused else note
+                val addName = "Add name to Synthetic lantern"
+                fun shows(name: String) = compose.onAllNodesWithText("Plants of this species without a name of their own show \u201c$name\u201d.").fetchSemanticsNodes().isNotEmpty()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                reveal(hasText("Details")).performClick()
+                reveal(hasText("Species names")).performClick()
+                compose.waitUntil(5_000) { shows("Synthetic lantern") && compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(field).performTextInput("Synthetic glow")
+                val place = compose.onNode(field).getBoundsInRoot()
+                compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.CREATED }
+                changed.set(true)
+                val before = plantReads()
+                compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+                compose.waitUntil(5_000) { plantReads() > before }
+                release.countDown()
+                compose.waitUntil(5_000) { repo.state.value.detail?.plant?.attributesJson?.let { JSONObject(it).optLong("gbif_key") } == 910019L && Running.count.get() == 0 }
+                compose.waitUntil(5_000) { shows("Synthetic star") || compose.onAllNodesWithText(line).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(field).assertTextContains("Synthetic glow")
+                assertEquals(place, compose.onNode(field).getBoundsInRoot())
+                assertTrue(shows("Synthetic lantern"))
+                compose.onNodeWithText(line).assertIsDisplayed()
+                compose.onNode(hasText(addName) and hasClickAction() and isEnabled()).assertIsDisplayed()
+                if (refuse) compose.explains(refused, "Synthetic names refusal", note, "Add or clear the name to see the names for Synthetic star.")
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+                compose.onNodeWithText("Keep editing").performClick()
+                if (add) compose.onNodeWithText(addName).performClick() else compose.onNode(field).performTextClearance()
+                if (add) compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic glow\u201d to Synthetic lantern").fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { shows("Synthetic star") }
+                assertEquals(add, synchronized(paths()) { "/api/species/910001/names" in paths() })
+                compose.onNodeWithText(note).assertDoesNotExist()
+                compose.onNodeWithText(addName).assertDoesNotExist()
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+            }
+        } finally { release.countDown() }
+    }
+
+    // C32: a species name that already ends with a full stop ends its sentence without a second one.
+    @Test fun aSpeciesNameEndingInAFullStopEndsItsSentenceOnce() {
+        val abbreviated = JSONObject(plantFixture).put("scientific_name", "Testoria lucida Inv.").apply { remove("canonical_name") }
+        val species = """{"gbif_key":910001,"scientific_name":"Testoria lucida Inv.","rank":"SPECIES","name_fetch_needed":false,"name_fetch_failed":false,"common_name":null,"names":[]}"""
+        withPlantServer({ path -> when (path) { "/api/plants/plant-one" -> abbreviated.toString(); "/api/species/910001" -> species; else -> null } }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            val settings = hasContentDescription("Plant settings") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(settings).performClick()
+            compose.onNodeWithText("Change species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic fern is currently Testoria lucida Inv. Care history", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Species names")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No source has a common name for it yet.").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Plants of this species without a name of their own show its scientific name, Testoria lucida Inv.").assertExists()
+            compose.onAllNodes(hasText("..", substring = true)).assertCountEquals(0)
+        }
+    }
+
     // C17: species names lead with the name in use, fold source names, confirm removals and give receipts.
     @Test fun speciesNamesLeadWithTheNameInUseAndConfirmRemovals() {
         val added = AtomicBoolean(false)
@@ -3258,7 +3461,7 @@ class PlantPageTest {
             reveal(hasText("Other names from sources (24)")).performClick()
             val refresh = reveal(hasText("Refresh names")).fetchSemanticsNode().boundsInRoot
             compose.onNodeWithText("Refresh names").performClick()
-            compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/species/910001" } >= 3 } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/species/910001" in paths().dropWhile { it != "/api/species/910001/names/refresh" } } && Running.count.get() == 0 }
             compose.waitForIdle()
             assertEquals("the list kept its place", refresh, compose.onNodeWithText("Refresh names").fetchSemanticsNode().boundsInRoot)
             reveal(hasText("Remove Synthetic lantern")).performClick()
@@ -3277,7 +3480,7 @@ class PlantPageTest {
             {"id":"name-en","name":"Synthetic lantern","language":"en","source":"owner","renamed_plant_count":2},
             {"id":"name-nb","name":"Syntetisk lykt","language":"nb","source":"owner","renamed_plant_count":2,"renamed_to":"Syntetisk lampe"},
             {"id":"name-spare","name":"Syntetisk lampe","language":"nb","source":"owner","renamed_plant_count":0}]}""")
-        compose.setContent { FytoriumTheme { SpeciesNames(species, syntheticOptions(), true, { _, _ -> }) } }
+        compose.setContent { FytoriumTheme { SpeciesNames(species, syntheticOptions(), true, { _, _, _ -> }) } }
         reveal(hasText("Remove Syntetisk lykt")).performClick()
         compose.onNodeWithText("2 plants show this name now and will show \u201cSyntetisk lampe\u201d instead.").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()

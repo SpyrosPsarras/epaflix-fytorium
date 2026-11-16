@@ -563,7 +563,7 @@ class PlantsScreenTest {
                 "unnamed" -> PlantForm(plant.copy(displayName = "Synthetic trialleaf", attributesJson = JSONObject(plant.attributesJson).put("nickname", JSONObject.NULL).toString()),
                     syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
                 else -> SpeciesNames(Species(910001, "Testoria lucida Inventor", listOf(SpeciesName("name-one", "Synthetic flower", "en", "owner", 2),
-                    SpeciesName("name-two", "Trialleaf", "en", "gbif")), false, "Testoria lucida", "Synthetic flower"), syntheticOptions(), true, { _, _ -> })
+                    SpeciesName("name-two", "Trialleaf", "en", "gbif")), false, "Testoria lucida", "Synthetic flower"), syntheticOptions(), true, { _, _, _ -> })
             }
         } } } }
         for (name in listOf("list", "graveyard", "detail", "search", "form", "care", "names", "restore", "repot", "add", "delete", "history", "birthday", "menu",

@@ -255,7 +255,7 @@ private fun aboutLines(a: JSONObject): List<String> {
     val list = rememberLazyListState()
     var touched by remember(plant.id) { mutableStateOf(false) }
     // Only the user's own scroll counts, not the place a return restores or the page clamping that place.
-    LaunchedEffect(list) { snapshotFlow { list.isScrollInProgress }.collect { if (it) touched = true } }
+    LaunchedEffect(list, plant.id) { snapshotFlow { list.isScrollInProgress }.collect { if (it) touched = true } }
     // Each entry, return and resume takes its first fresh read once, unless the user has scrolled or acted since (W2 A14).
     var entry by remember(plant.id) { mutableLongStateOf(detail.refreshedAt) }
     val refreshed by rememberUpdatedState(detail.refreshedAt)

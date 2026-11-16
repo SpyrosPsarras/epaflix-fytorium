@@ -56,4 +56,6 @@ fun parseSpecies(json: String): Species {
         j.nullable("common_name"))
 }
 internal fun speciesLabel(common: String?, canonical: String) = common?.takeIf { !it.equals(canonical, ignoreCase = true) }?.let { "$it ($canonical)" } ?: canonical
+// Author abbreviations such as "Mabb." already end a sentence.
+internal fun endSentence(name: String) = if (name.endsWith('.')) name else "$name."
 internal fun sameName(a: String, b: String) = squash(a) == squash(b)

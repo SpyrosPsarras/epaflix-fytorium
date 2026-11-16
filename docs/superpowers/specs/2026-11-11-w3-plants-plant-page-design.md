@@ -101,3 +101,10 @@ From council-w3-sol-r3.md and council-w3-opus-r3.md on 508297f. C25-C30 are requ
 - C28 (W3-opus-22). This device's own rename shows at once everywhere on the page, including the Care rows' and other controls' spoken names.
 - C29 (W3-opus-23). Repot shows a refused pot or soil type under the Repot button (C23 allows below the button); no space is reserved under the choices.
 - C30 (gate carry-over). An automatic retry of a failed sites read never clears a field or save error the user has not acted on (retry only reads that left Save disabled, or keep the form's errors through the retry).
+
+## Council round 4 amendments (2026-11-15)
+
+From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same build). C31-C32 are required for 10/10.
+
+- C31 (W3-opus-24, S2). After a species change, Species names (and any page that shows the plant's species) shows the new species' real names straight away: choosing a species never leaves a placeholder species in place of the loaded one, and the page loads the chosen species' names whenever the shown species is not loaded (not only when its key changes).
+- C32 (W3-opus-25). Sentences that end with a species name never print a doubled full stop when the name already ends with one (e.g. an author abbreviation "Mabb.").
