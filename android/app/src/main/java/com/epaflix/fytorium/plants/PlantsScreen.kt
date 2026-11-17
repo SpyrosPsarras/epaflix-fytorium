@@ -48,7 +48,6 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     var namesKey by remember { mutableStateOf<Long?>(null) }
     var chosenName by rememberSaveable { mutableStateOf("") }
     var chosenLabel by rememberSaveable { mutableStateOf("") }
-    val namesList = rememberLazyListState()
     var selection by rememberSaveable { mutableStateOf<String?>(null) }
     var reading by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -310,7 +309,9 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                 "restore" -> detail?.let { RestoreForm(it.plant, sites, enabled, { body -> command("restore-save", body) }, onCreateSite = { leaveFor("sites") }, error = request.errors["_form"],
                     chosen = { restoreSite }, onChoose = { site -> restoreSite = site }, onDirty = { formChanged = it }) }
                 "repot" -> detail?.let { d -> options?.let { PlantRepotForm(d.plant, it, enabled, errors = request.errors, onSave = { body -> command("repot", body) }, onDirty = { formChanged = it }) } }
-                "names" -> species?.takeIf { detail != null && it.key == namesKey }?.let { s -> options?.let { choices -> SpeciesNames(s, choices, enabled, list = namesList, error = request.errors["_form"], target = pinnedTo,
+                // A pinned draft keeps its place until the page follows the plant's new species.
+                "names" -> key(detail?.plant?.id, namesKey) { val namesList = rememberLazyListState()
+                species?.takeIf { detail != null && it.key == namesKey }?.let { s -> options?.let { choices -> SpeciesNames(s, choices, enabled, list = namesList, error = request.errors["_form"], target = pinnedTo,
                     onDirty = { formChanged = it }, onCommand = { action, body, onSuccess -> run(save = true) {
                     val receipt = when (action) {
                         "add" -> "Added the name \u201c${body.getString("name")}\u201d" + pinnedTo?.let { " to $it" }.orEmpty()
@@ -319,7 +320,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     }
                     val success = withContext(Dispatchers.IO) { repository!!.speciesNameCommand(s.key, action, body, receipt) }
                     if (success) { onSuccess(); scope.launch { loadSpecies(s.key) } }
-                } }) } } ?: PlantColumn { Text("Loading names\u2026") }
+                } }) } } ?: PlantColumn { Text("Loading names\u2026") } }
             }
         }
         // Progress the user asked for overlays the top edge, so nothing below it moves.

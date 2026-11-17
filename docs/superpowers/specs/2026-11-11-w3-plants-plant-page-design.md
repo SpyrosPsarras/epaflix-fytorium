@@ -108,3 +108,7 @@ From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same buil
 
 - C31 (W3-opus-24, S2). After a species change, Species names (and any page that shows the plant's species) shows the new species' real names straight away: choosing a species never leaves a placeholder species in place of the loaded one, and the page loads the chosen species' names whenever the shown species is not loaded (not only when its key changes).
 - C32 (W3-opus-25). Sentences that end with a species name never print a doubled full stop when the name already ends with one (e.g. an author abbreviation "Mabb.").
+
+## Council round 5 amendment (2026-11-16)
+
+- C33 (W3-opus-26). Species names opens at the top for each plant and species; it keeps its scroll place only when returning to the same plant's Species names from a page it opened (C27). It never inherits the place from another plant's or species' names page.

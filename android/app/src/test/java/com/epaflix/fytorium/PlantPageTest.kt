@@ -3298,6 +3298,113 @@ class PlantPageTest {
         }
     }
 
+    // C33: Species names opens at the top on every open, for the same plant again and for another plant's species, however far the last one was scrolled.
+    @Test fun speciesNamesOpenAtTheTopForEachPlantAndSpecies() {
+        fun names(key: Int, common: String) = JSONObject(speciesNamesFixture).put("gbif_key", key).put("common_name", common).put("names", JSONArray().apply {
+            put(JSONObject().put("id", "name-house").put("name", common).put("language", "en").put("source", "owner"))
+            repeat(24) { put(JSONObject().put("id", "name-$it").put("name", "$common $it").put("language", "en").put("source", "owner")) }
+        }).toString()
+        val ivy = JSONObject(plantFixture).put("id", "plant-two").put("display_name", "Synthetic ivy").put("nickname", "Synthetic ivy").put("gbif_key", 910002).toString()
+        withPlantServer({ path -> when (path) {
+            "/api/plants" -> "[$plantFixture,$ivy]"
+            "/api/plants/plant-two" -> ivy
+            "/api/plants/plant-two/tasks" -> scheduleFixture
+            "/api/plants/plant-two/care-settings" -> """{"customIntervals":{}}"""
+            "/api/species/910001" -> names(910001, "Synthetic lantern")
+            "/api/species/910002" -> names(910002, "Synthetic beacon")
+            else -> null
+        } }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo) } }
+            val loaded = hasContentDescription("Plant settings") and isEnabled()
+            val link = hasText("Species names") and hasClickAction()
+            fun openNames(common: String) {
+                compose.waitUntil(5_000) { compose.onAllNodes(loaded).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                if (compose.onAllNodes(link).fetchSemanticsNodes().isEmpty()) reveal(hasText("Details")).performClick()
+                reveal(link).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Loading names\u2026").fetchSemanticsNodes().isEmpty() &&
+                    compose.onAllNodesWithText(common, substring = true).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            }
+            fun scrollDown(common: String) {
+                reveal(hasText("Remove $common 23")).assertIsDisplayed()
+                assertTrue("the names page scrolled", compose.onAllNodes(isHeading() and hasText(common)).fetchSemanticsNodes().isEmpty())
+            }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("plant:plant-two")).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasTestTag("plant:plant-one")).performClick()
+            openNames("Synthetic lantern")
+            compose.onNode(isHeading() and hasText("Synthetic lantern")).assertIsDisplayed()
+            scrollDown("Synthetic lantern")
+            compose.onNodeWithContentDescription("Back").performClick()
+            openNames("Synthetic lantern")
+            compose.onNode(isHeading() and hasText("Synthetic lantern")).assertIsDisplayed()
+            scrollDown("Synthetic lantern")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(loaded).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("plant:plant-two")).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasTestTag("plant:plant-two")).performClick()
+            openNames("Synthetic beacon")
+            compose.onNode(isHeading() and hasText("Synthetic beacon")).assertIsDisplayed()
+            compose.onNodeWithText("Plants of this species without a name of their own show \u201cSynthetic beacon\u201d.").assertIsDisplayed()
+        }
+    }
+
+    @Test fun anOpenNamesPageStartsAtTheTopWhenTheSpeciesChangesElsewhere() = namesScrollDuringASpeciesChangeElsewhere(pinned = false)
+    @Test fun addingAPinnedNameStartsTheNewSpeciesAtTheTop() = namesScrollDuringASpeciesChangeElsewhere(pinned = true)
+
+    private fun namesScrollDuringASpeciesChangeElsewhere(pinned: Boolean) {
+        val changed = AtomicBoolean(false)
+        val after = JSONObject(plantFixture).put("gbif_key", 910019).put("scientific_name", "Testoria nova Inventor")
+            .put("canonical_name", "Testoria nova").put("common_name", "Synthetic star")
+        fun names(key: Int, common: String) = JSONObject(speciesNamesFixture).put("gbif_key", key).put("common_name", common).put("names", JSONArray().apply {
+            repeat(24) { put(JSONObject().put("id", "source-$it").put("name", "$common source $it").put("language", "en").put("source", if (key == 910001) "wikidata" else "owner")) }
+        }).toString()
+        val app = object : androidx.lifecycle.LifecycleOwner {
+            val registry = androidx.lifecycle.LifecycleRegistry(this)
+            override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
+        }
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one" -> if (changed.get()) after.toString() else null
+            "/api/plants" -> if (changed.get()) "[$after]" else null
+            "/api/species/910001" -> names(910001, "Synthetic lantern")
+            "/api/species/910019" -> names(910019, "Synthetic star")
+            "/api/species/910001/names" -> """{"id":"name-added","name":"Synthetic glow","language":"en","source":"owner"}"""
+            else -> null
+        } }) { repo, showing ->
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+            compose.setContent { CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides app) {
+                if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } } }
+            val settings = hasContentDescription("Plant settings") and isEnabled()
+            val list = compose.onNode(hasScrollToIndexAction())
+            fun scrollPosition() = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Species names")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(isHeading() and hasText("Synthetic lantern")).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            if (pinned) compose.onNode(hasText("Common name") and hasSetTextAction()).performTextInput("Synthetic glow")
+            reveal(hasText("Other names from sources (24)")).performClick()
+            reveal(hasText("Synthetic lantern source 20 · Wikidata")).assertIsDisplayed()
+            val scrolled = scrollPosition()
+            assertTrue("the old species is scrolled", scrolled > 2f)
+            val before = synchronized(paths()) { paths().count { it == "/api/plants/plant-one" } }
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.CREATED }
+            changed.set(true)
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+            compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/plants/plant-one" } > before } &&
+                repo.state.value.detail?.plant?.attributesJson?.let { JSONObject(it).optLong("gbif_key") } == 910019L && Running.count.get() == 0 }
+            if (pinned) {
+                compose.onNodeWithText("This plant is now Synthetic star. You're adding a name for Synthetic lantern.").assertIsDisplayed()
+                assertEquals("a pinned draft keeps its scroll position", scrolled, scrollPosition())
+                val add = hasText("Add name to Synthetic lantern") and hasClickAction() and isEnabled()
+                reveal(add).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name “Synthetic glow” to Synthetic lantern").fetchSemanticsNodes().isNotEmpty() }
+            }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/species/910019" in paths() } && Running.count.get() == 0 &&
+                compose.onAllNodesWithText("Loading names…").fetchSemanticsNodes().isEmpty() }
+            compose.onNode(isHeading() and hasText("Synthetic star")).assertIsDisplayed()
+            assertEquals("the new species starts at index zero with no offset", 0f, scrollPosition())
+        }
+    }
+
     // C19: a names read that lands while a household name is typed keeps the name, Back still asks, and only a successful add clears it.
     @Test fun speciesNamesKeepATypedNameWhenTheirReadLands() {
         val holding = AtomicBoolean(false)
@@ -3456,19 +3563,30 @@ class PlantPageTest {
             compose.onNodeWithText("Plants of this species without a name of their own show \u201cSynthetic lantern\u201d.").assertIsDisplayed()
             compose.onNodeWithText("Synthetic source name 1 \u00b7 Wikidata").assertDoesNotExist()
             compose.onNode(hasText("Common name") and hasSetTextAction()).performTextInput("Synthetic star")
+            val namesList = compose.onNode(hasScrollToIndexAction())
+            fun firstIndex() = namesList.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value().toInt()
+            namesList.performScrollToIndex(2)
+            val beforeAdd = firstIndex()
+            assertTrue("adding from a scrolled list", beforeAdd > 0)
             compose.onNodeWithText("Add name").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic star\u201d").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic star\u201d").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            assertEquals("adding a name keeps the first visible index", beforeAdd, firstIndex())
             reveal(hasText("Other names from sources (24)")).performClick()
             val refresh = reveal(hasText("Refresh names")).fetchSemanticsNode().boundsInRoot
             compose.onNodeWithText("Refresh names").performClick()
             compose.waitUntil(5_000) { synchronized(paths()) { "/api/species/910001" in paths().dropWhile { it != "/api/species/910001/names/refresh" } } && Running.count.get() == 0 }
             compose.waitForIdle()
             assertEquals("the list kept its place", refresh, compose.onNodeWithText("Refresh names").fetchSemanticsNode().boundsInRoot)
-            reveal(hasText("Remove Synthetic lantern")).performClick()
+            namesList.performScrollToIndex(3)
+            compose.onNodeWithText("Remove Synthetic lantern").assertIsDisplayed()
+            val beforeRemove = firstIndex()
+            assertTrue("removing from a scrolled list", beforeRemove > 0)
+            compose.onNodeWithText("Remove Synthetic lantern").performClick()
             compose.onNodeWithText("2 plants show this name now and will show \u201cTestoria lucida\u201d instead.").assertIsDisplayed()
             compose.runOnIdle { assertFalse(removed.get()) }
             compose.onNodeWithText("Remove name").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Removed the name \u201cSynthetic lantern\u201d").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Removed the name \u201cSynthetic lantern\u201d").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            assertEquals("removing a name keeps the first visible index", beforeRemove, firstIndex())
             compose.runOnIdle { assertTrue(removed.get()) }
         }
     }
