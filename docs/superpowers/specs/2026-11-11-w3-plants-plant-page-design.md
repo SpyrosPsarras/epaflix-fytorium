@@ -112,3 +112,7 @@ From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same buil
 ## Council round 5 amendment (2026-11-16)
 
 - C33 (W3-opus-26). Species names opens at the top for each plant and species; it keeps its scroll place only when returning to the same plant's Species names from a page it opened (C27). It never inherits the place from another plant's or species' names page.
+
+## Council round 6 amendment (2026-11-17)
+
+- C34 (W3-opus-27). C27 holds after content above the place changes: returning to the plant page after a Repot from its menu, or after a species change picked up while on a page it opened, restores the place by what was on screen (the item the user was looking at), not only by a scroll offset, so the page does not come back a screen higher at the end of the page with Details open.

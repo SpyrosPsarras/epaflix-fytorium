@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -245,14 +246,14 @@ private fun aboutLines(a: JSONObject): List<String> {
     onCommand: (String, JSONObject) -> Unit, onSpecies: () -> Unit, onUndo: (CareEvent) -> Unit, thumbnails: Thumbnails? = null,
     enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null,
     todayTask: CareTask? = null, onTask: (CareTask, String) -> Unit = { _, _ -> }, onBlocked: (String) -> Unit = {},
-    refreshing: Boolean = false, onRefresh: () -> Unit = {}, writeBlocked: String? = null, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {}) {
+    refreshing: Boolean = false, onRefresh: () -> Unit = {}, writeBlocked: String? = null, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {},
+    list: LazyListState = rememberLazyListState()) {
     val plant = detail.plant
     val owner = state.member?.role != Role.sitter
     val active = plant.status == "active"
     val today = state.today?.today ?: state.upcoming?.today
     val opened = todayTask?.takeIf { it.plantId == plant.id }?.let { state.currentTask(it.occurrence) ?: it }
     val live = TaskList(today.orEmpty(), "plant", TaskSettings(), emptyMap(), listOf(TaskSection(plant.id, plant.displayName, careRows(state, detail, opened, today))))
-    val list = rememberLazyListState()
     var touched by remember(plant.id) { mutableStateOf(false) }
     // Only the user's own scroll counts, not the place a return restores or the page clamping that place.
     LaunchedEffect(list, plant.id) { snapshotFlow { list.isScrollInProgress }.collect { if (it) touched = true } }

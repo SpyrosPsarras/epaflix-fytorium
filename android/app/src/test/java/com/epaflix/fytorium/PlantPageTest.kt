@@ -756,6 +756,62 @@ class PlantPageTest {
         }
     }
 
+    @Test fun repotFromTheEndOfDetailsKeepsTheItemOnScreen() = changedContentAboveDetailsKeepsTheItem(repot = true)
+
+    @Test fun aSpeciesChangeResumedOnNamesKeepsThePlantPageItemOnBack() = changedContentAboveDetailsKeepsTheItem(repot = false)
+
+    private fun changedContentAboveDetailsKeepsTheItem(repot: Boolean) {
+        val changed = AtomicBoolean(false)
+        val after = JSONObject(plantFixture).apply {
+            if (repot) put("pot_size_cm", 25)
+            else put("gbif_key", 910019).put("scientific_name", "Testoria nova Inventor").put("canonical_name", "Testoria nova").put("common_name", "Synthetic star")
+        }
+        val repotted = JSONObject(eventFixture).put("id", "event-repot").put("task_type", "repot")
+        val app = object : androidx.lifecycle.LifecycleOwner {
+            val registry = androidx.lifecycle.LifecycleRegistry(this)
+            override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
+        }
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one" -> after.toString().takeIf { changed.get() }
+            "/api/plants" -> "[$after]".takeIf { changed.get() }
+            "/api/plants/plant-one/repot" -> { changed.set(true); JSONObject().put("event", repotted).toString() }
+            "/api/plants/plant-one/history" -> "[$repotted]".takeIf { repot && changed.get() }
+            "/api/plants/plant-one/species-changes" -> """[{"id":"change-one","previous_name":"Testoria lucida Inventor","next_name":"Testoria nova Inventor","next_display_name":"Synthetic star","changed_at":"2030-06-02T09:00:00.000Z","changed_on":"2030-06-02","by_name":"Synthetic partner"}]""".takeIf { !repot && changed.get() }
+            "/api/species/910001" -> speciesNamesFixture
+            "/api/species/910019" -> speciesNamesFixture.replace("910001", "910019").replace("Synthetic lantern", "Synthetic star")
+            else -> null
+        } }) { repo, showing ->
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+            compose.setContent { CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides app) {
+                if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } } }
+            compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/plants/plant-one/photos" } == 2 } && Running.count.get() == 0 }
+            reveal(hasText("Details")).performClick()
+            val names = hasText("Species names") and hasClickAction()
+            reveal(names)
+            compose.waitUntil(5_000) { Running.count.get() == 0 }
+            val place = compose.onNode(names).fetchSemanticsNode().boundsInRoot
+            if (repot) {
+                compose.onNodeWithContentDescription("Plant settings").performClick()
+                compose.onNode(hasText("Repot") and hasAnyAncestor(isPopup())).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Repot Synthetic fern") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(hasText("Pot size in cm") and hasSetTextAction()).performTextReplacement("25")
+                compose.onNodeWithText("Repot Synthetic fern").performClick()
+            } else {
+                compose.onNode(names).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Common name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.CREATED }
+                changed.set(true)
+                compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+                compose.waitUntil(5_000) { repo.state.value.detail?.plant?.attributesJson?.let { JSONObject(it).optLong("gbif_key") } == 910019L && Running.count.get() == 0 }
+                compose.onNodeWithContentDescription("Back").performClick()
+            }
+            compose.waitUntil(5_000) { repo.state.value.detail?.plant?.attributesJson == after.toString() &&
+                compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(names).assertIsDisplayed()
+            assertEquals("return keeps the item at the end of unfolded Details", place, compose.onNode(names).fetchSemanticsNode().boundsInRoot)
+        }
+    }
+
     // C25, C27: Back from Care defaults returns to the kept place, and the plant's fresh read after that return still applies, as at any entry.
     @Config(qualifiers = "w360dp-h1200dp-mdpi")
     @Test fun theFreshReadAfterReturningToTheKeptPlaceApplies() {

@@ -55,8 +55,10 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     // The open form's check of what was typed, read at the moment something leaves it, so Back right after a keystroke still asks.
     var formChanged by remember { mutableStateOf({ false }) }
     var discarding by remember { mutableStateOf(false) }
-    // A page opened from a form or the plant page returns to it as the user left it, with what was typed, chosen, scrolled or unfolded.
+    // A page opened from a form or the plant page returns to it as the user left it, with what was typed, chosen or unfolded.
     val forms = rememberSaveableStateHolder()
+    // shortcut: a live list state follows the shown item's key, but after rotation on a child page it restores by index; save the item's key if that matters.
+    val detailList = key(id) { rememberLazyListState() }
     var speciesCareFrom by rememberSaveable { mutableStateOf("detail") }
     var leavingFor by remember { mutableStateOf<String?>(null) }
     var restoreSite by rememberSaveable { mutableStateOf<String?>(null) }
@@ -264,7 +266,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     refreshing = pulling, onRefresh = {
                         pulling = true
                         scope.launch { try { withContext(Dispatchers.IO) { repository?.refresh() }; reload() } finally { pulling = false } }
-                    }, writeBlocked = writeBlocked, request = request, onRetry = ::retry) }
+                    }, writeBlocked = writeBlocked, request = request, onRetry = ::retry, list = detailList) }
                 "species-care" -> PlantColumn {
                     Text("Connect to load the care defaults for this species.")
                     OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
