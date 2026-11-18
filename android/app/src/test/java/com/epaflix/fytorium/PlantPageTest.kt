@@ -3943,15 +3943,54 @@ class PlantPageTest {
         compose.onNode(hasText("Two") and hasAnyAncestor(isPopup())).assertIsDisplayed()
     }
 
+    @Test fun deleteConfirmationIsEmptyAfterCancel() = closedDeleteConfirmationReopensEmpty("cancel")
+    @Test fun deleteConfirmationIsEmptyAfterBack() = closedDeleteConfirmationReopensEmpty("back")
+    @Test fun deleteConfirmationIsEmptyAfterOutsideTap() = closedDeleteConfirmationReopensEmpty("outside")
+
+    private fun closedDeleteConfirmationReopensEmpty(close: String) {
+        val sent = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(today = today), detail(), {}, { command, _ -> sent += command }, {}, {}) } }
+        fun open() {
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNodeWithText("Delete plant").performClick()
+        }
+        open()
+        compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
+        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fern")
+        compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
+        when (close) {
+            "cancel" -> compose.onNodeWithText("Cancel deletion").performClick()
+            "back" -> {
+                val dialog = checkNotNull(org.robolectric.shadows.ShadowDialog.getLatestDialog().window).decorView
+                compose.runOnIdle { checkNotNull(dialog.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher.onBackPressed() }
+            }
+            "outside" -> compose.runOnIdle {
+                val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+                for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                    val event = android.view.MotionEvent.obtain(0, 0, action, -100f, -100f, 0)
+                    try { dialog.dispatchTouchEvent(event) } finally { event.recycle() }
+                }
+            }
+            else -> error("Unknown close action")
+        }
+        compose.onNodeWithText("Permanently delete Synthetic fern?").assertDoesNotExist()
+        open()
+        compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
+        compose.onNodeWithText("Type Synthetic fern to confirm").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+        compose.runOnIdle { assertTrue("closing never sends a delete", sent.isEmpty()) }
+    }
+
     @Test fun deleteConfirmationDraftSurvivesRecreation() {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {}) } }
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
-        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fe")
+        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fern")
+        compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("Permanently delete Synthetic fern?").assertIsDisplayed()
-        compose.onNodeWithText("Type Synthetic fern to confirm").assertTextContains("Synthetic fe")
+        compose.onNodeWithText("Type Synthetic fern to confirm").assertTextContains("Synthetic fern")
+        compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
     }
 
     @Test fun editPlantDraftSurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("Edit plant", "Name", "Synthetic glow")

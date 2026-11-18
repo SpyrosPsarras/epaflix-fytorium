@@ -319,7 +319,6 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
     var menu by remember { mutableStateOf(false) }
     var deleting by rememberSaveable(plant.id) { mutableStateOf(false) }
     var burying by rememberSaveable(plant.id) { mutableStateOf(false) }
-    var confirmation by rememberSaveable(plant.id) { mutableStateOf("") }
     val rowBlocked = if (state.writable) null else state.needs("Changes", "make changes", verb = "need")
     val acting: (() -> Unit) -> Unit = { touched = true; it() }
     // The name shows once: the bar takes it only after the headline under the cover has scrolled away.
@@ -512,18 +511,21 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
         text = { Text("It leaves Today and Upcoming. Its history and photos stay, and you can restore it later.") },
         confirmButton = { TextButton(onClick = { burying = false; onCommand("graveyard", JSONObject()) }, enabled = enabled) { Text("Move to graveyard") } },
         dismissButton = { TextButton(onClick = { burying = false }) { Text("Cancel") } })
-    if (deleting) AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = { deleting = false },
-        title = { Heading("Permanently delete ${plant.displayName}?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
-                OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type ${plant.displayName} to confirm") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
-            }
-        },
-        // The server checks the exact name, so a match that ignores case and outer spaces sends the name itself.
-        confirmButton = { TextButton(onClick = { onCommand("delete", JSONObject().put("confirm_name", plant.displayName)); deleting = false },
-            enabled = enabled && confirmation.trim().equals(plant.displayName.trim(), ignoreCase = true)) { Text("Permanently delete plant") } },
-        dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel deletion") } })
+    if (deleting) {
+        var confirmation by rememberSaveable(plant.id) { mutableStateOf("") }
+        AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = { deleting = false },
+            title = { Heading("Permanently delete ${plant.displayName}?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
+                    OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type ${plant.displayName} to confirm") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+            },
+            // The server checks the exact name, so a match that ignores case and outer spaces sends the name itself.
+            confirmButton = { TextButton(onClick = { onCommand("delete", JSONObject().put("confirm_name", plant.displayName)); deleting = false },
+                enabled = enabled && confirmation.trim().equals(plant.displayName.trim(), ignoreCase = true)) { Text("Permanently delete plant") } },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel deletion") } })
+    }
 }
 
 @Composable private fun CareRow(task: CareTask, state: CareState, today: String?, listed: Boolean, blocked: String?, onTask: (CareTask, String) -> Unit,

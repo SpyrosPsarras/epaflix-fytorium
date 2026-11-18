@@ -121,3 +121,7 @@ From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same buil
 
 - C35 (W3-opus-28). C34 also holds across a configuration change (rotation, dark mode) or process recreation while a page opened from the plant page is showing: the plant page's place is saved as the key of the item the user was looking at plus its offset, and restored by that key, so content that changed above it cannot shift the place.
 - Accepted limit (Spyros, 2026-11-17): a gallery photo chosen from a provider that offers no persistent read grant is held only by its temporary grant; if Android kills the app before that Add photo draft is saved, the restored draft shows the photo but cannot upload it, and the user chooses it again. Camera photos and every other draft value survive. Upgrade path: copy such inputs into app-private draft storage.
+
+## Council round 8 amendment (2026-11-17)
+
+- C36 (W3-opus-29, S2). The permanent-delete confirmation always opens empty: cancelling, Back or dismissing the dialog clears the typed name, so Permanently delete is never enabled when the dialog appears. The typed name still survives rotation and process recreation while the dialog stays open (C19).
