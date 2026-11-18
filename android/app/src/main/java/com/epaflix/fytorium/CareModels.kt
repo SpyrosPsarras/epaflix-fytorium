@@ -56,7 +56,7 @@ data class TaskList(val today: String, val view: String, val settings: TaskSetti
                     val groups: Map<String, List<CareTask>>, val sections: List<TaskSection>)
 data class Plant(val id: String, val displayName: String, val scientificName: String, val status: String,
                  val siteName: String?, val coverPhotoId: String?, val potType: String?, val potSizeCm: Int?, val soilType: String?,
-                 val attributesJson: String = "{}")
+                 val attributesJson: String = "{}") : java.io.Serializable
 data class PlantDetail(val plant: Plant, val history: List<CareEvent>, val tasks: Map<String, CareTask>,
                        val careSettingsJson: String? = null, val speciesChangesJson: String = "[]", val photoIds: List<String> = emptyList(), val refreshedAt: Long = 0) {
     // The plant schedule leaves out the plant and built-in task types, which a row's occurrence needs.

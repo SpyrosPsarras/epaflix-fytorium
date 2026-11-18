@@ -69,7 +69,7 @@ import java.time.ZoneOffset
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun TakenDate(value: String, today: String?, enabled: Boolean, onChange: (String) -> Unit) {
-    var showing by remember { mutableStateOf(false) }
+    var showing by rememberSaveable { mutableStateOf(false) }
     OutlinedButton(onClick = { showing = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Taken on: " + (value.takeIf { it.isNotBlank() }?.let(::dayMonthYear) ?: "not set")) }
     if (showing) {
         val initial = remember(value) { runCatching { LocalDate.parse(value).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull() }
@@ -85,23 +85,31 @@ import java.time.ZoneOffset
 @Composable fun PhotoScreen(state: PhotoState, online: Boolean, plantName: String?, selectedCount: Int,
     sourceControls: @Composable () -> Unit = {}, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
     onUpload: (String, String, String) -> Unit = { _, _, _ -> }, onChange: (String, String) -> Unit = { _, _ -> },
-    onOriginal: (String) -> Unit = {}, onCloseOriginal: () -> Unit = {}, onPlant: (String) -> Unit = {}) {
+    onOriginal: (String) -> Unit = {}, onCloseOriginal: () -> Unit = {}, onPlant: (String) -> Unit = {},
+    onFormDirty: (() -> String?) -> Unit = {}, onDiscard: () -> Unit = {}, originalOpen: Boolean = state.original != null) {
     var form by rememberSaveable { mutableStateOf(false) }
     var note by rememberSaveable { mutableStateOf("") }
     var health by rememberSaveable { mutableStateOf("") }
     var date by rememberSaveable { mutableStateOf("") }
-    var deleting by remember { mutableStateOf<PhotoUpdate?>(null) }
+    var deleting by rememberSaveable { mutableStateOf<PhotoUpdate?>(null) }
+    var discarding by rememberSaveable { mutableStateOf(false) }
+    val question = "Discard photo update for ${plantName ?: "this plant"}?"
+    fun changed() = form && (note.isNotEmpty() || health.isNotEmpty() || date.isNotEmpty() || selectedCount > 0)
+    fun clear() { form = false; note = ""; health = ""; date = ""; discarding = false; onDiscard() }
+    SideEffect { onFormDirty { question.takeIf { changed() } } }
+    val currentDirty by rememberUpdatedState(onFormDirty)
+    DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     val enabled = online && !state.blocked && !state.saving && !state.updateRequired
     // A lambda, not ::back: equal function references let Back keep the first composition's state, which skipped an open original.
-    val back = { if (state.original != null) onCloseOriginal() else if (form) form = false else onBack() }
+    val back = { if (originalOpen) onCloseOriginal() else if (changed()) discarding = true else if (form) clear() else onBack() }
     BackHandler(onBack = back)
     Column(Modifier.fillMaxSize()) {
-        PhotoBar(if (form) "Add a photo update" else if (state.original != null) "Photo" else plantName?.let { "$it updates" } ?: "Plant journal", back)
+        PhotoBar(if (form) "Add a photo update" else if (originalOpen) "Photo" else plantName?.let { "$it updates" } ?: "Plant journal", back)
         val scroll = rememberScrollState()
-        Column(Modifier.weight(1f).then(if (form || state.original != null) Modifier.verticalScroll(scroll) else Modifier).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f).then(if (form || originalOpen) Modifier.verticalScroll(scroll) else Modifier).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             PhotoNotice(state, online, onRefresh)
             when {
-                state.original != null -> PhotoBitmap(state.original, "Original plant photo")
+                originalOpen -> PhotoBitmap(state.original, "Original plant photo")
                 form -> {
                     sourceControls()
                     Text("Selected photos: $selectedCount")
@@ -134,11 +142,14 @@ import java.time.ZoneOffset
             }
         }
     }
+    if (discarding) DiscardDialog(question, onKeep = { discarding = false }) { clear() }
     if (deleting != null) AlertDialog(onDismissRequest = { if (!state.saving) deleting = null }, title = { Text("Delete photo update?") },
-        text = { Column { Text("Delete this photo update and its photos?"); PlantError(state.error) } },
+        text = { Column { Text("Delete this photo update of ${deleting!!.plantName} and its photos?"); PlantError(state.error) } },
         confirmButton = { TextButton(onClick = { onChange(deleting!!.id, "delete") }, enabled = enabled) { Text("Confirm delete") } },
         dismissButton = { TextButton(onClick = { deleting = null }, enabled = !state.saving) { Text("Cancel") } })
-    LaunchedEffect(state.photos) { if (deleting != null && state.photos.none { it.id == deleting!!.id }) deleting = null }
+    LaunchedEffect(state.photos, state.loaded, state.loading) {
+        if (state.loaded && !state.loading && deleting != null && state.photos.none { it.id == deleting!!.id }) deleting = null
+    }
     // A successful upload closes the form. A failed upload keeps every entered field.
     var uploaded by remember { mutableIntStateOf(state.uploadRevision) }
     LaunchedEffect(state.uploadRevision) {
@@ -150,7 +161,11 @@ import java.time.ZoneOffset
 @Composable fun IdentificationScreen(state: PhotoState, online: Boolean, selectedCount: Int,
     sourceControls: @Composable () -> Unit = {}, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
     onIdentify: () -> Unit = {}, onRemove: (Int) -> Unit = {}, onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }) {
-    var chosen by remember(state.result) { mutableStateOf<SpeciesCandidate?>(null) }
+    var chosen by rememberSaveable { mutableStateOf<SpeciesCandidate?>(null) }
+    var searchId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.result?.id) {
+        state.result?.id?.let { if (searchId != it) chosen = null }
+    }
     val enabled = online && !state.saving && !state.blocked && !state.updateRequired
     BackHandler { if (chosen != null) chosen = null else onBack() }
     Column(Modifier.fillMaxSize()) {
@@ -163,7 +178,7 @@ import java.time.ZoneOffset
                 Heading("Confirm species")
                 Text("Pl@ntNet suggested ${candidate.identificationName ?: candidate.scientificName}, ${Math.round((candidate.score ?: 0.0) * 100)}% identification score.")
                 Text("This match needs your confirmation. Is ${candidate.scientificName} the species you meant?")
-                Button(onClick = { onSelect(candidate, state.result!!.id, true) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm ${candidate.canonicalName}") }
+                Button(onClick = { onSelect(candidate, checkNotNull(searchId), true) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm ${candidate.canonicalName}") }
                 TextButton(onClick = { chosen = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }
             } else {
                 sourceControls()
@@ -178,7 +193,7 @@ import java.time.ZoneOffset
                             Text("${Math.round((candidate.score ?: 0.0) * 100)}% identification score")
                             if (candidate.commonNames.isNotEmpty()) Text(candidate.commonNames.joinToString(", "))
                             if (candidate.matchType != null) Text("GBIF accepted name: ${candidate.scientificName} · ${candidate.matchType.lowercase()} · ${candidate.confidence}% confidence · ${candidate.rank.lowercase()}")
-                            Button(onClick = { chosen = candidate }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose ${candidate.canonicalName}") }
+                            Button(onClick = { chosen = candidate; searchId = result.id }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose ${candidate.canonicalName}") }
                         } }
                     }
                 }

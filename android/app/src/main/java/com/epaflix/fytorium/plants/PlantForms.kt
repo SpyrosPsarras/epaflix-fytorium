@@ -48,7 +48,7 @@ import com.epaflix.fytorium.taskLabel
 import com.epaflix.fytorium.taskNames
 import org.json.JSONObject
 
-@Composable private fun savedFields(key: String?, initial: () -> Map<String, String>): androidx.compose.runtime.snapshots.SnapshotStateMap<String, String> =
+@Composable internal fun savedFields(key: String?, initial: () -> Map<String, String>): androidx.compose.runtime.snapshots.SnapshotStateMap<String, String> =
     rememberSaveable(key, saver = mapSaver(
         save = { fields: androidx.compose.runtime.snapshots.SnapshotStateMap<String, String> -> fields.toMap() },
         restore = { values -> values.map { it.key to it.value.toString() }.toMutableStateMap() })) { initial().toList().toMutableStateMap() }
@@ -69,7 +69,7 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun Choice(label: String, value: String, options: Map<String, String>, enabled: Boolean = true, supporting: (@Composable () -> Unit)? = null,
     onChange: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded && enabled, onExpandedChange = { if (enabled) expanded = it }) {
         OutlinedTextField(value = options[value] ?: choiceLabel(value), onValueChange = {}, readOnly = true,
             label = { Text(label) }, enabled = enabled, supportingText = supporting,
@@ -83,7 +83,7 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
 // The server refuses a birthday after its UTC date, so the picker offers no later day.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun Birthday(value: String, enabled: Boolean, error: String?, today: LocalDate, onChange: (String) -> Unit) {
-    var choosing by remember { mutableStateOf(false) }
+    var choosing by rememberSaveable { mutableStateOf(false) }
     val shown = value.takeIf { it.isNotBlank() }?.let { runCatching { dayMonthYear(it) }.getOrNull() ?: it } ?: "Not set"
     OutlinedButton(onClick = { choosing = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Birthday: $shown") }
     PlantError(error)
@@ -199,11 +199,12 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
     onDirty: (() -> Boolean) -> Unit = {}) {
     var query by rememberSaveable { mutableStateOf("") }
     SideEffect { onDirty { query.isNotBlank() } }
-    var selected by remember(result) { mutableStateOf<SpeciesCandidate?>(null) }
+    var selectedKey by rememberSaveable { mutableStateOf<Long?>(null) }
+    val selected = result?.candidates?.firstOrNull { it.key == selectedKey }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Heading("Species search", style = MaterialTheme.typography.headlineSmall) }
         item { OutlinedTextField(query, { query = it }, label = { Text("Species name") }, supportingText = { Text("Common or scientific name, English, Norwegian or Greek") }, singleLine = true, enabled = writable, modifier = Modifier.fillMaxWidth()) }
-        item { Button(onClick = { selected = null; onSearch(query.trim()) }, enabled = writable && query.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search species") } }
+        item { Button(onClick = { selectedKey = null; onSearch(query.trim()) }, enabled = writable && query.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search species") } }
         if (result != null) {
             if (selected == null) {
                 if (result.candidates.isEmpty()) item { Text("No species found.") }
@@ -216,7 +217,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
                             candidate.matchNote?.let { Text(it) }
                             if (candidate.matchType == "FUZZY" && candidate.confidence != null) Text("Close match, ${candidate.confidence}%")
                             OutlinedButton(onClick = {
-                                if (candidate.requiresConfirmation) selected = candidate else onSelect(candidate, result.id, false)
+                                if (candidate.requiresConfirmation) selectedKey = candidate.key else onSelect(candidate, result.id, false)
                             }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.headline) }
                         }
                     }
@@ -226,7 +227,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
                 ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
                 Text("This match needs your confirmation. Is " + candidate.scientificName + " the species you meant?")
                 Button(onClick = { onSelect(candidate, result.id, true) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm " + candidate.canonicalName) }
-                TextButton(onClick = { selected = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }
+                TextButton(onClick = { selectedKey = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }
             } }
         }
         item { Text("Names from GBIF, CC BY 4.0") }
@@ -237,10 +238,11 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 @Composable fun PlantCareSettings(json: String, writable: Boolean, onSave: (JSONObject) -> Unit, tasks: Map<String, CareTask> = emptyMap(),
     plantName: String = "", onSpeciesCare: (() -> Unit)? = null, onBack: (() -> Unit)? = null,
     barTitle: @Composable (@Composable () -> Unit) -> Unit = { it() }, error: String? = null, onDirty: (() -> Boolean) -> Unit = {}) {
-    val custom = remember(json) { JSONObject(json).getJSONObject("customIntervals") }
+    val opened = rememberSaveable { json }
+    val custom = remember(opened) { JSONObject(opened).getJSONObject("customIntervals") }
     val types = taskNames.keys.toList()
-    val stored = remember(json) { types.associateWith { if (custom.isNull(it)) "" else custom.optString(it) } }
-    val intervals = savedFields(json) { stored }
+    val stored = remember(opened) { types.associateWith { if (custom.isNull(it)) "" else custom.optString(it) } }
+    val intervals = savedFields(opened) { stored }
     SideEffect { onDirty { intervals.toMap() != stored } }
     val valid = intervals.values.all { it.isBlank() || it.toIntOrNull() in 1..365 }
     fun current(type: String): String? {
@@ -286,13 +288,14 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 }
 private val nameSources = mapOf("owner" to "Added by your household", "wikidata" to "Wikidata", "gbif" to "GBIF", "nortaxa" to "NorTaxa")
 @Composable fun SpeciesNames(species: Species, options: PlantOptions, writable: Boolean, onCommand: (String, JSONObject, onSuccess: () -> Unit) -> Unit,
-    list: LazyListState = rememberLazyListState(), error: String? = null, target: String? = null, onDirty: (() -> Boolean) -> Unit = {}) {
+    list: LazyListState = rememberLazyListState(), error: String? = null, target: String? = null, onDirty: (() -> Boolean) -> Unit = {}, draft: MutableState<String>? = null) {
     // A read landing while the user types, or a failed add, must not drop the draft; only a successful add clears it.
-    var name by remember(species.key) { mutableStateOf("") }
+    val nameState: MutableState<String> = draft ?: rememberSaveable(species.key) { mutableStateOf("") }
+    var name by nameState
     SideEffect { onDirty { name.isNotBlank() } }
-    var language by remember { mutableStateOf("en") }
+    var language by rememberSaveable(species.key) { mutableStateOf("en") }
     var others by rememberSaveable(species.key) { mutableStateOf(false) }
-    var removing by remember { mutableStateOf<SpeciesName?>(null) }
+    var removing by rememberSaveable(species.key) { mutableStateOf<SpeciesName?>(null) }
     val shown = species.commonName
     val household = species.names.filter { it.source == "owner" }
     val sourced = species.names.filter { it.source != "owner" && it.language in options.languages }

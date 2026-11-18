@@ -1,6 +1,7 @@
 package com.epaflix.fytorium
 
 import android.app.Application
+import android.content.Intent
 import android.os.Process
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -35,8 +36,12 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
     val care: CareController get() = careInstance.value
     val api: ApiClient by lazy {
         ApiClient(BuildConfig.SERVER_URL, store) {
-            try { clearCameraCaptures(cacheDir, delete = captureDeleter) }
-            finally { repository.wipe(); feed.wipe() }
+            try {
+                clearCameraCaptures(cacheDir, delete = captureDeleter)
+                contentResolver.persistedUriPermissions.toList().forEach { permission ->
+                    runCatching { contentResolver.releasePersistableUriPermission(permission.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                }
+            } finally { repository.wipe(); feed.wipe() }
             care.cancelRefresh()
             Diagnostics(this).apply { clear(); record(ErrorEvent.SESSION_ENDED) }
         }

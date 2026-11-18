@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.*
 import com.epaflix.fytorium.Role
+import com.epaflix.fytorium.plants.endSentence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,8 +38,11 @@ import org.json.JSONObject
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
-    val repository = remember(api, member, speciesKey) {
-        SpeciesCareRepository(api, speciesKey,
+    var target by rememberSaveable { mutableStateOf(speciesKey) }
+    var editing by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(speciesKey, editing) { if (!editing) target = speciesKey }
+    val repository = remember(api, member, target) {
+        SpeciesCareRepository(api, target,
             { member != null && member.role != Role.sitter && currentCare.member == member },
             { currentConnected() && !currentCare.updateRequired })
     }
@@ -75,13 +79,19 @@ import org.json.JSONObject
         if (success) { onChanged(); receipt?.let { onReceipt("$it for $species") } }
         return success
     }
+    val pinned = state.card?.takeIf { editing && target != speciesKey }?.let { card ->
+        val now = care.detail?.plant?.attributesJson?.let { JSONObject(it).let { a -> a.nullable("common_name") ?: a.nullable("canonical_name") } } ?: "another species"
+        "This plant is now ${endSentence(now)} You're editing care for ${endSentence(card.commonName ?: card.canonicalName)}" to
+            "Save or discard this override to see care for ${endSentence(now)}"
+    }
     SpeciesCareScreen(state, connected() && !care.updateRequired, permitted, onBack,
         onRefresh = { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } },
         onRefreshCare = { scope.launch { change { repository.refreshCare() } } },
         onOverride = { field, value -> change("Saved " + shortLabel(field)) { repository.override(field, value) } },
         onReset = { field -> change("Removed your " + shortLabel(field)) { repository.reset(field) } },
         onRetry = { key -> scope.launch { change { repository.retryMatch(key) } } },
-        onClear = repository::clearMessage, onSpecies = onSpecies, unmatched = speciesKey == null, onFormDirty = onFormDirty)
+        onClear = repository::clearMessage, onSpecies = onSpecies, unmatched = target == null, onFormDirty = onFormDirty,
+        onEditing = { editing = it }, note = pinned)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -89,25 +99,30 @@ import org.json.JSONObject
     onBack: () -> Unit = {}, onRefresh: () -> Unit = {}, onRefreshCare: () -> Unit = {},
     onOverride: suspend (String, Any) -> Boolean = { _, _ -> false }, onReset: suspend (String) -> Boolean = { false },
     onRetry: (Long) -> Unit = {}, onClear: () -> Unit = {}, onSpecies: (Long) -> Unit = {}, unmatched: Boolean = state.card == null,
-    onFormDirty: (() -> String?) -> Unit = {}) {
-    var editing by remember { mutableStateOf<String?>(null) }
-    var resetting by remember { mutableStateOf<String?>(null) }
+    onFormDirty: (() -> String?) -> Unit = {}, onEditing: (Boolean) -> Unit = {}, note: Pair<String, String>? = null) {
+    var editing by rememberSaveable { mutableStateOf<String?>(null) }
+    var editingKey by rememberSaveable { mutableStateOf<Long?>(null) }
+    var editingName by rememberSaveable { mutableStateOf("") }
+    var leaveOverride by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var resetting by rememberSaveable { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
+    SideEffect { onEditing(editing != null || resetting != null) }
     val scope = rememberCoroutineScope()
     val enabled = canEdit && online && state.writable && !submitting
-    BackHandler(onBack = onBack)
+    fun back() { if (editing != null) leaveOverride?.invoke() else onBack() }
+    BackHandler { back() }
     // An open dialog shows its own save's failure next to its fields.
     val failure = state.error?.takeIf { editing == null && resetting == null } ?: state.pageError
-    val status = when {
+    val status = (when {
         !canEdit || state.updateRequired -> null
         !online -> "Offline" to "This phone can't reach Fytorium. The values on this page stay readable. Reconnect and refresh to make changes."
         else -> (failure ?: state.message)?.let { it to it }
-    }
+    }).withNote(note)
     Scaffold(topBar = { Column {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { status?.first == failure && (state.blocked || state.pageError != null) }) {
             Text(if (unmatched) "Unmatched species" else "Care defaults for this species", maxLines = 1, overflow = TextOverflow.Ellipsis)
         } }, expandedHeight = barHeight(), navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+            IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         })
         // Progress has its own fixed slot under the bar, so it never moves or covers the page.
         Box(Modifier.fillMaxWidth().height(4.dp)) {
@@ -125,7 +140,7 @@ import org.json.JSONObject
                     Text("Starting estimates. Check the plant and soil before following a watering interval.")
                     // The values Fytorium knows lead; a field without one waits in its own fold, still open to a value of your own.
                     val (known, unknown) = careLabels.entries.partition { (field) -> card.profile.optJSONObject(field)?.isNull("value") == false }
-                    val edit = { field: String -> onClear(); editing = field }
+                    val edit = { field: String -> onClear(); editingKey = card.key; editingName = title; editing = field }
                     val reset = { field: String -> onClear(); resetting = field }
                     known.forEach { (field, label) -> CareField(card.profile.optJSONObject(field), field, label, enabled, edit, reset) }
                     OutdoorMonths(card.outdoor)
@@ -179,28 +194,30 @@ import org.json.JSONObject
             }
         }
     }
-    if (canEdit) editing?.let { field ->
-        val current = state.card?.profile?.optJSONObject(field)?.opt("value")
-        var draft by remember(field) { mutableStateOf(draftOf(field, current)) }
-        var low by remember(field) { mutableStateOf((current as? JSONObject)?.opt("min")?.toString().orEmpty()) }
-        var high by remember(field) { mutableStateOf((current as? JSONObject)?.opt("max")?.toString().orEmpty()) }
-        val months = remember(field) { mutableStateListOf<Int>().apply { (current as? JSONArray)?.takeIf { field == "pruningMonths" }?.let { a -> (0 until a.length()).forEach { add(a.getInt(it)) } } } }
+    if (canEdit) editing?.let { field -> key(editingKey, field) {
+        val card = state.card
+        val current = card?.profile?.optJSONObject(field)?.opt("value")
+        var draft by rememberSaveable { mutableStateOf(draftOf(field, current)) }
+        var low by rememberSaveable { mutableStateOf((current as? JSONObject)?.opt("min")?.toString().orEmpty()) }
+        var high by rememberSaveable { mutableStateOf((current as? JSONObject)?.opt("max")?.toString().orEmpty()) }
+        var months by rememberSaveable { mutableStateOf((current as? JSONArray)?.takeIf { field == "pruningMonths" }?.let { a -> (0 until a.length()).map { a.getInt(it) } }.orEmpty()) }
         var invalid by remember(field) { mutableStateOf<String?>(null) }
-        val opened = remember(field) { listOf(draft, low, high, months.toList()) }
+        val opened = rememberSaveable { listOf(draft, low, high, months.toList()) }
         // Read at the moment something leaves the dialog, so Back right after a keystroke still asks.
         fun changed() = opened != listOf(draft, low, high, months.toList())
-        var discarding by remember(field) { mutableStateOf(false) }
-        val question = "Discard your ${shortLabel(field)} for ${state.card?.let { it.commonName ?: it.canonicalName } ?: "this species"}?"
+        var discarding by rememberSaveable { mutableStateOf(false) }
+        val question = "Discard your ${shortLabel(field)} for $editingName?"
         // The shell asks the same question before a notification leaves the dialog with a typed value.
         SideEffect { onFormDirty { question.takeIf { changed() } } }
-        DisposableEffect(field) { onDispose { onFormDirty { null } } }
+        DisposableEffect(field) { onDispose { leaveOverride = null; onFormDirty { null } } }
         fun close() { discarding = false; editing = null; onClear() }
         fun leave() { if (changed()) discarding = true else close() }
+        SideEffect { leaveOverride = ::leave }
         // The server refuses a minimum above the maximum, so the dialog says so as the values are typed.
         val order = if (field !in careRanges) null else number(low)?.let { min -> number(high)?.let { max -> "Minimum must be lower than maximum".takeIf { min.toDouble() > max.toDouble() } } }
         // Temperatures can be below zero, which number pads without a minus key cannot type.
         val numberKeys = KeyboardOptions(keyboardType = if (field in setOf("temperatureRangeC", "hardinessC")) KeyboardType.Text else KeyboardType.Decimal)
-        AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        if (card != null) AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             onDismissRequest = { if (!submitting) leave() },
             title = { Text("Override ${lower(careLabels.getValue(field))}") },
             text = { DialogBody {
@@ -218,7 +235,7 @@ import org.json.JSONObject
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             monthNames.forEachIndexed { index, name ->
                                 val month = index + 1
-                                FilterChip(selected = month in months, onClick = { if (month in months) months.remove(month) else months.add(month); invalid = null },
+                                FilterChip(selected = month in months, onClick = { months = if (month in months) months - month else months + month; invalid = null },
                                     label = { Text(name.take(3)) }, enabled = enabled, modifier = Modifier.semantics { contentDescription = name })
                             }
                         }
@@ -239,7 +256,7 @@ import org.json.JSONObject
             }, enabled = enabled && order == null) { Text("Save override") } },
             dismissButton = { TextButton(onClick = { leave() }, enabled = !submitting) { Text("Cancel") } })
         if (discarding) com.epaflix.fytorium.plants.DiscardDialog(question, onKeep = { discarding = false }) { close() }
-    }
+    } }
     if (canEdit) resetting?.let { field ->
         AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { Text("Remove override for ${lower(careLabels.getValue(field))}?") },
             text = { DialogBody { Text("Every plant of this species goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },

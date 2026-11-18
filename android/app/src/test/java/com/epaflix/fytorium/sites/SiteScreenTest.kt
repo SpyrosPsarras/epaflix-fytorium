@@ -25,6 +25,96 @@ class SiteScreenTest {
     @get:Rule val compose = createComposeRule()
     private val site = Site("site-one", mapOf("name" to "Synthetic room", "location" to "indoor", "light" to "part_sun", "humidity" to "normal",
         "warm_min_c" to "18", "warm_max_c" to "25", "cold_min_c" to "", "cold_max_c" to "20"), growLight = true, plantCount = 2, importedIncomplete = true)
+    @Test fun aSiteChoiceStaysOpenAcrossRecreation() {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        var choice = ""
+        restoration.setContent { FytoriumTheme {
+            Choice("Synthetic condition", "indoor", listOf("indoor" to "Indoor", "outdoor" to "Outdoor"), true) { choice = it }
+        } }
+        compose.onNodeWithText("Synthetic condition: Indoor").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Outdoor").performClick()
+        assertEquals("outdoor", choice)
+    }
+
+    @Test fun aNewSiteDraftInTheSitesTabSurvivesRecreation() = siteDraftSurvivesRecreation(edit = false)
+    @Test fun anExistingSiteDraftInTheSitesTabSurvivesRecreation() = siteDraftSurvivesRecreation(edit = true)
+
+    private fun siteDraftSurvivesRecreation(edit: Boolean) {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        var saved: Site? = null
+        restoration.setContent { FytoriumTheme { SitesScreen(SiteState(listOf(site), loaded = true), onSave = { saved = it; true }) } }
+        compose.onNodeWithText(if (edit) "Edit" else "Create site").performScrollTo().performClick()
+        compose.onNodeWithText("Name").performTextReplacement("Synthetic porch")
+        compose.onNodeWithText("Grow light").performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText(if (edit) "Edit site" else "New site").assertIsDisplayed()
+        compose.onNodeWithText("Name").performScrollTo().assertTextContains("Synthetic porch")
+        compose.onNodeWithText("Grow light").performScrollTo().let { if (edit) it.assertIsOff() else it.assertIsOn() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText(if (edit) "Discard changes to Synthetic room?" else "Discard this new site?").assertIsDisplayed()
+        compose.onNodeWithText("Keep editing").performClick()
+        compose.onNodeWithText("Save site").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(if (edit) "site-one" else null, saved!!.id)
+            assertEquals("Synthetic porch", saved!!.fields["name"])
+        }
+    }
+
+    @Test fun aSiteDiscardQuestionSurvivesRecreation() {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { SitesScreen(SiteState(listOf(site), loaded = true)) } }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithText("Name").performTextReplacement("Synthetic porch")
+        compose.onNodeWithContentDescription("Back").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Keep editing").assertIsDisplayed()
+    }
+
+    @Test fun aSiteDeletionQuestionSurvivesAnOfflineReload() {
+        val state = mutableStateOf(SiteState(listOf(site), loaded = true))
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { SitesScreen(state.value, online = state.value.loaded) } }
+        compose.onNodeWithText("Delete").performClick()
+        compose.runOnIdle { state.value = SiteState() }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Delete site?").assertIsDisplayed()
+        compose.onNodeWithText("Confirm delete").assertIsNotEnabled()
+    }
+
+    @Test fun anOfflineRecreatedSiteEditorKeepsItsDraftAndDiscardsItBeforeCreate() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(
+                    """[{"id":"site-one","name":"Synthetic room","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false}]""")
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val online = mutableStateOf(true)
+            val answers = mutableIntStateOf(0)
+            var dirty: () -> String? = { null }
+            var exits = 0
+            val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+            restoration.setContent { FytoriumTheme { SitesRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { online.value },
+                { exits++ }, answers = answers.intValue, onFormDirty = { dirty = it }) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Edit") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Edit").performClick()
+            compose.onNodeWithText("Name").performTextReplacement("Synthetic porch")
+            compose.runOnIdle { online.value = false }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.onNodeWithText("Edit site").assertIsDisplayed()
+            compose.onNodeWithText("Name").assertTextContains("Synthetic porch")
+            compose.runOnIdle { assertEquals("Discard changes to Synthetic room?", dirty()) }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard changes to Synthetic room?").assertIsDisplayed()
+            compose.onNodeWithText("Discard").performClick()
+            compose.runOnIdle { assertEquals(0, exits); online.value = true; answers.intValue++ }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Create site").performClick()
+            compose.onNode(hasText("Name") and hasSetTextAction()).assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+        }
+    }
+
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
     private fun screens(dark: Boolean) {

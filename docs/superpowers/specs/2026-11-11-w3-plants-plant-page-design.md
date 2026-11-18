@@ -116,3 +116,8 @@ From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same buil
 ## Council round 6 amendment (2026-11-17)
 
 - C34 (W3-opus-27). C27 holds after content above the place changes: returning to the plant page after a Repot from its menu, or after a species change picked up while on a page it opened, restores the place by what was on screen (the item the user was looking at), not only by a scroll offset, so the page does not come back a screen higher at the end of the page with Details open.
+
+## Council round 7 amendment (2026-11-17)
+
+- C35 (W3-opus-28). C34 also holds across a configuration change (rotation, dark mode) or process recreation while a page opened from the plant page is showing: the plant page's place is saved as the key of the item the user was looking at plus its offset, and restored by that key, so content that changed above it cannot shift the place.
+- Accepted limit (Spyros, 2026-11-17): a gallery photo chosen from a provider that offers no persistent read grant is held only by its temporary grant; if Android kills the app before that Add photo draft is saved, the restored draft shows the photo but cannot upload it, and the user chooses it again. Camera photos and every other draft value survive. Upgrade path: copy such inputs into app-private draft storage.

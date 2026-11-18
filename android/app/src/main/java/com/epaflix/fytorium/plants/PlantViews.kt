@@ -7,13 +7,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -241,13 +243,39 @@ private fun aboutLines(a: JSONObject): List<String> {
     Heading(text, MaterialTheme.typography.titleLarge, Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp))
 }
 
+class PlantPageScroll(private var item: String? = null, private var offset: Int = 0, private var index: Int = 0) {
+    val list = LazyListState()
+    var restoring = item != null
+        private set
+
+    fun capture() {
+        val first = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == list.firstVisibleItemIndex } ?: return
+        item = first.key as String
+        offset = list.firstVisibleItemScrollOffset
+        index = list.firstVisibleItemIndex
+    }
+
+    fun restore(keys: List<String>) {
+        if (keys.isNotEmpty()) list.requestScrollToItem(keys.indexOf(item).takeIf { it >= 0 } ?: index.coerceAtMost(keys.lastIndex), offset)
+        restoring = false
+    }
+
+    companion object {
+        val Saver = listSaver<PlantPageScroll, Any>(save = { scroll ->
+            scroll.capture()
+            listOf(scroll.item.orEmpty(), scroll.offset, scroll.index)
+        }, restore = { PlantPageScroll((it[0] as String).ifEmpty { null }, it[1] as Int, it[2] as Int) })
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantDetailScreen(state: CareState, detail: PlantDetail, onEdit: () -> Unit,
     onCommand: (String, JSONObject) -> Unit, onSpecies: () -> Unit, onUndo: (CareEvent) -> Unit, thumbnails: Thumbnails? = null,
     enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null,
     todayTask: CareTask? = null, onTask: (CareTask, String) -> Unit = { _, _ -> }, onBlocked: (String) -> Unit = {},
     refreshing: Boolean = false, onRefresh: () -> Unit = {}, writeBlocked: String? = null, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {},
-    list: LazyListState = rememberLazyListState()) {
+    scroll: PlantPageScroll = rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() }) {
+    val list = scroll.list
     val plant = detail.plant
     val owner = state.member?.role != Role.sitter
     val active = plant.status == "active"
@@ -286,10 +314,12 @@ private fun aboutLines(a: JSONObject): List<String> {
     val about = remember(attributes) { aboutLines(attributes) }
     var allHistory by rememberSaveable(plant.id) { mutableStateOf(false) }
     var details by rememberSaveable(plant.id) { mutableStateOf(false) }
+    val shown = if (allHistory) moments else moments.take(10)
+    DisposableEffect(scroll) { onDispose { scroll.capture() } }
     var menu by remember { mutableStateOf(false) }
-    var deleting by remember(plant.id) { mutableStateOf(false) }
-    var burying by remember(plant.id) { mutableStateOf(false) }
-    var confirmation by remember(plant.id) { mutableStateOf("") }
+    var deleting by rememberSaveable(plant.id) { mutableStateOf(false) }
+    var burying by rememberSaveable(plant.id) { mutableStateOf(false) }
+    var confirmation by rememberSaveable(plant.id) { mutableStateOf("") }
     val rowBlocked = if (state.writable) null else state.needs("Changes", "make changes", verb = "need")
     val acting: (() -> Unit) -> Unit = { touched = true; it() }
     // The name shows once: the bar takes it only after the headline under the cover has scrolled away.
@@ -323,13 +353,14 @@ private fun aboutLines(a: JSONObject): List<String> {
             }
         })
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(Modifier.fillMaxSize(), list, contentPadding = PaddingValues(bottom = 24.dp)) {
-                item("cover") {
+            val content = buildList<Pair<String, @Composable LazyItemScope.() -> Unit>> {
+                fun pageItem(key: String, content: @Composable LazyItemScope.() -> Unit) { add(key to content) }
+                pageItem("cover") {
                     PlantCover(plant, thumbnails, Modifier.fillMaxWidth().aspectRatio(4f / 3f).then(
                         if (owner) Modifier.clickable(onClickLabel = "Open photo updates") { onCommand("photos", JSONObject()) } else Modifier), MaterialTheme.typography.displayLarge)
                 }
-                item("headline") { Heading(header.displayName, MaterialTheme.typography.headlineMedium, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp)) }
-                item("identity") {
+                pageItem("headline") { Heading(header.displayName, MaterialTheme.typography.headlineMedium, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp)) }
+                pageItem("identity") {
                     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         val species = attributes.nullable("canonical_name") ?: header.scientificName
                         if (!species.equals(header.displayName, ignoreCase = true)) Text(species, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -343,8 +374,8 @@ private fun aboutLines(a: JSONObject): List<String> {
                         if (buried) Text(attributes.nullable("graveyard_on")?.let { "In the graveyard since " + dayMonthYear(it) } ?: "In the graveyard")
                     }
                 }
-                item("care-heading") { SectionHeading("Care") }
-                if (buried) item("care-paused") {
+                pageItem("care-heading") { SectionHeading("Care") }
+                if (buried) pageItem("care-paused") {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Care pauses in the graveyard. Restore ${header.displayName} to bring its tasks back.")
                         // A plant restored elsewhere keeps the held button in place, off, until the next pull.
@@ -358,8 +389,8 @@ private fun aboutLines(a: JSONObject): List<String> {
                         }
                     }
                 } else {
-                    if (applicable.isEmpty()) item("care-none") { Text("No care tasks yet.", Modifier.padding(horizontal = 16.dp)) }
-                    else item("care") {
+                    if (applicable.isEmpty()) pageItem("care-none") { Text("No care tasks yet.", Modifier.padding(horizontal = 16.dp)) }
+                    else pageItem("care") {
                         Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(24.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                             applicable.forEach { task -> key(task.key) { CareRow(task, state, today, task.occurrence in listed, rowBlocked, { row, action -> acting { onTask(row, action) } },
@@ -388,26 +419,25 @@ private fun aboutLines(a: JSONObject): List<String> {
                             }
                         }
                     }
-                    if (resting.isNotEmpty()) item("care-resting") {
+                    if (resting.isNotEmpty()) pageItem("care-resting") {
                         Text("Not needed now: " + resting.joinToString(", ") { it.label }, style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp))
                     }
                 }
                 if (owner) {
-                    item("history-heading") { SectionHeading("History") }
-                    if (moments.isEmpty()) item("history-none") { Text("No care recorded yet.", Modifier.padding(horizontal = 16.dp)) }
-                    val shown = if (allHistory) moments else moments.take(10)
+                    pageItem("history-heading") { SectionHeading("History") }
+                    if (moments.isEmpty()) pageItem("history-none") { Text("No care recorded yet.", Modifier.padding(horizontal = 16.dp)) }
                     shown.forEachIndexed { index, moment ->
-                        if (index == 0 || moment.day != shown[index - 1].day) item("day:${moment.day}:$index") {
+                        if (index == 0 || moment.day != shown[index - 1].day) pageItem("day:${moment.day}") {
                             Text(historyDay(moment.day, today), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp).semantics { heading() })
                         }
-                        item(moment.key) { HistoryEntry(moment, heldEvents, plant.displayName, state, enabled, freshByKey[moment.key] != moment, writeBlocked ?: rowBlocked, { acting { onUndo(it) } }, onBlocked) }
+                        pageItem(moment.key) { HistoryEntry(moment, heldEvents, plant.displayName, state, enabled, freshByKey[moment.key] != moment, writeBlocked ?: rowBlocked, { acting { onUndo(it) } }, onBlocked) }
                     }
-                    if (shown.size < moments.size) item("history-all") {
+                    if (shown.size < moments.size) pageItem("history-all") {
                         TextButton(onClick = { acting { allHistory = true } }, modifier = Modifier.padding(horizontal = 4.dp).heightIn(min = 48.dp)) { Text("Show all history (${moments.size})") }
                     }
-                    item("photos") {
+                    pageItem("photos") {
                         Column {
                             Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.weight(1f)) { SectionHeading("Photos") }
@@ -433,7 +463,7 @@ private fun aboutLines(a: JSONObject): List<String> {
                             }
                         }
                     }
-                    item("about") {
+                    pageItem("about") {
                         Column {
                             SectionHeading("About this plant")
                             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -445,7 +475,7 @@ private fun aboutLines(a: JSONObject): List<String> {
                         }
                     }
                 }
-                item("details") {
+                pageItem("details") {
                     Column(Modifier.padding(top = 16.dp)) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (details) "Hide details" else "Show details") { acting { details = !details } }
                             .padding(horizontal = 16.dp).semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
@@ -471,6 +501,10 @@ private fun aboutLines(a: JSONObject): List<String> {
                         }
                     }
                 }
+            }
+            if (scroll.restoring) SideEffect { scroll.restore(content.map { it.first }) }
+            LazyColumn(Modifier.fillMaxSize(), list, contentPadding = PaddingValues(bottom = 24.dp)) {
+                items(content, key = { it.first }) { it.second(this) }
             }
         }
     }
@@ -564,9 +598,9 @@ private fun aboutLines(a: JSONObject): List<String> {
 @Composable internal fun PlantRepotForm(plant: Plant, options: PlantOptions, writable: Boolean, errors: Map<String, String> = emptyMap(),
     onSave: (JSONObject) -> Unit, onDirty: (() -> Boolean) -> Unit = {}) {
     val start = remember(plant.id) { listOf(plant.potType.orEmpty(), plant.soilType.orEmpty(), plant.potSizeCm?.toString().orEmpty()) }
-    var pot by remember(plant.id) { mutableStateOf(start[0]) }
-    var soil by remember(plant.id) { mutableStateOf(start[1]) }
-    var size by remember(plant.id) { mutableStateOf(start[2]) }
+    var pot by rememberSaveable(plant.id) { mutableStateOf(start[0]) }
+    var soil by rememberSaveable(plant.id) { mutableStateOf(start[1]) }
+    var size by rememberSaveable(plant.id) { mutableStateOf(start[2]) }
     SideEffect { onDirty { listOf(pot, soil, size) != start } }
     PlantColumn {
         Heading("New pot and soil for ${plant.displayName}", style = MaterialTheme.typography.headlineSmall)

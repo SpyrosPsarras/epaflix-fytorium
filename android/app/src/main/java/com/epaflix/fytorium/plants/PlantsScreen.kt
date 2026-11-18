@@ -40,12 +40,13 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     val graveQuery = rememberSaveable { mutableStateOf("") }
     var focusPending by rememberSaveable { mutableStateOf(focusSearch) }
     var graveyard by remember { mutableStateOf<List<Plant>>(emptyList()) }
-    var options by remember { mutableStateOf<PlantOptions?>(null) }
-    var sites by remember { mutableStateOf<List<PlantSite>>(emptyList()) }
-    var result by remember { mutableStateOf<SpeciesSearch?>(null) }
+    var options by rememberSaveable { mutableStateOf<PlantOptions?>(null) }
+    var sites by rememberSaveable { mutableStateOf<List<PlantSite>>(emptyList()) }
+    var result by rememberSaveable { mutableStateOf<SpeciesSearch?>(null) }
     var searched by rememberSaveable { mutableStateOf<String?>(null) }
-    var species by remember { mutableStateOf<Species?>(null) }
-    var namesKey by remember { mutableStateOf<Long?>(null) }
+    var species by rememberSaveable { mutableStateOf<Species?>(null) }
+    var namesKey by rememberSaveable { mutableStateOf<Long?>(null) }
+    val namesDraft = rememberSaveable { mutableStateOf("") }
     var chosenName by rememberSaveable { mutableStateOf("") }
     var chosenLabel by rememberSaveable { mutableStateOf("") }
     var selection by rememberSaveable { mutableStateOf<String?>(null) }
@@ -54,19 +55,23 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     var pulling by remember { mutableStateOf(false) }
     // The open form's check of what was typed, read at the moment something leaves it, so Back right after a keystroke still asks.
     var formChanged by remember { mutableStateOf({ false }) }
-    var discarding by remember { mutableStateOf(false) }
+    var discarding by rememberSaveable { mutableStateOf(false) }
     // A page opened from a form or the plant page returns to it as the user left it, with what was typed, chosen or unfolded.
     val forms = rememberSaveableStateHolder()
-    // shortcut: a live list state follows the shown item's key, but after rotation on a child page it restores by index; save the item's key if that matters.
-    val detailList = key(id) { rememberLazyListState() }
+    val detailScroll = key(id) { rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() } }
     var speciesCareFrom by rememberSaveable { mutableStateOf("detail") }
-    var leavingFor by remember { mutableStateOf<String?>(null) }
+    var leavingFor by rememberSaveable { mutableStateOf<String?>(null) }
     var restoreSite by rememberSaveable { mutableStateOf<String?>(null) }
     var subpageDraft by remember { mutableStateOf<() -> String?>({ null }) }
     var reloading by remember { mutableStateOf(false) }
     var reloadedAt by remember { mutableIntStateOf(0) }
     val detail = state.detail?.takeIf { it.plant.id == id }
-    val speciesKey = detail?.plant?.attributesJson?.let { JSONObject(it).optLong("gbif_key") }?.takeIf { it > 0 }
+    var savedPlant by rememberSaveable(id) { mutableStateOf<Plant?>(null) }
+    var savedCare by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    SideEffect { detail?.plant?.let { savedPlant = it }; detail?.careSettingsJson?.let { savedCare = it } }
+    val careJson = detail?.careSettingsJson ?: savedCare
+    val plant = detail?.plant ?: savedPlant?.takeIf { it.id == id }
+    val speciesKey = plant?.attributesJson?.let { JSONObject(it).optLong("gbif_key") }?.takeIf { it > 0 }
     val request = (repository?.plantState?.collectAsState()?.value ?: PlantsRequestState()).let { all ->
         all.copy(reads = all.reads.filterKeys { it in pageReads(page, id, namesKey, searched != null) }) }
     val enabled = request.enabled(state.member, state.updateRequired) && !saving
@@ -115,7 +120,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         if (page !in listOf("care", "species-care")) id?.let { forms.removeState("care:$it") }
         if (page !in listOf("search", "change-species", "identify")) listOf("search", "change-species").forEach { forms.removeState("search:$it") }
     }
-    val discardTitle = if (id == null) "Discard this new plant?" else "Discard changes to ${detail?.plant?.displayName ?: "this plant"}?"
+    val discardTitle = if (id == null) "Discard this new plant?" else "Discard changes to ${plant?.displayName ?: "this plant"}?"
     val currentDirty by rememberUpdatedState(onFormDirty)
     // The shell asks the same question before a tab or notification leaves a form with changes.
     SideEffect { onFormDirty { subpageDraft() ?: discardTitle.takeIf { unsaved() } } }
@@ -129,8 +134,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     // Adding a typed name to the species it was typed for is still valid, so a species change elsewhere must not drop it.
     LaunchedEffect(page, speciesKey) {
-        if (page != "names") namesKey = null
-        else snapshotFlow { formChanged() }.collect { typed -> if (!typed || namesKey == null) namesKey = speciesKey }
+        if (page != "names") { namesKey = null; namesDraft.value = "" }
+        else snapshotFlow { namesDraft.value.isNotBlank() }.collect { typed -> if (!typed || namesKey == null) namesKey = speciesKey }
     }
     // Every entry reads the plant's species, so a species change, names changed elsewhere and a restored activity all show the loaded names.
     LaunchedEffect(page, namesKey) {
@@ -190,8 +195,9 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     if (page in listOf("photos", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
         com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
-            plantId = if (page == "photos") id else null, plantName = if (page == "photos") detail?.plant?.displayName else null,
+            plantId = if (page == "photos") id else null, plantName = if (page == "photos") plant?.displayName else null,
             identifying = page == "identify", onBack = { page = if (page == "photos") "detail" else identifyReturn }, onUpdateRequired = { repository?.requireUpdate() },
+            onFormDirty = { subpageDraft = it },
             onChanged = { scope.launch { withContext(Dispatchers.IO) { repository?.refreshPlants() }; id?.let { refreshDetail(it) } } },
             onSelect = { candidate, searchId, confirmed ->
                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
@@ -200,9 +206,9 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             })
         return
     }
-    if (page == "species-care" && detail != null && speciesApi != null && state.member != null && state.member.role != Role.sitter) {
-        com.epaflix.fytorium.species.SpeciesCareRoute(speciesApi, JSONObject(detail.plant.attributesJson).getLong("gbif_key"), state, speciesConnected,
-            onBack = { page = speciesCareFrom; if (page == "care") run { refreshDetail(detail.plant.id) } }, onChanged = onCareChanged, onUpdateRequired = { repository?.requireUpdate() },
+    if (page == "species-care" && plant != null && speciesApi != null && state.member != null && state.member.role != Role.sitter) {
+        com.epaflix.fytorium.species.SpeciesCareRoute(speciesApi, JSONObject(plant.attributesJson).getLong("gbif_key"), state, speciesConnected,
+            onBack = { page = speciesCareFrom; if (page == "care") run { refreshDetail(plant.id) } }, onChanged = onCareChanged, onUpdateRequired = { repository?.requireUpdate() },
             onReceipt = ::explain, answers = request.answers, onFormDirty = { subpageDraft = it })
         return
     }
@@ -231,7 +237,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     // History Undo writes through this screen's gate, so a tap names its reasons too.
     val writeBlocked = state.needs("Changes", "make changes", verb = "need", online = request.online) ?: refused.takeIf { request.blocked }
         ?: "Wait for the current save to finish.".takeIf { saving || request.saving }
-    val ownBar = page in listOf("list", "graveyard") || (page == "detail" && detail != null) || (page == "care" && detail?.careSettingsJson != null)
+    val ownBar = page in listOf("list", "graveyard") || (page == "detail" && detail != null) || (page == "care" && careJson != null)
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             val pinnedTo = species?.takeIf { page == "names" && it.key == namesKey && namesKey != speciesKey }?.let { it.commonName ?: it.canonicalName }
@@ -266,7 +272,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     refreshing = pulling, onRefresh = {
                         pulling = true
                         scope.launch { try { withContext(Dispatchers.IO) { repository?.refresh() }; reload() } finally { pulling = false } }
-                    }, writeBlocked = writeBlocked, request = request, onRetry = ::retry, list = detailList) }
+                    }, writeBlocked = writeBlocked, request = request, onRetry = ::retry, scroll = detailScroll) }
                 "species-care" -> PlantColumn {
                     Text("Connect to load the care defaults for this species.")
                     OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
@@ -290,7 +296,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         else page = "form"
                     }, imageApi = speciesApi, onDirty = { formChanged = it })
                 } }
-                "form" -> options?.let { choices -> PlantForm(if (id == null) null else detail?.plant, choices, sites, enabled, errors = request.errors, onDirty = { formChanged = it }, onSave = { input ->
+                "form" -> options?.takeIf { id == null || plant != null }?.let { choices -> PlantForm(if (id == null) null else plant, choices, sites, enabled, errors = request.errors, onDirty = { formChanged = it }, onSave = { input ->
                     selection?.takeIf { id == null }?.let { json ->
                         val chosen = JSONObject(json)
                         listOf("gbif_key", "search_id", "confirmed").forEach { input.put(it, chosen.get(it)) }
@@ -304,16 +310,16 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         }
                     }
                 }) }
-                "care" -> detail?.careSettingsJson?.let { json -> forms.SaveableStateProvider("care:$id") { PlantCareSettings(json, enabled, onSave = { body -> command("care-settings", body) }, tasks = detail.tasks,
-                    plantName = detail.plant.displayName, onSpeciesCare = speciesApi?.let { { leaveFor("species-care") } }, onBack = ::back,
+                "care" -> careJson?.let { json -> forms.SaveableStateProvider("care:$id") { PlantCareSettings(json, enabled, onSave = { body -> command("care-settings", body) }, tasks = detail?.tasks.orEmpty(),
+                    plantName = plant?.displayName.orEmpty(), onSpeciesCare = speciesApi?.let { { leaveFor("species-care") } }, onBack = ::back,
                     barTitle = { title -> PlantBarTitle(state, request, ::retry, title = title) }, error = request.errors["_form"], onDirty = { formChanged = it }) } }
                     ?: PlantColumn { Text("Connect to load this plant's schedule.") }
-                "restore" -> detail?.let { RestoreForm(it.plant, sites, enabled, { body -> command("restore-save", body) }, onCreateSite = { leaveFor("sites") }, error = request.errors["_form"],
+                "restore" -> plant?.let { RestoreForm(it, sites, enabled, { body -> command("restore-save", body) }, onCreateSite = { leaveFor("sites") }, error = request.errors["_form"],
                     chosen = { restoreSite }, onChoose = { site -> restoreSite = site }, onDirty = { formChanged = it }) }
-                "repot" -> detail?.let { d -> options?.let { PlantRepotForm(d.plant, it, enabled, errors = request.errors, onSave = { body -> command("repot", body) }, onDirty = { formChanged = it }) } }
+                "repot" -> plant?.let { p -> options?.let { PlantRepotForm(p, it, enabled, errors = request.errors, onSave = { body -> command("repot", body) }, onDirty = { formChanged = it }) } }
                 // A pinned draft keeps its place until the page follows the plant's new species.
-                "names" -> key(detail?.plant?.id, namesKey) { val namesList = rememberLazyListState()
-                species?.takeIf { detail != null && it.key == namesKey }?.let { s -> options?.let { choices -> SpeciesNames(s, choices, enabled, list = namesList, error = request.errors["_form"], target = pinnedTo,
+                "names" -> key(plant?.id, namesKey) { val namesList = rememberLazyListState()
+                species?.takeIf { plant != null && it.key == namesKey }?.let { s -> options?.let { choices -> SpeciesNames(s, choices, enabled, list = namesList, error = request.errors["_form"], target = pinnedTo, draft = namesDraft,
                     onDirty = { formChanged = it }, onCommand = { action, body, onSuccess -> run(save = true) {
                     val receipt = when (action) {
                         "add" -> "Added the name \u201c${body.getString("name")}\u201d" + pinnedTo?.let { " to $it" }.orEmpty()
@@ -381,6 +387,6 @@ internal fun CareState.plantStatus(request: PlantsRequestState): Pair<String, St
 @Composable internal fun PlantBarTitle(care: CareState, request: PlantsRequestState, onRetry: () -> Unit, note: Pair<String, String>? = null, title: @Composable () -> Unit) {
     val own = care.plantStatus(request)
     // A status takes the line, so its explanation carries the note too.
-    val status = if (own != null && note != null) own.first to listOf(own.second, note.first, note.second).filter { it != own.first }.joinToString("\n") else own ?: note
+    val status = own.withNote(note)
     BarTitle(status?.first, status?.second.orEmpty(), retry = onRetry.takeIf { status?.first == refusedLine || request.reads.isNotEmpty() }, title = title)
 }

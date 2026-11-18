@@ -35,6 +35,60 @@ class SpeciesCareScreenTest {
         CareCard(910002, "Testoria nebulosa Inventor", it.getJSONObject("profile"), it.getJSONArray("fetches").mapObjects { row -> row }, JSONObject(outdoorFixture),
             "Testoria nebulosa", "Synthetic mistleaf")
     }
+    @Test fun anOverrideDiscardQuestionSurvivesRecreation() {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = card(), loaded = true)) } }
+        compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
+        compose.onNodeWithText("Days").performTextReplacement("19")
+        compose.onNodeWithText("Cancel").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Keep editing").assertIsDisplayed()
+    }
+
+    @Test fun anOverrideRemovalQuestionSurvivesRecreation() {
+        val own = card().let { it.copy(profile = JSONObject(it.profile.toString()).apply { getJSONObject("wateringIntervalDays").put("source", "override") }) }
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = own, loaded = true)) } }
+        compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Confirm reset").assertIsDisplayed()
+    }
+
+    @Test fun anOfflineRecreatedOverrideStillAsksAndDoesNotLeakIntoAnotherField() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(
+                    if (request.path!!.endsWith("outdoor-months")) outdoorFixture else careFixture.replace("pending", "done"))
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val online = mutableStateOf(true)
+            val answers = mutableIntStateOf(0)
+            var exits = 0
+            var dirty: () -> String? = { null }
+            val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+            restoration.setContent { FytoriumTheme { SpeciesCareRoute(api, 910002, CareState(member = Member("synthetic-member", Role.owner)),
+                { online.value }, { exits++ }, answers = answers.intValue, onFormDirty = { dirty = it }) } }
+            val open = hasText("Override watering interval in days") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(open).performScrollTo().performClick()
+            compose.onNodeWithText("Days").performTextReplacement("19")
+            compose.runOnIdle { online.value = false }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.runOnIdle { assertNotNull(dirty()) }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Keep editing").assertIsDisplayed().performClick()
+            compose.runOnIdle { assertEquals(0, exits); online.value = true; answers.intValue++ }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Days") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Days").assertTextContains("19")
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.onNodeWithText("No value yet", substring = true).performScrollTo().performClick()
+            compose.onNodeWithText("Override source care text").performScrollTo().performClick()
+            compose.onNode(hasText("Care text") and hasSetTextAction()).assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+        }
+    }
+
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)
     private fun screens(dark: Boolean) {

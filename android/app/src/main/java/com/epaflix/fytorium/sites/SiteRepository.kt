@@ -15,7 +15,7 @@ internal val siteChoices = linkedMapOf("location" to ("Location" to listOf("indo
 
 data class Site(val id: String? = null, val fields: Map<String, String> = mapOf("name" to "", "location" to "indoor",
     "light" to "part_sun", "humidity" to "normal"), val growLight: Boolean = false, val draft: Boolean = false,
-    val plantCount: Int = 0, val importedIncomplete: Boolean = false) {
+    val plantCount: Int = 0, val importedIncomplete: Boolean = false) : java.io.Serializable {
     fun json(): JSONObject = JSONObject().apply {
         for (field in listOf("name", "location", "light", "humidity")) put(field, fields[field].orEmpty())
         put("grow_light", growLight); put("draft", draft)

@@ -9,6 +9,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -220,9 +221,12 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     }
 }
 
+internal fun Pair<String, String>?.withNote(note: Pair<String, String>?) =
+    if (this != null && note != null) first to listOf(second, note.first, note.second).filter { it != first }.joinToString("\n") else this ?: note
+
 // A page-level status shows as a line under the title, in a bar always tall enough for both, so it never moves or covers the content.
 @Composable internal fun BarTitle(line: String?, explanation: String, center: Boolean = false, retry: (() -> Unit)? = null, title: @Composable () -> Unit) {
-    var explaining by remember { mutableStateOf(false) }
+    var explaining by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.heightIn(min = 48.dp).then(if (line == null) Modifier else Modifier.clickable(onClickLabel = "Explain") { explaining = true }.minimumInteractiveComponentSize()),
         verticalArrangement = Arrangement.Center, horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start) {
         title()
@@ -375,7 +379,7 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
 }
 
 @Composable internal fun Choice(label: String, value: String, choices: List<Pair<String, String>>, enabled: Boolean, change: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Column {
         OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
             Text("$label: " + (choices.firstOrNull { it.first == value }?.second ?: value))

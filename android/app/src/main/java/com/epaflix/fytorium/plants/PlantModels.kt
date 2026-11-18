@@ -16,13 +16,13 @@ data class PlantsRequestState(val online: Boolean = true, val refreshing: Boolea
 // Match acceptance belongs to the server, including partial names and all languages.
 data class SpeciesCandidate(val key: Long, val scientificName: String, val canonicalName: String, val rank: String,
     val matchType: String?, val confidence: Int?, val requiresConfirmation: Boolean, val matchedName: String?, val matchedLanguage: String?,
-    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null) {
+    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null) : java.io.Serializable {
     val headline get() = commonName ?: canonicalName
     // A name that matched but is neither name on the card tells the user why this species answered.
     val matchNote get() = matchedName?.takeIf { matched -> listOf(headline, canonicalName).none { squash(it) == squash(matched) } }?.let { "Matches \u201c$it\u201d" }
 }
 private fun squash(name: String) = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD).lowercase().filter(Char::isLetter)
-data class SpeciesSearch(val id: String, val candidates: List<SpeciesCandidate>)
+data class SpeciesSearch(val id: String, val candidates: List<SpeciesCandidate>) : java.io.Serializable
 fun parseSpeciesSearch(json: String): SpeciesSearch {
     val j = JSONObject(json)
     return SpeciesSearch(j.getString("search_id"), j.getJSONArray("candidates").mapObjects {
@@ -35,7 +35,7 @@ fun parseSpeciesSearch(json: String): SpeciesSearch {
     })
 }
 data class PlantOptions(val choices: Map<String, List<String>>, val labels: Map<String, String>, val numbers: List<String>,
-    val booleans: List<String>, val health: List<String>, val languages: Map<String, String>)
+    val booleans: List<String>, val health: List<String>, val languages: Map<String, String>) : java.io.Serializable
 fun parsePlantOptions(json: String): PlantOptions {
     val j = JSONObject(json); val p = j.getJSONObject("plant"); val c = p.getJSONObject("choices")
     fun strings(key: String) = p.getJSONArray(key).let { a -> (0 until a.length()).map { a.getString(it) } }
@@ -43,10 +43,10 @@ fun parsePlantOptions(json: String): PlantOptions {
     return PlantOptions(c.keys().asSequence().associateWith { key -> c.getJSONArray(key).let { a -> (0 until a.length()).map { a.getString(it) } } },
         labels(p.getJSONObject("labels")), strings("numbers"), strings("booleans"), strings("health"), labels(j.getJSONObject("nameLanguages")))
 }
-data class PlantSite(val id: String, val name: String)
-data class SpeciesName(val id: String, val name: String, val language: String, val source: String, val renamedPlants: Int = 0, val renamedTo: String? = null)
+data class PlantSite(val id: String, val name: String) : java.io.Serializable
+data class SpeciesName(val id: String, val name: String, val language: String, val source: String, val renamedPlants: Int = 0, val renamedTo: String? = null) : java.io.Serializable
 data class Species(val key: Long, val scientificName: String, val names: List<SpeciesName>, val fetching: Boolean,
-    val canonicalName: String = scientificName, val commonName: String? = null)
+    val canonicalName: String = scientificName, val commonName: String? = null) : java.io.Serializable
 fun parseSpecies(json: String): Species {
     val j = JSONObject(json)
     return Species(j.getLong("gbif_key"), j.getString("scientific_name"), j.getJSONArray("names").mapObjects {

@@ -68,6 +68,12 @@ class AppShellRestorationTest {
     @Test fun sitterClearsRestoredJournal() = navigation("sitter", "journal")
     @Test fun differentMemberClearsRestoredJournal() = navigation("member", "journal")
     @Test fun familyKeepsJournalAcrossRestore() = navigation(null, "journal", Role.family)
+    @Test fun photoDraftAsksBeforeTabExitAndRestoresItsDestination() = navigation(null, "photo-form", exit = "More")
+    @Test fun photoDraftAsksBeforeNotificationExitAndRestoresItsDestination() = navigation(null, "photo-form", exit = "home")
+    @Test fun restoredPhotoDraftAsksBeforeTabExit() = navigation(null, "photo-form", exit = "More", restoreBeforeExit = true)
+    @Test fun restoredPhotoDraftAsksBeforeNotificationExit() = navigation(null, "photo-form", exit = "home", restoreBeforeExit = true)
+    @Test fun pendingSiteDiscardRestoresItsTabDestination() = navigation(null, "site-draft", exit = "Plants")
+    @Test fun pendingSiteDiscardRestoresItsNotificationDestination() = navigation(null, "site-draft", exit = "home")
     @Test fun restoredPhotoFormKeepsDraft() = navigation(null, "photo-form")
     @Test fun logoutClearsRestoredPhotoForm() = navigation("logout", "photo-form")
     @Test fun sitterClearsRestoredPhotoForm() = navigation("sitter", "photo-form")
@@ -122,7 +128,8 @@ class AppShellRestorationTest {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    private fun navigation(reset: String?, route: String = "sites-unmatched", initialRole: Role = Role.owner) {
+    private fun navigation(reset: String?, route: String = "sites-unmatched", initialRole: Role = Role.owner,
+                           exit: String? = null, restoreBeforeExit: Boolean = false) {
         MockWebServer().use { server ->
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.path) {
@@ -168,13 +175,14 @@ class AppShellRestorationTest {
                 }, repository, client)
             }
             val showShell = mutableStateOf(true)
+            val homeRequest = mutableIntStateOf(0)
             var effects: Job? = null
             try {
             val restoration = StateRestorationTester(compose)
             restoration.setContent { if (showShell.value) {
                 LaunchedEffect(Unit) { effects = coroutineContext[Job]?.parent }
                 FytoriumTheme {
-                    AppShell(loggedIn.value, false, careState = care.value, controller = controller, feed = feed, sitesApi = api.value, sitesConnected = { true })
+                    AppShell(loggedIn.value, false, careState = care.value, controller = controller, feed = feed, sitesApi = api.value, sitesConnected = { true }, homeRequest = homeRequest.intValue)
                 }
             } }
             when (route) {
@@ -199,6 +207,13 @@ class AppShellRestorationTest {
                     compose.onNodeWithText("Add a photo update").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodes(hasText("Note") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Note").performTextInput("Unsaved photo note")
+                }
+                "site-draft" -> {
+                    compose.onNodeWithText("More").performClick()
+                    compose.onNodeWithText("Sites").performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                    compose.onNodeWithText("Create site").performClick()
+                    compose.onNodeWithText("Name").performTextInput("Synthetic draft room")
                 }
                 "sites-unmatched" -> {
                     compose.onNodeWithText("More").performClick()
@@ -242,6 +257,29 @@ class AppShellRestorationTest {
                         compose.onNodeWithText("Care defaults for this species").performClick()
                     }
                 }
+            }
+            if (exit != null) {
+                val question = if (route == "site-draft") "Discard this new site?" else "Discard photo update for Synthetic fern?"
+                val draft = if (route == "site-draft") "Synthetic draft room" else "Unsaved photo note"
+                if (restoreBeforeExit) restoration.emulateSavedInstanceStateRestore()
+                if (exit == "home") compose.runOnIdle { homeRequest.intValue++ }
+                else compose.onNode(hasText(exit) and isSelectable()).performClick()
+                compose.onNodeWithText(question).assertExists()
+                restoration.emulateSavedInstanceStateRestore()
+                compose.onNodeWithText(question).assertExists()
+                compose.onNodeWithText("Keep editing").performClick()
+                compose.onNodeWithText(draft).assertExists()
+                if (exit == "home") {
+                    compose.runOnIdle { homeRequest.intValue = 0 }
+                    compose.runOnIdle { homeRequest.intValue = 1 }
+                }
+                else compose.onNode(hasText(exit) and isSelectable()).performClick()
+                restoration.emulateSavedInstanceStateRestore()
+                compose.onNodeWithText("Discard").performClick()
+                compose.onNode(hasText(if (exit == "home") "Today" else exit) and isSelectable() and !hasTestTag("view-today")).assertIsSelected()
+                compose.onNode(hasText("Plants") and isSelectable()).performClick()
+                compose.onNodeWithText(draft).assertDoesNotExist()
+                return
             }
             restoration.emulateSavedInstanceStateRestore()
             compose.runOnIdle {

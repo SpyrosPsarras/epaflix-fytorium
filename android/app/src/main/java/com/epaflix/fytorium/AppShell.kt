@@ -71,12 +71,15 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var about by rememberSaveable { mutableStateOf(false) }
     // A Plants, Sites or Species care form names its discard question here, read when a tab or a notification leaves it, so it asks the same as its Back.
     var plantsDiscard by remember { mutableStateOf<() -> String?>({ null }) }
-    var leaving by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    var leaving by rememberSaveable { mutableStateOf<String?>(null) }
+    var destination by rememberSaveable { mutableStateOf<String?>(null) }
+    val homeHandled = key(homeRequest) { rememberSaveable { mutableStateOf(false) } }
     // Discard drops the Plants form even when the tap stays on Plants, so no form keeps changes the shell no longer asks about.
     var plantsDiscards by rememberSaveable { mutableIntStateOf(0) }
-    fun leave(go: () -> Unit) { val title = plantsDiscard(); if (title != null) leaving = title to go else go() }
     fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null }
-    LaunchedEffect(homeRequest) { if (homeRequest > 0) leave { select("Today"); taskView = "today" } }
+    fun go(target: String) { select(if (target == "home") "Today" else target); if (target == "home") taskView = "today" }
+    fun leave(target: String) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else go(target) }
+    LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; leave("home") } }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
     var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }
     LaunchedEffect(loggedIn, careState?.member) {
@@ -93,7 +96,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 tab = "Today"; taskView = "today"; about = false
             }
             sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null
-            if (!loggedIn || memberChanged || becameSitter) { feedPlant = null; openTask(null) }
+            if (!loggedIn || memberChanged || becameSitter) { feedPlant = null; openTask(null); leaving = null; destination = null }
         }
         if (!loggedIn || memberChanged || (member != null && member.role != Role.owner)) plantaImport = false
         if (!loggedIn) { previousMemberId = null; previousRole = null }
@@ -120,7 +123,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             NavigationBar(modifier) {
                 listOf("Today" to Icons.Default.Check, "Plants" to Icons.Default.Eco,
                     "Journal" to Icons.Default.Book, "More" to Icons.Default.Menu).filter { careState?.member?.role != Role.sitter || it.first != "Journal" }.forEach { (title, icon) ->
-                    NavigationBarItem(selected = tab == title, onClick = { leave { select(title) } },
+                    NavigationBarItem(selected = tab == title, onClick = { leave(title) },
                         icon = { Icon(icon, contentDescription = null) }, label = { Text(title) })
                 }
             }
@@ -144,8 +147,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             // A tap meant for a receipt that has just gone must not switch tabs.
             if (barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
-        leaving?.let { (title, go) -> com.epaflix.fytorium.plants.DiscardDialog(title, onKeep = { leaving = null }) {
-            leaving = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); go() } }
+        leaving?.let { title -> com.epaflix.fytorium.plants.DiscardDialog(title, onKeep = { leaving = null; destination = null }) {
+            val target = destination
+            leaving = null; destination = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); target?.let(::go) } }
     }) { padding ->
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
@@ -203,9 +207,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && careState?.member != null && careState.member.role != Role.sitter && tab == "Journal" && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
+                key(careState.member, plantsDiscards) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
                     onBack = { tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
-                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }) }
+                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }, onFormDirty = { plantsDiscard = it }) }
             }
             return@Scaffold
         }

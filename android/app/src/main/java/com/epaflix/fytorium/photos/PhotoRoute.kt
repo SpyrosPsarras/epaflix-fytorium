@@ -6,6 +6,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import com.epaflix.fytorium.*
 import com.epaflix.fytorium.plants.SpeciesCandidate
+import com.epaflix.fytorium.plants.SpeciesSearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -13,7 +14,8 @@ import kotlinx.coroutines.withContext
 @Composable fun PhotosRoute(api: ApiClient, care: CareState, connected: () -> Boolean, thumbnails: Thumbnails?,
     plantId: String? = null, plantName: String? = null, identifying: Boolean = false,
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
-    onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {}) {
+    onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {},
+    onFormDirty: (() -> String?) -> Unit = {}) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
@@ -22,14 +24,16 @@ import kotlinx.coroutines.withContext
         { currentConnected() && !currentCare.updateRequired }, plantId) }
     val state by repository.state.collectAsState()
     LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
-    var selected by rememberSaveable(member, plantId, identifying) { mutableStateOf<List<String>>(emptyList()) }
+    var selected by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<List<String>>(emptyList()) } }
+    var result by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<SpeciesSearch?>(null) } }
+    var originalId by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<String?>(null) } }
     var localError by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allowed = member != null && member.role != Role.sitter && !care.updateRequired
     val online = allowed && connected()
-    val shown = state.copy(saving = state.saving || submitting, error = localError ?: state.error)
+    val shown = state.copy(saving = state.saving || submitting, error = localError ?: state.error, result = state.result ?: result)
     suspend fun refresh() {
         withContext(Dispatchers.IO) {
             if (identifying) repository.quota() else {
@@ -47,12 +51,15 @@ import kotlinx.coroutines.withContext
     LaunchedEffect(repository) { refresh() }
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) refresh(); wasOnline = online }
+    LaunchedEffect(repository, originalId, online) {
+        originalId?.takeIf { online }?.let { id -> withContext(Dispatchers.IO) { repository.openOriginal(id) } }
+    }
     if (member == null || member.role == Role.sitter) return
     val sources = rememberPhotoSources(identifying, selected, onPhotos = { photos ->
             if (identifying && selected.size + photos.size > 5) localError = "Choose at most five photos. Remove a photo before adding more."
             else {
                 selected = if (identifying) selected + photos.map { it.toString() } else listOf(photos.first().toString())
-                repository.clearResult(); localError = null
+                repository.clearResult(); result = null; localError = null
             }
         }, onError = { localError = it })
     val controls: @Composable () -> Unit = {
@@ -60,14 +67,17 @@ import kotlinx.coroutines.withContext
     }
     if (identifying) IdentificationScreen(shown, online, selected.size, controls, onBack,
         onRefresh = { launch { refresh() } }, onIdentify = { launch(true) {
-            withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }
-        } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult() }, onSelect = onSelect)
+            result = null
+            if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
+        } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null }, onSelect = onSelect)
     else PhotoScreen(shown, online, plantName, selected.size, controls, thumbnails, onBack,
         onRefresh = { launch { refresh() } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch
             if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) { selected = emptyList(); onChanged() }
         } }, onChange = { id, action -> launch(true) {
             if (withContext(Dispatchers.IO) { repository.change(id, action) }) onChanged()
-        } }, onOriginal = { id -> launch { withContext(Dispatchers.IO) { repository.openOriginal(id) } } },
-        onCloseOriginal = repository::clearOriginal, onPlant = onPlant)
+        } }, onOriginal = { originalId = it },
+        onCloseOriginal = { originalId = null; repository.clearOriginal() }, onPlant = onPlant,
+        onFormDirty = onFormDirty, onDiscard = { selected = emptyList(); localError = null; repository.clearError() },
+        originalOpen = originalId != null)
 }

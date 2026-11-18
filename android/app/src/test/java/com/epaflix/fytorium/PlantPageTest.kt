@@ -1,5 +1,6 @@
 package com.epaflix.fytorium
 
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import android.os.Looper
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
@@ -14,6 +15,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.Density
@@ -50,6 +52,19 @@ class PlantPageTest {
         override fun restoreThreadContext(context: CoroutineContext, oldState: Boolean) { if (oldState) count.decrementAndGet() }
     }
     @get:Rule val compose = createComposeRule(Running)
+    @Test fun plantStatusExplanationStaysOpenAcrossRecreation() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme {
+            BarTitle("Offline", "Synthetic connection explanation") { Text("Synthetic sprout") }
+        } }
+        compose.onNodeWithText("Offline").performClick()
+        compose.onNodeWithText("Synthetic connection explanation").assertExists()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Synthetic connection explanation").assertExists()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithText("Synthetic connection explanation").assertDoesNotExist()
+    }
+
     private val plant = parsePlant(JSONObject(plantFixture))
     private val owner = CareState(member = Member("member-one", Role.owner), plants = listOf(plant))
     private val today = parseTaskList(taskListFixture("today"))
@@ -760,7 +775,11 @@ class PlantPageTest {
 
     @Test fun aSpeciesChangeResumedOnNamesKeepsThePlantPageItemOnBack() = changedContentAboveDetailsKeepsTheItem(repot = false)
 
-    private fun changedContentAboveDetailsKeepsTheItem(repot: Boolean) {
+    @Test fun repotAfterRecreationOnTheFormKeepsTheItemOnScreen() = changedContentAboveDetailsKeepsTheItem(repot = true, recreate = true)
+
+    @Test fun aSpeciesChangeAfterRecreationOnNamesKeepsThePlantPageItemOnBack() = changedContentAboveDetailsKeepsTheItem(repot = false, recreate = true)
+
+    private fun changedContentAboveDetailsKeepsTheItem(repot: Boolean, recreate: Boolean = false) {
         val changed = AtomicBoolean(false)
         val after = JSONObject(plantFixture).apply {
             if (repot) put("pot_size_cm", 25)
@@ -782,7 +801,8 @@ class PlantPageTest {
             else -> null
         } }) { repo, showing ->
             compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
-            compose.setContent { CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides app) {
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides app) {
                 if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } } }
             compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/plants/plant-one/photos" } == 2 } && Running.count.get() == 0 }
             reveal(hasText("Details")).performClick()
@@ -794,6 +814,10 @@ class PlantPageTest {
                 compose.onNodeWithContentDescription("Plant settings").performClick()
                 compose.onNode(hasText("Repot") and hasAnyAncestor(isPopup())).performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(hasText("Repot Synthetic fern") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                if (recreate) repeat(2) {
+                    restoration.emulateSavedInstanceStateRestore()
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Repot Synthetic fern") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                }
                 compose.onNode(hasText("Pot size in cm") and hasSetTextAction()).performTextReplacement("25")
                 compose.onNodeWithText("Repot Synthetic fern").performClick()
             } else {
@@ -803,6 +827,11 @@ class PlantPageTest {
                 changed.set(true)
                 compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
                 compose.waitUntil(5_000) { repo.state.value.detail?.plant?.attributesJson?.let { JSONObject(it).optLong("gbif_key") } == 910019L && Running.count.get() == 0 }
+                if (recreate) {
+                    restoration.emulateSavedInstanceStateRestore()
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Common name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                    compose.onNodeWithText("Plants of this species without a name of their own show \u201cSynthetic star\u201d.").assertIsDisplayed()
+                }
                 compose.onNodeWithContentDescription("Back").performClick()
             }
             compose.waitUntil(5_000) { repo.state.value.detail?.plant?.attributesJson == after.toString() &&
@@ -814,31 +843,50 @@ class PlantPageTest {
 
     // C25, C27: Back from Care defaults returns to the kept place, and the plant's fresh read after that return still applies, as at any entry.
     @Config(qualifiers = "w360dp-h1200dp-mdpi")
-    @Test fun theFreshReadAfterReturningToTheKeptPlaceApplies() {
+    @Test fun theFreshReadAfterReturningToTheKeptPlaceApplies() = freshReadAfterReturningToTheKeptPlace(recreate = false)
+
+    @Config(qualifiers = "w360dp-h1200dp-mdpi")
+    @Test fun restoringThePlantPageByKeyDoesNotBlockItsFirstFreshRead() = freshReadAfterReturningToTheKeptPlace(recreate = true)
+
+    private fun freshReadAfterReturningToTheKeptPlace(recreate: Boolean) {
         val changed = AtomicBoolean(false)
-        withPlantServer({ path -> when (path) {
-            "/api/species/910001/care" -> careFixture.replace("pending", "done")
-            "/api/species/910001/outdoor-months" -> outdoorFixture
-            "/api/plants/plant-one/tasks" -> JSONObject(scheduleFixture).apply { getJSONObject("water").put("dueOn", "2030-06-05").put("lateDays", 0) }.toString().takeIf { changed.get() }
-            else -> null
-        } }) { repo, showing ->
-            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
-                PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } }
-            // Both opening plant loads land first, so the read after the return is the first one after it.
-            compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/plants/plant-one/photos" } == 2 } && Running.count.get() == 0 }
-            reveal(hasText("Details")).performClick()
-            val link = hasText("Care defaults for this species") and hasClickAction()
-            reveal(link)
-            compose.waitUntil(5_000) { Running.count.get() == 0 }
-            compose.onNode(link).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Override watering interval in days") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            changed.set(true)
-            compose.onNodeWithContentDescription("Back").performClick()
-            compose.waitUntil(5_000) { repo.state.value.detail?.tasks?.get("water")?.dueOn == "2030-06-05" && Running.count.get() == 0 }
-            compose.onNode(link).assertIsDisplayed()
-            reveal(hasText("Due in 3 days")).assertIsDisplayed()
-            reveal(hasContentDescription("Mark Water done for Synthetic fern, Synthetic site")).assertIsEnabled()
-        }
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            withPlantServer({ path -> when (path) {
+                "/api/species/910001/care" -> careFixture.replace("pending", "done")
+                "/api/species/910001/outdoor-months" -> outdoorFixture
+                "/api/plants/plant-one/tasks" -> if (!changed.get()) null else { release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                    JSONObject(scheduleFixture).apply { getJSONObject("water").put("dueOn", "2030-06-05").put("lateDays", 0) }.toString() }
+                else -> null
+            } }) { repo, showing ->
+                val restoration = StateRestorationTester(compose)
+                restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                    PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } }
+                compose.waitUntil(5_000) { synchronized(paths()) { paths().count { it == "/api/plants/plant-one/photos" } == 2 } && Running.count.get() == 0 }
+                reveal(hasText("Details")).performClick()
+                val link = hasText("Care defaults for this species") and hasClickAction()
+                reveal(link)
+                compose.waitUntil(5_000) { Running.count.get() == 0 }
+                val place = compose.onNode(link).fetchSemanticsNode().boundsInRoot
+                compose.onNode(link).performClick()
+                val opened = hasText("Override watering interval in days") and isEnabled()
+                compose.waitUntil(5_000) { compose.onAllNodes(opened).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                if (recreate) {
+                    restoration.emulateSavedInstanceStateRestore()
+                    compose.waitUntil(5_000) { compose.onAllNodes(opened).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                }
+                changed.set(true)
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(link).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(link).assertIsDisplayed()
+                assertEquals("restoration keeps the item before the fresh read lands", place, compose.onNode(link).fetchSemanticsNode().boundsInRoot)
+                release.countDown()
+                compose.waitUntil(5_000) { repo.state.value.detail?.tasks?.get("water")?.dueOn == "2030-06-05" && Running.count.get() == 0 }
+                compose.onNode(link).assertIsDisplayed()
+                reveal(hasText("Due in 3 days")).assertIsDisplayed()
+                reveal(hasContentDescription("Mark Water done for Synthetic fern, Synthetic site")).assertIsEnabled()
+            }
+        } finally { release.countDown() }
     }
 
     // C2, C27: a clamp after a return (window grows) is not a user scroll, so the fresh read still applies.
@@ -3684,6 +3732,452 @@ class PlantPageTest {
     private fun choicesJson(options: PlantOptions) = JSONObject().put("plant", JSONObject().put("choices", JSONObject(options.choices)).put("labels", JSONObject(options.labels))
         .put("numbers", JSONArray(options.numbers)).put("booleans", JSONArray(options.booleans)).put("health", JSONArray(options.health)))
         .put("nameLanguages", JSONObject(options.languages)).toString()
+    @Test fun editDraftSurvivesANewRepositoryWhosePlantLoadsAfterOptions() {
+        val delaying = AtomicBoolean(false)
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val freshDb = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
+        try {
+            withPlantServer(respond = { request ->
+                if (delaying.get() && request.requestUrl!!.encodedPath == "/api/plants/plant-one") {
+                    started.countDown()
+                    check(release.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                }
+                null
+            }) { repo, showing ->
+                var current = repo
+                val restoration = StateRestorationTester(compose)
+                restoration.setContent { if (showing.value) FytoriumTheme { val care by current.state.collectAsState()
+                    PlantsScreen(care, current, initialPlant = plant.id) } }
+                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                compose.onNodeWithContentDescription("Edit plant").performClick()
+                val name = hasText("Name") and hasSetTextAction()
+                compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                compose.onNode(name).performTextReplacement("Synthetic glow")
+                val cache = CareCache(freshDb)
+                cache.bind("""{"member":{"id":"member-one","role":"owner"}}""")
+                val fresh = Repository(api, cache, { true })
+                fresh.restore()
+                assertNull(fresh.state.value.detail)
+                current = fresh
+                delaying.set(true)
+                restoration.emulateSavedInstanceStateRestore()
+                compose.waitUntil(5_000) { started.count == 0L }
+                release.countDown()
+                compose.waitUntil(5_000) { fresh.state.value.detail != null && Running.count.get() == 0 }
+                compose.onNode(name).assertTextContains("Synthetic glow")
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            }
+        } finally { release.countDown(); freshDb.close() }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Test fun anUnconfirmedBirthdaySurvivesRecreation() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { PlantForm(plant, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true,
+            onSave = {}, today = LocalDate.of(2030, 6, 2)) } }
+        compose.onNodeWithText("More details").performClick()
+        compose.onNode(hasText("Birthday:", substring = true) and hasClickAction()).performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Switch to text input mode").performClick()
+        val date = hasSetTextAction() and hasAnyAncestor(isDialog())
+        compose.onNode(date).performTextReplacement("05202030")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Set birthday").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Birthday: 20 May 2030").assertIsDisplayed()
+    }
+
+    @Test fun aSpeciesCareDraftSavesToItsOriginalSpeciesAfterResumeAndRecreation() {
+        val changed = AtomicBoolean(false)
+        val after = JSONObject(plantFixture).put("gbif_key", 910019).put("canonical_name", "Testoria nova").put("common_name", "Synthetic star")
+        val posts = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val app = object : androidx.lifecycle.LifecycleOwner {
+            val registry = androidx.lifecycle.LifecycleRegistry(this)
+            override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
+        }
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one" -> after.toString().takeIf { changed.get() }
+            "/api/species/910001/care", "/api/species/910019/care" -> JSONObject(careFixture.replace("pending", "done")).apply {
+                put("species", JSONObject().put("gbif_key", if (path.contains("910019")) 910019 else 910001)
+                    .put("scientific_name", "Testoria lucida Inventor").put("canonical_name", "Testoria lucida")
+                    .put("common_name", if (path.contains("910019")) "Synthetic star" else "Synthetic trialleaf"))
+            }.toString()
+            "/api/species/910001/outdoor-months", "/api/species/910019/outdoor-months" -> outdoorFixture
+            else -> null
+        } }, respond = { request -> if (request.method == "PUT") {
+            posts += request.requestUrl!!.encodedPath to request.body.readUtf8()
+            MockResponse().setBody("{}")
+        } else null }) { repo, showing ->
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides app) {
+                if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                    PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Care defaults for this species")).performClick()
+            val open = hasText("Override watering interval in days") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(open).performClick()
+            val days = hasText("Days") and hasSetTextAction()
+            compose.onNode(days).performTextReplacement("9")
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.CREATED }
+            changed.set(true)
+            compose.runOnIdle { app.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+            compose.waitUntil(5_000) { repo.state.value.detail?.plant?.attributesJson == after.toString() && Running.count.get() == 0 }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.waitUntil(5_000) { compose.onAllNodes(days and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(days).assertTextContains("9")
+            compose.onNodeWithText("This plant is now Synthetic star. You're editing care for Synthetic trialleaf.").assertExists()
+            compose.onNodeWithText("Save override").performClick()
+            compose.waitUntil(5_000) { synchronized(posts) { posts.isNotEmpty() } && Running.count.get() == 0 }
+            assertEquals(listOf("/api/species/910001/care/overrides/wateringIntervalDays"), synchronized(posts) { posts.map { it.first } })
+            assertEquals(9, JSONObject(posts.single().second).getInt("value"))
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic star").fetchSemanticsNodes().isNotEmpty() }
+        }
+    }
+
+    @Test fun anOlderHistoryDayKeepsItsPlaceAfterRecreationAndRepot() {
+        val changed = AtomicBoolean(false)
+        val history = (1..8).map { n -> JSONObject(eventFixture).put("id", "older-$n").put("occurred_on", "2030-05-${30 - n}")
+            .put("occurred_at", "2030-05-${30 - n}T09:00:00Z") }
+        val repot = JSONObject(eventFixture).put("id", "new-repot").put("task_type", "repot")
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one/history" -> JSONArray((if (changed.get()) listOf(repot) else emptyList()) + history).toString()
+            "/api/plants/plant-one/repot" -> { changed.set(true); JSONObject().put("event", repot).toString() }
+            else -> null
+        } }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { repo.state.value.detail?.history?.size == 8 && Running.count.get() == 0 }
+            compose.onAllNodes(hasScrollAction()).onFirst().performScrollToIndex(9)
+            val day = hasText("Tue 28 May") and isHeading()
+            val place = compose.onNode(day).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNode(hasText("Repot") and hasAnyAncestor(isPopup())).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Repot Synthetic fern").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Repot Synthetic fern") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNodeWithText("Repot Synthetic fern").performClick()
+            compose.waitUntil(5_000) { repo.state.value.detail?.history?.size == 9 && compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            assertEquals(place, compose.onNode(day).assertIsDisplayed().fetchSemanticsNode().boundsInRoot)
+        }
+    }
+
+    @Test fun aMissingSavedItemFallsBackToItsPreviousIndex() {
+        val history = (1..12).map { event("older-$it") }
+        var shown = detail(history)
+        var scroll: PlantPageScroll? = null
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme {
+            val place = androidx.compose.runtime.saveable.rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() }
+            SideEffect { scroll = place }
+            PlantDetailScreen(owner.copy(today = today), shown, {}, { _, _ -> }, {}, {}, scroll = place)
+        } }
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToIndex(8)
+        compose.runOnIdle { assertEquals("history:older-1", scroll!!.list.layoutInfo.visibleItemsInfo.first().key) }
+        shown = detail(listOf(event("replacement")) + history.drop(1))
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle {
+            assertEquals(8, scroll!!.list.firstVisibleItemIndex)
+            assertEquals("history:replacement", scroll!!.list.layoutInfo.visibleItemsInfo.first().key)
+        }
+    }
+
+    @Test fun aScheduleLinkQuestionSurvivesRecreation() = withPlantServer { repo, showing ->
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("This plant's schedule").performClick()
+        val field = hasText("Water interval in days") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(field).fetchSemanticsNodes().isNotEmpty() }
+        reveal(field).performTextReplacement("5")
+        reveal(hasText("Care defaults for this species") and hasClickAction()).performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Open care defaults for this species?").assertIsDisplayed()
+    }
+
+    @Test fun aGraveyardConfirmationSurvivesRecreation() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {}) } }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Move to graveyard").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Move Synthetic fern to the graveyard?").assertIsDisplayed()
+    }
+
+    @Test fun aSpeciesNameDraftRemainsVisibleWhenRecreatedOffline() {
+        val online = AtomicBoolean(true)
+        withPlantServer({ if (it == "/api/species/910001") speciesNamesFixture else null }, connected = { online.get() }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Species names")).performClick()
+            val name = hasText("Common name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(name).performTextInput("Synthetic glow")
+            online.set(false)
+            restoration.emulateSavedInstanceStateRestore()
+            compose.onNode(hasText("Common name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText)).assertTextContains("Synthetic glow")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+        }
+    }
+
+    @Test fun aNameRemovalConfirmationSurvivesRecreation() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { SpeciesNames(parseSpecies(speciesNamesFixture), syntheticOptions(), true, { _, _, _ -> }) } }
+        compose.onNodeWithText("Remove Synthetic lantern").performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Remove name").assertIsDisplayed()
+    }
+
+    @Test fun anOpenChoiceSurvivesRecreation() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { Choice("Synthetic choice", "one", mapOf("one" to "One", "two" to "Two")) {} } }
+        compose.onNodeWithText("Synthetic choice").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNode(hasText("Two") and hasAnyAncestor(isPopup())).assertIsDisplayed()
+    }
+
+    @Test fun deleteConfirmationDraftSurvivesRecreation() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {}) } }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Delete plant").performClick()
+        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fe")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Permanently delete Synthetic fern?").assertIsDisplayed()
+        compose.onNodeWithText("Type Synthetic fern to confirm").assertTextContains("Synthetic fe")
+    }
+
+    @Test fun editPlantDraftSurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("Edit plant", "Name", "Synthetic glow")
+    @Test fun repotDraftSurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("Repot", "Pot size in cm", "25")
+    @Test fun scheduleDraftSurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("This plant's schedule", "Water interval in days", "5")
+    @Test fun changeSpeciesQuerySurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("Change species", "Species name", "Synthetic star")
+    @Test fun addPlantQuerySurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("Add plant", "Species name", "Synthetic star")
+
+    @Test fun editPlantDraftRemainsVisibleWhenRecreatedOffline() = offlinePlantDraft("Edit plant", "Name", "Synthetic glow")
+    @Test fun aScheduleDraftSurvivesItsReloadAfterRecreation() {
+        val json = mutableStateOf("""{"customIntervals":{"water":7}}""")
+        val restoration = StateRestorationTester(compose)
+        var changed: () -> Boolean = { false }
+        restoration.setContent { FytoriumTheme { PlantCareSettings(json.value, true, {}, onDirty = { changed = it }) } }
+        val water = hasText("Water interval in days") and hasSetTextAction()
+        compose.onNode(water).performTextReplacement("5")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle { json.value = """{"customIntervals":{"water":9}}""" }
+        compose.onNode(water).assertTextContains("5")
+        compose.runOnIdle { assertTrue(changed()) }
+    }
+
+    @Test fun scheduleDraftRemainsVisibleWhenRecreatedOffline() = offlinePlantDraft("This plant's schedule", "Water interval in days", "5")
+    @Test fun repotDraftRemainsVisibleWhenRecreatedOffline() = offlinePlantDraft("Repot", "Pot size in cm", "25")
+    @Test fun addPlantQueryRemainsVisibleWhenRecreatedOffline() = offlinePlantDraft("Add plant", "Species name", "Synthetic glow")
+
+    private fun offlinePlantDraft(page: String, label: String, value: String) = plantDraftSurvivesRecreation(page, label, value, offline = true)
+
+    private fun plantDraftSurvivesRecreation(page: String, label: String, value: String, offline: Boolean = false) {
+        val online = AtomicBoolean(true)
+        withPlantServer(connected = { online.get() }) { repo, showing ->
+            var reloading = false
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(if (reloading) care.copy(detail = null) else care, repo, initialPlant = plant.id.takeUnless { page == "Add plant" }, initialAdd = page == "Add plant") } }
+            if (page != "Add plant") {
+                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                if (page == "Edit plant") compose.onNodeWithContentDescription("Edit plant").performClick() else {
+                    compose.onNodeWithContentDescription("Plant settings").performClick()
+                    compose.onNode(hasText(page) and hasAnyAncestor(isPopup())).performClick()
+                }
+            }
+            val field = hasText(label) and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(field and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(field).performTextReplacement(value)
+            if (offline) { online.set(false); reloading = true }
+            restoration.emulateSavedInstanceStateRestore()
+            val restoredField = hasText(label) and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText)
+            compose.waitUntil(5_000) { compose.onAllNodes(restoredField).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(restoredField).assertTextContains(value)
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText(if (page == "Add plant") "Discard this new plant?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+            if (offline) {
+                restoration.emulateSavedInstanceStateRestore()
+                compose.onNodeWithText("Keep editing").assertIsDisplayed()
+            }
+        }
+    }
+
+    @Test fun addPlantFormDraftSurvivesRecreationAndBackStillAsks() = chosenSpeciesSurvivesRecreation(add = true)
+    @Test fun changeSpeciesChoiceSurvivesRecreationAndBackStillAsks() = chosenSpeciesSurvivesRecreation(add = false)
+    @Test fun changeSpeciesConfirmationSurvivesRecreationAndBackStillAsks() = chosenSpeciesSurvivesRecreation(add = false, confirm = false)
+
+    @Test fun addPlantFieldsRemainVisibleWhenRecreatedOffline() = chosenSpeciesSurvivesRecreation(add = true, offline = true)
+
+    private fun chosenSpeciesSurvivesRecreation(add: Boolean, confirm: Boolean = true, offline: Boolean = false) {
+        val recreated = AtomicBoolean(false)
+        val online = AtomicBoolean(true)
+        withPlantServer({ path ->
+            JSONObject(identified).apply { getJSONArray("candidates").getJSONObject(0).put("common_name", "Synthetic cloud plant") }.toString().takeIf { path == "/api/species/search" }
+        }, connected = { online.get() }, status = { path -> if (recreated.get() && path == "/api/species/search") 503 else 200 }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id.takeUnless { add }, initialAdd = add) } }
+            if (!add) {
+                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+                compose.onNodeWithContentDescription("Plant settings").performClick()
+                compose.onNode(hasText("Change species") and hasAnyAncestor(isPopup())).performClick()
+            }
+            val query = hasText("Species name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(query and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(query).performTextInput("Synthetic cloud plant")
+            compose.onNodeWithText("Search species").performClick()
+            val choose = hasText("Choose Synthetic cloud plant") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(choose).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(choose).performClick()
+            if (confirm) compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+            if (add) {
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic glow")
+            }
+            recreated.set(true)
+            if (offline) online.set(false)
+            restoration.emulateSavedInstanceStateRestore()
+            val kept = when { add -> hasText("Name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText); confirm -> hasText("Chosen species: Synthetic cloud plant (Testoria nebulosa)"); else -> hasText("Confirm Testoria nebulosa") }
+            compose.waitUntil(5_000) { compose.onAllNodes(kept).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            if (add) compose.onNode(kept).assertTextContains("Synthetic glow") else reveal(kept).assertIsDisplayed()
+            if (!confirm) compose.onNode(query).assertTextContains("Synthetic cloud plant")
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText(if (add) "Discard this new plant?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+        }
+    }
+
+    @Test fun aRestoreChoiceRemainsVisibleWhenRecreatedOffline() {
+        val online = AtomicBoolean(true)
+        withPlantServer({ path -> when (path) {
+            "/api/sites" -> """[{"id":"site-one","name":"Synthetic site"},{"id":"site-porch","name":"Synthetic porch"}]"""
+            else -> restoreServed(path)
+        } }, connected = { online.get() }) { repo, showing ->
+            var reloading = false
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(if (reloading) care.copy(detail = null) else care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNodeWithText("Restore plant").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Restore Synthetic fern to Synthetic site").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(hasText("Site") and hasText("Synthetic site")).performClick()
+            compose.onNode(hasText("Synthetic porch") and hasAnyAncestor(isPopup())).performClick()
+            online.set(false)
+            reloading = true
+            restoration.emulateSavedInstanceStateRestore()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic porch") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Restore Synthetic fern to Synthetic porch").assertIsDisplayed().assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+        }
+    }
+
+    @Test fun restoreSiteChoiceSurvivesRecreationAndBackStillAsks() = withPlantServer({ path -> when (path) {
+        "/api/sites" -> """[{"id":"site-one","name":"Synthetic site"},{"id":"site-porch","name":"Synthetic porch"}]"""
+        else -> restoreServed(path)
+    } }) { repo, showing ->
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Restore plant").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Restore Synthetic fern to Synthetic site").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasText("Site") and hasText("Synthetic site")).performClick()
+        compose.onNode(hasText("Synthetic porch") and hasAnyAncestor(isPopup())).performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        val kept = hasText("Restore Synthetic fern to Synthetic porch") and isEnabled()
+        compose.waitUntil(5_000) { compose.onAllNodes(kept).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        compose.onNode(kept).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+    }
+
+    @Test fun createSiteDraftFromRestoreSurvivesRecreationAndBackStillAsks() = withPlantServer(::restoreServed) { repo, showing ->
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+        openCreateASite()
+        val name = hasText("Name") and hasSetTextAction()
+        compose.onNode(name).performTextInput("Synthetic porch")
+        compose.onNodeWithText("Grow light").performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        reveal(name).assertTextContains("Synthetic porch")
+        compose.onNodeWithText("Grow light").performScrollTo().assertIsOn()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard this new site?").assertIsDisplayed()
+    }
+
+    @Test fun speciesNamesDraftAndPinnedSpeciesSurviveRecreationAndBackStillAsks() {
+        val changed = AtomicBoolean(false)
+        val after = JSONObject(plantFixture).put("gbif_key", 910019).put("canonical_name", "Testoria nova").put("common_name", "Synthetic star")
+        withPlantServer({ path -> when (path) {
+            "/api/plants/plant-one" -> after.toString().takeIf { changed.get() }
+            "/api/species/910001" -> speciesNamesFixture
+            "/api/species/910019" -> speciesNamesFixture.replace("910001", "910019").replace("Synthetic lantern", "Synthetic star")
+            else -> null
+        } }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Species names")).performClick()
+            val name = hasText("Common name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(name).performTextInput("Synthetic glow")
+            changed.set(true)
+            repo.openPlant(plant.id, full = true)
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Add name to Synthetic lantern").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(name).assertTextContains("Synthetic glow")
+            compose.onNodeWithText("Add name to Synthetic lantern").assertIsDisplayed()
+            compose.onNodeWithText("This plant is now Synthetic star. You're adding a name for Synthetic lantern.").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+        }
+    }
+
+    @Test fun speciesCareOverrideDraftSurvivesRecreationAndBackStillAsks() = overrideDraftSurvivesRecreation("watering interval in days", "Days", "9")
+    @Test fun speciesCareRangeDraftSurvivesRecreationAndBackStillAsks() = overrideDraftSurvivesRecreation("temperature range in °C", "Minimum", "12")
+    @Test fun speciesCareMonthChoiceSurvivesRecreationAndBackStillAsks() = overrideDraftSurvivesRecreation("pruning months", "January", null)
+
+    private fun overrideDraftSurvivesRecreation(label: String, field: String, typed: String?) = withPlantServer({ path -> when (path) {
+        "/api/species/910001/care" -> JSONObject(careFixture.replace("pending", "done")).apply {
+            getJSONObject("profile").put("temperatureRangeC", JSONObject().put("value", JSONObject().put("min", 5).put("max", 30)).put("source", "rules"))
+                .put("pruningMonths", JSONObject().put("value", JSONArray(listOf(6))).put("source", "rules"))
+        }.toString()
+        "/api/species/910001/outdoor-months" -> outdoorFixture
+        else -> null
+    } }) { repo, showing ->
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true }) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        reveal(hasText("Details")).performClick()
+        reveal(hasText("Care defaults for this species")).performClick()
+        val open = hasText("Override $label") and isEnabled()
+        compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        reveal(open).performClick()
+        val input = if (typed == null) hasContentDescription(field) else hasText(field) and hasSetTextAction()
+        if (typed == null) compose.onNode(input).performClick() else compose.onNode(input).performTextReplacement(typed)
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitUntil(5_000) { compose.onAllNodes(input).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        if (typed == null) compose.onNode(input).assertIsSelected() else compose.onNode(input).assertTextContains(typed)
+        val dialog = checkNotNull(org.robolectric.shadows.ShadowDialog.getLatestDialog().window).decorView
+        compose.runOnIdle { checkNotNull(dialog.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher.onBackPressed() }
+        compose.onNode(hasText("Keep editing") and hasAnyAncestor(isDialog())).assertIsDisplayed()
+    }
+
     private fun withPlantServer(served: (String) -> String? = { null }, lists: String = taskListFixture("today"),
         paths: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf()), connected: () -> Boolean = { true },
         status: (String) -> Int = { 200 }, views: (String) -> String? = { null }, posted: (String) -> String? = { null },
