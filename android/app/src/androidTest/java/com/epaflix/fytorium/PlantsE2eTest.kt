@@ -80,6 +80,7 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         assertEquals(90, edited.getInt("window_distance_cm")); assertTrue(edited.getBoolean("near_ac")); assertEquals(siteId, edited.getString("site_id"))
         settings()
         click("Move to graveyard")
+        compose.onNode(hasText("Synthetic A05 edited sprout leaves Today and Upcoming. Its history and photos stay, and you can restore it later.") and hasAnyAncestor(isDialog())).performScrollTo().assertIsDisplayed()
         compose.onNode(hasText("Move to graveyard") and hasAnyAncestor(isDialog())).performClick()
         compose.waitForState("Plant moved to graveyard", 30_000) { app.repository.state.value.detail?.plant?.status == "graveyard" && !app.repository.state.value.busy }
         compose.onNodeWithText("Handle all tasks").assertDoesNotExist()
@@ -91,7 +92,8 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         settings()
         click("Delete plant")
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
-        compose.onNodeWithText("Type Synthetic A05 edited sprout to confirm").performTextInput("Synthetic A05 edited sprout")
+        compose.onNode(hasText("Type Synthetic A05 edited sprout to confirm.") and hasAnyAncestor(isDialog())).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Plant name").performTextInput("Synthetic A05 edited sprout")
         compose.onNodeWithText("Permanently delete plant").performClick()
         compose.waitForState("Plant deleted and detail cleared", 30_000) { app.repository.state.value.plants.none { it.id == plantId } && app.repository.state.value.detail == null && !app.repository.state.value.busy }
         println("A05 E2E PASS: typo search, explicit confirmation, native add/edit with pot and placement, graveyard/restore, confirmed permanent deletion")

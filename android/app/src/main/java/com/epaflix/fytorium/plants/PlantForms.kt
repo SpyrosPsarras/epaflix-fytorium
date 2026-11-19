@@ -36,6 +36,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import java.time.LocalDate
 import java.time.Instant
 import java.time.ZoneOffset
+import com.epaflix.fytorium.DialogBody
+import com.epaflix.fytorium.DialogTitle
 import com.epaflix.fytorium.ApiClient
 import com.epaflix.fytorium.barHeight
 import com.epaflix.fytorium.CareTask
@@ -96,7 +98,7 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
         })
         DatePickerDialog(onDismissRequest = { choosing = false },
             confirmButton = { TextButton(onClick = { onChange(picker.selectedDateMillis?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString() }.orEmpty()); choosing = false }) { Text("Set birthday") } },
-            dismissButton = { TextButton(onClick = { choosing = false }) { Text("Cancel") } }) { DatePicker(picker) }
+            dismissButton = { TextButton(onClick = { choosing = false }) { Text("Cancel") } }) { DialogBody { DatePicker(picker) } }
     }
     if (value.isNotBlank()) TextButton(onClick = { onChange("") }, enabled = enabled) { Text("Clear birthday") }
 }
@@ -354,12 +356,12 @@ private val nameSources = mapOf("owner" to "Added by your household", "wikidata"
     removing?.let { entry ->
         val renames = entry.renamedPlants
         val next = entry.renamedTo?.let { "\u201c$it\u201d" } ?: "another name for this species"
-        AlertDialog(onDismissRequest = { removing = null }, title = { Text("Remove \u201c${entry.name}\u201d?") },
-            text = { Text(when (renames) {
+        AlertDialog(onDismissRequest = { removing = null }, title = { DialogTitle("Remove this name?") },
+            text = { DialogBody { Text("Remove \u201c${entry.name}\u201d from this species?"); Text(when (renames) {
                 0 -> "No plant shows this name now, so removing it renames none."
                 1 -> "1 plant shows this name now and will show $next instead."
                 else -> "$renames plants show this name now and will show $next instead."
-            }) },
+            }) } },
             confirmButton = { TextButton(onClick = { removing = null; onCommand(entry.id, JSONObject()) {} }, enabled = writable) { Text("Remove name") } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })
     }

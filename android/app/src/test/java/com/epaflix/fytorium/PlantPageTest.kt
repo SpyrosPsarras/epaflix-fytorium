@@ -443,7 +443,8 @@ class PlantPageTest {
         for (item in listOf("Change species", "This plant's schedule", "Repot", "Move to graveyard", "Delete plant")) compose.onNodeWithText(item).assertIsDisplayed()
         compose.onNodeWithText("Species care").assertDoesNotExist()
         compose.onNodeWithText("Move to graveyard").performClick()
-        compose.onNodeWithText("Move Synthetic fern to the graveyard?").assertIsDisplayed()
+        compose.onNodeWithText("Move to the graveyard?").assertIsDisplayed()
+        compose.assertDialogBody("Synthetic fern leaves Today and Upcoming. Its history and photos stay, and you can restore it later.")
         compose.runOnIdle { assertEquals(emptyList<String>(), commands) }
         compose.onNode(hasText("Move to graveyard") and hasAnyAncestor(isDialog())).performClick()
         compose.runOnIdle { assertEquals(listOf("graveyard"), commands) }
@@ -488,7 +489,7 @@ class PlantPageTest {
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic renamed fern")
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+        compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
         compose.onNodeWithText("Keep editing").performClick()
         compose.onNodeWithText("Synthetic renamed fern").assertExists()
         compose.onNodeWithContentDescription("Back").performClick()
@@ -566,7 +567,8 @@ class PlantPageTest {
         compose.runOnIdle { screen.value = "detail" }
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
-        compose.onNodeWithText("Permanently delete Synthetic fern?").assertIsDisplayed()
+        compose.onNodeWithText("Permanently delete this plant?").assertIsDisplayed()
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
     }
 
     @Test fun movingThePlantToTheGraveyardHereAndUndoingItShowAtOnce() {
@@ -2337,7 +2339,7 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(hasText(field) and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasText(field) and hasSetTextAction()).performTextReplacement(typed)
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(hasText(field) and hasSetTextAction()).assertTextContains(typed)
             compose.onNodeWithContentDescription("Back").performClick()
@@ -2374,7 +2376,7 @@ class PlantPageTest {
         compose.onNode(water).assertTextContains("9")
         // The form still holds what was typed, so its own Back still asks.
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+        compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
     }
 
     // C19, C26: Identify from photos asks first, naming the plant, when a query was typed or a species was chosen, and Back from it returns to the species search with that query.
@@ -2437,13 +2439,13 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(water).performTextReplacement("9")
             compose.onNode(hasText("Today") and hasClickAction()).performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(water).assertTextContains("9")
             compose.onNode(hasText("Today") and hasClickAction()).performClick()
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isEmpty() }
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
         } finally { controller.close() }
     }
 
@@ -2463,7 +2465,7 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).performTextReplacement("Fern")
             compose.runOnIdle { home.intValue++ }
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Fern")
             compose.runOnIdle { home.intValue++ }
@@ -2494,9 +2496,8 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(open).performScrollTo().performClick()
             compose.onNodeWithText("Days").performTextReplacement("9")
-            val question = hasText("Discard your watering interval for ", substring = true)
             compose.runOnIdle { home.intValue++ }
-            compose.onNode(question).assertIsDisplayed()
+            compose.assertDiscard("Your watering interval override for Testoria nebulosa Inventor is not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNodeWithText("Days").assertTextContains("9")
             compose.runOnIdle { home.intValue++ }
@@ -2521,15 +2522,15 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).performTextReplacement("Fern")
             compose.onNode(hasText("More") and hasClickAction()).performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Fern")
             compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isEmpty() }
             compose.onNode(hasText("More") and hasClickAction()).performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
             compose.onNodeWithText("Log out").assertIsDisplayed()
         } finally { controller.close() }
     }
@@ -2561,7 +2562,7 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(query).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(query).performTextInput("nova")
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard this new plant?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to this new plant are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(query).assertTextContains("nova")
             compose.onNodeWithContentDescription("Back").performClick()
@@ -2582,7 +2583,7 @@ class PlantPageTest {
             val name = hasText("Name") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard this new plant?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to this new plant are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertIsDisplayed()
             compose.onNodeWithContentDescription("Back").performClick()
@@ -2605,7 +2606,7 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(field).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(field).performTextInput("Synthetic star")
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(field).assertTextContains("Synthetic star")
             compose.onNodeWithContentDescription("Back").performClick()
@@ -2631,7 +2632,7 @@ class PlantPageTest {
             val porch = hasText("Restore Synthetic fern to Synthetic porch")
             compose.onNode(porch).assertIsEnabled()
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(porch).assertIsEnabled()
             compose.onNodeWithContentDescription("Back").performClick()
@@ -2664,27 +2665,43 @@ class PlantPageTest {
     }
 
     // C26: Create a site from a Restore form with a changed site asks first, like the schedule's Care defaults link, and Back keeps the chosen site.
-    @Test fun createASiteFromAChangedRestoreAsksFirstAndBackKeepsTheChoice() {
+    @Test fun createASiteFromAChangedRestoreAsksFirstAndBackKeepsTheChoice() = changedRestore(1f)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun restoreLinkAndSitePickerWorkInLandscapeWithLargeText() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        changedRestore(1.3f)
+    }
+
+    private fun changedRestore(fontScale: Float) {
         val site = """{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":1}"""
         val porch = """{"id":"site-porch","name":"Synthetic porch","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":0}"""
         withPlantServer({ path -> when (path) { "/api/sites" -> "[$site,$porch]"; else -> restoreServed(path) } }) { repo, showing ->
-            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
-                PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+            compose.setContent {
+                if (fontScale == 1.3f) CheckLandscape(fontScale)
+                if (showing.value) FytoriumTheme {
+                    val care by repo.state.collectAsState()
+                    PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true })
+                }
+            }
             compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Plant settings").performClick()
             compose.onNodeWithText("Restore plant").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNode(hasText("Site") and hasText("Synthetic site")).performClick()
-            compose.onNode(hasText("Synthetic porch") and hasAnyAncestor(isPopup())).performClick()
+            compose.onNode(hasText("Site") and hasText("Synthetic site")).performScrollTo().performClick()
+            compose.onNode(hasText("Synthetic porch") and hasAnyAncestor(isPopup())).performScrollTo().assertIsDisplayed().performClick()
             val chosen = hasText("Restore Synthetic fern to Synthetic porch") and isEnabled()
+            compose.onNode(chosen).assertExists()
             val link = hasText("Create a site") and !hasAnyAncestor(isDialog())
-            compose.onNode(link).performClick()
+            compose.onNode(link).performScrollTo().performClick()
             compose.onNodeWithText("Create a site?").assertIsDisplayed()
-            compose.onNodeWithText("Keep editing").performClick()
+            compose.checkDialogTextScale("Create a site?", fontScale)
+            compose.onNodeWithText("Synthetic fern is not restored yet. If you come back without creating a site, your choice stays. A site you create is chosen instead.").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").assertIsDisplayed().performClick()
             compose.onNode(chosen).assertExists()
             compose.onNodeWithText("Save site").assertDoesNotExist()
-            compose.onNode(link).performClick()
-            compose.onNode(hasText("Create a site") and hasAnyAncestor(isDialog())).performClick()
+            compose.onNode(link).performScrollTo().performClick()
+            compose.onNode(hasText("Create a site") and hasAnyAncestor(isDialog())).assertIsDisplayed().performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Back").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(chosen).fetchSemanticsNodes().isNotEmpty() }
@@ -2904,7 +2921,8 @@ class PlantPageTest {
         compose.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(today = today), detail(), {}, { action, body -> sent += action + ":" + body.optString("confirm_name") }, {}, {}) } }
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
-        compose.onNode(hasText("Type Synthetic fern to confirm") and hasSetTextAction()).performTextInput("  synthetic FERN ")
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
+        compose.onNode(hasText("Plant name") and hasSetTextAction()).performTextInput("  synthetic FERN ")
         compose.onNodeWithText("Permanently delete plant").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf("delete:Synthetic fern"), sent) }
     }
@@ -2967,7 +2985,7 @@ class PlantPageTest {
             }
             compose.onNode(name).performTextInput("Synthetic porch")
             leave()
-            compose.onNodeWithText("Discard this new site?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to this new site are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Synthetic porch")
             leave()
@@ -2990,7 +3008,7 @@ class PlantPageTest {
             val name = hasText("Name") and hasSetTextAction()
             compose.onNode(name).performTextInput("Synthetic porch")
             compose.onNode(hasText("Today") and hasClickAction()).performClick()
-            compose.onNodeWithText("Discard this new site?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to this new site are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Synthetic porch")
             compose.onNode(hasText("Today") and hasClickAction()).performClick()
@@ -3022,7 +3040,7 @@ class PlantPageTest {
             compose.onNode(hasText("Plants") and hasClickAction()).performClick()
             compose.onNode(name).performTextInput("Synthetic porch")
             compose.onNode(hasText("Today") and hasClickAction()).performClick()
-            compose.onNodeWithText(if (createSite) "Discard this new site?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard(if (createSite) "Your changes to this new site are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Synthetic porch", substring = true)
         } finally { controller.close() }
@@ -3044,7 +3062,7 @@ class PlantPageTest {
         // No wait in between, so Back arrives before the typed name is composed.
         compose.onNode(name).performTextInput("Synthetic porch")
         compose.runOnUiThread { checkNotNull(back).onBackPressed() }
-        compose.onNodeWithText(if (createSite) "Discard this new site?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+        compose.assertDiscard(if (createSite) "Your changes to this new site are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
         compose.onNodeWithText("Keep editing").performClick()
         compose.onNode(name).assertTextContains("Synthetic porch", substring = true)
     }
@@ -3539,14 +3557,14 @@ class PlantPageTest {
                 compose.waitUntil(5_000) { shows("Synthetic beacon") }
                 compose.onNode(field).assertTextContains("Synthetic star")
                 compose.onNodeWithContentDescription("Back").performClick()
-                compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+                compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
                 compose.onNodeWithText("Keep editing").performClick()
                 compose.onNodeWithText("Add name").performClick()
                 compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic star\u201d").fetchSemanticsNodes().isNotEmpty() &&
                     compose.onAllNodes(field and hasText("Synthetic star")).fetchSemanticsNodes().isEmpty() }
                 compose.onNodeWithContentDescription("Back").performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+                compose.onNodeWithText("Discard changes?").assertDoesNotExist()
             }
         } finally { release.countDown() }
     }
@@ -3606,7 +3624,7 @@ class PlantPageTest {
                 compose.onNode(hasText(addName) and hasClickAction() and isEnabled()).assertIsDisplayed()
                 if (refuse) compose.explains(refused, "Synthetic names refusal", note, "Add or clear the name to see the names for Synthetic star.")
                 compose.onNodeWithContentDescription("Back").performClick()
-                compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+                compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
                 compose.onNodeWithText("Keep editing").performClick()
                 if (add) compose.onNodeWithText(addName).performClick() else compose.onNode(field).performTextClearance()
                 if (add) compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic glow\u201d to Synthetic lantern").fetchSemanticsNodes().isNotEmpty() }
@@ -3616,7 +3634,7 @@ class PlantPageTest {
                 compose.onNodeWithText(addName).assertDoesNotExist()
                 compose.onNodeWithContentDescription("Back").performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("Discard changes to Synthetic fern?").assertDoesNotExist()
+                compose.onNodeWithText("Discard changes?").assertDoesNotExist()
             }
         } finally { release.countDown() }
     }
@@ -3767,7 +3785,7 @@ class PlantPageTest {
                 compose.waitUntil(5_000) { fresh.state.value.detail != null && Running.count.get() == 0 }
                 compose.onNode(name).assertTextContains("Synthetic glow")
                 compose.onNodeWithContentDescription("Back").performClick()
-                compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+                compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             }
         } finally { release.countDown(); freshDb.close() }
     }
@@ -3905,7 +3923,8 @@ class PlantPageTest {
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Move to graveyard").performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Move Synthetic fern to the graveyard?").assertIsDisplayed()
+        compose.onNodeWithText("Move to the graveyard?").assertIsDisplayed()
+        compose.assertDialogBody("Synthetic fern leaves Today and Upcoming. Its history and photos stay, and you can restore it later.")
     }
 
     @Test fun aSpeciesNameDraftRemainsVisibleWhenRecreatedOffline() {
@@ -3923,7 +3942,7 @@ class PlantPageTest {
             restoration.emulateSavedInstanceStateRestore()
             compose.onNode(hasText("Common name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText)).assertTextContains("Synthetic glow")
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
         }
     }
 
@@ -3943,6 +3962,169 @@ class PlantPageTest {
         compose.onNode(hasText("Two") and hasAnyAncestor(isPopup())).assertIsDisplayed()
     }
 
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun scheduleLinkScrollsInsideInLandscapeWithLargeText() = withPlantServer { repo, showing ->
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); if (showing.value) FytoriumTheme {
+            val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, speciesApi = api, speciesConnected = { true })
+        } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("This plant's schedule").performClick()
+        val field = hasText("Water interval in days") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(field).fetchSemanticsNodes().isNotEmpty() }
+        reveal(field).performTextReplacement("5")
+        reveal(hasText("Care defaults for this species") and hasClickAction()).performClick()
+        compose.onNodeWithText("Your changes to Synthetic fern's schedule are not saved yet. They stay here when you come back.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Open care defaults").assertIsDisplayed()
+        compose.checkDialogTextScale("Open care defaults", 1.3f)
+        compose.onNodeWithText("Keep editing").assertIsDisplayed().performClick()
+        reveal(field).assertTextContains("5")
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun confirmationsScrollInsideInLandscapeWithLargeText() {
+        val screen = mutableStateOf("graveyard")
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            key(screen.value) { when (screen.value) {
+                "graveyard" -> PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {})
+                "names" -> SpeciesNames(parseSpecies(speciesNamesFixture), syntheticOptions(), true, { _, _, _ -> })
+                "discard" -> DiscardDialog("Discard changes?", "Your changes to Synthetic fern are not saved yet.", {}, {})
+                else -> BarTitle("Offline", "Synthetic connection explanation ".repeat(12)) { Text("Synthetic fern") }
+            } }
+        } }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Move to graveyard").performClick()
+        compose.checkDialogTextScale("Move to graveyard", 1.3f)
+        compose.onNodeWithText("Synthetic fern leaves Today and Upcoming. Its history and photos stay, and you can restore it later.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Move to graveyard").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { screen.value = "names" }
+        reveal(hasText("Remove Synthetic lantern")).performClick()
+        compose.onNodeWithText("Remove this name?").assertIsDisplayed()
+        compose.onNodeWithText("Remove \u201cSynthetic lantern\u201d from this species?").performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText("Synthetic lantern") and hasAnyAncestor(isDialog()), useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("No plant shows this name now, so removing it renames none.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Remove name").assertIsDisplayed()
+        compose.checkDialogTextScale("Remove name", 1.3f)
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { screen.value = "discard" }
+        compose.onNodeWithText("Your changes to Synthetic fern are not saved yet.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Discard").assertIsDisplayed()
+        compose.onNodeWithText("Keep editing").assertIsDisplayed()
+        compose.checkDialogTextScale("Keep editing", 1.3f)
+        compose.runOnIdle { screen.value = "status" }
+        compose.onNodeWithText("Offline").performClick()
+        compose.onNode(hasText("Synthetic connection explanation", substring = true)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Close").assertIsDisplayed()
+        compose.checkDialogTextScale("Close", 1.3f)
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun birthdayPickerIsReachableInLandscapeWithLargeText() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            PlantForm(plant.copy(attributesJson = JSONObject(plant.attributesJson).put("birthday", "2030-01-02").toString()), syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true,
+                onSave = {}, today = LocalDate.of(2030, 1, 15))
+        } }
+        compose.onNodeWithText("More details").performScrollTo().performClick()
+        compose.onNodeWithText("Birthday: 2 Jan 2030").performScrollTo().performClick()
+        compose.onNodeWithText("Tuesday, January 1, 2030").performScrollTo().performClick()
+        compose.onNodeWithText("Tuesday, January 1, 2030").assertIsSelected()
+        compose.checkDialogTextScale("Set birthday", 1.3f)
+        compose.onNodeWithContentDescription("Switch to text input mode").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Date, MM/DD/YYYY").performScrollTo().assertIsDisplayed()
+        compose.checkDialogTextScale("Set birthday", 1.3f)
+        compose.onNodeWithText("Set birthday").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Birthday: 1 Jan 2030").assertExists()
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun deleteConfirmationKeepsTypedNameVisibleInLandscape() = landscapeDelete(1f)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun deleteConfirmationKeepsLargeTypedNameVisibleInLandscape() = landscapeDelete(1.3f)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun longNameDeleteStaysUsableInLandscapeWithLargeText() = longNameDialog("delete")
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun longNameGraveyardStaysUsableInLandscapeWithLargeText() = longNameDialog("graveyard")
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun longNameDiscardStaysUsableInLandscapeWithLargeText() = longNameDialog("discard")
+
+    private fun longNameDialog(kind: String) {
+        val name = "Synthetic fern ".repeat(15).take(200)
+        val title = when (kind) {
+            "delete" -> "Permanently delete this plant?"
+            "graveyard" -> "Move to the graveyard?"
+            else -> "Discard changes?"
+        }
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            if (kind == "discard") DiscardDialog("Discard changes?", "Your changes to $name are not saved yet.", {}, {})
+            else PlantDetailScreen(owner.copy(today = today), detail().copy(plant = plant.copy(displayName = name)), {}, { _, _ -> }, {}, {})
+        } }
+        if (kind != "discard") {
+            compose.onNodeWithContentDescription("Plant settings").performClick()
+            compose.onNodeWithText(if (kind == "delete") "Delete plant" else "Move to graveyard").performClick()
+        }
+        val heading = compose.onNodeWithText(title, useUnmergedTree = true).fetchSemanticsNode().textLayout()
+        assertTrue("Title line count must be at most two, got ${heading.lineCount}", heading.lineCount <= 2)
+        assertTrue("The short title fits without an ellipsis", !heading.isLineEllipsized(heading.lineCount - 1))
+        compose.onNode(hasText(name) and hasAnyAncestor(isDialog()), useUnmergedTree = true).assertDoesNotExist()
+        val guidance = when (kind) {
+            "delete" -> "This permanently deletes $name, all care history and photos. It cannot be undone."
+            "graveyard" -> "$name leaves Today and Upcoming. Its history and photos stay, and you can restore it later."
+            else -> "Your changes to $name are not saved yet."
+        }
+        compose.onNodeWithText(guidance).performScrollTo().assertIsDisplayed()
+        if (kind == "delete") {
+            compose.onNodeWithText("Type $name to confirm.").assertExists()
+            val field = compose.onNode(hasText("Plant name") and hasSetTextAction())
+            field.performScrollTo().performTextInput(name)
+            field.assertTextContains(name).assertIsDisplayed()
+            assertTrue("The confirmation field keeps its full height", field.fetchSemanticsNode().boundsInRoot.height >= 56f)
+            val label = compose.onNode(hasText("Plant name") and !hasSetTextAction(), useUnmergedTree = true).fetchSemanticsNode().textLayout()
+            assertEquals("The floating label stays on one line", 1, label.lineCount)
+            val typed = field.fetchSemanticsNode().textLayout()
+            assertEquals(name, typed.layoutInput.text.text)
+            assertTrue("Typed text fits the field vertically", typed.size.height <= field.fetchSemanticsNode().boundsInRoot.height)
+        } else {
+            compose.onNode(hasText(name, substring = true) and hasAnyAncestor(hasScrollAction())).performScrollTo().assertExists()
+        }
+        val confirm = when (kind) { "delete" -> "Permanently delete plant"; "graveyard" -> "Move to graveyard"; else -> "Discard" }
+        val cancel = when (kind) { "delete" -> "Cancel deletion"; "graveyard" -> "Cancel"; else -> "Keep editing" }
+        compose.onNodeWithText(confirm).assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText(cancel).assertIsDisplayed()
+        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
+        val buttons = listOf(confirm, cancel).map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+        buttons.forEach { assertTrue("Buttons fit inside the dialog", it.top >= dialog.top && it.bottom <= dialog.bottom) }
+        compose.captureDialog("src/test/screenshots/native-plants-$kind-long-name-landscape-large.png")
+    }
+
+    private fun landscapeDelete(fontScale: Float) {
+        RuntimeEnvironment.setFontScale(fontScale)
+        compose.setContent { CheckLandscape(fontScale); FytoriumTheme {
+            PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Delete plant").performClick()
+        compose.checkDialogTextScale("Permanently delete this plant?", fontScale)
+        compose.onNodeWithText("Type Synthetic fern to confirm.").assertExists()
+        val field = compose.onNode(hasText("Plant name") and hasSetTextAction())
+        field.performTextInput("Synthetic fern")
+        field.assertTextContains("Synthetic fern")
+        assertEquals("The dialog uses the requested text scale", fontScale, field.fetchSemanticsNode().textLayout().layoutInput.density.fontScale, 0.01f)
+        assertTrue("The confirmation field must not be compressed", field.fetchSemanticsNode().boundsInRoot.height >= 56f)
+        field.performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Permanently delete plant").assertIsDisplayed().assertIsEnabled()
+        compose.captureDialog("src/test/screenshots/native-plants-delete-landscape-${if (fontScale == 1f) "normal" else "large"}.png")
+    }
+
     @Test fun deleteConfirmationIsEmptyAfterCancel() = closedDeleteConfirmationReopensEmpty("cancel")
     @Test fun deleteConfirmationIsEmptyAfterBack() = closedDeleteConfirmationReopensEmpty("back")
     @Test fun deleteConfirmationIsEmptyAfterOutsideTap() = closedDeleteConfirmationReopensEmpty("outside")
@@ -3956,7 +4138,8 @@ class PlantPageTest {
         }
         open()
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
-        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fern")
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
+        compose.onNodeWithText("Plant name").performTextInput("Synthetic fern")
         compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
         when (close) {
             "cancel" -> compose.onNodeWithText("Cancel deletion").performClick()
@@ -3973,10 +4156,11 @@ class PlantPageTest {
             }
             else -> error("Unknown close action")
         }
-        compose.onNodeWithText("Permanently delete Synthetic fern?").assertDoesNotExist()
+        compose.onNodeWithText("Permanently delete this plant?").assertDoesNotExist()
         open()
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
-        compose.onNodeWithText("Type Synthetic fern to confirm").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
+        compose.onNodeWithText("Plant name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
         compose.runOnIdle { assertTrue("closing never sends a delete", sent.isEmpty()) }
     }
 
@@ -3985,11 +4169,13 @@ class PlantPageTest {
         restoration.setContent { FytoriumTheme { PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {}) } }
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
-        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fern")
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
+        compose.onNodeWithText("Plant name").performTextInput("Synthetic fern")
         compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Permanently delete Synthetic fern?").assertIsDisplayed()
-        compose.onNodeWithText("Type Synthetic fern to confirm").assertTextContains("Synthetic fern")
+        compose.onNodeWithText("Permanently delete this plant?").assertIsDisplayed()
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
+        compose.onNodeWithText("Plant name").assertTextContains("Synthetic fern")
         compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
     }
 
@@ -4042,7 +4228,7 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(restoredField).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
             reveal(restoredField).assertTextContains(value)
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText(if (page == "Add plant") "Discard this new plant?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard(if (page == "Add plant") "Your changes to this new plant are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
             if (offline) {
                 restoration.emulateSavedInstanceStateRestore()
                 compose.onNodeWithText("Keep editing").assertIsDisplayed()
@@ -4090,7 +4276,7 @@ class PlantPageTest {
             if (add) compose.onNode(kept).assertTextContains("Synthetic glow") else reveal(kept).assertIsDisplayed()
             if (!confirm) compose.onNode(query).assertTextContains("Synthetic cloud plant")
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText(if (add) "Discard this new plant?" else "Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard(if (add) "Your changes to this new plant are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
         }
     }
 
@@ -4116,7 +4302,7 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic porch") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Restore Synthetic fern to Synthetic porch").assertIsDisplayed().assertIsNotEnabled()
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
         }
     }
 
@@ -4137,7 +4323,7 @@ class PlantPageTest {
         compose.waitUntil(5_000) { compose.onAllNodes(kept).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
         compose.onNode(kept).assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+        compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
     }
 
     @Test fun createSiteDraftFromRestoreSurvivesRecreationAndBackStillAsks() = withPlantServer(::restoreServed) { repo, showing ->
@@ -4153,7 +4339,7 @@ class PlantPageTest {
         reveal(name).assertTextContains("Synthetic porch")
         compose.onNodeWithText("Grow light").performScrollTo().assertIsOn()
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Discard this new site?").assertIsDisplayed()
+        compose.assertDiscard("Your changes to this new site are not saved yet.")
     }
 
     @Test fun speciesNamesDraftAndPinnedSpeciesSurviveRecreationAndBackStillAsks() {
@@ -4182,7 +4368,7 @@ class PlantPageTest {
             compose.onNodeWithText("Add name to Synthetic lantern").assertIsDisplayed()
             compose.onNodeWithText("This plant is now Synthetic star. You're adding a name for Synthetic lantern.").assertIsDisplayed()
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic fern?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
         }
     }
 

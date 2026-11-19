@@ -125,3 +125,7 @@ From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same buil
 ## Council round 8 amendment (2026-11-17)
 
 - C36 (W3-opus-29, S2). The permanent-delete confirmation always opens empty: cancelling, Back or dismissing the dialog clears the typed name, so Permanently delete is never enabled when the dialog appears. The typed name still survives rotation and process recreation while the dialog stays open (C19).
+
+## Council round 9 amendment (2026-11-17)
+
+- C37 (W3-opus-30). Every W3 dialog stays usable in landscape and at 1.3x text: its body scrolls inside the dialog when it does not fit, text fields keep their full height and show what is typed, and the buttons stay visible. Applies to the delete-plant confirmation and every other dialog reachable from the Plants tab and the plant page.

@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
+import com.epaflix.fytorium.DialogBody
+import com.epaflix.fytorium.DialogTitle
 import com.epaflix.fytorium.Thumbnails
 import com.epaflix.fytorium.dayMonthYear
 import com.epaflix.fytorium.plants.*
@@ -78,7 +80,7 @@ import java.time.ZoneOffset
         })
         DatePickerDialog(onDismissRequest = { showing = false }, confirmButton = {
             TextButton(onClick = { picker.selectedDateMillis?.let { onChange(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()) }; showing = false }, enabled = picker.selectedDateMillis != null) { Text("Set date") }
-        }, dismissButton = { TextButton(onClick = { showing = false }) { Text("Cancel") } }) { DatePicker(picker) }
+        }, dismissButton = { TextButton(onClick = { showing = false }) { Text("Cancel") } }) { DialogBody { DatePicker(picker) } }
     }
 }
 
@@ -93,10 +95,10 @@ import java.time.ZoneOffset
     var date by rememberSaveable { mutableStateOf("") }
     var deleting by rememberSaveable { mutableStateOf<PhotoUpdate?>(null) }
     var discarding by rememberSaveable { mutableStateOf(false) }
-    val question = "Discard photo update for ${plantName ?: "this plant"}?"
+    val discardBody = "Your photo update for ${plantName ?: "this plant"} is not saved yet."
     fun changed() = form && (note.isNotEmpty() || health.isNotEmpty() || date.isNotEmpty() || selectedCount > 0)
     fun clear() { form = false; note = ""; health = ""; date = ""; discarding = false; onDiscard() }
-    SideEffect { onFormDirty { question.takeIf { changed() } } }
+    SideEffect { onFormDirty { discardBody.takeIf { changed() } } }
     val currentDirty by rememberUpdatedState(onFormDirty)
     DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     val enabled = online && !state.blocked && !state.saving && !state.updateRequired
@@ -142,9 +144,9 @@ import java.time.ZoneOffset
             }
         }
     }
-    if (discarding) DiscardDialog(question, onKeep = { discarding = false }) { clear() }
-    if (deleting != null) AlertDialog(onDismissRequest = { if (!state.saving) deleting = null }, title = { Text("Delete photo update?") },
-        text = { Column { Text("Delete this photo update of ${deleting!!.plantName} and its photos?"); PlantError(state.error) } },
+    if (discarding) DiscardDialog("Discard changes?", discardBody, onKeep = { discarding = false }) { clear() }
+    if (deleting != null) AlertDialog(onDismissRequest = { if (!state.saving) deleting = null }, title = { DialogTitle("Delete photo update?") },
+        text = { DialogBody { Text("Delete this photo update of ${deleting!!.plantName} and its photos?"); PlantError(state.error) } },
         confirmButton = { TextButton(onClick = { onChange(deleting!!.id, "delete") }, enabled = enabled) { Text("Confirm delete") } },
         dismissButton = { TextButton(onClick = { deleting = null }, enabled = !state.saving) { Text("Cancel") } })
     LaunchedEffect(state.photos, state.loaded, state.loading) {

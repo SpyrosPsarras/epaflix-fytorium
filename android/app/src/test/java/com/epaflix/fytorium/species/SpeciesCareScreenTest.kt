@@ -18,12 +18,12 @@ import androidx.compose.ui.unit.dp
 import com.epaflix.fytorium.*
 import com.github.takahirom.roborazzi.captureRoboImage
 import org.json.JSONObject
-import androidx.core.view.drawToBitmap
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @OptIn(ExperimentalTestApi::class)
@@ -35,6 +35,91 @@ class SpeciesCareScreenTest {
         CareCard(910002, "Testoria nebulosa Inventor", it.getJSONObject("profile"), it.getJSONArray("fetches").mapObjects { row -> row }, JSONObject(outdoorFixture),
             "Testoria nebulosa", "Synthetic mistleaf")
     }
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun careDialogsStayUsableInLandscapeWithLargeText() {
+        val own = card().let { it.copy(profile = JSONObject(it.profile.toString()).apply { getJSONObject("wateringIntervalDays").put("source", "override") }) }
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            SpeciesCareScreen(SpeciesCareState(card = own, loaded = true))
+        } }
+        compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
+        compose.onNodeWithText("Days").performScrollTo().performTextReplacement("19")
+        compose.onNodeWithText("Days").assertTextContains("19").assertIsDisplayed()
+        assertTrue(compose.onNode(hasText("Days") and hasSetTextAction()).fetchSemanticsNode().boundsInRoot.height >= 56f)
+        compose.onNodeWithText("Save override").assertIsDisplayed()
+        compose.checkDialogTextScale("Save override", 1.3f)
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Your watering interval override for Synthetic mistleaf is not saved yet.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Discard").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
+        compose.onNodeWithText("Every Synthetic mistleaf goes back to the value from its source data or Fytorium's rule.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Confirm reset").assertIsDisplayed()
+        compose.checkDialogTextScale("Confirm reset", 1.3f)
+        compose.onNodeWithText("Cancel").assertIsDisplayed()
+    }
+
+    @Test fun resetBodiesNameTheCurrentSpeciesAndEveryField() {
+        val profile = JSONObject().apply { careLabels.keys.forEach { put(it, JSONObject().put("value", 9).put("source", "override")) } }
+        val current = mutableStateOf(card().copy(profile = profile))
+        compose.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = current.value, loaded = true)) } }
+        for (name in listOf("Synthetic mistleaf", null)) {
+            compose.runOnIdle { current.value = current.value.copy(commonName = name) }
+            for (label in careLabels.values) {
+                val field = label.replaceFirstChar(Char::lowercase)
+                compose.onNodeWithText("Remove override for $field").performScrollTo().performClick()
+                val body = "Every ${name ?: current.value.canonicalName} goes back to the value from its source data or Fytorium's rule."
+                compose.onNodeWithText(body).performScrollTo().assertIsDisplayed()
+                compose.onNodeWithText("Cancel").performClick()
+            }
+        }
+    }
+
+    @Test fun overrideDiscardBodiesNameTheSpeciesAndEveryField() {
+        val profile = JSONObject().apply { careLabels.keys.forEach { put(it, JSONObject().put("value", 9).put("source", "override")) } }
+        val current = mutableStateOf(card().copy(profile = profile))
+        var dirty: () -> String? = { null }
+        compose.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = current.value, loaded = true), onFormDirty = { dirty = it }) } }
+        val labels = listOf("watering interval", "fertilizing interval", "light", "temperature range", "soil moisture sensor range", "source care text",
+            "minimum survival temperature", "hardiness zones", "poisonous to pets", "poisonous to humans", "lifecycle", "size", "pruning months", "common pests", "indoor")
+        for (name in listOf("Synthetic mistleaf", null)) {
+            compose.runOnIdle { current.value = current.value.copy(commonName = name) }
+            for ((field, short) in careLabels.keys.zip(labels)) {
+                val label = careLabels.getValue(field).replaceFirstChar(Char::lowercase)
+                compose.onNodeWithText("Override $label").performScrollTo().performClick()
+                when {
+                    field in careChoices -> {
+                        compose.onNodeWithText("Override value for $label: 9").performScrollTo().performClick()
+                        compose.onNodeWithText(when (field) { "light" -> "Full sun"; "cycle" -> "Perennial"; else -> "Yes" }).performClick()
+                    }
+                    field in setOf("temperatureRangeC", "soilMoistureRangePercent", "hardiness", "dimensions") -> compose.onNodeWithText("Minimum").performScrollTo().performTextReplacement("1")
+                    field == "pruningMonths" -> compose.onNodeWithContentDescription("January").performScrollTo().performClick()
+                    else -> compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("19")
+                }
+                val body = "Your $short override for ${name ?: current.value.canonicalName} is not saved yet."
+                compose.runOnIdle { assertEquals(body, dirty()) }
+                compose.onNodeWithText("Cancel").performClick()
+                compose.assertDiscard(body)
+                compose.onNodeWithText("Discard").performClick()
+            }
+        }
+    }
+
+    @Test fun aRestoredResetWaitsForTheSpeciesCard() {
+        val own = card().let { it.copy(profile = JSONObject(it.profile.toString()).apply { getJSONObject("wateringIntervalDays").put("source", "override") }) }
+        val state = mutableStateOf(SpeciesCareState(card = own, loaded = true))
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { SpeciesCareScreen(state.value) } }
+        compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
+        compose.runOnIdle { state.value = SpeciesCareState(loading = true) }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNode(hasText("null", substring = true)).assertDoesNotExist()
+        compose.onNode(isDialog()).assertDoesNotExist()
+        compose.runOnIdle { state.value = SpeciesCareState(card = own, loaded = true) }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Confirm reset").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Every Synthetic mistleaf goes back to the value from its source data or Fytorium's rule.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Confirm reset").assertIsEnabled()
+    }
+
     @Test fun anOverrideDiscardQuestionSurvivesRecreation() {
         val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = card(), loaded = true)) } }
@@ -107,10 +192,7 @@ class SpeciesCareScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             val file = "src/test/screenshots/$name-${if (dark) "dark" else "light"}.png"
             if (name in listOf("species-override", "species-reset")) {
-                // Roborazzi window capture misses Compose dialogs, as in PlantsScreenTest.
-                val layout = compose.onNode(isDialog()).fetchSemanticsNode().layoutInfo
-                val owner = layout.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layout) as android.view.View
-                compose.runOnIdle { owner.drawToBitmap().captureRoboImage(file) }
+                compose.captureDialog(file)
             } else compose.onRoot().captureRoboImage(file)
         }
         compose.onNodeWithContentDescription("Back").assertExists()
@@ -453,9 +535,10 @@ class SpeciesCareScreenTest {
                 for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP))
                     android.view.MotionEvent.obtain(0, 0, action, 1f, 1f, 0).let { dialog.dispatchTouchEvent(it); it.recycle() }
             }
-            val question = "Discard your watering interval for Synthetic mistleaf?"
+            val question = "Your watering interval override for Synthetic mistleaf is not saved yet."
             for (leave in listOf<() -> Unit>(::back, ::tapOutside, { compose.onNodeWithText("Cancel").performClick() }, { compose.runOnIdle { home.intValue++ } })) {
                 leave()
+                compose.onNodeWithText("Discard changes?").assertIsDisplayed()
                 compose.onNodeWithText(question).assertIsDisplayed()
                 compose.onNodeWithText("Keep editing").performClick()
                 compose.onNodeWithText("Days").assertTextContains("9")
@@ -463,7 +546,7 @@ class SpeciesCareScreenTest {
             compose.runOnIdle { home.intValue++ }
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Days").fetchSemanticsNodes().isEmpty() }
-            compose.onNodeWithText(question).assertDoesNotExist()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
         }
     }
     @Test fun careFailuresNeverGateSpeciesAndSessionChangesHideControls() {

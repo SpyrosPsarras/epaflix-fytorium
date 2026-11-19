@@ -16,6 +16,7 @@ import org.junit.Test
 import org.junit.Assert.*
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @OptIn(ExperimentalTestApi::class)
@@ -52,7 +53,7 @@ class SiteScreenTest {
         compose.onNodeWithText("Name").performScrollTo().assertTextContains("Synthetic porch")
         compose.onNodeWithText("Grow light").performScrollTo().let { if (edit) it.assertIsOff() else it.assertIsOn() }
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText(if (edit) "Discard changes to Synthetic room?" else "Discard this new site?").assertIsDisplayed()
+        compose.assertDiscard(if (edit) "Your changes to Synthetic room are not saved yet." else "Your changes to this new site are not saved yet.")
         compose.onNodeWithText("Keep editing").performClick()
         compose.onNodeWithText("Save site").performScrollTo().performClick()
         compose.runOnIdle {
@@ -79,6 +80,7 @@ class SiteScreenTest {
         compose.runOnIdle { state.value = SiteState() }
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("Delete site?").assertIsDisplayed()
+        compose.onNodeWithText("This permanently deletes Synthetic room and its settings if it has no plants.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Confirm delete").assertIsNotEnabled()
     }
 
@@ -104,15 +106,36 @@ class SiteScreenTest {
             restoration.emulateSavedInstanceStateRestore()
             compose.onNodeWithText("Edit site").assertIsDisplayed()
             compose.onNodeWithText("Name").assertTextContains("Synthetic porch")
-            compose.runOnIdle { assertEquals("Discard changes to Synthetic room?", dirty()) }
+            compose.runOnIdle { assertEquals("Your changes to Synthetic room are not saved yet.", dirty()) }
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard changes to Synthetic room?").assertIsDisplayed()
+            compose.assertDiscard("Your changes to Synthetic room are not saved yet.")
             compose.onNodeWithText("Discard").performClick()
             compose.runOnIdle { assertEquals(0, exits); online.value = true; answers.intValue++ }
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Create site").performClick()
             compose.onNode(hasText("Name") and hasSetTextAction()).assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
         }
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun siteDeletionStaysUsableInLandscapeWithLargeText() = landscapeDeletion("Synthetic room", "site-delete-landscape-large")
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun longNameSiteDeletionStaysUsableInLandscapeWithLargeText() = landscapeDeletion("Synthetic room ".repeat(15).take(200), "site-delete-long-name-landscape-large")
+
+    private fun landscapeDeletion(name: String, screenshot: String) {
+        val current = site.copy(fields = site.fields + ("name" to name))
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme { SitesScreen(SiteState(listOf(current), loaded = true)) } }
+        compose.onNodeWithText("Delete").performScrollTo().performClick()
+        val title = compose.onNodeWithText("Delete site?", useUnmergedTree = true).fetchSemanticsNode().textLayout()
+        assertTrue("The short title fits in two lines", title.lineCount <= 2 && !title.isLineEllipsized(title.lineCount - 1))
+        compose.onNodeWithText("This permanently deletes $name and its settings if it has no plants.").performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText(name) and hasAnyAncestor(isDialog()), useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Confirm delete").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Cancel").assertIsDisplayed()
+        compose.checkDialogTextScale("Confirm delete", 1.3f)
+        compose.captureDialog("src/test/screenshots/$screenshot.png")
     }
 
     @Test fun lightScreens() = screens(false)
@@ -130,7 +153,8 @@ class SiteScreenTest {
         fun capture(name: String) {
             compose.mainClock.advanceTimeBy(1000)
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
-            compose.onRoot().captureRoboImage("src/test/screenshots/$name-${if (dark) "dark" else "light"}.png")
+            val file = "src/test/screenshots/$name-${if (dark) "dark" else "light"}.png"
+            if (name == "site-delete-refused") compose.captureDialog(file) else compose.onRoot().captureRoboImage(file)
         }
         compose.onNodeWithText("Indoor · 2 plants").assertIsDisplayed()
         compose.onNodeWithText("Create site").assertHeightIsAtLeast(48.dp)
@@ -138,6 +162,7 @@ class SiteScreenTest {
         compose.onNodeWithText("Delete").performScrollTo().performClick()
         compose.onNodeWithText("Confirm delete").performClick()
         compose.onNodeWithText("Move or remove the 2 plants on this site first.").assertIsDisplayed()
+        compose.onNodeWithText("This permanently deletes Synthetic room and its settings if it has no plants.").performScrollTo().assertIsDisplayed()
         capture("site-delete-refused")
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { state.value = state.value.copy(errors = emptyMap()) }
@@ -159,7 +184,7 @@ class SiteScreenTest {
         compose.onNodeWithText("Warm minimum °C").performScrollTo()
         compose.onNodeWithText("Minimum must not exceed maximum.").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performScrollTo().performClick()
-        compose.onNodeWithText("Discard changes to Synthetic room?").assertIsDisplayed()
+        compose.assertDiscard("Your changes to Synthetic room are not saved yet.")
         compose.onNodeWithText("Discard").performClick()
         compose.onNodeWithText("Create site").performScrollTo().performClick()
         compose.runOnIdle { state.value = state.value.copy(errors = emptyMap()) }
@@ -251,10 +276,11 @@ class SiteScreenTest {
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Edit") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Edit").performClick()
             compose.onNodeWithText("Name").performTextReplacement("Synthetic den")
-            val question = "Discard changes to Synthetic room?"
+            val question = "Your changes to Synthetic room are not saved yet."
             for (leave in listOf<() -> Unit>({ compose.onNodeWithContentDescription("Back").performClick() }, { compose.onNodeWithText("Cancel").performScrollTo().performClick() },
                 { compose.onNode(hasText("Today") and hasClickAction()).performClick() })) {
                 leave()
+                compose.onNodeWithText("Discard changes?").assertIsDisplayed()
                 compose.onNodeWithText(question).assertIsDisplayed()
                 compose.onNodeWithText("Keep editing").performClick()
                 compose.onNodeWithText("Name").assertTextContains("Synthetic den")
@@ -262,7 +288,7 @@ class SiteScreenTest {
             compose.onNode(hasText("Today") and hasClickAction()).performClick()
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Save site").fetchSemanticsNodes().isEmpty() }
-            compose.onNodeWithText(question).assertDoesNotExist()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
         }
     }
     @Test fun onlyOwnerAndFamilySeeSitesUnderMore() {

@@ -18,7 +18,6 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
@@ -206,9 +205,9 @@ import org.json.JSONObject
         // Read at the moment something leaves the dialog, so Back right after a keystroke still asks.
         fun changed() = opened != listOf(draft, low, high, months.toList())
         var discarding by rememberSaveable { mutableStateOf(false) }
-        val question = "Discard your ${shortLabel(field)} for $editingName?"
+        val discardBody = "Your ${shortLabel(field)} override for $editingName is not saved yet."
         // The shell asks the same question before a notification leaves the dialog with a typed value.
-        SideEffect { onFormDirty { question.takeIf { changed() } } }
+        SideEffect { onFormDirty { discardBody.takeIf { changed() } } }
         DisposableEffect(field) { onDispose { leaveOverride = null; onFormDirty { null } } }
         fun close() { discarding = false; editing = null; onClear() }
         fun leave() { if (changed()) discarding = true else close() }
@@ -219,8 +218,8 @@ import org.json.JSONObject
         val numberKeys = KeyboardOptions(keyboardType = if (field in setOf("temperatureRangeC", "hardinessC")) KeyboardType.Text else KeyboardType.Decimal)
         if (card != null) AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             onDismissRequest = { if (!submitting) leave() },
-            title = { Text("Override ${lower(careLabels.getValue(field))}") },
-            text = { DialogBody {
+            title = { DialogTitle("Override ${lower(careLabels.getValue(field))}") },
+            text = { DialogBody(keepOpeningHeight = true) {
                 val label = "Override value for ${lower(careLabels.getValue(field))}"
                 // Each kind of value gets its own control, so nobody types JSON.
                 when {
@@ -255,11 +254,11 @@ import org.json.JSONObject
                 scope.launch { submitting = true; try { if (onOverride(field, value)) editing = null } finally { submitting = false } }
             }, enabled = enabled && order == null) { Text("Save override") } },
             dismissButton = { TextButton(onClick = { leave() }, enabled = !submitting) { Text("Cancel") } })
-        if (discarding) com.epaflix.fytorium.plants.DiscardDialog(question, onKeep = { discarding = false }) { close() }
+        if (discarding) com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", discardBody, onKeep = { discarding = false }) { close() }
     } }
-    if (canEdit) resetting?.let { field ->
-        AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { Text("Remove override for ${lower(careLabels.getValue(field))}?") },
-            text = { DialogBody { Text("Every plant of this species goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },
+    if (canEdit && state.card != null) resetting?.let { field ->
+        AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { DialogTitle("Remove override for ${lower(careLabels.getValue(field))}?") },
+            text = { DialogBody(keepOpeningHeight = true) { Text("Every ${state.card.commonName ?: state.card.canonicalName} goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },
             confirmButton = { TextButton(onClick = { scope.launch { submitting = true; try { if (onReset(field)) resetting = null } finally { submitting = false } } }, enabled = enabled) { Text("Confirm reset") } },
             dismissButton = { TextButton(onClick = { resetting = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
@@ -287,17 +286,6 @@ import org.json.JSONObject
             modifier = if (message == null) Modifier.clearAndSetSemantics {} else Modifier.semantics { liveRegion = LiveRegionMode.Polite })
         retry?.invoke()
     }
-}
-
-// A dialog body keeps the height it opened with and scrolls inside it, so a failed save's message never moves the dialog's buttons.
-@Composable private fun DialogBody(content: @Composable ColumnScope.() -> Unit) {
-    val opened = remember { IntArray(1) { -1 } }
-    Column(Modifier.layout { measurable, constraints ->
-        val held = opened[0].takeIf { it >= 0 }?.coerceAtMost(constraints.maxHeight)
-        val body = measurable.measure(held?.let { constraints.copy(minHeight = it, maxHeight = it) } ?: constraints)
-        // Recorded when placed, as intrinsic measurements of the dialog also run this block.
-        layout(body.width, body.height) { if (opened[0] < 0) opened[0] = body.height; body.place(0, 0) }
-    }.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
 }
 
 @Composable private fun OutdoorMonths(months: JSONObject) {

@@ -507,18 +507,19 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
             }
         }
     }
-    if (burying) AlertDialog(onDismissRequest = { burying = false }, title = { Text("Move ${plant.displayName} to the graveyard?") },
-        text = { Text("It leaves Today and Upcoming. Its history and photos stay, and you can restore it later.") },
+    if (burying) AlertDialog(onDismissRequest = { burying = false }, title = { DialogTitle("Move to the graveyard?") },
+        text = { DialogBody { Text("${plant.displayName} leaves Today and Upcoming. Its history and photos stay, and you can restore it later.") } },
         confirmButton = { TextButton(onClick = { burying = false; onCommand("graveyard", JSONObject()) }, enabled = enabled) { Text("Move to graveyard") } },
         dismissButton = { TextButton(onClick = { burying = false }) { Text("Cancel") } })
     if (deleting) {
         var confirmation by rememberSaveable(plant.id) { mutableStateOf("") }
         AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = { deleting = false },
-            title = { Heading("Permanently delete ${plant.displayName}?") },
+            title = { DialogTitle("Permanently delete this plant?") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DialogBody {
                     Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
-                    OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Type ${plant.displayName} to confirm") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Type ${plant.displayName} to confirm.")
+                    OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Plant name") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
             },
             // The server checks the exact name, so a match that ignores case and outer spaces sends the name itself.

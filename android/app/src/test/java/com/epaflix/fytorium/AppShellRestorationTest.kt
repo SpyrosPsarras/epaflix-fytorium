@@ -259,13 +259,15 @@ class AppShellRestorationTest {
                 }
             }
             if (exit != null) {
-                val question = if (route == "site-draft") "Discard this new site?" else "Discard photo update for Synthetic fern?"
+                val question = if (route == "site-draft") "Your changes to this new site are not saved yet." else "Your photo update for Synthetic fern is not saved yet."
                 val draft = if (route == "site-draft") "Synthetic draft room" else "Unsaved photo note"
                 if (restoreBeforeExit) restoration.emulateSavedInstanceStateRestore()
                 if (exit == "home") compose.runOnIdle { homeRequest.intValue++ }
                 else compose.onNode(hasText(exit) and isSelectable()).performClick()
+                compose.onNodeWithText("Discard changes?").assertExists()
                 compose.onNodeWithText(question).assertExists()
                 restoration.emulateSavedInstanceStateRestore()
+                compose.onNodeWithText("Discard changes?").assertExists()
                 compose.onNodeWithText(question).assertExists()
                 compose.onNodeWithText("Keep editing").performClick()
                 compose.onNodeWithText(draft).assertExists()

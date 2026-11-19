@@ -421,7 +421,8 @@ class PlantsScreenTest {
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
         compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
-        compose.onNodeWithText("Type Synthetic fern to confirm").performTextInput("Synthetic fern")
+        compose.assertDialogBody("Type Synthetic fern to confirm.")
+        compose.onNodeWithText("Plant name").performTextInput("Synthetic fern")
         compose.onNodeWithText("Permanently delete plant").assertIsEnabled().performClick()
         assertEquals("Synthetic fern", deleted)
     }

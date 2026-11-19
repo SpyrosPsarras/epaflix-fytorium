@@ -234,7 +234,7 @@ internal fun Pair<String, String>?.withNote(note: Pair<String, String>?) =
             overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
     }
     val close: @Composable () -> Unit = { TextButton(onClick = { explaining = false }) { Text("Close") } }
-    if (explaining && line != null) AlertDialog(onDismissRequest = { explaining = false }, title = { Text(line) }, text = explanation.takeIf { it != line }?.let { { Text(it) } },
+    if (explaining && line != null) AlertDialog(onDismissRequest = { explaining = false }, title = { DialogTitle("Status") }, text = { DialogBody { Text(line); if (explanation != line) Text(explanation) } },
         confirmButton = { if (retry == null) close() else TextButton(onClick = { explaining = false; retry() }) { Text("Try again") } },
         dismissButton = close.takeIf { retry != null })
 }

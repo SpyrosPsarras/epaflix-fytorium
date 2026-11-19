@@ -62,10 +62,10 @@ import kotlinx.coroutines.withContext
     val writable = online && state.loaded && !state.busy && !state.blocked && !state.updateRequired && !submitting
     fun closeEditor() { forms.removeState("editor"); editor = null; onClear(); if (creating) onBack() }
     fun leaveEditor() { if (changed()) discarding = true else closeEditor() }
-    val discardTitle = editor?.let { if (it.id == null) "Discard this new site?" else "Discard changes to ${it.fields["name"]?.takeIf(String::isNotBlank) ?: "this site"}?" }
+    val discardBody = editor?.let { if (it.id == null) "Your changes to this new site are not saved yet." else "Your changes to ${it.fields["name"]?.takeIf(String::isNotBlank) ?: "this site"} are not saved yet." }
     val currentDirty by rememberUpdatedState(onFormDirty)
     // The shell asks the same question before a tab or notification leaves a form with changes.
-    SideEffect { onFormDirty { discardTitle?.takeIf { changed() } } }
+    SideEffect { onFormDirty { discardBody?.takeIf { changed() } } }
     DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     BackHandler { if (editor != null) leaveEditor() else onBack() }
     val status = if (!online) "Offline" to "This phone can't reach Fytorium. Reconnect to make changes." else state.readError?.let { "Sites didn't load" to it }
@@ -115,17 +115,15 @@ import kotlinx.coroutines.withContext
         // Progress overlays the top edge, so nothing in the form moves when a save starts or ends.
         if (state.busy || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
     } }
-    if (discarding) com.epaflix.fytorium.plants.DiscardDialog(discardTitle.orEmpty(), onKeep = { discarding = false }) { discarding = false; closeEditor() }
+    if (discarding) com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", discardBody.orEmpty(), onKeep = { discarding = false }) { discarding = false; closeEditor() }
     confirming?.let { site ->
         fun dismiss() { if (!submitting && !state.busy) { confirming = null; onClear() } }
         AlertDialog(onDismissRequest = ::dismiss,
-            title = { Text("Delete site?") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Delete \"${site.fields["name"]}\"? This removes the site and its settings permanently. Sites with plants cannot be deleted.")
-                    PlantError(state.errors["_form"])
-                }
-            },
+            title = { DialogTitle("Delete site?") },
+            text = { DialogBody {
+                Text("This permanently deletes ${site.fields["name"]} and its settings if it has no plants.")
+                PlantError(state.errors["_form"])
+            } },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {

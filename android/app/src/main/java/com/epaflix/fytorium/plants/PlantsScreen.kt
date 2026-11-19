@@ -120,10 +120,10 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         if (page !in listOf("care", "species-care")) id?.let { forms.removeState("care:$it") }
         if (page !in listOf("search", "change-species", "identify")) listOf("search", "change-species").forEach { forms.removeState("search:$it") }
     }
-    val discardTitle = if (id == null) "Discard this new plant?" else "Discard changes to ${plant?.displayName ?: "this plant"}?"
+    val discardBody = if (id == null) "Your changes to this new plant are not saved yet." else "Your changes to ${plant?.displayName ?: "this plant"} are not saved yet."
     val currentDirty by rememberUpdatedState(onFormDirty)
     // The shell asks the same question before a tab or notification leaves a form with changes.
-    SideEffect { onFormDirty { subpageDraft() ?: discardTitle.takeIf { unsaved() } } }
+    SideEffect { onFormDirty { subpageDraft() ?: discardBody.takeIf { unsaved() } } }
     DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     // A search page opens without the last search's failure, so it cannot flash while the first query loads.
     LaunchedEffect(page) { if (page in listOf("search", "change-species") && searched == null) repository?.clearRead("search") }
@@ -342,17 +342,19 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             "sites" -> Triple("Create a site?", "$name is not restored yet. If you come back without creating a site, your choice stays. A site you create is chosen instead.", "Create a site")
             else -> Triple("Identify from photos?", "Your species search for ${if (page == "change-species") name else "this new plant"} stays here when you come back.", "Identify from photos")
         }
-        AlertDialog(onDismissRequest = { leavingFor = null }, title = { Text(title) }, text = { Text(text) },
+        AlertDialog(onDismissRequest = { leavingFor = null }, title = { DialogTitle(title) }, text = { DialogBody { Text(text) } },
             confirmButton = { TextButton(onClick = { leavingFor = null; follow(link) }) { Text(go) } },
             dismissButton = { TextButton(onClick = { leavingFor = null }) { Text("Keep editing") } })
     }
-    if (discarding) DiscardDialog(discardTitle, onKeep = { discarding = false }) { discarding = false; formChanged = { false }; selection = null; back() }
+    if (discarding) DiscardDialog("Discard changes?", discardBody, onKeep = { discarding = false }) { discarding = false; formChanged = { false }; selection = null; back() }
 }
 
-@Composable internal fun DiscardDialog(title: String, onKeep: () -> Unit, onDiscard: () -> Unit) = AlertDialog(onDismissRequest = onKeep,
-    title = { Text(title) }, text = { Text("Your changes are not saved yet.") },
-    confirmButton = { TextButton(onClick = onDiscard) { Text("Discard") } },
-    dismissButton = { TextButton(onClick = onKeep) { Text("Keep editing") } })
+@Composable internal fun DiscardDialog(title: String, body: String, onKeep: () -> Unit, onDiscard: () -> Unit) {
+    AlertDialog(onDismissRequest = onKeep,
+        title = { DialogTitle(title) }, text = { DialogBody { Text(body) } },
+        confirmButton = { TextButton(onClick = onDiscard) { Text("Discard") } },
+        dismissButton = { TextButton(onClick = onKeep) { Text("Keep editing") } })
+}
 
 internal fun CareState.connectionNotice(online: Boolean): String? = when {
     offline || !online -> "This phone can't reach Fytorium. You can still see the plants saved on this phone. Reconnect and refresh to make changes."

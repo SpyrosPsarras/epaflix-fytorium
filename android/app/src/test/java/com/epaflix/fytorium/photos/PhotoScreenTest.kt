@@ -8,7 +8,6 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
-import androidx.core.view.drawToBitmap
 import com.epaflix.fytorium.*
 import com.epaflix.fytorium.plants.*
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -17,6 +16,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @OptIn(ExperimentalTestApi::class)
@@ -61,6 +61,37 @@ class PhotoScreenTest {
         compose.onNodeWithText("13 Oct 2026 \u00b7 Cover photo").assertExists()
         compose.onAllNodes(hasText("2026-10-13", substring = true)).assertCountEquals(0)
     }
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun photoDeleteScrollsInsideInLandscapeWithLargeText() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            PhotoScreen(PhotoState(listOf(photo), loaded = true), true, "Synthetic sprout", 0)
+        } }
+        compose.onNodeWithText("Delete photo update").performScrollTo().performClick()
+        compose.onNodeWithText("Delete this photo update of Synthetic sprout and its photos?").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Confirm delete").assertIsDisplayed()
+        compose.checkDialogTextScale("Confirm delete", 1.3f)
+        compose.onNodeWithText("Cancel").assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun photoDateIsReachableInLandscapeWithLargeText() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", 0)
+        } }
+        compose.onNodeWithText("Add a photo update").performClick()
+        compose.onNodeWithText("Taken on: 13 Oct 2026").performScrollTo().performClick()
+        compose.onNodeWithText("Thursday, October 1, 2026").performScrollTo().performClick()
+        compose.onNodeWithText("Thursday, October 1, 2026").assertIsSelected()
+        compose.checkDialogTextScale("Set date", 1.3f)
+        compose.onNodeWithContentDescription("Switch to text input mode").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Date, MM/DD/YYYY").performScrollTo().assertIsDisplayed()
+        compose.checkDialogTextScale("Set date", 1.3f)
+        compose.onNodeWithText("Set date").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Taken on: 1 Oct 2026").assertExists()
+    }
+
     @Test fun takenDateKeepsItsUnconfirmedSelectionAcrossRecreation() {
         val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", 0) } }
@@ -98,9 +129,9 @@ class PhotoScreenTest {
         if (restore) restoration.emulateSavedInstanceStateRestore()
         if (system) compose.runOnIdle { checkNotNull(back).onBackPressed() }
         else compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("Discard photo update for Synthetic sprout?").assertExists()
+        compose.assertDiscard("Your photo update for Synthetic sprout is not saved yet.")
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Discard photo update for Synthetic sprout?").assertExists()
+        compose.assertDiscard("Your photo update for Synthetic sprout is not saved yet.")
         compose.onNodeWithText("Keep editing").performClick()
         if (selected == 0 && !health && !date) compose.onNodeWithText("Synthetic draft").assertExists()
         compose.onNodeWithContentDescription("Back").performClick()
@@ -328,7 +359,7 @@ class PhotoScreenTest {
             compose.onNodeWithText("Choose photos").performClick()
             compose.onNodeWithText("Selected photos: 1").assertExists()
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Discard photo update for Synthetic sprout?").assertExists()
+            compose.assertDiscard("Your photo update for Synthetic sprout is not saved yet.")
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { app.contentResolver.persistedUriPermissions.isEmpty() }
             compose.onNodeWithText("Add a photo update").performClick()
@@ -371,9 +402,7 @@ class PhotoScreenTest {
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
             val file = "src/test/screenshots/a06-$name-${if (dark) "dark" else "light"}.png"
             if (name in listOf("date", "delete")) {
-                val layout = compose.onNode(isDialog()).fetchSemanticsNode().layoutInfo
-                val owner = layout.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layout) as android.view.View
-                compose.runOnIdle { owner.drawToBitmap().captureRoboImage(file) }
+                compose.captureDialog(file)
             } else compose.onRoot().captureRoboImage(file)
         }
         compose.onNodeWithText("Use as cover").performScrollTo().assertHeightIsAtLeast(48.dp)
