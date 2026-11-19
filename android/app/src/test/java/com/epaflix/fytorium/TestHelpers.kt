@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
@@ -85,14 +86,17 @@ internal fun ComposeTestRule.captureDialog(file: String) {
         val lines = if (node.config.contains(SemanticsActions.GetTextLayoutResult)) {
             val text = node.textLayout()
             val bounds = node.boundsInRoot
-            listOf(JSONObject().put("text", text.layoutInput.text.text).put("lines", JSONArray((0 until text.lineCount).map { line ->
+            listOf(JSONObject().put("text", text.layoutInput.text.text).put("bounds", bounds.toString()).put("lines", JSONArray((0 until text.lineCount).map { line ->
                 JSONObject().put("text", text.layoutInput.text.text.substring(text.getLineStart(line), text.getLineEnd(line, visibleEnd = true)))
                     .put("visible", node.positionInRoot.y + text.getLineBottom(line) > bounds.top && node.positionInRoot.y + text.getLineTop(line) < bounds.bottom && bounds.height > 0)
             })))
         } else emptyList()
         return lines + node.children.flatMap(::textLines)
     }
-    println("DIALOG_SEMANTICS " + JSONObject().put("file", file).put("nodes", JSONArray(textLines(dialog))))
+    val configuration = org.robolectric.RuntimeEnvironment.getApplication().resources.configuration
+    val surface = onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true).fetchSemanticsNode()
+    println("DIALOG_SEMANTICS " + JSONObject().put("file", file).put("windowDp", JSONArray(listOf(configuration.screenWidthDp, configuration.screenHeightDp)))
+        .put("dialogBounds", dialog.boundsInRoot.toString()).put("surfaceBounds", surface.boundsInRoot.toString()).put("nodes", JSONArray(textLines(dialog))))
     val layout = dialog.layoutInfo
     val owner = layout.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layout) as android.view.View
     runOnIdle { owner.drawToBitmap().captureRoboImage(file) }

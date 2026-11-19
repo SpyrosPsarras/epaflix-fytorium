@@ -6,6 +6,7 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,6 +45,64 @@ class DialogBodyTest {
         assertTrue("Input mode must be compact: calendar=$calendarHeight input=$inputHeight", inputHeight < 400f)
         compose.onNodeWithContentDescription("Switch to calendar input mode").performClick()
         assertEquals(calendarHeight, compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.height, 1f)
+    }
+
+    @Test fun dividersFollowScrollableEdgesAndDisappearWhenContentFits() {
+        val height = mutableStateOf(1200.dp)
+        compose.setContent { FytoriumTheme {
+            AlertDialog(onDismissRequest = {}, text = { DialogBody {
+                Text("Start")
+                Box(Modifier.height(height.value))
+                Text("End")
+            } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } })
+        } }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        compose.onNodeWithText("End").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertIsDisplayed()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        compose.onNodeWithText("Start").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        compose.runOnIdle { height.value = 20.dp }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+    }
+
+    @Test fun heldHeightDividersFollowGrowingContentWithoutMovingButtons() {
+        val height = mutableStateOf(120.dp)
+        compose.setContent { FytoriumTheme {
+            AlertDialog(modifier = Modifier.width(320.dp), onDismissRequest = {}, text = { DialogBody(keepOpeningHeight = true) {
+                Text("Start")
+                Box(Modifier.height(height.value))
+                Text("End")
+            } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } },
+                dismissButton = { TextButton(onClick = {}) { Text("Cancel") } })
+        } }
+        val buttons = listOf("Cancel", "Confirm")
+        val openingBounds = buttons.map { compose.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        fun checkButtons() {
+            assertEquals("Content changes and scrolling must not move the buttons", openingBounds,
+                buttons.map { compose.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot })
+        }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        compose.runOnIdle { height.value = 1200.dp }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        checkButtons()
+        compose.onNodeWithText("End").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertIsDisplayed()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        checkButtons()
+        compose.onNodeWithText("Start").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        checkButtons()
+        compose.runOnIdle { height.value = 120.dp }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        checkButtons()
     }
 
     @Test fun shrinkingContentLeavesNoEmptyBand() {

@@ -513,19 +513,19 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
         dismissButton = { TextButton(onClick = { burying = false }) { Text("Cancel") } })
     if (deleting) {
         var confirmation by rememberSaveable(plant.id) { mutableStateOf("") }
-        AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = { deleting = false },
+        AlertDialog(modifier = Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth(), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = { deleting = false },
             title = { DialogTitle("Permanently delete this plant?") },
             text = {
                 DialogBody {
-                    Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
                     Text("Type ${plant.displayName} to confirm.")
                     OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Plant name") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
                 }
             },
             // The server checks the exact name, so a match that ignores case and outer spaces sends the name itself.
             confirmButton = { TextButton(onClick = { onCommand("delete", JSONObject().put("confirm_name", plant.displayName)); deleting = false },
-                enabled = enabled && confirmation.trim().equals(plant.displayName.trim(), ignoreCase = true)) { Text("Permanently delete plant") } },
-            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel deletion") } })
+                enabled = enabled && confirmation.trim().equals(plant.displayName.trim(), ignoreCase = true)) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel") } })
     }
 }
 

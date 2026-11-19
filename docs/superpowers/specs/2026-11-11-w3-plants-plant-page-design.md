@@ -124,8 +124,13 @@ From council-w3-opus-r4.md on 3e05fae (Sol scored every item 10 on the same buil
 
 ## Council round 8 amendment (2026-11-17)
 
-- C36 (W3-opus-29, S2). The permanent-delete confirmation always opens empty: cancelling, Back or dismissing the dialog clears the typed name, so Permanently delete is never enabled when the dialog appears. The typed name still survives rotation and process recreation while the dialog stays open (C19).
+- C36 (W3-opus-29, S2). The permanent-delete confirmation always opens empty: cancelling, Back or dismissing the dialog clears the typed name, so its delete button ("Delete" since C39) is never enabled when the dialog appears. The typed name still survives rotation and process recreation while the dialog stays open (C19).
 
 ## Council round 9 amendment (2026-11-17)
 
 - C37 (W3-opus-30). Every W3 dialog stays usable in landscape and at 1.3x text: its body scrolls inside the dialog when it does not fit, text fields keep their full height and show what is typed, and the buttons stay visible. Applies to the delete-plant confirmation and every other dialog reachable from the Plants tab and the plant page.
+
+## Council round 10 amendment (2026-11-19)
+
+- C38 (W3-opus-31, S18). The remove-override question names the field in its body, which is never cut: title "Remove this override?", body "Every <species> goes back to the default for <field>." with the field label in full.
+- C39 (W3-opus-32, S10, F15). The delete-plant confirmation shows "Type <name> to confirm." and the full "Plant name" field together, without scrolling, when it opens in landscape (800×360 dp) at 1.0 and 1.3x text with a name up to 60 characters. The buttons are "Cancel" and "Delete" in one row; the body order is the instruction, the field, then what is deleted. The dialog keeps one width while typing and may be wider than 320 dp when the window allows (up to 560 dp). Every W3 dialog body that scrolls shows a divider on each edge that has more content, so a cut-off body never looks complete.

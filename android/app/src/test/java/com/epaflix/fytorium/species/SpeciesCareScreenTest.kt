@@ -52,7 +52,7 @@ class SpeciesCareScreenTest {
         compose.onNodeWithText("Your watering interval override for Synthetic mistleaf is not saved yet.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Discard").assertIsDisplayed().performClick()
         compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
-        compose.onNodeWithText("Every Synthetic mistleaf goes back to the value from its source data or Fytorium's rule.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Every Synthetic mistleaf goes back to the default for watering interval in days.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Confirm reset").assertIsDisplayed()
         compose.checkDialogTextScale("Confirm reset", 1.3f)
         compose.onNodeWithText("Cancel").assertIsDisplayed()
@@ -67,8 +67,11 @@ class SpeciesCareScreenTest {
             for (label in careLabels.values) {
                 val field = label.replaceFirstChar(Char::lowercase)
                 compose.onNodeWithText("Remove override for $field").performScrollTo().performClick()
-                val body = "Every ${name ?: current.value.canonicalName} goes back to the value from its source data or Fytorium's rule."
-                compose.onNodeWithText(body).performScrollTo().assertIsDisplayed()
+                val body = "Every ${name ?: current.value.canonicalName} goes back to the default for $field."
+                compose.onNodeWithText("Remove this override?").assertIsDisplayed()
+                val text = compose.onNodeWithText(body).performScrollTo().assertIsDisplayed().fetchSemanticsNode().textLayout()
+                assertEquals(body, text.layoutInput.text.text)
+                assertTrue("The full field label is never ellipsized", (0 until text.lineCount).none(text::isLineEllipsized))
                 compose.onNodeWithText("Cancel").performClick()
             }
         }
@@ -116,7 +119,7 @@ class SpeciesCareScreenTest {
         compose.onNode(isDialog()).assertDoesNotExist()
         compose.runOnIdle { state.value = SpeciesCareState(card = own, loaded = true) }
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Confirm reset").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Every Synthetic mistleaf goes back to the value from its source data or Fytorium's rule.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Every Synthetic mistleaf goes back to the default for watering interval in days.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Confirm reset").assertIsEnabled()
     }
 

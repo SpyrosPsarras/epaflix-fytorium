@@ -91,10 +91,10 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         assertEquals("active", JSONObject(json("/api/plants/$plantId")).getString("status"))
         settings()
         click("Delete plant")
-        compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
+        compose.onNodeWithText("Delete").assertIsNotEnabled()
         compose.onNode(hasText("Type Synthetic A05 edited sprout to confirm.") and hasAnyAncestor(isDialog())).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Plant name").performTextInput("Synthetic A05 edited sprout")
-        compose.onNodeWithText("Permanently delete plant").performClick()
+        compose.onNodeWithText("Delete").performClick()
         compose.waitForState("Plant deleted and detail cleared", 30_000) { app.repository.state.value.plants.none { it.id == plantId } && app.repository.state.value.detail == null && !app.repository.state.value.busy }
         println("A05 E2E PASS: typo search, explicit confirmation, native add/edit with pot and placement, graveyard/restore, confirmed permanent deletion")
     } catch (error: Throwable) { failure = error; throw error } finally {

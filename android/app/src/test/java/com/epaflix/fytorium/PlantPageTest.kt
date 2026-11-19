@@ -2923,7 +2923,7 @@ class PlantPageTest {
         compose.onNodeWithText("Delete plant").performClick()
         compose.assertDialogBody("Type Synthetic fern to confirm.")
         compose.onNode(hasText("Plant name") and hasSetTextAction()).performTextInput("  synthetic FERN ")
-        compose.onNodeWithText("Permanently delete plant").assertIsEnabled().performClick()
+        compose.onNodeWithText("Delete").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf("delete:Synthetic fern"), sent) }
     }
 
@@ -4041,6 +4041,31 @@ class PlantPageTest {
         compose.onNodeWithText("Birthday: 1 Jan 2030").assertExists()
     }
 
+    @Test fun deleteConfirmationKeepsMarginsOn360dpPortrait() = portraitDelete(360)
+
+    @Config(qualifiers = "w411dp-h800dp-mdpi")
+    @Test fun deleteConfirmationKeepsMarginsOn411dpPortrait() = portraitDelete(411)
+
+    private fun portraitDelete(windowWidth: Int) {
+        compose.setContent { FytoriumTheme {
+            assertEquals(windowWidth, androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp)
+            PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Delete plant").performClick()
+        val surface = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true)
+        val before = surface.fetchSemanticsNode().boundsInRoot
+        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
+        val left = (windowWidth - dialog.width) / 2 + before.left
+        val right = windowWidth - (windowWidth - dialog.width) / 2 - before.right
+        assertTrue("Left margin must be at least 24 dp, got $left in $windowWidth dp", left >= 24f)
+        assertTrue("Right margin must be at least 24 dp, got $right in $windowWidth dp", right >= 24f)
+        compose.onNode(hasText("Plant name") and hasSetTextAction()).performTextInput(plant.displayName)
+        assertEquals("Typing keeps the dialog surface bounds", before, surface.fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithText("Delete").assertIsEnabled()
+        compose.captureDialog("src/test/screenshots/native-plants-delete-portrait-$windowWidth.png")
+    }
+
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
     @Test fun deleteConfirmationKeepsTypedNameVisibleInLandscape() = landscapeDelete(1f)
 
@@ -4057,7 +4082,9 @@ class PlantPageTest {
     @Test fun longNameDiscardStaysUsableInLandscapeWithLargeText() = longNameDialog("discard")
 
     private fun longNameDialog(kind: String) {
-        val name = "Synthetic fern ".repeat(15).take(200)
+        val name = "Synthetic fern ".repeat(13) + "frond"
+        assertEquals(200, name.length)
+        assertEquals(name.trim(), name)
         val title = when (kind) {
             "delete" -> "Permanently delete this plant?"
             "graveyard" -> "Move to the graveyard?"
@@ -4096,8 +4123,8 @@ class PlantPageTest {
         } else {
             compose.onNode(hasText(name, substring = true) and hasAnyAncestor(hasScrollAction())).performScrollTo().assertExists()
         }
-        val confirm = when (kind) { "delete" -> "Permanently delete plant"; "graveyard" -> "Move to graveyard"; else -> "Discard" }
-        val cancel = when (kind) { "delete" -> "Cancel deletion"; "graveyard" -> "Cancel"; else -> "Keep editing" }
+        val confirm = when (kind) { "delete" -> "Delete"; "graveyard" -> "Move to graveyard"; else -> "Discard" }
+        val cancel = when (kind) { "delete" -> "Cancel"; "graveyard" -> "Cancel"; else -> "Keep editing" }
         compose.onNodeWithText(confirm).assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText(cancel).assertIsDisplayed()
         val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
@@ -4106,23 +4133,74 @@ class PlantPageTest {
         compose.captureDialog("src/test/screenshots/native-plants-$kind-long-name-landscape-large.png")
     }
 
-    private fun landscapeDelete(fontScale: Float) {
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun sixtyCharacterDeleteOpensFullyInLandscape() = landscapeDelete(1f, "Synthetic fern ".repeat(3) + "Synthetic frond")
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun sixtyCharacterDeleteOpensFullyWithLargeText() = landscapeDelete(1.3f, "Synthetic fern ".repeat(3) + "Synthetic frond")
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun overflowingDeleteShowsOnlyEdgesWithMoreContent() = overflowingDelete(1.3f)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun overflowingDeleteShowsEdgesWithNormalText() = overflowingDelete(1f)
+
+    private fun overflowingDelete(fontScale: Float) {
+        val name = "Synthetic fern ".repeat(13) + "frond"
+        assertEquals(200, name.length)
+        assertEquals(name.trim(), name)
         RuntimeEnvironment.setFontScale(fontScale)
         compose.setContent { CheckLandscape(fontScale); FytoriumTheme {
-            PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {})
+            PlantDetailScreen(owner.copy(today = today), detail().copy(plant = plant.copy(displayName = name)), {}, { _, _ -> }, {}, {})
+        } }
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Delete plant").performClick()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithText("This permanently deletes $name, all care history and photos. It cannot be undone.").performScrollTo()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-above").assertIsDisplayed()
+        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
+        val field = compose.onNode(hasText("Plant name") and hasSetTextAction())
+        val buttons = listOf("Cancel", "Delete").map { compose.onNode(hasText(it) and hasAnyAncestor(isDialog())).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        assertEquals("Buttons share one row", buttons[0].center.y, buttons[1].center.y, 1f)
+        field.performScrollTo().performTextInput(name)
+        field.assertTextContains(name)
+        assertEquals("Typing keeps the dialog width", dialog.width, compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.width, 0f)
+    }
+
+    private fun landscapeDelete(fontScale: Float, name: String = "Synthetic fern") {
+        assertEquals(name.trim(), name)
+        assertTrue("The fixture has exactly 14 or 60 characters", name.length in listOf(14, 60))
+        RuntimeEnvironment.setFontScale(fontScale)
+        compose.setContent { CheckLandscape(fontScale); FytoriumTheme {
+            PlantDetailScreen(owner.copy(today = today), detail().copy(plant = plant.copy(displayName = name)), {}, { _, _ -> }, {}, {})
         } }
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
         compose.checkDialogTextScale("Permanently delete this plant?", fontScale)
-        compose.onNodeWithText("Type Synthetic fern to confirm.").assertExists()
+        val instruction = compose.onNodeWithText("Type $name to confirm.").assertIsDisplayed().fetchSemanticsNode()
         val field = compose.onNode(hasText("Plant name") and hasSetTextAction())
-        field.performTextInput("Synthetic fern")
-        field.assertTextContains("Synthetic fern")
+        field.assertIsDisplayed()
+        val scroll = compose.onNode(hasScrollAction() and hasAnyAncestor(isDialog())).fetchSemanticsNode()
+        val viewport = scroll.boundsInRoot
+        val instructionLayout = instruction.textLayout()
+        assertTrue("The full instruction is visible on open", instruction.positionInRoot.y >= viewport.top && instruction.positionInRoot.y + instructionLayout.size.height <= viewport.bottom)
+        val openingField = field.fetchSemanticsNode()
+        assertTrue("The whole field is visible on open", openingField.positionInRoot.y >= viewport.top && openingField.positionInRoot.y + openingField.size.height <= viewport.bottom)
+        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
+        val surface = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true)
+        assertEquals("Landscape keeps the full 560 dp surface width", 560f, surface.fetchSemanticsNode().boundsInRoot.width, 0f)
+        val buttons = listOf("Cancel", "Delete").map { compose.onNode(hasText(it) and hasAnyAncestor(isDialog())).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        assertEquals("Buttons share one row", buttons[0].center.y, buttons[1].center.y, 1f)
+        field.performTextInput(name)
+        field.assertTextContains(name)
+        assertEquals("Typing keeps the dialog width", dialog.width, compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.width, 0f)
         assertEquals("The dialog uses the requested text scale", fontScale, field.fetchSemanticsNode().textLayout().layoutInput.density.fontScale, 0.01f)
         assertTrue("The confirmation field must not be compressed", field.fetchSemanticsNode().boundsInRoot.height >= 56f)
         field.performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Permanently delete plant").assertIsDisplayed().assertIsEnabled()
-        compose.captureDialog("src/test/screenshots/native-plants-delete-landscape-${if (fontScale == 1f) "normal" else "large"}.png")
+        compose.onNodeWithText("Delete").assertIsDisplayed().assertIsEnabled()
+        compose.captureDialog("src/test/screenshots/native-plants-delete-landscape-${if (fontScale == 1f) "normal" else "large"}${if (name.length == 60) "-60" else ""}.png")
     }
 
     @Test fun deleteConfirmationIsEmptyAfterCancel() = closedDeleteConfirmationReopensEmpty("cancel")
@@ -4137,12 +4215,12 @@ class PlantPageTest {
             compose.onNodeWithText("Delete plant").performClick()
         }
         open()
-        compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
+        compose.onNodeWithText("Delete").assertIsNotEnabled()
         compose.assertDialogBody("Type Synthetic fern to confirm.")
         compose.onNodeWithText("Plant name").performTextInput("Synthetic fern")
-        compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
+        compose.onNodeWithText("Delete").assertIsEnabled()
         when (close) {
-            "cancel" -> compose.onNodeWithText("Cancel deletion").performClick()
+            "cancel" -> compose.onNodeWithText("Cancel").performClick()
             "back" -> {
                 val dialog = checkNotNull(org.robolectric.shadows.ShadowDialog.getLatestDialog().window).decorView
                 compose.runOnIdle { checkNotNull(dialog.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher.onBackPressed() }
@@ -4158,7 +4236,7 @@ class PlantPageTest {
         }
         compose.onNodeWithText("Permanently delete this plant?").assertDoesNotExist()
         open()
-        compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
+        compose.onNodeWithText("Delete").assertIsNotEnabled()
         compose.assertDialogBody("Type Synthetic fern to confirm.")
         compose.onNodeWithText("Plant name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
         compose.runOnIdle { assertTrue("closing never sends a delete", sent.isEmpty()) }
@@ -4171,12 +4249,12 @@ class PlantPageTest {
         compose.onNodeWithText("Delete plant").performClick()
         compose.assertDialogBody("Type Synthetic fern to confirm.")
         compose.onNodeWithText("Plant name").performTextInput("Synthetic fern")
-        compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
+        compose.onNodeWithText("Delete").assertIsEnabled()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("Permanently delete this plant?").assertIsDisplayed()
         compose.assertDialogBody("Type Synthetic fern to confirm.")
         compose.onNodeWithText("Plant name").assertTextContains("Synthetic fern")
-        compose.onNodeWithText("Permanently delete plant").assertIsEnabled()
+        compose.onNodeWithText("Delete").assertIsEnabled()
     }
 
     @Test fun editPlantDraftSurvivesRecreationAndBackStillAsks() = plantDraftSurvivesRecreation("Edit plant", "Name", "Synthetic glow")

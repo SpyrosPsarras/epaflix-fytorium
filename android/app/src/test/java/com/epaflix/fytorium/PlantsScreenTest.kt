@@ -420,10 +420,10 @@ class PlantsScreenTest {
         compose.onNodeWithText("Undo watering").assertDoesNotExist()
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Delete plant").performClick()
-        compose.onNodeWithText("Permanently delete plant").assertIsNotEnabled()
+        compose.onNodeWithText("Delete").assertIsNotEnabled()
         compose.assertDialogBody("Type Synthetic fern to confirm.")
         compose.onNodeWithText("Plant name").performTextInput("Synthetic fern")
-        compose.onNodeWithText("Permanently delete plant").assertIsEnabled().performClick()
+        compose.onNodeWithText("Delete").assertIsEnabled().performClick()
         assertEquals("Synthetic fern", deleted)
     }
     @Test fun editingFieldsStayEnabledAndKeepUnsavedInputDuringAnActualDetailRefresh() {
@@ -587,7 +587,7 @@ class PlantsScreenTest {
             val file = "src/test/screenshots/native-plants-$name-${if (dark) "dark" else "light"}.png"
             if (name in listOf("delete", "birthday", "bury")) compose.captureDialog(file)
             else compose.onRoot().captureRoboImage(file)
-            if (name == "delete") compose.onNodeWithText("Cancel deletion").performClick()
+            if (name == "delete") compose.onNodeWithText("Cancel").performClick()
             if (name == "birthday" || name == "bury") compose.onNodeWithText("Cancel").performClick()
             if (name == "menu") compose.onNodeWithText("This plant's schedule").performClick()
             if (name == "search") {

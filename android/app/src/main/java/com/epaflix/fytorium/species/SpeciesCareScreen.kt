@@ -257,8 +257,8 @@ import org.json.JSONObject
         if (discarding) com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", discardBody, onKeep = { discarding = false }) { close() }
     } }
     if (canEdit && state.card != null) resetting?.let { field ->
-        AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { DialogTitle("Remove override for ${lower(careLabels.getValue(field))}?") },
-            text = { DialogBody(keepOpeningHeight = true) { Text("Every ${state.card.commonName ?: state.card.canonicalName} goes back to the value from its source data or Fytorium's rule."); CareMessage(state.error) } },
+        AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { DialogTitle("Remove this override?") },
+            text = { DialogBody(keepOpeningHeight = true) { Text("Every ${state.card.commonName ?: state.card.canonicalName} goes back to the default for ${lower(careLabels.getValue(field))}."); CareMessage(state.error) } },
             confirmButton = { TextButton(onClick = { scope.launch { submitting = true; try { if (onReset(field)) resetting = null } finally { submitting = false } } }, enabled = enabled) { Text("Confirm reset") } },
             dismissButton = { TextButton(onClick = { resetting = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
