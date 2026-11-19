@@ -1,7 +1,9 @@
 package com.epaflix.fytorium.species
 
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -53,8 +55,8 @@ class SpeciesCareScreenTest {
         compose.onNodeWithText("Discard").assertIsDisplayed().performClick()
         compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
         compose.onNodeWithText("Every Synthetic mistleaf goes back to the default for watering interval in days.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Confirm reset").assertIsDisplayed()
-        compose.checkDialogTextScale("Confirm reset", 1.3f)
+        compose.onNodeWithText("Remove").assertIsDisplayed()
+        compose.checkDialogTextScale("Remove", 1.3f)
         compose.onNodeWithText("Cancel").assertIsDisplayed()
     }
 
@@ -107,6 +109,150 @@ class SpeciesCareScreenTest {
         }
     }
 
+    @Test fun carePlaceSurvivesSavedState() = carePlaceSurvives()
+    @Test fun carePlaceSurvivesThemeChange() = carePlaceSurvives(changeTheme = true)
+    @Test fun carePlaceSurvivesFontChange() = carePlaceSurvives(changeFont = true)
+    @Config(qualifiers = "w800dp-h800dp-mdpi")
+    @Test fun carePlaceSurvivesRotation() = carePlaceSurvives(rotate = true)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun overrideDialogScrollsOnlyForRealContent() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        val state = mutableStateOf(SpeciesCareState(card = card(), loaded = true))
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme { SpeciesCareScreen(state.value) } }
+        compose.onNodeWithText("Override watering interval in days").performScrollTo().performClick()
+        compose.checkDialogTextScale("Save override", 1.3f)
+        val label = compose.onNodeWithText("Override value for watering interval in days")
+        val days = compose.onNode(hasText("Days") and hasSetTextAction())
+        val below = compose.onNodeWithTag("dialog-more-below")
+        val above = compose.onNodeWithTag("dialog-more-above")
+        val body = compose.onNode(hasScrollAction() and hasAnyAncestor(isDialog()))
+        below.assertDoesNotExist()
+        above.assertDoesNotExist()
+        val openingLabel = label.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val openingDays = days.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 300f) }
+        assertEquals(openingLabel, label.fetchSemanticsNode().boundsInRoot)
+        assertEquals(openingDays, days.fetchSemanticsNode().boundsInRoot)
+        above.assertDoesNotExist()
+        compose.captureDialog("src/test/screenshots/native-species-override-landscape-large.png")
+        val error = "This value could not be saved. Check the watering interval and try again."
+        compose.runOnIdle { state.value = state.value.copy(error = error) }
+        compose.onNodeWithText(error).performScrollTo().assertIsDisplayed()
+        above.assertIsDisplayed()
+        below.assertDoesNotExist()
+        compose.captureDialog("src/test/screenshots/native-species-override-error-landscape-large.png")
+        label.performScrollTo().assertIsDisplayed()
+        above.assertDoesNotExist()
+        assertTrue(below.assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top > days.assertIsDisplayed().fetchSemanticsNode().boundsInRoot.bottom)
+        compose.runOnIdle { state.value = state.value.copy(error = null) }
+        below.assertDoesNotExist()
+        assertEquals(openingLabel, label.fetchSemanticsNode().boundsInRoot)
+    }
+
+    private fun carePlaceSurvives(changeTheme: Boolean = false, changeFont: Boolean = false, rotate: Boolean = false) {
+        val loaded = SpeciesCareState(card = card(), loaded = true)
+        var dark by mutableStateOf(false)
+        var fontScale by mutableFloatStateOf(1f)
+        var landscape by mutableStateOf(false)
+        var waiting by mutableStateOf(false)
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent {
+            // Only a recreated screen waits for a new species card.
+            val state = remember { mutableStateOf(if (waiting) SpeciesCareState(loading = true) else loaded) }
+            if (!waiting) SideEffect { state.value = loaded }
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+                FytoriumTheme(dark) { Box(Modifier.size(if (landscape) 800.dp else 360.dp, if (landscape) 360.dp else 800.dp)) {
+                    SpeciesCareScreen(state.value, unmatched = false)
+                } }
+            }
+        }
+        compose.onNodeWithText("Sources").performScrollTo().performClick()
+        compose.onNodeWithText("No value yet (13)").performScrollTo().performClick()
+        val field = compose.onNodeWithTag("care:hardinessC")
+        val page = compose.onNode(hasScrollAction())
+        field.performScrollTo()
+        fun offset() = field.fetchSemanticsNode().boundsInRoot.top - page.fetchSemanticsNode().boundsInRoot.top
+        val delta = offset() - 12f
+        page.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, delta) }
+        val openingOffset = offset()
+        assertEquals(12f, openingOffset, 1f)
+        compose.runOnIdle { waiting = true }
+        restoration.emulateSavedInstanceStateRestore()
+        field.assertDoesNotExist()
+        compose.runOnIdle { dark = changeTheme; fontScale = if (changeFont) 1.3f else 1f; landscape = rotate; waiting = false }
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("care:hardinessC").fetchSemanticsNodes().isNotEmpty() }
+        field.assertIsDisplayed()
+        assertEquals(openingOffset, offset(), 1f)
+        compose.onNodeWithText("GBIF key: 910002").assertExists()
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun sourcesPlaceSurvivesAnAddedCareValueAfterRecreation() {
+        val original = card()
+        val profile = JSONObject(original.profile.toString()).put("fertilizingIntervalDays", JSONObject().put("value", 21).put("source", "override"))
+        var reload by mutableStateOf(false)
+        var loaded by mutableStateOf(false)
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent {
+            val recreated = remember { reload }
+            val state = when {
+                !recreated -> SpeciesCareState(card = original, loaded = true)
+                !loaded -> SpeciesCareState(loading = true)
+                else -> SpeciesCareState(card = original.copy(profile = profile), loaded = true)
+            }
+            FytoriumTheme { SpeciesCareScreen(state, unmatched = false) }
+        }
+        compose.onNodeWithText("Sources").performScrollTo().performClick()
+        val gbif = compose.onNodeWithText("GBIF key: 910002")
+        val page = compose.onNode(hasScrollAction())
+        fun offset() = gbif.fetchSemanticsNode().boundsInRoot.top - page.fetchSemanticsNode().boundsInRoot.top
+        gbif.performScrollTo()
+        val delta = offset() - 12f
+        page.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, delta) }
+        assertEquals(12f, offset(), 1f)
+        compose.runOnIdle { reload = true }
+        restoration.emulateSavedInstanceStateRestore()
+        gbif.assertDoesNotExist()
+        compose.runOnIdle { loaded = true }
+        gbif.assertIsDisplayed()
+        assertEquals(12f, offset(), 1f)
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun removingTheSavedSourceRowRestoresItsPreviousIndex() {
+        val reloaded = card()
+        val original = reloaded.copy(profile = JSONObject(reloaded.profile.toString())
+            .put("fertilizingIntervalDays", JSONObject().put("value", 21).put("source", "override")))
+        var recreate by mutableStateOf(false)
+        var loaded by mutableStateOf(false)
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        restoration.setContent {
+            val state = when {
+                !remember { recreate } -> SpeciesCareState(card = original, loaded = true)
+                !loaded -> SpeciesCareState(loading = true)
+                else -> SpeciesCareState(card = reloaded, loaded = true)
+            }
+            FytoriumTheme { Box(Modifier.size(800.dp, 240.dp)) { SpeciesCareScreen(state, unmatched = false) } }
+        }
+        compose.onNodeWithText("Sources").performScrollTo().performClick()
+        val removed = compose.onNodeWithText("Fertilizing interval in days: your value")
+        val successor = compose.onNodeWithText("Open Plantbook: no match")
+        val page = compose.onNode(hasScrollAction())
+        fun offset(row: SemanticsNodeInteraction) = row.fetchSemanticsNode().boundsInRoot.top - page.fetchSemanticsNode().boundsInRoot.top
+        removed.performScrollTo()
+        val delta = offset(removed) - 6f
+        page.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, delta) }
+        assertEquals(6f, offset(removed), 1f)
+        compose.runOnIdle { recreate = true }
+        restoration.emulateSavedInstanceStateRestore()
+        successor.assertDoesNotExist()
+        compose.runOnIdle { loaded = true }
+        removed.assertDoesNotExist()
+        successor.assertIsDisplayed()
+        assertEquals(6f, offset(successor), 1f)
+    }
+
     @Test fun aRestoredResetWaitsForTheSpeciesCard() {
         val own = card().let { it.copy(profile = JSONObject(it.profile.toString()).apply { getJSONObject("wateringIntervalDays").put("source", "override") }) }
         val state = mutableStateOf(SpeciesCareState(card = own, loaded = true))
@@ -118,9 +264,9 @@ class SpeciesCareScreenTest {
         compose.onNode(hasText("null", substring = true)).assertDoesNotExist()
         compose.onNode(isDialog()).assertDoesNotExist()
         compose.runOnIdle { state.value = SpeciesCareState(card = own, loaded = true) }
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Confirm reset").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Remove").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Every Synthetic mistleaf goes back to the default for watering interval in days.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Confirm reset").assertIsEnabled()
+        compose.onNodeWithText("Remove").assertIsEnabled()
     }
 
     @Test fun anOverrideDiscardQuestionSurvivesRecreation() {
@@ -139,7 +285,7 @@ class SpeciesCareScreenTest {
         restoration.setContent { FytoriumTheme { SpeciesCareScreen(SpeciesCareState(card = own, loaded = true)) } }
         compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Confirm reset").assertIsDisplayed()
+        compose.onNodeWithText("Remove").assertIsDisplayed()
     }
 
     @Test fun anOfflineRecreatedOverrideStillAsksAndDoesNotLeakIntoAnotherField() {
@@ -219,7 +365,7 @@ class SpeciesCareScreenTest {
         compose.onNodeWithText("Watering interval in days: your value").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
         capture("species-reset")
-        compose.onNodeWithText("Confirm reset").performClick()
+        compose.onNodeWithText("Remove").performClick()
         compose.runOnIdle { assertEquals("wateringIntervalDays", reset); online.value = false }
         compose.onNodeWithText("Override watering interval in days").performScrollTo().assertIsNotEnabled()
         compose.onNode(hasText("Offline") and hasClickAction()).assertIsDisplayed()
@@ -284,7 +430,7 @@ class SpeciesCareScreenTest {
         val overridden = card().let { it.copy(profile = JSONObject(it.profile.toString()).put("wateringIntervalDays", JSONObject("""{"value":9,"source":"override","fetchedAt":null}"""))) }
         val state = mutableStateOf(SpeciesCareState(card = overridden, loaded = true))
         compose.setContent { FytoriumTheme { SpeciesCareScreen(state.value) } }
-        for ((open, confirm) in listOf("Override watering interval in days" to "Save override", "Remove override for watering interval in days" to "Confirm reset")) {
+        for ((open, confirm) in listOf("Override watering interval in days" to "Save override", "Remove override for watering interval in days" to "Remove")) {
             compose.runOnIdle { state.value = state.value.copy(error = null, blocked = false) }
             compose.onNodeWithText(open).performScrollTo().performClick()
             val before = compose.onNodeWithText(confirm).fetchSemanticsNode().boundsInRoot
@@ -446,7 +592,7 @@ class SpeciesCareScreenTest {
             val failure = "Could not reach the server. Try again."
             fun dialog() = compose.onAllNodes(hasAnyAncestor(isDialog())).fetchSemanticsNodes().map {
                 it.config.getOrNull(SemanticsProperties.Text)?.joinToString() to it.config.contains(SemanticsProperties.Disabled) }
-            for ((open, confirm) in listOf("Override watering interval in days" to "Save override", "Remove override for watering interval in days" to "Confirm reset")) {
+            for ((open, confirm) in listOf("Override watering interval in days" to "Save override", "Remove override for watering interval in days" to "Remove")) {
                 compose.waitUntil(5_000) { compose.onAllNodes(hasText(open) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText(open).performScrollTo().performClick()
                 compose.onNode(hasText(confirm) and isEnabled()).assertIsDisplayed()

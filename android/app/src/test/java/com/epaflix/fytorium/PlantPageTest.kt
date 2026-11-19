@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
@@ -2893,7 +2894,7 @@ class PlantPageTest {
                 compose.onAllNodes(hasText("Override saved", substring = true)).assertCountEquals(0)
                 compose.onAllNodes(hasText("fetched", substring = true)).assertCountEquals(0)
                 compose.onNodeWithText("Remove override for watering interval in days").performScrollTo().performClick()
-                compose.onNodeWithText("Confirm reset").performClick()
+                compose.onNodeWithText("Remove").performClick()
                 compose.waitUntil(10_000) { compose.onAllNodesWithText("Removed your watering interval for Synthetic mistleaf").fetchSemanticsNodes().isNotEmpty() }
                 compose.waitUntil(5_000) { compose.onAllNodesWithText("Your value").fetchSemanticsNodes().isEmpty() }
                 compose.onNodeWithText("Sources").performScrollTo().performClick()
@@ -4046,24 +4047,45 @@ class PlantPageTest {
     @Config(qualifiers = "w411dp-h800dp-mdpi")
     @Test fun deleteConfirmationKeepsMarginsOn411dpPortrait() = portraitDelete(411)
 
-    private fun portraitDelete(windowWidth: Int) {
+    @Test fun deleteConfirmationOpensFullyOn360dpPortraitWithLargeText() = portraitDelete(360, 1.3f)
+
+    @Config(qualifiers = "w411dp-h800dp-mdpi")
+    @Test fun deleteConfirmationOpensFullyOn411dpPortraitWithLargeText() = portraitDelete(411, 1.3f)
+
+    private val ordinaryDeleteName = "Synthetic fern ".repeat(3) + "Synthetic frond"
+    private val wideDeleteName = "W".repeat(60)
+    private val longDeleteName = "Synthetic fern ".repeat(13) + "frond"
+
+    private fun portraitDelete(windowWidth: Int, fontScale: Float = 1f) {
+        RuntimeEnvironment.setFontScale(fontScale)
+        val names = listOf(plant.displayName, ordinaryDeleteName, wideDeleteName, longDeleteName)
+        assertEquals(listOf(14, 60, 60, 200), names.map { it.length })
+        var name by mutableStateOf(names.first())
         compose.setContent { FytoriumTheme {
             assertEquals(windowWidth, androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp)
-            PlantDetailScreen(owner.copy(today = today), detail(), {}, { _, _ -> }, {}, {})
+            PlantDetailScreen(owner.copy(today = today), detail().copy(plant = plant.copy(displayName = name)), {}, { _, _ -> }, {}, {})
         } }
-        compose.onNodeWithContentDescription("Plant settings").performClick()
-        compose.onNodeWithText("Delete plant").performClick()
-        val surface = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true)
-        val before = surface.fetchSemanticsNode().boundsInRoot
-        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
-        val left = (windowWidth - dialog.width) / 2 + before.left
-        val right = windowWidth - (windowWidth - dialog.width) / 2 - before.right
-        assertTrue("Left margin must be at least 24 dp, got $left in $windowWidth dp", left >= 24f)
-        assertTrue("Right margin must be at least 24 dp, got $right in $windowWidth dp", right >= 24f)
-        compose.onNode(hasText("Plant name") and hasSetTextAction()).performTextInput(plant.displayName)
-        assertEquals("Typing keeps the dialog surface bounds", before, surface.fetchSemanticsNode().boundsInRoot)
-        compose.onNodeWithText("Delete").assertIsEnabled()
-        compose.captureDialog("src/test/screenshots/native-plants-delete-portrait-$windowWidth.png")
+        for (candidate in names) {
+            compose.runOnIdle { name = candidate }
+            openPlantDelete()
+            compose.checkDialogTextScale("Permanently delete this plant?", fontScale)
+            val field = assertOpeningDelete(candidate, fullInstruction = candidate == plant.displayName || candidate == ordinaryDeleteName)
+            val surface = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true)
+            val before = surface.fetchSemanticsNode().boundsInRoot
+            val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
+            val left = (windowWidth - dialog.width) / 2 + before.left
+            val right = windowWidth - (windowWidth - dialog.width) / 2 - before.right
+            assertTrue("Left margin must be at least 24 dp, got $left in $windowWidth dp", left >= 24f)
+            assertTrue("Right margin must be at least 24 dp, got $right in $windowWidth dp", right >= 24f)
+            field.performTextInput(candidate)
+            field.assertTextContains(candidate)
+            val after = surface.fetchSemanticsNode().boundsInRoot
+            assertEquals("Typing keeps the dialog surface width", before.width, after.width, 0f)
+            if (fontScale == 1f) assertEquals("Typing keeps the dialog surface bounds at normal text size", before, after)
+            compose.onNodeWithText("Delete").assertIsEnabled()
+            if (candidate == plant.displayName && fontScale == 1f) compose.captureDialog("src/test/screenshots/native-plants-delete-portrait-$windowWidth.png")
+            compose.onNodeWithText("Cancel").performClick()
+        }
     }
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
@@ -4082,7 +4104,7 @@ class PlantPageTest {
     @Test fun longNameDiscardStaysUsableInLandscapeWithLargeText() = longNameDialog("discard")
 
     private fun longNameDialog(kind: String) {
-        val name = "Synthetic fern ".repeat(13) + "frond"
+        val name = longDeleteName
         assertEquals(200, name.length)
         assertEquals(name.trim(), name)
         val title = when (kind) {
@@ -4134,10 +4156,16 @@ class PlantPageTest {
     }
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
-    @Test fun sixtyCharacterDeleteOpensFullyInLandscape() = landscapeDelete(1f, "Synthetic fern ".repeat(3) + "Synthetic frond")
+    @Test fun sixtyCharacterDeleteOpensFullyInLandscape() = landscapeDelete(1f, ordinaryDeleteName)
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
-    @Test fun sixtyCharacterDeleteOpensFullyWithLargeText() = landscapeDelete(1.3f, "Synthetic fern ".repeat(3) + "Synthetic frond")
+    @Test fun sixtyCharacterDeleteOpensFullyWithLargeText() = landscapeDelete(1.3f, ordinaryDeleteName)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun wideNameDeleteOpensWithFullField() = landscapeDelete(1f, wideDeleteName)
+
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun wideNameDeleteOpensWithFullFieldWithLargeText() = landscapeDelete(1.3f, wideDeleteName)
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
     @Test fun overflowingDeleteShowsOnlyEdgesWithMoreContent() = overflowingDelete(1.3f)
@@ -4146,53 +4174,86 @@ class PlantPageTest {
     @Test fun overflowingDeleteShowsEdgesWithNormalText() = overflowingDelete(1f)
 
     private fun overflowingDelete(fontScale: Float) {
-        val name = "Synthetic fern ".repeat(13) + "frond"
+        val name = longDeleteName
         assertEquals(200, name.length)
         assertEquals(name.trim(), name)
-        RuntimeEnvironment.setFontScale(fontScale)
-        compose.setContent { CheckLandscape(fontScale); FytoriumTheme {
-            PlantDetailScreen(owner.copy(today = today), detail().copy(plant = plant.copy(displayName = name)), {}, { _, _ -> }, {}, {})
-        } }
-        compose.onNodeWithContentDescription("Plant settings").performClick()
-        compose.onNodeWithText("Delete plant").performClick()
-        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
-        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
-        compose.onNodeWithText("This permanently deletes $name, all care history and photos. It cannot be undone.").performScrollTo()
+        openLandscapeDelete(name, fontScale)
+        val field = assertOpeningDelete(name, fullInstruction = false, mustOverflow = true)
+        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithText(deleteWarning(name)).performScrollTo()
         compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
         compose.onNodeWithTag("dialog-more-above").assertIsDisplayed()
-        val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
-        val field = compose.onNode(hasText("Plant name") and hasSetTextAction())
-        val buttons = listOf("Cancel", "Delete").map { compose.onNode(hasText(it) and hasAnyAncestor(isDialog())).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
-        assertEquals("Buttons share one row", buttons[0].center.y, buttons[1].center.y, 1f)
+        assertDeleteButtonsShareRow()
         field.performScrollTo().performTextInput(name)
         field.assertTextContains(name)
         assertEquals("Typing keeps the dialog width", dialog.width, compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.width, 0f)
     }
 
-    private fun landscapeDelete(fontScale: Float, name: String = "Synthetic fern") {
-        assertEquals(name.trim(), name)
-        assertTrue("The fixture has exactly 14 or 60 characters", name.length in listOf(14, 60))
+    private fun openPlantDelete() {
+        compose.onNodeWithContentDescription("Plant settings").performClick()
+        compose.onNodeWithText("Delete plant").performClick()
+    }
+
+    private fun openLandscapeDelete(name: String, fontScale: Float) {
         RuntimeEnvironment.setFontScale(fontScale)
         compose.setContent { CheckLandscape(fontScale); FytoriumTheme {
             PlantDetailScreen(owner.copy(today = today), detail().copy(plant = plant.copy(displayName = name)), {}, { _, _ -> }, {}, {})
         } }
-        compose.onNodeWithContentDescription("Plant settings").performClick()
-        compose.onNodeWithText("Delete plant").performClick()
+        openPlantDelete()
         compose.checkDialogTextScale("Permanently delete this plant?", fontScale)
-        val instruction = compose.onNodeWithText("Type $name to confirm.").assertIsDisplayed().fetchSemanticsNode()
-        val field = compose.onNode(hasText("Plant name") and hasSetTextAction())
-        field.assertIsDisplayed()
-        val scroll = compose.onNode(hasScrollAction() and hasAnyAncestor(isDialog())).fetchSemanticsNode()
-        val viewport = scroll.boundsInRoot
-        val instructionLayout = instruction.textLayout()
-        assertTrue("The full instruction is visible on open", instruction.positionInRoot.y >= viewport.top && instruction.positionInRoot.y + instructionLayout.size.height <= viewport.bottom)
+    }
+
+    private fun deleteWarning(name: String) = "This permanently deletes $name, all care history and photos. It cannot be undone."
+
+    private fun assertOpeningDelete(name: String, fullInstruction: Boolean, mustOverflow: Boolean = false): SemanticsNodeInteraction {
+        val field = compose.onNode(hasText("Plant name") and hasSetTextAction()).assertIsDisplayed()
+        val viewport = compose.onNode(hasScrollAction() and hasAnyAncestor(isDialog())).fetchSemanticsNode().boundsInRoot
+        fun assertFullyVisible(what: String, node: SemanticsNode) {
+            val start = node.positionInRoot
+            val size = node.size
+            assertTrue("The whole $what is visible on open for '$name': $start, $size, viewport $viewport",
+                start.x >= viewport.left && start.x + size.width <= viewport.right && start.y >= viewport.top && start.y + size.height <= viewport.bottom)
+        }
         val openingField = field.fetchSemanticsNode()
-        assertTrue("The whole field is visible on open", openingField.positionInRoot.y >= viewport.top && openingField.positionInRoot.y + openingField.size.height <= viewport.bottom)
+        assertFullyVisible("field", openingField)
+        val label = compose.onNode(hasText("Plant name") and !hasSetTextAction(), useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode()
+        assertFullyVisible("field label", label)
+        val instructionText = "Type $name to confirm."
+        val instruction = compose.onNodeWithText(instructionText).assertIsDisplayed().fetchSemanticsNode()
+        val warning = compose.onNodeWithText(deleteWarning(name)).fetchSemanticsNode()
+        assertTrue("The field comes before the instruction", openingField.positionInRoot.y + openingField.size.height <= instruction.positionInRoot.y)
+        val instructionLayout = instruction.textLayout()
+        val instructionBottom = instruction.positionInRoot.y + instructionLayout.size.height
+        assertTrue("The instruction comes before the warning", instructionBottom <= warning.positionInRoot.y)
+        if (fullInstruction) {
+            assertFullyVisible("instruction", instruction)
+            assertTrue("The full instruction text is visible on open", instructionBottom <= viewport.bottom)
+            val lastLine = instructionLayout.lineCount - 1
+            assertFalse("The instruction has no ellipsis", instructionLayout.isLineEllipsized(lastLine))
+            assertEquals("The last line ends at the end of the instruction", instructionText.length, instructionLayout.getLineEnd(lastLine))
+        }
+        if (mustOverflow) compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        assertDeleteButtonsShareRow()
+        compose.onNodeWithText("Delete").assertIsNotEnabled()
+        return field
+    }
+
+    private fun assertDeleteButtonsShareRow() {
+        val buttons = listOf("Cancel", "Delete").map { compose.onNode(hasText(it) and hasAnyAncestor(isDialog())).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        assertEquals("Buttons share one row", buttons[0].center.y, buttons[1].center.y, 1f)
+    }
+
+    private fun landscapeDelete(fontScale: Float, name: String = "Synthetic fern") {
+        assertEquals(name.trim(), name)
+        assertTrue("The fixture has exactly 14 or 60 characters", name.length in listOf(14, 60))
+        val wide = name == wideDeleteName
+        openLandscapeDelete(name, fontScale)
+        val field = assertOpeningDelete(name, fullInstruction = !wide, mustOverflow = wide)
         val dialog = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot
         val surface = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true)
         assertEquals("Landscape keeps the full 560 dp surface width", 560f, surface.fetchSemanticsNode().boundsInRoot.width, 0f)
-        val buttons = listOf("Cancel", "Delete").map { compose.onNode(hasText(it) and hasAnyAncestor(isDialog())).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
-        assertEquals("Buttons share one row", buttons[0].center.y, buttons[1].center.y, 1f)
+        if (wide && fontScale == 1.3f) compose.captureDialog("src/test/screenshots/native-plants-delete-wide-name-landscape-large.png")
         field.performTextInput(name)
         field.assertTextContains(name)
         assertEquals("Typing keeps the dialog width", dialog.width, compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.width, 0f)
@@ -4200,7 +4261,7 @@ class PlantPageTest {
         assertTrue("The confirmation field must not be compressed", field.fetchSemanticsNode().boundsInRoot.height >= 56f)
         field.performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Delete").assertIsDisplayed().assertIsEnabled()
-        compose.captureDialog("src/test/screenshots/native-plants-delete-landscape-${if (fontScale == 1f) "normal" else "large"}${if (name.length == 60) "-60" else ""}.png")
+        if (!wide) compose.captureDialog("src/test/screenshots/native-plants-delete-landscape-${if (fontScale == 1f) "normal" else "large"}${if (name.length == 60) "-60" else ""}.png")
     }
 
     @Test fun deleteConfirmationIsEmptyAfterCancel() = closedDeleteConfirmationReopensEmpty("cancel")

@@ -98,7 +98,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         compose.waitForNode(water and hasText("Source: override", substring = true)).performScrollTo().assertIsDisplayed()
         openCare()
         compose.waitForNode(hasText("Remove override for watering interval in days") and isEnabled()).performScrollTo().performClick()
-        compose.onNodeWithText("Confirm reset").performClick()
+        compose.onNodeWithText("Remove").performClick()
         compose.waitForState("Watering basis reset to original", 30_000) { waterBasis()?.source == original.source && waterBasis()?.value == original.value }
         showTodayRow()
         val resetTasks = JSONObject(json("/api/plants/$plantId/tasks")).getJSONObject("water").getJSONArray("basedOn")

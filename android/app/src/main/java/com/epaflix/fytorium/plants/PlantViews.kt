@@ -517,8 +517,8 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
             title = { DialogTitle("Permanently delete this plant?") },
             text = {
                 DialogBody {
-                    Text("Type ${plant.displayName} to confirm.")
                     OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Plant name") }, enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Type ${plant.displayName} to confirm.")
                     Text("This permanently deletes ${plant.displayName}, all care history and photos. It cannot be undone.")
                 }
             },

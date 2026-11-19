@@ -2,8 +2,6 @@ package com.epaflix.fytorium.species
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,6 +16,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,15 +127,15 @@ import org.json.JSONObject
             if (canEdit && (state.loading || state.saving || submitting)) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
     } }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        CarePageColumn(Modifier.fillMaxSize().padding(padding), unmatched) {
             if (canEdit) {
                 state.card?.let { card ->
                     val title = card.commonName ?: card.canonicalName
-                    Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-                    if (card.commonName != null) Text(card.canonicalName, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("These values set the starting care for every plant of $title in your household. To change one plant only, use its schedule on the plant page.")
-                    Text("Starting estimates. Check the plant and soil before following a watering interval.")
+                    Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.layoutId("title").semantics { heading() })
+                    if (card.commonName != null) Text(card.canonicalName, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.layoutId("canonical-name"))
+                    Text("These values set the starting care for every plant of $title in your household. To change one plant only, use its schedule on the plant page.",
+                        modifier = Modifier.layoutId("scope"))
+                    Text("Starting estimates. Check the plant and soil before following a watering interval.", modifier = Modifier.layoutId("estimate"))
                     // The values Fytorium knows lead; a field without one waits in its own fold, still open to a value of your own.
                     val (known, unknown) = careLabels.entries.partition { (field) -> card.profile.optJSONObject(field)?.isNull("value") == false }
                     val edit = { field: String -> onClear(); editingKey = card.key; editingName = title; editing = field }
@@ -144,41 +143,44 @@ import org.json.JSONObject
                     known.forEach { (field, label) -> CareField(card.profile.optJSONObject(field), field, label, enabled, edit, reset) }
                     OutdoorMonths(card.outdoor)
                     var missing by rememberSaveable(card.key) { mutableStateOf(false) }
-                    if (unknown.isNotEmpty()) com.epaflix.fytorium.plants.Expander("No value yet (${unknown.size})", missing) { missing = !missing }
+                    if (unknown.isNotEmpty()) com.epaflix.fytorium.plants.Expander("No value yet (${unknown.size})", missing, Modifier.layoutId("missing")) { missing = !missing }
                     if (missing) unknown.forEach { (field, label) -> CareField(null, field, label, enabled, edit, reset) }
                     // Where the values come from is for checking a source, so it waits behind its own heading.
                     var sources by rememberSaveable(card.key) { mutableStateOf(false) }
-                    com.epaflix.fytorium.plants.Expander("Sources", sources) { sources = !sources }
+                    com.epaflix.fytorium.plants.Expander("Sources", sources, Modifier.layoutId("sources")) { sources = !sources }
                     if (sources) {
-                        Text("GBIF key: ${card.key}")
+                        Text("GBIF key: ${card.key}", modifier = Modifier.layoutId("gbif"))
                         known.forEach { (field, label) ->
                             val item = card.profile.getJSONObject(field)
                             val source = item.known("source")?.takeIf { it != "unknown" }
-                            if (source == "override") Text("$label: your value")
+                            if (source == "override") Text("$label: your value", modifier = Modifier.layoutId("source:$field"))
                             else source?.let { Text("$label: ${it.replace('_', ' ')}" + item.known("ruleId")?.let { rule -> " \u00b7 $rule" }.orEmpty() +
-                                item.known("fetchedAt")?.let { at -> " \u00b7 fetched ${readableDate(at)}" }.orEmpty()) }
+                                item.known("fetchedAt")?.let { at -> " \u00b7 fetched ${readableDate(at)}" }.orEmpty(), modifier = Modifier.layoutId("source:$field")) }
                         }
                         OutdoorSources(card.outdoor)
                         for (fetch in card.fetches) {
+                            val sourceId = fetch.getString("source")
                             if (fetch.has("matchStatus")) {
                                 val status = fetch.getString("matchStatus")
-                                Text("Open Plantbook: ${if (status == "matched") "matched ${fetch.optString("pid")}" else status.replace('_', ' ')}")
-                                OutlinedButton(onClick = { onRetry(card.key) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Retry match") }
+                                Text("Open Plantbook: ${if (status == "matched") "matched ${fetch.optString("pid")}" else status.replace('_', ' ')}",
+                                    modifier = Modifier.layoutId("match:$sourceId"))
+                                OutlinedButton(onClick = { onRetry(card.key) }, enabled = enabled, modifier = Modifier.layoutId("retry:$sourceId").heightIn(min = 48.dp)) { Text("Retry match") }
                             }
-                            val source = fetch.getString("source").split('_').joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
-                            Text(if (fetch.getString("status") == "disabled") "$source not configured" else "$source fetch: ${fetch.getString("status").replace('_', ' ')}")
+                            val source = sourceId.split('_').joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+                            Text(if (fetch.getString("status") == "disabled") "$source not configured" else "$source fetch: ${fetch.getString("status").replace('_', ' ')}",
+                                modifier = Modifier.layoutId("fetch:$sourceId"))
                         }
-                        OutlinedButton(onClick = onRefreshCare, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh care data") }
+                        OutlinedButton(onClick = onRefreshCare, enabled = enabled, modifier = Modifier.layoutId("refresh-care").heightIn(min = 48.dp)) { Text("Refresh care data") }
                         OutlinedButton(onClick = onRefresh, enabled = online && !state.loading && !state.saving && !submitting,
-                            modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh species") }
+                            modifier = Modifier.layoutId("refresh-species").heightIn(min = 48.dp)) { Text("Refresh species") }
                     }
                 } ?: run {
                     if (unmatched) {
                     OutlinedButton(onClick = onRefresh, enabled = online && !state.loading && !state.saving && !submitting,
-                        modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh species") }
-                    Text("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.")
-                    if (state.loaded && state.unmatched.isEmpty()) Text("Every species of yours has care data.")
-                    for (species in state.unmatched) Card(Modifier.fillMaxWidth()) {
+                        modifier = Modifier.layoutId("refresh-species").heightIn(min = 48.dp)) { Text("Refresh species") }
+                    Text("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.", modifier = Modifier.layoutId("unmatched-scope"))
+                    if (state.loaded && state.unmatched.isEmpty()) Text("Every species of yours has care data.", modifier = Modifier.layoutId("unmatched-empty"))
+                    for (species in state.unmatched) Card(Modifier.layoutId("unmatched:${species.key}").fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             val title = species.commonName ?: species.name
                             Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
@@ -219,7 +221,8 @@ import org.json.JSONObject
         if (card != null) AlertDialog(modifier = Modifier.width(320.dp), properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             onDismissRequest = { if (!submitting) leave() },
             title = { DialogTitle("Override ${lower(careLabels.getValue(field))}") },
-            text = { DialogBody(keepOpeningHeight = true) {
+            text = { CareDialogBody(order ?: invalid ?: state.error, retry = if (!state.blocked) null else ({
+                TextButton(onClick = onRefresh, enabled = online && !state.loading && !submitting) { Text("Retry loading species") } })) {
                 val label = "Override value for ${lower(careLabels.getValue(field))}"
                 // Each kind of value gets its own control, so nobody types JSON.
                 when {
@@ -246,8 +249,6 @@ import org.json.JSONObject
                             keyboardOptions = if (field in careNumbers) numberKeys else KeyboardOptions.Default, modifier = Modifier.fillMaxWidth())
                     }
                 }
-                CareMessage(order ?: invalid ?: state.error, retry = if (!state.blocked) null else ({
-                    TextButton(onClick = onRefresh, enabled = online && !state.loading && !submitting) { Text("Retry loading species") } }))
             } },
             confirmButton = { TextButton(onClick = {
                 val value = overrideValue(field, draft, low, high, months.sorted()) ?: run { invalid = "Enter a value for every field."; return@TextButton }
@@ -258,15 +259,15 @@ import org.json.JSONObject
     } }
     if (canEdit && state.card != null) resetting?.let { field ->
         AlertDialog(onDismissRequest = { if (!submitting) { resetting = null; onClear() } }, title = { DialogTitle("Remove this override?") },
-            text = { DialogBody(keepOpeningHeight = true) { Text("Every ${state.card.commonName ?: state.card.canonicalName} goes back to the default for ${lower(careLabels.getValue(field))}."); CareMessage(state.error) } },
-            confirmButton = { TextButton(onClick = { scope.launch { submitting = true; try { if (onReset(field)) resetting = null } finally { submitting = false } } }, enabled = enabled) { Text("Confirm reset") } },
+            text = { CareDialogBody(state.error) { Text("Every ${state.card.commonName ?: state.card.canonicalName} goes back to the default for ${lower(careLabels.getValue(field))}.") } },
+            confirmButton = { TextButton(onClick = { scope.launch { submitting = true; try { if (onReset(field)) resetting = null } finally { submitting = false } } }, enabled = enabled) { Text("Remove") } },
             dismissButton = { TextButton(onClick = { resetting = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
 }
 
 @Composable private fun CareField(item: JSONObject?, field: String, label: String, enabled: Boolean, onEdit: (String) -> Unit, onReset: (String) -> Unit) {
     val own = item?.optString("source") == "override"
-    Card(Modifier.fillMaxWidth().testTag("care:$field")) {
+    Card(Modifier.fillMaxWidth().layoutId(field).testTag("care:$field")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
             if (item?.isNull("value") == false) Text(displayCareValue(field, item.opt("value")))
@@ -277,38 +278,50 @@ import org.json.JSONObject
     }
 }
 
-// The message keeps two lines from the start; a longer one or Retry scrolls into view inside the dialog body.
-@Composable private fun CareMessage(message: String?, retry: (@Composable () -> Unit)? = null) {
-    val requester = remember { BringIntoViewRequester() }
-    LaunchedEffect(message, retry != null) { if (message != null) requester.bringIntoView() }
-    Column(Modifier.bringIntoViewRequester(requester)) {
-        Text(message.orEmpty(), color = MaterialTheme.colorScheme.error, minLines = 2,
-            modifier = if (message == null) Modifier.clearAndSetSemantics {} else Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-        retry?.invoke()
+@Composable private fun CareDialogBody(message: String?, retry: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+    val reserve: (@Composable () -> Unit)? = if (message == null && retry == null) ({ Text("", minLines = 2) }) else null
+    DialogBody(keepOpeningHeight = true, reserveOpening = reserve) {
+        content()
+        if (message != null || retry != null) {
+            val requester = remember { BringIntoViewRequester() }
+            LaunchedEffect(message, retry != null) { if (message != null) requester.bringIntoView() }
+            Column(Modifier.bringIntoViewRequester(requester)) {
+                if (message != null) Text(message, color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                retry?.invoke()
+            }
+        }
     }
 }
 
 @Composable private fun OutdoorMonths(months: JSONObject) {
-    Text("Outdoor months", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-    if (!months.optBoolean("locationSet")) Text("Set your location to see outdoor months")
+    Text("Outdoor months", style = MaterialTheme.typography.titleMedium, modifier = Modifier.layoutId("outdoor-months").semantics { heading() })
+    if (!months.optBoolean("locationSet")) Text("Set your location to see outdoor months", modifier = Modifier.layoutId("outdoor-location"))
     else {
         fun show(field: String): String = if (months.isNull(field)) "Climate refresh pending" else months.getJSONArray(field).let {
             if (it.length() == 0) "No suitable months" else displayCareValue("pruningMonths", it)
         }
-        Text("Pot: ${show("pot")}"); Text("Ground: ${show("ground")}")
-        Text("Ground hardiness: ${months.get("groundThresholdC")} °C. Potted hardiness: ${months.get("potThresholdC")} °C.")
-        Text("Monthly mean minimum must be at least hardiness plus ${months.get("marginC")} °C. This estimate does not rule out frost.")
-        if (!months.isNull("unavailableSince")) Text("Climate unavailable since ${readableDate(months.getString("unavailableSince"))}. Last good values remain.")
+        Text("Pot: ${show("pot")}", modifier = Modifier.layoutId("outdoor-pot"))
+        Text("Ground: ${show("ground")}", modifier = Modifier.layoutId("outdoor-ground"))
+        Text("Ground hardiness: ${months.get("groundThresholdC")} °C. Potted hardiness: ${months.get("potThresholdC")} °C.",
+            modifier = Modifier.layoutId("outdoor-hardiness"))
+        Text("Monthly mean minimum must be at least hardiness plus ${months.get("marginC")} °C. This estimate does not rule out frost.",
+            modifier = Modifier.layoutId("outdoor-estimate"))
+        if (!months.isNull("unavailableSince")) Text("Climate unavailable since ${readableDate(months.getString("unavailableSince"))}. Last good values remain.",
+            modifier = Modifier.layoutId("outdoor-unavailable"))
     }
 }
 
 @Composable private fun OutdoorSources(months: JSONObject) {
     if (!months.optBoolean("locationSet")) return
     val hardiness = months.getJSONObject("hardiness")
-    Text("Hardiness source: ${hardiness.getString("source").replace('_', ' ')} · ${hardiness.get("value")} °C${hardiness.optString("ruleId").takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" }.orEmpty()}")
-    if (hardiness.optString("ruleId") == "hardiness.usda_uncertain@1") Text("USDA zone conversion is uncertain. Perenual does not name its hardiness scale.")
-    Text("Rules: ${months.getString("potRuleId")} · ${months.getString("ruleId")}")
-    Text("Climate from Open-Meteo, CMCC_CM2_VHR4 model, 1991 to 2020 daily minimum averages. Fetched: ${months.known("fetchedAt")?.let(::readableDate) ?: "not fetched"}.")
+    Text("Hardiness source: ${hardiness.getString("source").replace('_', ' ')} · ${hardiness.get("value")} °C${hardiness.optString("ruleId").takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" }.orEmpty()}",
+        modifier = Modifier.layoutId("source-hardiness"))
+    if (hardiness.optString("ruleId") == "hardiness.usda_uncertain@1") Text("USDA zone conversion is uncertain. Perenual does not name its hardiness scale.",
+        modifier = Modifier.layoutId("source-usda"))
+    Text("Rules: ${months.getString("potRuleId")} · ${months.getString("ruleId")}", modifier = Modifier.layoutId("source-rules"))
+    Text("Climate from Open-Meteo, CMCC_CM2_VHR4 model, 1991 to 2020 daily minimum averages. Fetched: ${months.known("fetchedAt")?.let(::readableDate) ?: "not fetched"}.",
+        modifier = Modifier.layoutId("source-climate"))
 }
 
 private fun lower(label: String) = label.replaceFirstChar(Char::lowercase)

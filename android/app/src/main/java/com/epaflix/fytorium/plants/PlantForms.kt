@@ -111,8 +111,8 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
 @Composable internal fun PlantColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
 }
-@Composable internal fun Expander(label: String, open: Boolean, onToggle: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (open) "Hide $label" else "Show $label", onClick = onToggle)
+@Composable internal fun Expander(label: String, open: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
+    Row(modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (open) "Hide $label" else "Show $label", onClick = onToggle)
         .semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)

@@ -1,6 +1,7 @@
 package com.epaflix.fytorium
 
 import android.content.res.Configuration
+import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -97,10 +98,12 @@ internal fun ComposeTestRule.captureDialog(file: String) {
     val surface = onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle) and hasAnyAncestor(isDialog()), useUnmergedTree = true).fetchSemanticsNode()
     println("DIALOG_SEMANTICS " + JSONObject().put("file", file).put("windowDp", JSONArray(listOf(configuration.screenWidthDp, configuration.screenHeightDp)))
         .put("dialogBounds", dialog.boundsInRoot.toString()).put("surfaceBounds", surface.boundsInRoot.toString()).put("nodes", JSONArray(textLines(dialog))))
-    val layout = dialog.layoutInfo
-    val owner = layout.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layout) as android.view.View
+    val owner = dialog.dialogOwner()
     runOnIdle { owner.drawToBitmap().captureRoboImage(file) }
 }
+
+internal fun SemanticsNode.dialogOwner(): View =
+    layoutInfo.javaClass.methods.first { it.name.startsWith("getOwner") }.invoke(layoutInfo) as View
 
 internal fun SemanticsNode.textLayout(): TextLayoutResult =
     mutableListOf<TextLayoutResult>().also { config[SemanticsActions.GetTextLayoutResult].action!!(it) }.single()

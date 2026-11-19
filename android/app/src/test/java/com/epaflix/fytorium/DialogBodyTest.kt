@@ -12,10 +12,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.dp
+import androidx.core.view.drawToBitmap
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -57,9 +60,16 @@ class DialogBodyTest {
             } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } })
         } }
         compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
-        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        val body = compose.onNode(hasScrollAction() and hasAnyAncestor(isDialog()))
+        val below = compose.onNodeWithTag("dialog-more-below")
+        val above = compose.onNodeWithTag("dialog-more-above")
+        below.assertIsDisplayed()
+        assertTrue("Bottom divider is outside the text viewport",
+            below.fetchSemanticsNode().boundsInRoot.top > body.fetchSemanticsNode().boundsInRoot.bottom)
         compose.onNodeWithText("End").performScrollTo()
-        compose.onNodeWithTag("dialog-more-above").assertIsDisplayed()
+        above.assertIsDisplayed()
+        assertTrue("Top divider is outside the text viewport",
+            above.fetchSemanticsNode().boundsInRoot.bottom < body.fetchSemanticsNode().boundsInRoot.top)
         compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
         compose.onNodeWithText("Start").performScrollTo()
         compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
@@ -103,6 +113,26 @@ class DialogBodyTest {
         compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
         compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
         checkButtons()
+    }
+
+    @Test fun lightDividerContrastsWithDialogSurface() = checkDividerContrast(dark = false)
+    @Test fun darkDividerContrastsWithDialogSurface() = checkDividerContrast(dark = true)
+
+    private fun checkDividerContrast(dark: Boolean) {
+        compose.setContent { FytoriumTheme(dark) {
+            AlertDialog(onDismissRequest = {}, text = { DialogBody {
+                Box(Modifier.height(1200.dp))
+                Text("End")
+            } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } })
+        } }
+        val divider = compose.onNodeWithTag("dialog-more-below").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val owner = compose.onNode(isDialog(), useUnmergedTree = true).fetchSemanticsNode().dialogOwner()
+        val bitmap = compose.runOnIdle { owner.drawToBitmap() }
+        val x = divider.center.x.toInt()
+        val line = Color(bitmap.getPixel(x, divider.center.y.toInt())).luminance()
+        val surface = Color(bitmap.getPixel(x, divider.bottom.toInt() + 2)).luminance()
+        val contrast = (maxOf(line, surface) + 0.05f) / (minOf(line, surface) + 0.05f)
+        assertTrue("Divider contrast was $contrast:1 against the dialog surface", contrast >= 3f)
     }
 
     @Test fun shrinkingContentLeavesNoEmptyBand() {
