@@ -168,6 +168,25 @@ class PhotoScreenTest {
         assertEquals(Triple(2f, 200f, 0f), clampZoom(2f, 900f, 900f, 400f, 300f, 400f, 800f))
     }
 
+    // W4-P37: Identify's dialogs fit landscape at 1.3x.
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun identifyDialogsFitLandscapeWithLargeText() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
+            IdentificationScreen(PhotoState(), true, listOf("content://synthetic/one", "content://synthetic/two"))
+        } }
+        compose.onNodeWithText("Details").performScrollTo().performClick()
+        compose.onNodeWithText("Up to 5 photos, 15 MB each and 40 MB in total.", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Close").assertIsDisplayed()
+        compose.checkDialogTextScale("Close", 1.3f)
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Your 2 photos are not used yet.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Discard").assertIsDisplayed()
+        compose.onNodeWithText("Keep editing").assertIsDisplayed()
+        compose.checkDialogTextScale("Discard", 1.3f)
+    }
+
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
     @Test fun photoDeleteScrollsInsideInLandscapeWithLargeText() {
         RuntimeEnvironment.setFontScale(1.3f)
