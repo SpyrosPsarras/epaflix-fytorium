@@ -115,7 +115,8 @@ test('species changes require a household search and confirmation, keep every ca
   const page = await (await owner.request('/plants/' + plant.id)).text();
   expect(page).toContain('Species changed from Testoria lucida Inventor to Testoria correcta Inventor');
   await owner.request('/__test/clock', 'POST', { action: 'advance', milliseconds: 300001 });
-  expect((await owner.request(path + '/species', 'POST', { search_id: search.search_id, gbif_key: 910019, confirmed: true })).status).toBe(422);
+  expect((await owner.request(path + '/species', 'POST', { search_id: search.search_id, gbif_key: 910019, confirmed: false })).status).toBe(422);
+  expect((await owner.request(path + '/species', 'POST', { search_id: search.search_id, gbif_key: 910019, confirmed: true })).status).toBe(200);
   harness.setGbif({ usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
   await owner.request(path + '/graveyard', 'POST');
   expect((await owner.request(path, 'DELETE', { confirm_name: plant.display_name })).status).toBe(204);

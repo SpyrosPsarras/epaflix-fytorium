@@ -12,6 +12,7 @@ import { requireUndo, withUndoFlag, withUndoFlags } from './undo-policy';
 import { getPlant, isUuid, plantSelectFor, potErrors } from './plants';
 import { db, withSnapshot, withTransaction } from './db';
 import { now, calendarDate } from './clock';
+import { config } from './config';
 import type { ForecastDay } from '$lib/weather';
 import { recentRain } from './weather/rain';
 import { taskWeather, weatherReport } from './weather/cache';
@@ -243,6 +244,14 @@ export async function dueDates(client: pg.PoolClient, identity: Identity, plantI
   return Object.fromEntries(taskTypes.map(type => [type, dueOf(tasks[type])])) as Record<TaskType, string | null>;
 }
 
+export async function recordInitialWatering(client: pg.PoolClient, identity: Identity, plantId: string, day: string, createdAt: Date) {
+  const due = await dueDates(client, identity, plantId);
+  const occurredAt = day === calendarDate(createdAt) ? createdAt : (await client.query<{ at: Date }>(
+    'SELECT $1::date::timestamp AT TIME ZONE $2 AS at', [day, config().householdTimezone],
+  )).rows[0].at;
+  await recordEvent(client, identity, plantId, 'water', 'completed', randomUUID(), occurredAt, due.water, { sendNotices: false });
+}
+
 // Care commands take the household lock before plant locks.
 // The request record survives empty batches and remembers taps that reused another rain batch.
 async function careAction(identity: Identity, plantId: string | null, requestId: string, action: string, payload: Record<string, unknown>,
@@ -277,12 +286,12 @@ async function careAction(identity: Identity, plantId: string | null, requestId:
 }
 
 // dueOn is the acted-on task's due date at that moment, so the completed row keeps its place whatever the schedule does later.
-async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, dueOn: string | null, { batchId = null, previousPot = null, linkedEventId = null, until = null }: { batchId?: string | null; previousPot?: Record<string, unknown> | null; linkedEventId?: string | null; until?: string | null } = {}) {
+async function recordEvent(client: pg.PoolClient, identity: Identity, plantId: string, taskType: string, kind: CareEvent['kind'], requestId: string, at: Date, dueOn: string | null, { batchId = null, previousPot = null, linkedEventId = null, until = null, sendNotices = true }: { batchId?: string | null; previousPot?: Record<string, unknown> | null; linkedEventId?: string | null; until?: string | null; sendNotices?: boolean } = {}) {
   const member = await client.query('SELECT display_name FROM members WHERE id = $1 AND household_id = $2', [identity.member.id, identity.household.id]);
   const event = await client.query('INSERT INTO care_events (household_id, plant_id, task_type, kind, occurred_at, by_member, by_name, request_id, batch_id, previous_pot, custom_task_id, linked_event_id, due_on, postponed_until) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id',
     [identity.household.id, plantId, taskTypes.includes(taskType as TaskType) ? taskType : null, kind, at, identity.member.id, member.rows[0].display_name, requestId, batchId, previousPot, isUuid(taskType) ? taskType : null, linkedEventId, dueOn, until]);
   // Fix the recipients at completion time. Turning notices on later must not replay history.
-  if (kind === 'completed') await client.query(`INSERT INTO completion_notice_sends (event_id, member_id, attempted_at, claimed_until)
+  if (kind === 'completed' && sendNotices) await client.query(`INSERT INTO completion_notice_sends (event_id, member_id, attempted_at, claimed_until)
     SELECT $1, m.id, $2, $2::timestamptz - interval '1 millisecond' FROM members m
     JOIN plants p ON p.household_id = m.household_id AND p.id = $3
     WHERE m.completion_notices_enabled AND m.id <> $4 AND ${visiblePlantSql('m.id')}`,

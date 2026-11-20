@@ -163,9 +163,9 @@
 <section aria-labelledby="attributes-title">
   <h2 id="attributes-title">Pot and plant attributes</h2>
   <dl>
-    {#each choices as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field].replaceAll('_', ' ')}</dd>{/each}
+    {#each choices as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field]?.replaceAll('_', ' ') ?? 'Not set'}</dd>{/each}
     {#each plantNumbers as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field] ?? 'Not set'}</dd>{/each}
-    {#each plantBooleans as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field] ? 'Yes' : 'No'}</dd>{/each}
+    {#each plantBooleans as field}<dt>{plantLabels[field]}</dt><dd>{data.plant[field] === null ? 'Not set' : data.plant[field] ? 'Yes' : 'No'}</dd>{/each}
   </dl>
 </section>
 {/if}

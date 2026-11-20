@@ -6,6 +6,7 @@ import { chosenSpecies, saveSpecies } from '$lib/server/species';
 import { kickNameFetch } from '$lib/server/names';
 import { visiblePlantSql } from '$lib/server/policy';
 import { checkOrigin } from '$lib/server/sites';
+import { recordInitialWatering } from '$lib/server/tasks';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, url }) => {
@@ -28,18 +29,22 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  const input = await readPlant(request, locals.identity.household.id);
+  const identity = locals.identity;
+  const household = identity.household.id;
+  const input = await readPlant(request, household);
   if (input instanceof Response) return input;
-  const household = locals.identity.household.id;
-  const species = chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed);
+  const species = await chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed);
   let id: string;
   try {
     id = await withTransaction(async (client) => {
       await saveSpecies(client, species);
       const fields = ['household_id', 'gbif_key', 'attributes_as_of', 'created_at', ...plantFields];
-      const values = [household, species.gbif_key, now().toISOString().slice(0, 10), now(), ...plantFields.map(field => input[field])];
-      const result = await client.query('INSERT INTO plants (' + fields.join(', ') + ') VALUES (' + values.map((_, i) => '$' + (i + 1)).join(', ') + ') RETURNING id', values);
-      return result.rows[0].id as string;
+      const at = now();
+      const values = [household, species.gbif_key, at.toISOString().slice(0, 10), at, ...plantFields.map(field => input[field])];
+      const result = await client.query<{ id: string }>('INSERT INTO plants (' + fields.join(', ') + ') VALUES (' + values.map((_, i) => '$' + (i + 1)).join(', ') + ') RETURNING id', values);
+      const plantId = result.rows[0].id;
+      if (input.last_watered_on) await recordInitialWatering(client, identity, plantId, input.last_watered_on, at);
+      return plantId;
     });
   } catch (cause) {
     const failure = writeError(cause);

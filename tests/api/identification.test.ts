@@ -215,7 +215,7 @@ test('reports an empty API key as unconfigured without calling upstream', async 
   await harness.restartApp();
 });
 
-test('requires login and same origin, expires choices and refuses picks across households', async () => {
+test('requires login and same origin, requires confirmation after expiry and refuses picks across households', async () => {
   const calls = harness.identificationRequests.length;
   for (const cookie of ['', 'fytorium_session=invalid']) {
     expect((await identify([gpsImage], cookie)).status).toBe(401);
@@ -225,7 +225,8 @@ test('requires login and same origin, expires choices and refuses picks across h
   expect(harness.identificationRequests).toHaveLength(calls);
   const result = await (await identify([gpsImage])).json();
   await owner.request('/__test/clock', 'POST', { action: 'advance', milliseconds: 300001 });
-  expect((await add(result.search_id, { confirmed: true })).status).toBe(422);
+  expect((await add(result.search_id, { confirmed: false })).status).toBe(422);
+  expect((await add(result.search_id, { confirmed: true })).status).toBe(201);
   await owner.request('/__test/clock', 'POST', { action: 'reset' });
   const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   try {

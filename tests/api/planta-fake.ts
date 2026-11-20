@@ -17,7 +17,7 @@ export function syntheticPlant(id: string, nickname = 'Test import lantern') {
 }
 export function createFakePlanta() {
   const env: Record<string, string> = {};
-  let plants = [syntheticPlant('synthetic-planta-20-a'), syntheticPlant('synthetic-planta-20-b', 'Test import glow')];
+  let plants: unknown[] = [syntheticPlant('synthetic-planta-20-a'), syntheticPlant('synthetic-planta-20-b', 'Test import glow')];
   let mode = 'normal';
   let attempts = 0;
   const calls: { path: string; at: number }[] = [];
@@ -51,7 +51,7 @@ export function createFakePlanta() {
   afterAll(async () => { server.closeAllConnections(); await close(server); });
   return {
     env, code, access, refresh, calls,
-    setPlants(value: typeof plants) { plants = value; },
+    setPlants(value: unknown[]) { plants = value; },
     setMode(value: string) { mode = value; attempts = 0; calls.length = 0; },
   };
 }

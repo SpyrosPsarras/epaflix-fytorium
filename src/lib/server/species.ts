@@ -3,59 +3,87 @@ import type { PoolClient } from 'pg';
 import { error, isHttpError } from '@sveltejs/kit';
 import { db } from './db';
 import { now } from './clock';
-import { matchSpecies } from './gbif';
+import { acceptedSpecies, isGbifKey, matchSpecies } from './gbif';
+import { remoteSpeciesSearch, type RemoteCandidate } from './species-remote';
+import { rankCandidates, searchNameKey, wordsMatch } from './species-ranking';
+import { pickCommonName } from './common-name';
 import { enqueueCareFetch } from './care/catalogue';
 import { lockUpdateAndRecomputeCommonNames } from './names';
 import type { Candidate } from '$lib/plants';
 import type { CommonNameLanguage } from '$lib/names';
 
-// A five-minute server record avoids a second GBIF call and never trusts client-sent taxonomy.
-// Records are household-scoped and bounded; after a restart or expiry the owner searches again.
+// The bounded receipt only trusts taxonomy from the household's search results.
 const searches = new Map<string, { household: string; expires: number; candidates: Candidate[] }>();
+
+async function localSpeciesSearch(query: string, exactQuery: string, fuzzy = false): Promise<(RemoteCandidate & { exact: boolean })[]> {
+  const result = await db().query<Pick<Candidate, 'gbif_key' | 'scientific_name' | 'canonical_name' | 'rank'> & {
+    name: string; language: Candidate['matched_language'] | null; literal_prefix: boolean;
+  }>(`
+    WITH input AS (SELECT normalise_species_name($1) AS query), names AS (
+      SELECT gbif_key, name, language, normalised FROM species_names
+      ${fuzzy ? 'WHERE normalised % (SELECT query FROM input)' : `UNION ALL
+      SELECT gbif_key, scientific_name, NULL, normalise_species_name(scientific_name) FROM species
+      UNION ALL SELECT gbif_key, canonical_name, NULL, normalise_species_name(canonical_name) FROM species`}
+    ) SELECT s.gbif_key, s.scientific_name, s.canonical_name, s.rank, n.name, n.language,
+      starts_with(n.normalised, input.query) AS literal_prefix
+    FROM names n JOIN species s USING (gbif_key) CROSS JOIN input
+    ORDER BY (n.language IS NULL OR n.language = 'la') DESC,
+      ${fuzzy ? 'similarity(n.normalised, input.query)' : '-length(n.normalised)'} DESC,
+      s.scientific_name, s.gbif_key, n.language NULLS LAST, n.name`, [query]);
+  return result.rows.flatMap(({ name, language, literal_prefix, ...row }) => {
+    const exact = !fuzzy && !!exactQuery && searchNameKey(name) === exactQuery;
+    if (!fuzzy && !exact && !(exactQuery ? wordsMatch(query, name) : literal_prefix)) return [];
+    const candidate: Candidate = { ...row, ...(language ? { matched_name: name, matched_language: language } : {}),
+      match_type: null, confidence: null, requires_confirmation: row.rank !== 'SPECIES' || !exact };
+    return [{ candidate, exact }];
+  });
+}
+
+export async function matchPlantaSpecies(query: string): Promise<Candidate[]> {
+  query = query.trim().replace(/\s+/g, ' ');
+  const exactQuery = searchNameKey(query);
+  const local = await localSpeciesSearch(query, exactQuery);
+  let ranked = rankCandidates(local);
+  const exact = ranked.filter(entry => entry.exact);
+  if (exact.length === 1 && !exact[0].candidate.requires_confirmation) return ranked.map(({ candidate }) => candidate);
+
+  const matches = await matchSpecies(query).catch(cause => {
+    if (isHttpError(cause, 422) || isHttpError(cause, 503)) return [];
+    throw cause;
+  });
+  ranked = rankCandidates(local, matches.map(candidate => ({ candidate,
+    exact: !!exactQuery && [candidate.canonical_name, candidate.scientific_name].some(name => searchNameKey(name) === exactQuery),
+  })));
+  if (!ranked.length) ranked = rankCandidates(await localSpeciesSearch(query, exactQuery, true));
+  const ambiguous = ranked.filter(entry => entry.exact).length > 1;
+  return ranked.map(({ candidate }) => ({ ...candidate, requires_confirmation: candidate.requires_confirmation || ambiguous }));
+}
+
 export async function searchSpecies(query: string, household: string, language: CommonNameLanguage) {
-  query = query.trim();
-  const names = await db().query(`
-    WITH input AS (SELECT normalise_species_name($1) AS query, normalise_species_name($2) AS prefix), hits AS (
-      SELECT DISTINCT ON (n.gbif_key) s.gbif_key, s.scientific_name, s.canonical_name, s.rank,
-        n.name AS matched_name, n.language AS matched_language,
-        NOT (s.rank = 'SPECIES' AND n.normalised = input.query AND
-          (SELECT count(DISTINCT gbif_key) FROM species_names WHERE normalised = input.query) = 1) AS requires_confirmation,
-        similarity(n.normalised, input.query) + CASE WHEN starts_with(n.normalised, input.query) THEN 0.2 ELSE 0 END AS score
-      FROM species_names n JOIN species s USING (gbif_key) CROSS JOIN input
-      WHERE n.normalised % input.query OR n.normalised LIKE input.prefix
-      ORDER BY n.gbif_key, score DESC, n.name, n.language, n.source
-    ) SELECT * FROM hits ORDER BY score DESC, scientific_name LIMIT 20`, [query, query.replace(/[\\%_]/g, '\\$&') + '%']);
-  const local = await db().query(`
-    SELECT gbif_key, scientific_name, canonical_name, rank FROM species
-    WHERE position(lower($1) in lower(scientific_name)) > 0 OR position(lower($1) in lower(canonical_name)) > 0
-    ORDER BY (rank = 'SPECIES' AND (lower(scientific_name) = lower($1) OR lower(canonical_name) = lower($1))) DESC, scientific_name
-    LIMIT 20`, [query]);
-  const exactName = (row: Candidate) => [row.scientific_name, row.canonical_name].some(name => name.toLowerCase() === query.toLowerCase());
-  const nameCandidates: Candidate[] = names.rows.map(({ score: _score, ...row }) => ({ ...row, match_type: null, confidence: null }));
-  const scientificCandidates: Candidate[] = local.rows.map(row => ({
-    ...row, match_type: null, confidence: null, requires_confirmation: !exactName(row) || row.rank !== 'SPECIES',
+  query = query.trim().replace(/\s+/g, ' ');
+  const exactQuery = searchNameKey(query);
+  const equal = (name: string) => !!exactQuery && searchNameKey(name) === exactQuery;
+  const [local, remote] = await Promise.all([localSpeciesSearch(query, exactQuery), remoteSpeciesSearch(query)]);
+  const entries = remote.candidates.map(({ candidate, names, gbifNames }) => {
+    const exactAlias = names?.find(row => equal(row.name));
+    const matched = exactAlias ?? names?.find(row => wordsMatch(query, row.name));
+    return { candidate: { ...candidate, ...(matched ? { matched_name: matched.name, matched_language: matched.language } : {}),
+      requires_confirmation: names ? !exactAlias : candidate.requires_confirmation },
+      exact: !!exactAlias || [candidate.canonical_name, candidate.scientific_name, ...(gbifNames ?? [])].some(equal), names };
+  });
+  let ranked = rankCandidates(local, entries);
+  if (!ranked.length) ranked = rankCandidates(await localSpeciesSearch(query, exactQuery, true));
+  if (!ranked.length) {
+    if (remote.unavailable) error(503, 'Species search is unavailable. Try again in a minute.');
+    error(422, 'No plant species matched that name. Try another name.');
+  }
+  const ambiguous = ranked.filter(entry => entry.exact).length > 1;
+  const namesByKey = await speciesCommonNames(ranked.map(({ candidate }) => candidate.gbif_key), language);
+  const candidates = ranked.map(({ candidate, names }) => ({ ...candidate,
+    requires_confirmation: candidate.requires_confirmation || ambiguous,
+    common_name: namesByKey.has(candidate.gbif_key) ? namesByKey.get(candidate.gbif_key)! : names
+      ? pickCommonName(candidate.canonical_name, names.filter(row => row.language === language).map(row => ({ ...row, source: 'wikidata' }))) : null,
   }));
-  // Scientific exact matches take priority, even when a vernacular neighbour also matches.
-  const merged = new Map(nameCandidates.map(row => [row.gbif_key, row]));
-  for (const row of scientificCandidates) {
-    if (!merged.has(row.gbif_key) || !row.requires_confirmation) merged.set(row.gbif_key, { ...merged.get(row.gbif_key), ...row });
-  }
-  const scientificPriority = (row: Candidate) => !row.requires_confirmation && exactName(row) ? 1 : 0;
-  let candidates = [...merged.values()].sort((a, b) => scientificPriority(b) - scientificPriority(a));
-  if (!candidates.some(row => !row.requires_confirmation)) {
-    try {
-      const matches = await matchSpecies(query);
-      // GBIF can confirm scientific names, but fuzzy or ambiguous vernacular hits still need confirmation.
-      candidates = [...matches.map(match => {
-        const named = nameCandidates.find(row => row.gbif_key === match.gbif_key);
-        return named ? { ...named, ...match, requires_confirmation: (named.matched_language !== 'la' && named.requires_confirmation) || match.requires_confirmation } : match;
-      }), ...candidates.filter(local => !matches.some(match => match.gbif_key === local.gbif_key))];
-    } catch (cause) {
-      if (!candidates.length || !isHttpError(cause) || ![422, 503].includes(cause.status)) throw cause;
-    }
-  }
-  if (!candidates.length) error(422, 'No species-rank plant matched that name. Try another name.');
-  candidates = candidates.map(await withCommonNames(candidates, language));
   return recordSpeciesSearch(candidates, household);
 }
 
@@ -78,13 +106,23 @@ export function recordSpeciesSearch(candidates: Candidate[], household: string) 
   searches.set(search_id, { household, expires: time + 300000, candidates });
   return { search_id, candidates };
 }
-export function chosenSpecies(searchId: unknown, key: unknown, household: string, confirmed: unknown): Candidate {
+export async function chosenSpecies(searchId: unknown, key: unknown, household: string, confirmed: unknown, { requireReceipt = false } = {}): Promise<Candidate> {
   const record = typeof searchId === 'string' ? searches.get(searchId) : undefined;
-  if (!record || record.household !== household || record.expires <= now().getTime()) error(422, 'Search again before choosing this species.');
-  const candidate = record.candidates.find(item => item.gbif_key === key);
-  if (!candidate) error(422, 'Choose a species from the search results.');
-  if (candidate.requires_confirmation && confirmed !== true) error(422, 'Confirm this species before saving the plant.');
-  return candidate;
+  if (record && record.expires > now().getTime()) {
+    if (record.household !== household) error(422, 'Search again before choosing this species.');
+    const candidate = record.candidates.find(item => item.gbif_key === key);
+    if (!candidate) error(422, 'Choose a species from the search results.');
+    if (candidate.requires_confirmation && confirmed !== true) error(422, 'Confirm this species before saving the plant.');
+    return candidate;
+  }
+  if (!requireReceipt && confirmed === true && isGbifKey(key)) {
+    const stored = await db().query<Pick<Candidate, 'gbif_key' | 'scientific_name' | 'canonical_name' | 'rank'>>(
+      'SELECT gbif_key, scientific_name, canonical_name, rank FROM species WHERE gbif_key = $1', [key]);
+    if (stored.rows[0]) return { ...stored.rows[0], confidence: null, match_type: null, requires_confirmation: true };
+    const candidate = await acceptedSpecies(key).catch(() => null);
+    if (candidate) return candidate;
+  }
+  error(422, 'Search again before choosing this species.');
 }
 
 export async function saveSpecies(client: PoolClient, species: Candidate, preserveTaxonomy = species.source === 'identification') {

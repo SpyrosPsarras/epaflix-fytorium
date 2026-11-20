@@ -14,11 +14,11 @@ export const plantLabels = {
 } as const;
 export const plantBooleans = ['drainage', 'grow_light', 'near_ac', 'near_heater'] as const;
 export const plantNumbers = ['pot_size_cm', 'window_distance_cm'] as const;
-export type PlantInput = { [K in keyof typeof plantChoices]: typeof plantChoices[K][number] } & {
+export type PlantInput = { [K in keyof typeof plantChoices]: typeof plantChoices[K][number] | null } & {
   health?: Health | null;
   site_id: string; nickname: string | null; cultivar: string | null; birthday: string | null;
   pot_size_cm: number | null; window_distance_cm: number | null;
-  drainage: boolean; grow_light: boolean; near_ac: boolean; near_heater: boolean;
+  drainage: boolean | null; grow_light: boolean; near_ac: boolean; near_heater: boolean;
 };
 export type Plant = Omit<PlantInput, 'site_id'> & {
   site_id: string | null; status: 'active' | 'graveyard'; graveyard_on: string | null;

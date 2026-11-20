@@ -56,7 +56,7 @@ export async function deletePlant(id: string, household: string, input: Record<s
 export async function changeSpecies(id: string, identity: Identity, input: Record<string, unknown>) {
   const household = identity.household.id;
   await getPlant(id, household, identity.language);
-  const species = chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed);
+  const species = await chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed);
   await withTransaction(async (client) => {
     const result = await client.query('SELECT p.gbif_key, s.scientific_name FROM plants p JOIN species s ON s.gbif_key = p.gbif_key WHERE p.id = $1 AND p.household_id = $2 FOR UPDATE OF p', [id, household]);
     if (!result.rowCount) error(404, 'Plant not found');

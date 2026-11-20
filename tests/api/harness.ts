@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect } from 'vitest';
 import { assertApiResponse } from './openapi';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
+import { resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -10,9 +12,11 @@ import { identificationResponse } from '../identification-fixture';
 import { close, listen, startOidcProvider, TEST_CLIENT_SECRET } from './oidc-provider';
 
 type FakeResponse = { status: number; body: unknown; headers?: Record<string, string>; delay?: number };
-export function createApiHarness(options: { appEnv?: Record<string, string>; testClock?: boolean; queryStatistics?: boolean; photos?: boolean; careEnv?: Record<string, string>; weather?: (url: URL) => FakeResponse; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
+export function createApiHarness(options: { appEnv?: Record<string, string>; testClock?: boolean; wiremock?: boolean; queryStatistics?: boolean; photos?: boolean; careEnv?: Record<string, string>; weather?: (url: URL) => FakeResponse; perenual?: (path: string) => FakeResponse; openPlantbook?: (url: URL, authorization: string | undefined) => FakeResponse } = {}) {
   const originalFetch = globalThis.fetch;
   let postgres: StartedPostgreSqlContainer;
+  let wiremock: StartedTestContainer | undefined;
+  let wiremockUrl: string | undefined;
   const photos = createPhotoStorage();
   const push = createPushService();
   const vapid = push.vapid;
@@ -25,9 +29,12 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
   let gbifResponse: unknown = { usageKey: 910001, scientificName: 'Testoria lucida Inventor', canonicalName: 'Testoria lucida', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 };
   let gbifStatus = 200;
   let gbifDelay = 0;
+  const gbifMatches = new Map<string, unknown>();
+  let wikidataSearchStalled = false;
   const gbifSpecies = new Map<number, unknown>();
   const gbifOccurrences = new Map<number, { payload: unknown; status: number }>();
   const occurrenceRequests: URL[] = [];
+  const taxonomySearchRequests: URL[] = [];
   const names = {
     gbif: { payload: { results: [], endOfRecords: true } as unknown, status: 200, delay: 0 },
     wikidata: { payload: { entities: {} } as unknown, status: 200, delay: 0 },
@@ -54,6 +61,10 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     }
     if (/^\/species\/\d+\/vernacularNames$/.test(url.pathname)) return nameResponse('gbif', response, url.pathname.split('/')[2]);
     if (url.pathname === '/wikidata/w/api.php') {
+      if (url.searchParams.get('srsearch')?.endsWith(' haswbstatement:P846')) {
+        taxonomySearchRequests.push(url);
+        if (wikidataSearchStalled) return;
+      }
       if (url.searchParams.get('action') === 'query' && /^haswbstatement:P846=\d+$/.test(url.searchParams.get('srsearch') ?? '')) {
         const key = url.searchParams.get('srsearch')!.split('=').pop();
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -73,7 +84,8 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
       response.writeHead(400).end();
       return;
     }
-    const payload = gbifResponse;
+    taxonomySearchRequests.push(url);
+    const payload = gbifMatches.get(url.searchParams.get('name')!) ?? gbifResponse;
     const status = gbifStatus;
     setTimeout(() => {
       response.writeHead(status, { 'content-type': 'application/json' });
@@ -127,6 +139,12 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     const postgresContainer = new PostgreSqlContainer('postgres:17-alpine');
     if (options.queryStatistics) postgresContainer.withCommand(['postgres', '-c', 'shared_preload_libraries=pg_stat_statements']);
     postgres = await postgresContainer.start();
+    if (options.wiremock) {
+      wiremock = await new GenericContainer('wiremock/wiremock:3.13.2')
+        .withCopyDirectoriesToContainer([{ source: resolve('tests/stack/mappings'), target: '/home/wiremock/mappings' }])
+        .withExposedPorts(8080).withWaitStrategy(Wait.forHttp('/__admin/mappings', 8080)).start();
+      wiremockUrl = `http://${wiremock.getHost()}:${wiremock.getMappedPort(8080)}/`;
+    }
     if (options.photos) await photos.start();
     provider = await startOidcProvider();
     const gbifPort = await listen(gbif);
@@ -146,7 +164,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
       return response;
     };
     // start.mjs runs migrations before starting the HTTP listener.
-    appEnv = { ...process.env, FCM_BASE_URL: `http://127.0.0.1:${pushPort}`, FCM_OAUTH_TOKEN_URL: `http://127.0.0.1:${pushPort}/oauth/token`, FCM_PROJECT_ID: 'synthetic-fytorium', FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(push.fcm.account), FCM_SERVICE_ACCOUNT_FILE: '', FYTORIUM_TEST_PUSH_URL: `http://127.0.0.1:${pushPort}/`, VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: 'mailto:push@example.test', PUSH_WORKER_ENABLED: 'false', OPEN_METEO_BASE_URL: `http://127.0.0.1:${weatherPort}/`, OPEN_METEO_CLIMATE_BASE_URL: `http://127.0.0.1:${weatherPort}/`, WEATHER_WORKER_ENABLED: 'false', OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual-key', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, ...options.appEnv, GBIF_BASE_URL: `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, PLANTNET_BASE_URL: `http://127.0.0.1:${plantnetPort}/`, PLANTNET_API_KEY: plantnetKey, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '41M' };
+    appEnv = { ...process.env, FCM_BASE_URL: `http://127.0.0.1:${pushPort}`, FCM_OAUTH_TOKEN_URL: `http://127.0.0.1:${pushPort}/oauth/token`, FCM_PROJECT_ID: 'synthetic-fytorium', FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(push.fcm.account), FCM_SERVICE_ACCOUNT_FILE: '', FYTORIUM_TEST_PUSH_URL: `http://127.0.0.1:${pushPort}/`, VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: 'mailto:push@example.test', PUSH_WORKER_ENABLED: 'false', OPEN_METEO_BASE_URL: `http://127.0.0.1:${weatherPort}/`, OPEN_METEO_CLIMATE_BASE_URL: `http://127.0.0.1:${weatherPort}/`, WEATHER_WORKER_ENABLED: 'false', OPEN_PLANTBOOK_BASE_URL: `http://127.0.0.1:${openPlantbookPort}/api/v1/`, OPEN_PLANTBOOK_API_KEY: options.openPlantbook ? 'synthetic-plantbook-token' : '', PERENUAL_BASE_URL: `http://127.0.0.1:${perenualPort}/`, PERENUAL_API_KEY: 'synthetic-perenual-key', PERENUAL_WORKER_ENABLED: 'false', ...options.careEnv, ...options.appEnv, GBIF_BASE_URL: wiremockUrl ?? `http://127.0.0.1:${gbifPort}/`, WIKIDATA_BASE_URL: wiremockUrl ?? `http://127.0.0.1:${gbifPort}/wikidata/`, NORTAXA_BASE_URL: `http://127.0.0.1:${gbifPort}/nortaxa/`, PLANTNET_BASE_URL: `http://127.0.0.1:${plantnetPort}/`, PLANTNET_API_KEY: plantnetKey, NODE_ENV: options.testClock ? 'test' : 'production', FYTORIUM_TEST_CLOCK: options.testClock ? 'true' : 'false', HOST: '127.0.0.1', PORT: String(port), ORIGIN: base, DATABASE_URL: postgres.getConnectionUri() + '?sslmode=disable', OIDC_ISSUER: provider.issuer, OIDC_CLIENT_ID: 'test-client', OIDC_CLIENT_SECRET: TEST_CLIENT_SECRET, OIDC_REDIRECT_URL: base + '/auth/callback', OIDC_ALLOW_INSECURE_HTTP: 'true', ...photos.env, BODY_SIZE_LIMIT: '41M' };
     app = spawn('node', ['scripts/start.mjs'], { env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     app.stdout!.on('data', data => appOutput += data);
     app.stderr!.on('data', data => appOutput += data);
@@ -185,6 +203,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     await close(plantnet);
     if (postgres && !postgresStopped) await stopPostgres();
     await photos.stop();
+    await wiremock?.stop();
   });
 
   async function login(subject = 'synthetic-owner', claims: { name?: string; email?: string } = { name: 'Test member' }, invite?: string) {
@@ -238,6 +257,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     push,
     vapidPublicKey: vapid.publicKey,
     get base() { return base; },
+    get wiremockUrl() { return wiremockUrl; },
     get storage() { return photos.storage; },
     bucket: photos.bucket,
     get minioOrigin() { return photos.minioOrigin; },
@@ -248,11 +268,14 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     get identificationKeyLeaked() { return appOutput.includes(plantnetKey); },
     login,
     setGbif(payload: unknown, status = 200, delay = 0) { gbifResponse = payload; gbifStatus = status; gbifDelay = delay; },
+    setGbifMatch(name: string, payload: unknown) { gbifMatches.set(name, payload); },
+    stallWikidataSearch(stalled: boolean) { wikidataSearchStalled = stalled; },
     identificationRequests,
     setPlantnet(payload: unknown = identificationResponse, status = 200, delay = 0) { plantnetResponse = payload; plantnetStatus = status; plantnetDelay = delay; },
     setGbifSpecies(key: number, payload: unknown) { gbifSpecies.set(key, payload); },
     setGbifOccurrences(key: number, payload: unknown, status = 200) { gbifOccurrences.set(key, { payload, status }); },
     occurrenceRequests,
+    taxonomySearchRequests,
     async restartApp(overrides: NodeJS.ProcessEnv = {}) {
       const exited = new Promise<void>(resolve => app.once('exit', () => resolve()));
       app.kill('SIGTERM');
