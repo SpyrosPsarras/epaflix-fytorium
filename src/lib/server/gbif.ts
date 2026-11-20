@@ -16,9 +16,10 @@ function acceptedRank(rank: string, canonicalName: string, name: string, genus: 
 }
 
 type ReferencePhoto = { identifier: string; creator: string; license: 'CC BY 4.0' | 'CC0'; source_url: string };
-export async function referencePhoto(key: number): Promise<ReferencePhoto | null> {
+// Several occurrences, so one with an unusable image or link does not hide a usable one behind it.
+export async function referencePhotos(key: number): Promise<ReferencePhoto[]> {
   const url = sourceUrl(config().gbifBaseUrl, 'occurrence/search');
-  url.search = new URLSearchParams({ taxonKey: String(key), mediaType: 'StillImage', limit: '1' }).toString();
+  url.search = new URLSearchParams({ taxonKey: String(key), mediaType: 'StillImage', limit: '10' }).toString();
   url.searchParams.append('license', 'CC0_1_0');
   url.searchParams.append('license', 'CC_BY_4_0');
   let body;
@@ -28,18 +29,22 @@ export async function referencePhoto(key: number): Promise<ReferencePhoto | null
     body = await response.json();
     if (!Array.isArray(body?.results)) throw new Error();
   } catch { error(503, 'Reference photos are unavailable. GBIF did not respond. Try again.'); }
-  const occurrence = body.results[0];
-  const media = occurrence?.media?.[0];
-  if (typeof media?.identifier !== 'string' || typeof media.license !== 'string') return null;
-  const license = /^https?:\/\/creativecommons\.org\/licenses\/by\/4\.0\/?$/.test(media.license) ? 'CC BY 4.0'
-    : /^https?:\/\/creativecommons\.org\/publicdomain\/zero\/1\.0\/?$/.test(media.license) ? 'CC0' : null;
-  if (!license) return null;
-  let source: URL;
-  try { source = new URL(occurrence.references); }
-  catch { return null; }
-  if (!['https:', 'http:'].includes(source.protocol) || source.username || source.password) return null;
-  const creator = [media.creator, media.rightsHolder].find(value => typeof value === 'string' && value.trim());
-  return { identifier: media.identifier, creator: creator?.trim().slice(0, 500) ?? 'Unknown photographer', license, source_url: source.href };
+  const photos: ReferencePhoto[] = [];
+  for (const occurrence of body.results) {
+    let source: URL;
+    try { source = new URL(occurrence?.references); }
+    catch { continue; }
+    if (!['https:', 'http:'].includes(source.protocol) || source.username || source.password) continue;
+    for (const media of Array.isArray(occurrence.media) ? occurrence.media : []) {
+      if (typeof media?.identifier !== 'string' || typeof media.license !== 'string') continue;
+      const license = /^https?:\/\/creativecommons\.org\/licenses\/by\/4\.0\/?$/.test(media.license) ? 'CC BY 4.0'
+        : /^https?:\/\/creativecommons\.org\/publicdomain\/zero\/1\.0\/?$/.test(media.license) ? 'CC0' : null;
+      if (!license) continue;
+      const creator = [media.creator, media.rightsHolder].find(value => typeof value === 'string' && value.trim());
+      photos.push({ identifier: media.identifier, creator: creator?.trim().slice(0, 500) ?? 'Unknown photographer', license, source_url: source.href });
+    }
+  }
+  return photos;
 }
 
 export function isGbifKey(key: unknown): key is number {
