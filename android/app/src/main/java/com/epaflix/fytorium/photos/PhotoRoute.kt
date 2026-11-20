@@ -12,16 +12,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable fun PhotosRoute(api: ApiClient, care: CareState, connected: () -> Boolean, thumbnails: Thumbnails?,
-    plantId: String? = null, plantName: String? = null, identifying: Boolean = false,
+    plantId: String? = null, plantName: String? = null, identifying: Boolean = false, formOnly: Boolean = false,
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
     onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {},
-    onFormDirty: (() -> String?) -> Unit = {}) {
+    onFormDirty: (() -> String?) -> Unit = {}, onReceipt: (String) -> Unit = {}, onAdd: (() -> Unit)? = null, onUploaded: () -> Unit = onBack,
+    cached: (String) -> String? = { null }, keep: (String, String) -> Unit = { _, _ -> },
+    grid: androidx.compose.foundation.lazy.grid.LazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
     val repository = remember(api, member, plantId, identifying) { PhotoRepository(api,
         { member != null && member.role != Role.sitter && currentCare.member == member },
-        { currentConnected() && !currentCare.updateRequired }, plantId) }
+        { currentConnected() && !currentCare.updateRequired }, plantId, cached, keep) }
     val state by repository.state.collectAsState()
     LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
     var selected by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<List<String>>(emptyList()) } }
@@ -29,6 +31,7 @@ import kotlinx.coroutines.withContext
     var originalId by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<String?>(null) } }
     var localError by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
+    var pulling by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allowed = member != null && member.role != Role.sitter && !care.updateRequired
@@ -71,13 +74,21 @@ import kotlinx.coroutines.withContext
             if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
         } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null }, onSelect = onSelect)
     else PhotoScreen(shown, online, plantName, selected.size, controls, thumbnails, onBack,
-        onRefresh = { launch { refresh() } }, onUpload = { note, health, date -> launch(true) {
+        onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch
-            if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) { selected = emptyList(); onChanged() }
+            if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) {
+                selected = emptyList(); onChanged(); onReceipt("Added a photo of ${plantName ?: "this plant"}")
+            }
         } }, onChange = { id, action -> launch(true) {
-            if (withContext(Dispatchers.IO) { repository.change(id, action) }) onChanged()
+            val photo = state.photos.firstOrNull { it.id == id }
+            if (withContext(Dispatchers.IO) { repository.change(id, action) }) {
+                onChanged()
+                photo?.let { onReceipt(if (action == "cover") "${it.plantName}'s cover photo changed" else "Deleted the ${dayMonthYear(it.takenOn)} photo of ${it.plantName}") }
+            }
         } }, onOriginal = { originalId = it },
         onCloseOriginal = { originalId = null; repository.clearOriginal() }, onPlant = onPlant,
         onFormDirty = onFormDirty, onDiscard = { selected = emptyList(); localError = null; repository.clearError() },
-        originalOpen = originalId != null)
+        originalOpen = originalId != null, care = care, refreshing = pulling, onExplain = onReceipt, openPhotoId = originalId,
+        formOnly = formOnly, onAdd = onAdd, onUploaded = onUploaded, grid = grid, selectedUri = selected.firstOrNull(), onTake = sources.take, onChoose = sources.choose,
+        onRemovePhoto = { selected = emptyList(); localError = null; repository.clearError() })
 }

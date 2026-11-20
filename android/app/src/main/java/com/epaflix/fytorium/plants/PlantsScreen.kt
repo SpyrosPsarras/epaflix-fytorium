@@ -69,6 +69,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     var leavingFor by rememberSaveable { mutableStateOf<String?>(null) }
     var restoreSite by rememberSaveable { mutableStateOf<String?>(null) }
     var subpageDraft by remember { mutableStateOf<() -> String?>({ null }) }
+    // The plant photos page returns to the card the user left after the viewer, the form and the plant page.
+    val photoGrid = rememberSaveable(id, saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
     var reloading by remember { mutableStateOf(false) }
     var reloadedAt by remember { mutableIntStateOf(0) }
     val detail = state.detail?.takeIf { it.plant.id == id }
@@ -135,7 +137,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     // A search page opens without the last search's failure, so it cannot flash while the first query loads.
     LaunchedEffect(page) { if (page in listOf("search", "change-species") && searched == null) repository?.clearRead("search") }
     LaunchedEffect(state.member, page) {
-        if (page in listOf("species-care", "photos", "identify") && state.member?.role == Role.sitter) page = if (id == null) "list" else "detail"
+        if (page in listOf("species-care", "photos", "photo-form", "identify") && state.member?.role == Role.sitter) page = if (id == null) "list" else "detail"
         loadOptions()
         if (page == "graveyard" && repository != null) graveyard = withContext(Dispatchers.IO) { repository.graveyard() }
     }
@@ -200,7 +202,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         val key = id ?: return
         repository?.clearPlantErrors()
         when (action) {
-            "photos" -> page = "photos"
+            "photos", "photo-form" -> page = action
             "care-form" -> page = "care"
             "repot-form", "restore", "change-species" -> run {
                 loadOptions()
@@ -216,11 +218,13 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             }
         }
     }
-    if (page in listOf("photos", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
+    if (page in listOf("photos", "photo-form", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
+        val photos = page != "identify"
         com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
-            plantId = if (page == "photos") id else null, plantName = if (page == "photos") plant?.displayName else null,
-            identifying = page == "identify", onBack = { page = if (page == "photos") "detail" else identifyReturn }, onUpdateRequired = { repository?.requireUpdate() },
-            onFormDirty = { subpageDraft = it },
+            plantId = if (photos) id else null, plantName = if (photos) plant?.displayName else null, formOnly = page == "photo-form",
+            identifying = page == "identify", onBack = { page = if (photos) "detail" else identifyReturn }, onUpdateRequired = { repository?.requireUpdate() },
+            onFormDirty = { subpageDraft = it }, onReceipt = { repository?.showReceipt(it) },
+            cached = { repository?.cachedJson(it) }, keep = { resource, json -> repository?.saveJson(resource, json) }, grid = photoGrid,
             onChanged = { scope.launch { withContext(Dispatchers.IO) { repository?.refreshPlants() }; id?.let { refreshDetail(it) } } },
             onSelect = { candidate, searchId, confirmed ->
                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()

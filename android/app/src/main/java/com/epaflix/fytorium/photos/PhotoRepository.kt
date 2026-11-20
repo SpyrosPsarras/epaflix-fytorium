@@ -20,7 +20,8 @@ private class PhotoFailure(val status: Int, val messageText: String) : Exception
 
 // One member and one gallery. Neither metadata nor original images are persisted here.
 class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boolean,
-    private val connected: () -> Boolean, private val plantId: String? = null) {
+    private val connected: () -> Boolean, private val plantId: String? = null,
+    private val cached: (String) -> String? = { null }, private val keep: (String, String) -> Unit = { _, _ -> }) {
     private val mutable = MutableStateFlow(PhotoState())
     val state = mutable.asStateFlow()
     private fun safe(id: String): String { require(id.matches(Regex("[A-Za-z0-9_-]+"))); return id }
@@ -32,14 +33,21 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
             ?.takeIf { message -> message.isNotBlank() } ?: fallback)
         text
     }
-    private fun load() {
-        val photos = JSONArray(response(api.request(listPath))).mapObjects {
-            PhotoUpdate(it.getString("id"), it.getString("plant_id"), it.getString("plant_name"), it.getString("note"),
-                it.nullable("health"), it.getString("taken_on"), it.getBoolean("is_cover"))
-        }
-        if (allowed()) mutable.value = mutable.value.copy(photos = photos, loaded = true, blocked = false)
+    private val cacheKey get() = plantId?.let { "photos/$it" } ?: "journal"
+    private fun parse(json: String) = JSONArray(json).mapObjects {
+        PhotoUpdate(it.getString("id"), it.getString("plant_id"), it.getString("plant_name"), it.getString("note"),
+            it.nullable("health"), it.getString("taken_on"), it.getBoolean("is_cover"))
     }
-    @Synchronized fun refresh(): Boolean = run(false) { load() }
+    private fun load() {
+        val json = response(api.request(listPath))
+        val photos = parse(json)
+        if (allowed()) { keep(cacheKey, json); mutable.value = mutable.value.copy(photos = photos, loaded = true, blocked = false) }
+    }
+    @Synchronized fun refresh(): Boolean {
+        // The last saved list shows at once and stays when the read fails.
+        if (!state.value.loaded) cached(cacheKey)?.let { json -> runCatching { parse(json) }.getOrNull()?.let { if (allowed()) mutable.value = mutable.value.copy(photos = it, loaded = true) } }
+        return run(false) { load() }
+    }
     @Synchronized fun options(): Boolean = run(false) {
         val meta = JSONObject(response(api.request("/api/meta")))
         val choices = com.epaflix.fytorium.plants.parsePlantOptions(response(api.request("/api/choices")))

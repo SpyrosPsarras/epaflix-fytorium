@@ -61,6 +61,10 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
     var journalPlantId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Journal +: "" is the plant picker, a plant id its photo form.
+    var journalAdd by rememberSaveable { mutableStateOf<String?>(null) }
+    val pickerQuery = rememberSaveable { mutableStateOf("") }
+    val journalGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     var unmatched by rememberSaveable { mutableStateOf(false) }
     var plantaImport by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -76,7 +80,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val homeHandled = key(homeRequest) { rememberSaveable { mutableStateOf(false) } }
     // Discard drops the Plants form even when the tap stays on Plants, so no form keeps changes the shell no longer asks about.
     var plantsDiscards by rememberSaveable { mutableIntStateOf(0) }
-    fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null }
+    fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null; journalAdd = null }
     fun go(target: String) { select(if (target == "home") "Today" else target); if (target == "home") taskView = "today" }
     fun leave(target: String) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else go(target) }
     LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; leave("home") } }
@@ -95,7 +99,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
             }
-            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null
+            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null; journalAdd = null
             if (!loggedIn || memberChanged || becameSitter) { feedPlant = null; openTask(null); leaving = null; destination = null }
         }
         if (!loggedIn || memberChanged || (member != null && member.role != Role.owner)) plantaImport = false
@@ -211,9 +215,20 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && careState?.member != null && careState.member.role != Role.sitter && tab == "Journal" && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member, plantsDiscards) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
-                    onBack = { tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
-                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }, onFormDirty = { plantsDiscard = it }) }
+                val adding = journalAdd
+                val picked = adding?.takeIf { it.isNotEmpty() }?.let { id -> careState.plants.firstOrNull { it.id == id } }
+                if (adding == "" || (adding != null && picked == null)) {
+                    BackHandler { journalAdd = null }
+                    com.epaflix.fytorium.plants.PlantsList(careState, careState.plants, false, onPlant = { journalAdd = it }, onAdd = {}, onGraveyard = {},
+                        onRefresh = { controller?.refresh(pulled = true) }, thumbnails = thumbnails, search = pickerQuery, onBack = { journalAdd = null },
+                        refreshing = controller?.pulling?.collectAsState()?.value == true, chooseTitle = "Choose a plant")
+                } else key(careState.member, plantsDiscards, picked?.id) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
+                    plantId = picked?.id, plantName = picked?.displayName, formOnly = picked != null,
+                    onBack = { if (picked != null) journalAdd = "" else tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
+                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }, onFormDirty = { plantsDiscard = it },
+                    onReceipt = { controller?.repository?.showReceipt(it) }, onAdd = { journalAdd = "" }, onUploaded = { journalAdd = null },
+                    cached = { controller?.repository?.cachedJson(it) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json) },
+                    grid = if (picked == null) journalGrid else androidx.compose.foundation.lazy.grid.rememberLazyGridState()) }
             }
             return@Scaffold
         }

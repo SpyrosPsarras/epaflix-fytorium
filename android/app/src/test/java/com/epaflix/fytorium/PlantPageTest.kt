@@ -417,7 +417,7 @@ class PlantPageTest {
         compose.onAllNodesWithContentDescription("Photo update", substring = true).assertCountEquals(2)
         reveal(hasText("Add photo")).performClick()
         reveal(hasText("See all")).performClick()
-        compose.runOnIdle { assertEquals(listOf("photos", "photos"), commands) }
+        compose.runOnIdle { assertEquals(listOf("photo-form", "photos"), commands) }
     }
 
     @Test fun aboutListsOnlySetFieldsAsSentences() {
@@ -773,7 +773,7 @@ class PlantPageTest {
         compose.waitUntil(5_000) { Running.count.get() == 0 }
         for ((open, opened) in listOf(names to (hasText("Common name") and hasSetTextAction()),
             (hasText("Care defaults for this species") and hasClickAction()) to (hasText("Override watering interval in days") and isEnabled()),
-            hasText("See all") to (hasText("Synthetic fern updates") and isHeading()),
+            hasText("See all") to (hasText("Photos of Synthetic fern") and isHeading()),
             hasContentDescription("Edit plant") to (hasText("Name") and hasSetTextAction()))) {
             compose.onNode(open).assertIsDisplayed().performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(opened).fetchSemanticsNodes().isNotEmpty() }
@@ -943,7 +943,7 @@ class PlantPageTest {
     @Test fun anUndoElsewhereDuringSpeciesNamesShowsWhenBackReturns() = undoElsewhereShowsOnReturn(hasText("Species names") and hasClickAction(),
         hasText("Common name") and hasSetTextAction())
     @Config(qualifiers = "w360dp-h2400dp-mdpi")
-    @Test fun anUndoElsewhereDuringPhotosShowsWhenBackReturns() = undoElsewhereShowsOnReturn(hasText("See all"), hasText("Synthetic fern updates") and isHeading())
+    @Test fun anUndoElsewhereDuringPhotosShowsWhenBackReturns() = undoElsewhereShowsOnReturn(hasText("See all"), hasText("Photos of Synthetic fern") and isHeading())
 
     private fun undoElsewhereShowsOnReturn(open: SemanticsMatcher, opened: SemanticsMatcher) {
         val undone = AtomicBoolean(false)
@@ -2776,11 +2776,11 @@ class PlantPageTest {
                 PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("See all")).fetchSemanticsNodes().isNotEmpty() }
             reveal(hasText("See all")).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Open original photo of Synthetic fern") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Open original photo of Synthetic fern").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Photo") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Photo of Synthetic fern, 1 Jun 2030").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Photo of Synthetic fern, 1 Jun 2030").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Synthetic fern \u00b7 1 Jun 2030") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
             androidx.test.espresso.Espresso.pressBack()
-            compose.onNode(hasText("Synthetic fern updates") and isHeading()).assertIsDisplayed()
+            compose.onNode(hasText("Photos of Synthetic fern") and isHeading()).assertIsDisplayed()
             androidx.test.espresso.Espresso.pressBack()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("History") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
         }

@@ -25,6 +25,14 @@ import org.robolectric.annotation.Config
 class PhotoScreenTest {
     @get:Rule val compose = createComposeRule()
     private val photo = PhotoUpdate("photo-one", "plant-one", "Synthetic sprout", "Synthetic note", "good", "2026-10-13", false)
+    private val addPhoto = hasContentDescription("Add a photo", substring = true)
+    private fun openForm() = compose.onNode(addPhoto).performClick()
+    private val chosen = hasContentDescription("Chosen photo", substring = true)
+    private fun chosenPhotos() = compose.onAllNodes(chosen).fetchSemanticsNodes().size
+    private fun photoAction(name: String) {
+        compose.onNode(hasContentDescription("Actions for the", substring = true)).performScrollTo().performClick()
+        compose.onNodeWithText(name).performClick()
+    }
     @Test fun careFailuresAndRefreshesDoNotDisablePhotoControlsAndSittersSendNothing() {
         okhttp3.mockwebserver.MockWebServer().use { server ->
             server.start()
@@ -33,10 +41,10 @@ class PhotoScreenTest {
             val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
             val care = mutableStateOf(CareState(member = Member("synthetic-member", Role.owner), busy = true, offline = true, serverUnavailable = true))
             compose.setContent { FytoriumTheme { PhotosRoute(api, care.value, { true }, null, onBack = {}) } }
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Use as cover") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Use as cover").performScrollTo().assertIsEnabled()
+            compose.waitUntil(5_000) { server.requestCount == 1 && compose.onAllNodesWithText("Synthetic note").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(addPhoto).assertIsEnabled()
             compose.runOnIdle { care.value = care.value.copy(member = Member("synthetic-member", Role.sitter)) }
-            compose.onNodeWithText("Use as cover").assertDoesNotExist()
+            compose.onNode(addPhoto).assertDoesNotExist()
             compose.onNodeWithText("Choose photos").assertDoesNotExist()
             assertEquals(1, server.requestCount)
         }
@@ -57,20 +65,119 @@ class PhotoScreenTest {
     // C11: photo updates show readable dates.
     @Test fun photoUpdatesShowReadableDates() {
         compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo, photo.copy(id = "photo-two", cover = true)), loaded = true), true, "Synthetic sprout", 0) } }
-        compose.onNodeWithText("13 Oct 2026").assertExists()
-        compose.onNodeWithText("13 Oct 2026 \u00b7 Cover photo").assertExists()
+        compose.onAllNodesWithText("13 Oct 2026").assertCountEquals(2)
+        compose.onNodeWithText("Cover photo").assertExists()
         compose.onAllNodes(hasText("2026-10-13", substring = true)).assertCountEquals(0)
     }
+    // W4-P27-P29: photo-first cards, the plant as a link on the Journal, one menu of actions, + in the top bar.
+    @Test fun journalCardsLinkThePlantAndKeepActionsInOneMenu() {
+        var opened: String? = null
+        var plantOpened: String? = null
+        var command: String? = null
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo.copy(cover = true)), loaded = true), true, null, 0,
+            onOriginal = { opened = it }, onPlant = { plantOpened = it }, onChange = { _, action -> command = action }) } }
+        compose.onNode(hasText("Journal") and isHeading()).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add a photo update").assertIsEnabled()
+        compose.onNodeWithText("Refresh photos").assertDoesNotExist()
+        compose.onNodeWithText("Cover photo").assertIsDisplayed()
+        compose.onNodeWithText("Synthetic sprout").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithContentDescription("Photo of Synthetic sprout, 13 Oct 2026").performClick()
+        compose.runOnIdle { assertEquals("plant-one", plantOpened); assertEquals("photo-one", opened) }
+        compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of Synthetic sprout").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithText("Use as cover").assertDoesNotExist()
+        compose.onNodeWithText("Delete").performClick()
+        compose.onNodeWithText("Delete the 13 Oct 2026 photo of Synthetic sprout? This can't be undone.").assertIsDisplayed()
+        compose.onNodeWithText("Delete").performClick()
+        compose.runOnIdle { assertEquals("delete", command) }
+    }
+
+    @Test fun anEmptyJournalOffersTheFirstPhoto() {
+        var added = 0
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(loaded = true), true, null, 0, onAdd = { added++ }) } }
+        compose.onNodeWithText("No photos yet").assertIsDisplayed()
+        compose.onNodeWithText("Add your first photo").performClick()
+        compose.runOnIdle { assertEquals(1, added) }
+    }
+
+    // W4-P35: offline the list stays and photo changes look off and say why.
+    @Test fun offlinePhotoChangesExplainWhy() {
+        val explained = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo), loaded = true), false, "Synthetic sprout", 0,
+            care = CareState(member = Member("synthetic-member", Role.owner), offline = true), onExplain = { explained += it }) } }
+        compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add a photo of Synthetic sprout").assertIsNotEnabled().performClick()
+        photoAction("Delete")
+        compose.onNodeWithText("Delete this photo?").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf("Photo changes need a connection.", "Photo changes need a connection."), explained) }
+    }
+
+    // W4-P31: no photo yet, the button looks off and says what is missing.
+    @Test fun addingWithoutAPhotoSaysChooseOneFirst() {
+        val explained = mutableListOf<String>()
+        var uploads = 0
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", 0, formOnly = true,
+            onExplain = { explained += it }, onUpload = { _, _, _ -> uploads++ }) } }
+        compose.onNode(hasText("Add a photo of Synthetic sprout") and isHeading()).assertIsDisplayed()
+        compose.onNodeWithText("Take photo").assertIsDisplayed()
+        compose.onNodeWithText("Choose photo").assertIsDisplayed()
+        compose.onNodeWithText("Add photo update").performScrollTo().assertIsNotEnabled().performClick()
+        compose.runOnIdle { assertEquals(listOf("Choose a photo first."), explained); assertEquals(0, uploads) }
+    }
+
+    // W4-P31, P33, P34: each change ends with a receipt that names the photo or plant.
+    @Test fun photoChangesEndWithReceipts() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(when {
+                    request.method == "DELETE" -> ""
+                    request.method == "PUT" -> photoFixture
+                    request.path == "/api/plants/plant-one/photos" -> "[$photoFixture]"
+                    request.path == "/api/meta" -> """{"today":"2026-10-13"}"""
+                    else -> """{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":[]},"nameLanguages":{}}"""
+                }).setResponseCode(if (request.method == "DELETE") 204 else 200)
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val receipts = mutableListOf<String>()
+            compose.setContent { FytoriumTheme { PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { true }, null,
+                plantId = "plant-one", plantName = "Synthetic sprout", onBack = {}, onReceipt = { receipts += it }) } }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic note").fetchSemanticsNodes().isNotEmpty() }
+            photoAction("Use as cover")
+            compose.waitUntil(5_000) { receipts.size == 1 }
+            photoAction("Delete")
+            compose.onNodeWithText("Delete").performClick()
+            compose.waitUntil(5_000) { receipts.size == 2 }
+            assertEquals(listOf("Synthetic sprout's cover photo changed", "Deleted the 13 Oct 2026 photo of Synthetic sprout"), receipts)
+        }
+    }
+
+    // W4-P35: the last list shows offline from the phone's copy.
+    @Test fun theLastPhotoListShowsOffline() {
+        val api = ApiClient("http://127.0.0.1:9", MemoryCredentials()) {}
+        compose.setContent { FytoriumTheme { PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner), offline = true), { false }, null,
+            plantId = "plant-one", plantName = "Synthetic sprout", onBack = {}, cached = { if (it == "photos/plant-one") "[$photoFixture]" else null }) } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic note").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
+    }
+
+    // W4-P30: zoom stays between 1x and 5x and pans no further than the photo's edges.
+    @Test fun viewerZoomStaysInsideThePhoto() {
+        assertEquals(Triple(5f, 0f, 0f), clampZoom(9f, 0f, 0f, 400f, 300f, 400f, 800f))
+        assertEquals(Triple(1f, 0f, 0f), clampZoom(0.5f, 50f, 50f, 400f, 300f, 400f, 800f))
+        // At 2x a 400 x 300 photo is 800 x 600 inside a 400 x 800 window: 200 px of side room, none above.
+        assertEquals(Triple(2f, 200f, 0f), clampZoom(2f, 900f, 900f, 400f, 300f, 400f, 800f))
+    }
+
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
     @Test fun photoDeleteScrollsInsideInLandscapeWithLargeText() {
         RuntimeEnvironment.setFontScale(1.3f)
         compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
             PhotoScreen(PhotoState(listOf(photo), loaded = true), true, "Synthetic sprout", 0)
         } }
-        compose.onNodeWithText("Delete photo update").performScrollTo().performClick()
-        compose.onNodeWithText("Delete this photo update of Synthetic sprout and its photos?").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Confirm delete").assertIsDisplayed()
-        compose.checkDialogTextScale("Confirm delete", 1.3f)
+        photoAction("Delete")
+        compose.onNodeWithText("Delete the 13 Oct 2026 photo of Synthetic sprout? This can't be undone.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Delete").assertIsDisplayed()
+        compose.checkDialogTextScale("Delete", 1.3f)
         compose.onNodeWithText("Cancel").assertIsDisplayed()
     }
 
@@ -80,7 +187,7 @@ class PhotoScreenTest {
         compose.setContent { CheckLandscape(1.3f); FytoriumTheme {
             PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", 0)
         } }
-        compose.onNodeWithText("Add a photo update").performClick()
+        openForm()
         compose.onNodeWithText("Taken on: 13 Oct 2026").performScrollTo().performClick()
         compose.onNodeWithText("Thursday, October 1, 2026").performScrollTo().performClick()
         compose.onNodeWithText("Thursday, October 1, 2026").assertIsSelected()
@@ -95,7 +202,7 @@ class PhotoScreenTest {
     @Test fun takenDateKeepsItsUnconfirmedSelectionAcrossRecreation() {
         val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", 0) } }
-        compose.onNodeWithText("Add a photo update").performClick()
+        openForm()
         compose.onNodeWithText("Taken on: 13 Oct 2026").performScrollTo().performClick()
         compose.onNodeWithText("Monday, October 12, 2026").performClick()
         restoration.emulateSavedInstanceStateRestore()
@@ -116,7 +223,7 @@ class PhotoScreenTest {
             back = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
             PhotoScreen(PhotoState(today = "2026-10-13", healthChoices = listOf("good")), true, "Synthetic sprout", selected)
         } }
-        compose.onNodeWithText("Add a photo update").performClick()
+        openForm()
         when {
             health -> { compose.onNodeWithText("Photo health").performScrollTo().performClick(); compose.onNodeWithText("good").performClick() }
             date -> {
@@ -136,7 +243,7 @@ class PhotoScreenTest {
         if (selected == 0 && !health && !date) compose.onNodeWithText("Synthetic draft").assertExists()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithText("Discard").performClick()
-        compose.onNodeWithText("Add a photo update").performClick()
+        openForm()
         compose.onNodeWithText("Note").assertTextEquals("Note", "")
         compose.onNodeWithText("Photo health").assertTextContains("Not set")
         compose.onNodeWithText("Taken on: 13 Oct 2026").assertExists()
@@ -149,15 +256,15 @@ class PhotoScreenTest {
         restoration.setContent { FytoriumTheme { PhotoScreen(state.value, true, "Synthetic sprout", 0, onChange = { id, action ->
             if (action == "delete") { deleted = id; state.value = PhotoState(loaded = true) }
         }) } }
-        compose.onNodeWithText("Delete photo update").performScrollTo().performClick()
+        photoAction("Delete")
         compose.runOnIdle { state.value = PhotoState(loading = true) }
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Confirm delete").assertExists()
+        compose.onNodeWithText("Delete this photo?").assertExists()
         compose.runOnIdle { state.value = PhotoState(listOf(photo), loaded = true) }
-        compose.onNodeWithText("Confirm delete").performClick()
+        compose.onNodeWithText("Delete").performClick()
         compose.waitUntil { deleted != null }
         assertEquals("photo-one", deleted)
-        compose.onNodeWithText("Confirm delete").assertDoesNotExist()
+        compose.onNodeWithText("Delete this photo?").assertDoesNotExist()
     }
 
     @Test fun identificationChoiceAndSearchSurviveRecreationWhileResultsReload() {
@@ -193,13 +300,14 @@ class PhotoScreenTest {
             val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
             restoration.setContent { FytoriumTheme { PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { true }, null,
                 plantId = "plant-one", plantName = "Synthetic sprout", onBack = {}) } }
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Open original photo of Synthetic sprout").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Open original photo of Synthetic sprout").performScrollTo().performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Original plant photo").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Photo of Synthetic sprout, 13 Oct 2026").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Photo of Synthetic sprout, 13 Oct 2026").performScrollTo().performClick()
+            val viewer = hasText("Synthetic sprout \u00b7 13 Oct 2026") and isHeading()
+            compose.waitUntil(5_000) { compose.onAllNodes(viewer).fetchSemanticsNodes().isNotEmpty() && compose.onAllNodesWithContentDescription("Photo of Synthetic sprout, 13 Oct 2026").fetchSemanticsNodes().isNotEmpty() }
             restoration.emulateSavedInstanceStateRestore()
-            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Original plant photo").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(viewer).fetchSemanticsNodes().isNotEmpty() && compose.onAllNodesWithContentDescription("Photo of Synthetic sprout, 13 Oct 2026").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.onNodeWithText("Synthetic sprout updates").assertExists()
+            compose.onNodeWithText("Photos of Synthetic sprout").assertExists()
         }
     }
 
@@ -214,20 +322,21 @@ class PhotoScreenTest {
         assertTrue("An unsaved draft must keep its old camera image", file.exists())
         assertFalse("Startup must still remove old unreferenced captures", orphan.exists())
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Selected photos: 1").assertExists()
+        compose.onNode(chosen).assertExists()
         assertTrue(preparePhoto(app, androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".photos", file)).isNotEmpty())
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Add photo update") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Add photo update").performScrollTo().performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic sprout updates").fetchSemanticsNodes().isNotEmpty() && !file.exists() }
-        compose.onNodeWithText("Add a photo update").performClick()
-        compose.onNodeWithText("Selected photos: 0").assertExists()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Photos of Synthetic sprout").fetchSemanticsNodes().isNotEmpty() && !file.exists() }
+        openForm()
+        compose.onNode(chosen).assertDoesNotExist()
         assertFalse("A successful upload must remove the capture", file.exists())
         assertFalse(java.io.File(file.path + ".draft").exists())
     }
 
     @Test fun replacingACameraDraftRemovesOnlyTheReplacedImage() = cameraDraft { first, _ ->
-        compose.onNodeWithText("Take photo").performScrollTo().performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Selected photos: 1").fetchSemanticsNodes().isNotEmpty() && !first.exists() }
+        compose.onNodeWithText("Replace").performScrollTo().performClick()
+        compose.onNodeWithText("Take photo").performClick()
+        compose.waitUntil(5_000) { chosenPhotos() == 1 && !first.exists() }
         assertFalse(java.io.File(first.path + ".draft").exists())
         val remaining = first.parentFile!!.listFiles().orEmpty().filter { it.extension == "jpg" }
         assertEquals(1, remaining.size)
@@ -296,13 +405,13 @@ class PhotoScreenTest {
                     plantId = "plant-one", plantName = "Synthetic sprout", onBack = {})
             } } }
             try {
-                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Add a photo update") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("Add a photo update").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(addPhoto and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                openForm()
                 compose.onNodeWithText("Take photo").performClick()
-                compose.waitUntil(5_000) { compose.onAllNodesWithText("Selected photos: 1").fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { chosenPhotos() == 1 }
                 org.robolectric.util.ReflectionHelpers.setField(activity, "mChangingConfigurations", true)
                 check(files.single(), restoration)
-                if (compose.onAllNodesWithText("Selected photos: 0").fetchSemanticsNodes().isNotEmpty()) assertEquals(1, uploads.get())
+                if (compose.onAllNodesWithText("Choose photo").fetchSemanticsNodes().isNotEmpty()) assertEquals(1, uploads.get())
                 if (leaveRoute) {
                     org.robolectric.util.ReflectionHelpers.setField(activity, "mChangingConfigurations", false)
                     compose.runOnIdle { showing.value = false }
@@ -340,30 +449,30 @@ class PhotoScreenTest {
             var selected by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
             remove = { selected = emptyList() }
             val sources = rememberPhotoSources(false, selected, onPhotos = { selected = it.map { photo -> photo.toString() } }, onError = { error = it })
-            PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", selected.size,
-                sourceControls = { PhotoSourceButtons(true, sources.take, sources.choose) }, onDiscard = { selected = emptyList() })
+            PhotoScreen(PhotoState(today = "2026-10-13"), true, "Synthetic sprout", selected.size, selectedUri = selected.firstOrNull(),
+                onTake = sources.take, onChoose = sources.choose, onDiscard = { selected = emptyList() })
         } }
-        compose.onNodeWithText("Add a photo update").performClick()
-        compose.onNodeWithText("Choose photos").performClick()
-        compose.onNodeWithText("Selected photos: 1").assertExists()
+        openForm()
+        compose.onNodeWithText("Choose photo").performClick()
+        compose.onNode(chosen).assertExists()
         assertNull(error)
         assertEquals(if (persistable) listOf(uri) else emptyList<android.net.Uri>(), app.contentResolver.persistedUriPermissions.map { it.uri })
         try {
             org.robolectric.util.ReflectionHelpers.setField(activity, "mChangingConfigurations", true)
             restoration.emulateSavedInstanceStateRestore()
-            compose.onNodeWithText("Selected photos: 1").assertExists()
+            compose.onNode(chosen).assertExists()
             assertEquals(if (persistable) listOf(uri) else emptyList<android.net.Uri>(), app.contentResolver.persistedUriPermissions.map { it.uri })
             compose.runOnIdle { remove() }
-            compose.onNodeWithText("Selected photos: 0").assertExists()
+            compose.onNode(chosen).assertDoesNotExist()
             compose.waitUntil(5_000) { app.contentResolver.persistedUriPermissions.isEmpty() }
-            compose.onNodeWithText("Choose photos").performClick()
-            compose.onNodeWithText("Selected photos: 1").assertExists()
+            compose.onNodeWithText("Choose photo").performClick()
+            compose.onNode(chosen).assertExists()
             compose.onNodeWithContentDescription("Back").performClick()
             compose.assertDiscard("Your photo update for Synthetic sprout is not saved yet.")
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { app.contentResolver.persistedUriPermissions.isEmpty() }
-            compose.onNodeWithText("Add a photo update").performClick()
-            compose.onNodeWithText("Selected photos: 0").assertExists()
+            openForm()
+            compose.onNode(chosen).assertDoesNotExist()
             if (!persistable) assertEquals(0, org.robolectric.shadow.api.Shadow.extract<TemporaryGalleryGrants>(app.contentResolver).releaseAttempts)
         } finally { org.robolectric.util.ReflectionHelpers.setField(activity, "mChangingConfigurations", false) }
     }
@@ -393,7 +502,7 @@ class PhotoScreenTest {
                 PhotoSourceButtons(!state.value.saving, {}, {})
             }, onSelect = { _, _, confirmed -> selection = confirmed })
             else key(mode.value) { PhotoScreen(state.value, true, if (mode.value == "journal") null else "Synthetic sprout", 1,
-                sourceControls = { PhotoSourceButtons(true, {}, {}) }, onChange = { _, action -> command = action },
+                selectedUri = "content://synthetic/photo", onChange = { _, action -> command = action },
                 onUpload = { _, _, _ -> state.value = state.value.copy(blocked = true, error = "Could not reach Fytorium. Try again.") },
                 onRefresh = { state.value = state.value.copy(blocked = false, loading = true, error = null) }) }
         } } }
@@ -405,23 +514,24 @@ class PhotoScreenTest {
                 compose.captureDialog(file)
             } else compose.onRoot().captureRoboImage(file)
         }
-        compose.onNodeWithText("Use as cover").performScrollTo().assertHeightIsAtLeast(48.dp)
+        compose.onNode(hasContentDescription("Actions for the", substring = true)).performScrollTo().assertHeightIsAtLeast(48.dp)
         capture("gallery")
-        compose.onNodeWithText("Use as cover").performClick()
+        photoAction("Use as cover")
         assertEquals("cover", command)
-        compose.onNodeWithText("Delete photo update").performClick()
-        compose.onNodeWithText("Confirm delete").assertIsDisplayed()
+        photoAction("Delete")
+        compose.onNodeWithText("Delete").assertIsDisplayed()
         capture("delete")
         compose.onNodeWithText("Cancel").performClick()
-        compose.onNodeWithText("Add a photo update").assertIsDisplayed().performClick()
-        compose.onNodeWithText("Take photo").assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithText("Choose photos").assertIsDisplayed()
+        compose.onNode(addPhoto).assertIsDisplayed().performClick()
+        compose.onNodeWithText("Replace").assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("Replace").assertIsDisplayed()
         capture("form")
         compose.onNodeWithText("Note").performScrollTo().performTextReplacement("Synthetic unsaved note")
         compose.onNodeWithText("Add photo update").performScrollTo().performClick()
         compose.onNodeWithText("Add photo update").assertIsNotEnabled()
         capture("failure")
-        compose.onNodeWithText("Refresh photos").performScrollTo().performClick()
+        compose.onNodeWithText("Fytorium isn't responding").performClick()
+        compose.onNodeWithText("Try again").performClick()
         compose.onNodeWithText("Note").performScrollTo().assertTextContains("Synthetic unsaved note")
         compose.onNodeWithText("Add photo update").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("Taken on: 13 Oct 2026").performScrollTo().performClick()
@@ -434,13 +544,13 @@ class PhotoScreenTest {
         compose.onNodeWithText("Set date").assertIsNotEnabled()
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { mode.value = "journal"; state.value = state.value.copy(loading = false) }
-        compose.onNodeWithText("Plant journal").assertIsDisplayed()
+        compose.onNodeWithText("Journal").assertIsDisplayed()
         capture("journal")
         val bitmap = android.graphics.Bitmap.createBitmap(200, 150, android.graphics.Bitmap.Config.ARGB_8888)
         bitmap.eraseColor(android.graphics.Color.rgb(90, 160, 100))
         val bytes = java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray(); bitmap.recycle()
         compose.runOnIdle { state.value = state.value.copy(original = bytes) }
-        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Original plant photo").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Plant photo").fetchSemanticsNodes().isNotEmpty() }
         capture("original")
         compose.runOnIdle { mode.value = "identify"; state.value = state.value.copy(original = null, saving = true, uploading = true, progress = 0.5f) }
         capture("identify-upload")

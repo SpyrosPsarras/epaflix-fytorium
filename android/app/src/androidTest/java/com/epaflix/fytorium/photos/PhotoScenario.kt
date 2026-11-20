@@ -99,16 +99,15 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.selectTab("Plants")
         click("Synthetic A06 sprout")
         click("See all")
-        click("Add a photo update")
+        compose.onNodeWithContentDescription("Add a photo of Synthetic A06 sprout").performClick()
         chooseInjectedPhoto()
         compose.waitUntil(30_000) { runCatching { compose.onNodeWithText("Selected photos: 1").assertExists(); true }.getOrDefault(false) }
         scroll(hasText("Note")).performTextReplacement("Synthetic A06 photo note")
         click("Photo health")
         compose.onNodeWithText("good").performClick()
         click("Add photo update")
-        compose.waitUntil(30_000) { runCatching { scroll(hasText("Use as cover")).assertIsEnabled(); true }.getOrDefault(false) }
-        click("Use as cover")
-        compose.waitUntil(30_000) { runCatching { scroll(hasText("1 Jun 2030 · Cover photo")).assertIsDisplayed(); true }.getOrDefault(false) }
+        // The first photo becomes the cover without a tap.
+        compose.waitUntil(30_000) { runCatching { scroll(hasText("Cover photo")).assertIsDisplayed(); true }.getOrDefault(false) }
         val photo = rows("/api/plants/$plantId/photos").single()
         assertTrue(photo.getBoolean("is_cover")); assertEquals("good", photo.getString("health")); assertEquals("Synthetic A06 photo note", photo.getString("note"))
         val photoId = photo.getString("id")
@@ -121,9 +120,9 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         }
         assertEquals(photoId, JSONObject(json("/api/plants/$plantId")).getString("cover_photo_id"))
         compose.waitUntil(30_000) {
-            runCatching { compose.onNodeWithContentDescription("Photo update of Synthetic A06 sprout").assertExists(); true }.getOrDefault(false)
+            runCatching { compose.onNodeWithContentDescription("Photo of Synthetic A06 sprout", substring = true).assertExists(); true }.getOrDefault(false)
         }
-        scroll(hasContentDescription("Photo update of Synthetic A06 sprout")).assertIsDisplayed()
+        scroll(hasContentDescription("Photo of Synthetic A06 sprout", substring = true)).assertIsDisplayed()
         compose.selectTab("Journal")
         compose.waitUntil(30_000) { runCatching { scroll(hasText("Synthetic A06 photo note")).assertIsDisplayed(); true }.getOrDefault(false) }
         compose.selectTab("Plants")

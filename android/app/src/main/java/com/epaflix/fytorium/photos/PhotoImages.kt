@@ -67,6 +67,15 @@ internal fun decodePhotoPreview(bytes: ByteArray, width: Int, height: Int): Bitm
     }
 } catch (_: IOException) { null } catch (_: OutOfMemoryError) { null }
 
+internal fun decodeUriPreview(context: Context, uri: Uri, width: Int, height: Int): Bitmap? = try {
+    val source = if (uri.scheme == "file") ImageDecoder.createSource(File(requireNotNull(uri.path))) else ImageDecoder.createSource(context.contentResolver, uri)
+    ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        val scale = minOf(1.0, width.toDouble() / info.size.width, height.toDouble() / info.size.height)
+        decoder.setTargetSize(maxOf(1, (info.size.width * scale).toInt()), maxOf(1, (info.size.height * scale).toInt()))
+    }
+} catch (_: Exception) { null } catch (_: OutOfMemoryError) { null }
+
 // Bound downloaded originals; camera inputs are decoded directly from their URI.
 internal fun readPhotoBytes(input: java.io.InputStream, limit: Int): ByteArray {
     val output = ByteArrayOutputStream()

@@ -292,6 +292,10 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     fun showBatchReceipt(event: CareEvent) = synchronized(monitor) {
         (state.value.batches[event.batchId] ?: receiptFor(event))?.let { mutable.value = mutable.value.copy(receipt = Receipt(it.text, event)) }
     }
+    // Photo lists keep their last answer per member, so the Journal and plant photos read offline.
+    fun cachedJson(resource: String): String? = state.value.member?.let { cache.get(it.id, resource)?.json }
+    fun saveJson(resource: String, json: String) { state.value.member?.let { cache.save(it.id, mapOf(resource to json), clock()) } }
+    fun showReceipt(text: String) = synchronized(monitor) { mutable.value = mutable.value.copy(receipt = Receipt(text, short = true)) }
     fun clearReceipt(receipt: Receipt) = synchronized(monitor) {
         if (state.value.receipt?.id == receipt.id) mutable.value = mutable.value.copy(receipt = null)
     }

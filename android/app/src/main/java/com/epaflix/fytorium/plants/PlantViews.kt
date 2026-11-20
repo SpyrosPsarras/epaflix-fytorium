@@ -63,7 +63,8 @@ import org.json.JSONObject
 @Composable fun PlantsList(state: CareState, plants: List<Plant>, graveyard: Boolean, onPlant: (String) -> Unit,
     onAdd: () -> Unit, onGraveyard: () -> Unit, onRefresh: () -> Unit, thumbnails: Thumbnails? = null, enabled: Boolean = true,
     search: MutableState<String>? = null, focusSearch: Boolean = false, onFocused: () -> Unit = {}, onBack: () -> Unit = {},
-    refreshing: Boolean = false, addBlocked: String? = null, onBlocked: (String) -> Unit = {}, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {}) {
+    refreshing: Boolean = false, addBlocked: String? = null, onBlocked: (String) -> Unit = {}, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {},
+    chooseTitle: String? = null) {
     val query = search ?: rememberSaveable { mutableStateOf("") }
     val editor = state.member?.role != Role.sitter
     val canAdd = enabled && addBlocked == null
@@ -87,10 +88,10 @@ import org.json.JSONObject
     LaunchedEffect(wanted) { grid.scrollToItem(0) }
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { PlantBarTitle(state, request, onRetry) { Heading(if (graveyard) "Graveyard" else "Plants") } }, expandedHeight = barHeight(), navigationIcon = {
-            if (graveyard) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+        TopAppBar(title = { PlantBarTitle(state, request, onRetry) { Heading(chooseTitle ?: if (graveyard) "Graveyard" else "Plants") } }, expandedHeight = barHeight(), navigationIcon = {
+            if (graveyard || chooseTitle != null) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         }, actions = {
-            if (editor && !graveyard) {
+            if (editor && !graveyard && chooseTitle == null) {
                 IconButton(onClick = ::add, modifier = Modifier.semantics { if (!canAdd) { disabled(); addBlocked?.let { stateDescription = it } } }) {
                     Icon(Icons.Default.Add, contentDescription = "Add plant", tint = if (canAdd) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                 }
@@ -119,6 +120,7 @@ import org.json.JSONObject
                         TextButton(onClick = { query.value = "" }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Clear search") }
                     }
                     graveyard -> Text("No plants in the graveyard.", style = MaterialTheme.typography.titleMedium)
+                    chooseTitle != null -> Text("No plants yet", style = MaterialTheme.typography.headlineSmall)
                     editor -> {
                         Text("No plants yet", style = MaterialTheme.typography.headlineSmall)
                         Button(onClick = ::add, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add your first plant") }
@@ -444,7 +446,7 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
                             }
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 item("add") {
-                                    Surface(onClick = { onCommand("photos", JSONObject()) }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer,
+                                    Surface(onClick = { onCommand("photo-form", JSONObject()) }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer,
                                         modifier = Modifier.size(96.dp)) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                                             Icon(Icons.Outlined.AddAPhoto, contentDescription = null)

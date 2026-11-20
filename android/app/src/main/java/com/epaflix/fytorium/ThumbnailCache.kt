@@ -38,16 +38,18 @@ class ThumbnailCache(private val directory: File, private val capBytes: Long = 5
 class Thumbnails(private val api: ApiClient, private val disk: ThumbnailCache, private val connected: () -> Boolean) {
     private var generation = 0
     @Synchronized fun wipe() { generation++; disk.wipe() }
-    fun load(photoId: String): ByteArray? {
-        require(photoId.matches(Regex("[A-Za-z0-9_-]+")))
+    // display is the 1080 px copy photo cards use; thumb keeps its old cache key.
+    fun load(photoId: String, variant: String = "thumb"): ByteArray? {
+        require(photoId.matches(Regex("[A-Za-z0-9_-]+")) && variant in listOf("thumb", "display"))
+        val key = if (variant == "thumb") photoId else "$photoId/$variant"
         val epoch: Int
         synchronized(this) {
-            disk.get(photoId)?.let { return it }
+            disk.get(key)?.let { return it }
             epoch = generation
         }
         if (!connected()) return null
         return runCatching {
-            api.request("/api/photos/$photoId/thumb").use { response ->
+            api.request("/api/photos/$photoId/$variant").use { response ->
                 if (!response.isSuccessful) return null
                 val bytes = response.body?.byteStream()?.use { input ->
                     val output = java.io.ByteArrayOutputStream()
@@ -60,7 +62,7 @@ class Thumbnails(private val api: ApiClient, private val disk: ThumbnailCache, p
                     output.toByteArray()
                 } ?: return null
                 if (bytes.size > 1_048_576) return null
-                synchronized(this) { if (epoch != generation) return null; disk.put(photoId, bytes) }
+                synchronized(this) { if (epoch != generation) return null; disk.put(key, bytes) }
                 bytes
             }
         }.getOrNull()
