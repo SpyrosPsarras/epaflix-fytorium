@@ -96,9 +96,9 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             .put("site_id", siteId).put("search_id", search.getString("search_id")).put("gbif_key", 910001)
         val plantId = JSONObject(json("/api/plants", "POST", plantBody)).getString("id")
         app.repository.refreshPlants()
-        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        compose.selectTab("Plants")
         click("Synthetic A06 sprout")
-        click("View all updates")
+        click("See all")
         click("Add a photo update")
         chooseInjectedPhoto()
         compose.waitUntil(30_000) { runCatching { compose.onNodeWithText("Selected photos: 1").assertExists(); true }.getOrDefault(false) }
@@ -108,7 +108,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         click("Add photo update")
         compose.waitUntil(30_000) { runCatching { scroll(hasText("Use as cover")).assertIsEnabled(); true }.getOrDefault(false) }
         click("Use as cover")
-        compose.waitUntil(30_000) { runCatching { scroll(hasText("2030-06-01 · Cover photo")).assertIsDisplayed(); true }.getOrDefault(false) }
+        compose.waitUntil(30_000) { runCatching { scroll(hasText("1 Jun 2030 · Cover photo")).assertIsDisplayed(); true }.getOrDefault(false) }
         val photo = rows("/api/plants/$plantId/photos").single()
         assertTrue(photo.getBoolean("is_cover")); assertEquals("good", photo.getString("health")); assertEquals("Synthetic A06 photo note", photo.getString("note"))
         val photoId = photo.getString("id")
@@ -124,10 +124,10 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             runCatching { compose.onNodeWithContentDescription("Photo update of Synthetic A06 sprout").assertExists(); true }.getOrDefault(false)
         }
         scroll(hasContentDescription("Photo update of Synthetic A06 sprout")).assertIsDisplayed()
-        compose.onNode(hasText("Journal") and hasClickAction()).performClick()
+        compose.selectTab("Journal")
         compose.waitUntil(30_000) { runCatching { scroll(hasText("Synthetic A06 photo note")).assertIsDisplayed(); true }.getOrDefault(false) }
-        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-        click("Add plant")
+        compose.selectTab("Plants")
+        compose.onNodeWithContentDescription("Add plant").performClick()
         click("Identify from photos")
         chooseInjectedPhoto()
         takeInjectedPhoto()
@@ -135,7 +135,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         click("Choose Testoria picta")
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Confirm Testoria picta")
-        scroll(hasText("Nickname")).performTextReplacement("Synthetic A06 identified sprout")
+        scroll(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic A06 identified sprout")
         click("Site")
         compose.onNodeWithText("Synthetic A06 site").performClick()
         click("Save plant")
@@ -148,5 +148,5 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val cleanup = runCatching { cleanupPlants(); siteId?.let { json("/api/sites/$it", "DELETE") }; file.delete() }
         if (failure == null) cleanup.getOrThrow()
     }
-    compose.onNode(hasText("Today") and hasClickAction()).performClick()
+    compose.selectTab("Today")
 }

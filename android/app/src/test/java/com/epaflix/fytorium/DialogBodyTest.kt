@@ -1,0 +1,149 @@
+package com.epaflix.fytorium
+
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.unit.dp
+import androidx.core.view.drawToBitmap
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@OptIn(ExperimentalTestApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
+class DialogBodyTest {
+    @get:Rule val compose = createComposeRule()
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Test fun datePickerShrinksWhenSwitchingToInputAndGrowsBackToCalendar() {
+        compose.setContent { FytoriumTheme {
+            val picker = rememberDatePickerState(initialSelectedDateMillis = 1_893_542_400_000L)
+            DatePickerDialog(onDismissRequest = {},
+                confirmButton = { TextButton(onClick = {}) { Text("Set date") } }) { DialogBody { DatePicker(picker) } }
+        } }
+        val calendarHeight = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.height
+        compose.checkDialogBody("date-picker-calendar")
+        compose.onNodeWithContentDescription("Switch to text input mode").performClick()
+        val inputHeight = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.height
+        compose.checkDialogBody("date-picker-input")
+        assertTrue("Input mode must be compact: calendar=$calendarHeight input=$inputHeight", inputHeight < 400f)
+        compose.onNodeWithContentDescription("Switch to calendar input mode").performClick()
+        assertEquals(calendarHeight, compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.height, 1f)
+    }
+
+    @Test fun dividersFollowScrollableEdgesAndDisappearWhenContentFits() {
+        val height = mutableStateOf(1200.dp)
+        compose.setContent { FytoriumTheme {
+            AlertDialog(onDismissRequest = {}, text = { DialogBody {
+                Text("Start")
+                Box(Modifier.height(height.value))
+                Text("End")
+            } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } })
+        } }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        val body = compose.onNode(hasScrollAction() and hasAnyAncestor(isDialog()))
+        val below = compose.onNodeWithTag("dialog-more-below")
+        val above = compose.onNodeWithTag("dialog-more-above")
+        below.assertIsDisplayed()
+        assertTrue("Bottom divider is outside the text viewport",
+            below.fetchSemanticsNode().boundsInRoot.top > body.fetchSemanticsNode().boundsInRoot.bottom)
+        compose.onNodeWithText("End").performScrollTo()
+        above.assertIsDisplayed()
+        assertTrue("Top divider is outside the text viewport",
+            above.fetchSemanticsNode().boundsInRoot.bottom < body.fetchSemanticsNode().boundsInRoot.top)
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        compose.onNodeWithText("Start").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        compose.runOnIdle { height.value = 20.dp }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+    }
+
+    @Test fun heldHeightDividersFollowGrowingContentWithoutMovingButtons() {
+        val height = mutableStateOf(120.dp)
+        compose.setContent { FytoriumTheme {
+            AlertDialog(modifier = Modifier.width(320.dp), onDismissRequest = {}, text = { DialogBody(keepOpeningHeight = true) {
+                Text("Start")
+                Box(Modifier.height(height.value))
+                Text("End")
+            } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } },
+                dismissButton = { TextButton(onClick = {}) { Text("Cancel") } })
+        } }
+        val buttons = listOf("Cancel", "Confirm")
+        val openingBounds = buttons.map { compose.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        fun checkButtons() {
+            assertEquals("Content changes and scrolling must not move the buttons", openingBounds,
+                buttons.map { compose.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot })
+        }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        compose.runOnIdle { height.value = 1200.dp }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        checkButtons()
+        compose.onNodeWithText("End").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertIsDisplayed()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        checkButtons()
+        compose.onNodeWithText("Start").performScrollTo()
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertIsDisplayed()
+        checkButtons()
+        compose.runOnIdle { height.value = 120.dp }
+        compose.onNodeWithTag("dialog-more-above").assertDoesNotExist()
+        compose.onNodeWithTag("dialog-more-below").assertDoesNotExist()
+        checkButtons()
+    }
+
+    @Test fun lightDividerContrastsWithDialogSurface() = checkDividerContrast(dark = false)
+    @Test fun darkDividerContrastsWithDialogSurface() = checkDividerContrast(dark = true)
+
+    private fun checkDividerContrast(dark: Boolean) {
+        compose.setContent { FytoriumTheme(dark) {
+            AlertDialog(onDismissRequest = {}, text = { DialogBody {
+                Box(Modifier.height(1200.dp))
+                Text("End")
+            } }, confirmButton = { TextButton(onClick = {}) { Text("Confirm") } })
+        } }
+        val divider = compose.onNodeWithTag("dialog-more-below").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val owner = compose.onNode(isDialog(), useUnmergedTree = true).fetchSemanticsNode().dialogOwner()
+        val bitmap = compose.runOnIdle { owner.drawToBitmap() }
+        val x = divider.center.x.toInt()
+        val line = Color(bitmap.getPixel(x, divider.center.y.toInt())).luminance()
+        val surface = Color(bitmap.getPixel(x, divider.bottom.toInt() + 2)).luminance()
+        val contrast = (maxOf(line, surface) + 0.05f) / (minOf(line, surface) + 0.05f)
+        assertTrue("Divider contrast was $contrast:1 against the dialog surface", contrast >= 3f)
+    }
+
+    @Test fun shrinkingContentLeavesNoEmptyBand() {
+        val height = mutableStateOf(300.dp)
+        compose.setContent { FytoriumTheme {
+            AlertDialog(onDismissRequest = {}, text = { DialogBody { Box(Modifier.height(height.value).testTag("content")) } },
+                confirmButton = { TextButton(onClick = {}) { Text("Confirm") } })
+        } }
+        val before = compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.height
+        compose.runOnIdle { height.value = 60.dp }
+        assertEquals("The dialog follows shrinking content", before - 240f,
+            compose.onNode(isDialog()).fetchSemanticsNode().boundsInRoot.height, 1f)
+    }
+}

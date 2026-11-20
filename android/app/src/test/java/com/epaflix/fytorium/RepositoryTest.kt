@@ -86,7 +86,7 @@ class RepositoryTest {
             assertEquals("/api/task-batches/batch-one/undo", server.takeRequest().path)
             // The undo response carries the lists, so no refresh follows it.
             assertNull(server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS))
-            assertEquals("Undid leaf cleaning for 2 plants", repository.state.value.receipt!!.text)
+            assertEquals("Undid cleaning leaves for 2 plants", repository.state.value.receipt!!.text)
             assertTrue(repository.state.value.today!!.sections.single().tasks.all { it.completedEvent == null })
         }
     }
@@ -559,9 +559,9 @@ class RepositoryTest {
             .put(section("2030-06-02", row)).put(section(until, ""","postponed":"${event.getString("kind")}""""))).toString()
     }
     @Test fun aSnoozedRowStaysOnTodayThroughRefreshAndRestartAndItsUndoRestoresThePendingRow() =
-        postponedRowStays("snooze", "snoozed", "2030-06-04", "Snoozed Synthetic fern until Tue 4 Jun", "Undid snooze for Synthetic fern")
+        postponedRowStays("snooze", "snoozed", "2030-06-04", "Snoozed watering for Synthetic fern until Tue 4 Jun", "Undid snooze of watering for Synthetic fern")
     @Test fun aSkippedRowStaysOnTodayThroughRefreshAndRestartAndItsUndoRestoresThePendingRow() =
-        postponedRowStays("skip", "skipped", "2030-06-09", "Skipped Synthetic fern until Sun 9 Jun", "Undid skip for Synthetic fern")
+        postponedRowStays("skip", "skipped", "2030-06-09", "Skipped watering for Synthetic fern until Sun 9 Jun", "Undid skip of watering for Synthetic fern")
     private fun postponedRowStays(action: String, kind: String, until: String, receipt: String, undone: String) {
         withRepository { repository, server, cache -> ServedLists(server).use { served ->
             repository.refresh()
@@ -1051,12 +1051,12 @@ class RepositoryTest {
             assertTrue(repository.act(today().single(), "snooze"))
             assertEquals(listOf("event-snoozed" to "2030-06-03"), today().map { it.completedEvent?.id to it.postponedUntil })
             assertTrue(repository.undoReceipt(repository.state.value.receipt!!))
-            assertEquals("Undid snooze for Synthetic fern", repository.state.value.receipt!!.text)
+            assertEquals("Undid snooze of watering for Synthetic fern", repository.state.value.receipt!!.text)
             assertRestored()
             assertTrue(repository.act(today().single(), "skip"))
             assertEquals(listOf("event-skipped" to "2030-06-03"), today().map { it.completedEvent?.id to it.postponedUntil })
             assertTrue(repository.undoHistory(parseEvent(postponed("skipped"))))
-            assertEquals("Undid skip for Synthetic fern", repository.state.value.receipt!!.text)
+            assertEquals("Undid skip of watering for Synthetic fern", repository.state.value.receipt!!.text)
             assertRestored()
         }
     }
@@ -1265,8 +1265,8 @@ class RepositoryTest {
             val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
             val repository = Repository(ApiClient(server.url("").toString().trimEnd('/'), credentials) {}, CareCache(db), { false })
             repository.refresh()
-            assertEquals("Offline, not updated yet", repository.state.value.offlineBanner())
-            assertEquals("Offline. Changes need a connection.", repository.state.value.todayBanner())
+            assertEquals("Offline", repository.state.value.connectionLine())
+            assertEquals("This phone can't reach Fytorium. Tasks have not loaded yet. Changes need a connection.", repository.state.value.todayConnectionNotice())
             assertTrue(repository.state.value.offline)
             assertFalse(repository.state.value.serverUnavailable)
             assertEquals(0, server.requestCount)
@@ -1284,8 +1284,8 @@ class RepositoryTest {
                 assertTrue(repository.state.value.serverUnavailable)
                 assertEquals(before, repository.state.value.today)
                 assertEquals(timestamp, repository.state.value.lastUpdated)
-                assertTrue(repository.state.value.serverBanner().startsWith("Fytorium isn't responding. Showing data from "))
-                assertTrue(repository.state.value.todayBanner()!!.startsWith("Fytorium isn't responding. Showing tasks from "))
+                assertEquals("Fytorium isn't responding", repository.state.value.connectionLine())
+                assertEquals("Fytorium didn't answer. You can still see the tasks from the last update. Pull down to try again.", repository.state.value.todayConnectionNotice())
                 val calls = server.requestCount
                 assertFalse(repository.act(before!!.sections.single().tasks.single(), "complete"))
                 assertEquals(calls, server.requestCount)
@@ -1299,8 +1299,8 @@ class RepositoryTest {
     @Test fun serverFailureBeforeFirstRefreshSaysNotUpdatedYet() {
         withRepository { repository, server, _ ->
             server.enqueue(MockResponse().setResponseCode(500)); repository.refresh()
-            assertEquals("Fytorium isn't responding. Not updated yet", repository.state.value.serverBanner())
-            assertEquals("Fytorium isn't responding. Pull down to try again.", repository.state.value.todayBanner())
+            assertEquals("Fytorium isn't responding", repository.state.value.connectionLine())
+            assertEquals("Fytorium didn't answer. Tasks have not loaded yet. Pull down to try again.", repository.state.value.todayConnectionNotice())
             assertFalse(repository.state.value.offline)
             assertTrue(repository.state.value.serverUnavailable)
         }
@@ -1418,7 +1418,7 @@ class RepositoryTest {
             fun todayRows() = repository.state.value.today!!.sections.flatMap { it.tasks }.map { it.completedEvent?.id to it.postponedUntil }
             assertEquals(listOf("event-snooze" to "2030-06-04"), todayRows())
             val receipt = repository.state.value.receipt!!
-            assertEquals("Snoozed Synthetic fern until Tue 4 Jun", receipt.text)
+            assertEquals("Snoozed watering for Synthetic fern until Tue 4 Jun", receipt.text)
             assertEquals("event-snooze", receipt.undo!!.id)
             assertEquals("/api/plants/plant-one/tasks/water/snooze", server.takeRequest().path)
             assertEquals("/api/tasks?view=today", server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.path)

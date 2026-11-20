@@ -36,7 +36,11 @@ class PhotoMemoryTest {
             assertFalse(File(directory, "nested").exists())
             assertTrue(unrelated.exists())
             File(directory, "logout.jpg").writeText("synthetic capture")
+            File(directory, "logout.jpg.draft").writeText("")
+            val picked = android.net.Uri.parse("content://media/picker/synthetic-image")
+            app.contentResolver.takePersistableUriPermission(picked, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             withContext(Dispatchers.IO) { app.api.logout() }
+            assertTrue(app.contentResolver.persistedUriPermissions.isEmpty())
             assertTrue(directory.listFiles().orEmpty().isEmpty())
             assertTrue(unrelated.exists())
         } finally { directory.deleteRecursively(); unrelated.delete() }

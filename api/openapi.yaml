@@ -1886,7 +1886,7 @@ paths:
       summary: GET /api/species/unmatched
       responses:
         "200":
-          description: JSON response
+          description: The household's unmatched species, ordered by the name each shows, common_name else canonical_name.
           content:
             application/json:
               schema:
@@ -3850,6 +3850,11 @@ components:
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
         display_name:
           type: string
+        common_name:
+          description: The species' common name in the request language, else English; null when it has none.
+          anyOf:
+            - type: string
+            - type: "null"
         scientific_name:
           type: string
         canonical_name:
@@ -3903,6 +3908,7 @@ components:
         - health
         - id
         - display_name
+        - common_name
         - scientific_name
         - canonical_name
         - status
@@ -3926,6 +3932,11 @@ components:
           type: string
         rank:
           type: string
+        common_name:
+          description: Species care only. The species' common name in the request language, else English.
+          anyOf:
+            - type: string
+            - type: "null"
         fetched_at:
           type: string
           pattern: ^\d{4}-\d{2}-\d{2}T
@@ -3956,6 +3967,12 @@ components:
             - wikidata
             - nortaxa
             - owner
+        renamed_plant_count:
+          description: GET /api/species/{gbifKey} household names only. The household's plants without a nickname that would show another name, in any language, if this name were removed.
+          type: integer
+        renamed_to:
+          description: GET /api/species/{gbifKey} household names only. The name those plants would show instead in this name's language, falling back to English and then the canonical name.
+          type: string
       required:
         - id
         - name
@@ -3981,6 +3998,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Name"
+        common_name:
+          description: The name plants of this species without a nickname show, in the request language, else English.
+          anyOf:
+            - type: string
+            - type: "null"
       required:
         - gbif_key
         - scientific_name
@@ -3989,6 +4011,7 @@ components:
         - name_fetch_needed
         - name_fetch_failed
         - names
+        - common_name
       additionalProperties: false
     Candidate:
       type: object
@@ -4538,7 +4561,7 @@ components:
       additionalProperties: false
     RestoredOccurrences:
       type: array
-      description: One entry for each event the undo reversed, including linked water. Computed from one snapshot of the undo's transaction (REPEATABLE READ, run once more after a serialization failure). occurrence is the pending occurrence the undo brought back into the member's listing (it was not pending there before the undo), or null when there is none, for example when another member's snooze or skip had already listed the pending occurrence. Clients match it to the pending row in today or upcoming with the same plant_id, task and dueOn.
+      description: One entry for each event the undo reversed, including linked water. Computed from one snapshot of the undo's transaction (REPEATABLE READ, run once more after a serialization failure). occurrence is the pending occurrence the undo brought back into the member's listing (no occurrence with the same due date and postponement was pending there before the undo, so a skip to the date the task already had names its unpostponed occurrence), or null when there is none, for example when another member's snooze or skip had already listed the pending occurrence. Clients match it to the pending row in today or upcoming with the same plant_id, task and dueOn.
       items:
         type: object
         properties:
@@ -4820,9 +4843,15 @@ components:
           type: integer
         previous_name:
           type: string
+        previous_display_name:
+          description: The name a plant of the previous species without a nickname shows.
+          type: string
         next_gbif_key:
           type: integer
         next_name:
+          type: string
+        next_display_name:
+          description: The name a plant of the next species without a nickname shows.
           type: string
         changed_at:
           type: string
@@ -4836,8 +4865,10 @@ components:
         - id
         - previous_gbif_key
         - previous_name
+        - previous_display_name
         - next_gbif_key
         - next_name
+        - next_display_name
         - changed_at
         - changed_on
         - by_name
@@ -5452,6 +5483,11 @@ components:
           type: integer
         canonical_name:
           type: string
+        common_name:
+          description: The name plants of this species without a nickname show, in the request language, else English.
+          anyOf:
+            - type: string
+            - type: "null"
         status:
           enum:
             - no_match
@@ -5459,6 +5495,7 @@ components:
       required:
         - gbif_key
         - canonical_name
+        - common_name
         - status
       additionalProperties: false
     ImportRow:

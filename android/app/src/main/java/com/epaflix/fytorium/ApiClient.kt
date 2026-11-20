@@ -21,6 +21,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
         private val refreshLock = Any()
     }
     // A transport retry could replay a refresh token already consumed by the server.
+    // shortcut: with several server addresses a timed-out route stays preferred and a refusing one keeps failing; upgrade to OkHttp 5 or retry idempotent reads.
     private val http = OkHttpClient.Builder().retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
         // Retire idle sockets before Node's five-second timeout without replaying a failed write.
         .connectionPool(ConnectionPool(5, 1, TimeUnit.SECONDS))

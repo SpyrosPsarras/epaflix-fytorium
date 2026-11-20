@@ -51,10 +51,12 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         input.text = subjectName
         assertTrue(device.wait(Until.hasObject(By.text(subjectName)), 10_000))
         val keyboard = By.pkg("com.google.android.inputmethod.latin")
-        if (device.wait(Until.hasObject(keyboard), 2_000)) { device.pressBack(); device.wait(Until.gone(keyboard), 5_000) }
+        if (device.wait(Until.hasObject(keyboard), 2_000)) { blurFocusedChromeField(); assertTrue("A09 keyboard did not close", device.wait(Until.gone(keyboard), 5_000)) }
         var button = device.findObject(By.text("Sign-in"))
         repeat(8) {
             if (button == null) {
+                // A keyboard that opens late would turn the swipe into glide typing in the subject field.
+                if (device.hasObject(keyboard)) { blurFocusedChromeField(); assertTrue("A09 keyboard did not close before swipe", device.wait(Until.gone(keyboard), 5_000)) }
                 device.swipe(device.displayWidth * 95 / 100, device.displayHeight * 3 / 4, device.displayWidth * 95 / 100, device.displayHeight / 2, 80)
                 button = device.wait(Until.findObject(By.text("Sign-in")), 2_000)
             }
@@ -102,10 +104,10 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         memberId = app.repository.state.value.member!!.id
         assertEquals(setOf(plantIds.first()), app.repository.state.value.plants.map { it.id }.toSet())
         assertEquals(1, JSONObject(app.api.request("/api/plants/count").use { assertTrue(it.isSuccessful); it.body!!.string() }).getInt("count"))
-        compose.onNodeWithText("Plants").performClick()
+        compose.selectTab("Plants")
         compose.onNodeWithText(names.first()).assertIsDisplayed()
         compose.onNodeWithText(names.last()).assertDoesNotExist()
-        compose.onNodeWithText("More").performClick()
+        compose.selectTab("More")
         for (name in listOf("Members", "Household settings", "Custom tasks")) compose.onNodeWithText(name).assertDoesNotExist()
         // The separate API actor was idle through two browser flows. Open a fresh connection, never replay a write.
         owner.networkLost()
@@ -129,7 +131,7 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
             app.startActivity(android.content.Intent(app, MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             assertTrue(device.wait(Until.hasObject(By.pkg("com.epaflix.fytorium")), 30_000))
             compose.waitUntil(60_000) { app.repository.state.value.member?.role == Role.owner && !app.repository.state.value.busy }
-            compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).performClick()
+            compose.selectTab("Today")
         }
         if (failure == null) cleanup.getOrThrow()
     }

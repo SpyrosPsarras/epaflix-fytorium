@@ -54,7 +54,8 @@ test('no match is reported on the card and owner list, then retry clears the old
   await tick();
   expect((await card()).openPlantbookMatch).toMatchObject({ status: 'no_match', pid: null });
   expect(await (await request('/species/910100')).text()).toContain('Open Plantbook: no match');
-  expect(await (await request('/api/species/unmatched')).json()).toContainEqual(expect.objectContaining({ gbif_key: 910100, status: 'no_match' }));
+  const { common_name } = await (await request('/api/species/910100')).json();
+  expect(await (await request('/api/species/unmatched')).json()).toContainEqual({ gbif_key: 910100, canonical_name: expect.any(String), common_name, status: 'no_match' });
   results = [{ pid: 'testoria_sensor', display_pid: 'Testoria sensor' }];
   expect((await retry()).status).toBe(202);
   await tick();
@@ -159,5 +160,21 @@ test('a GBIF synonym resolving to the same accepted species is matched', async (
   harness.setGbif({ ...exact, usageKey: 910888, acceptedUsageKey: 910100, acceptedScientificName: 'Testoria sensor Inventor', acceptedCanonicalName: 'Testoria sensor' });
   await retry(); await tick();
   expect((await card()).openPlantbookMatch.status).toBe('matched');
+  harness.setGbif(exact);
+});
+
+// Runs last: the second species never reaches the care worker, whose fake Plantbook knows only Testoria sensor.
+test('unmatched species are listed by the name they show, common name first', async () => {
+  results = []; await retry(); await tick();
+  expect((await request('/api/species/910100/names', 'POST', { name: 'Synthetic sensor', language: 'en' })).status).toBe(201);
+  harness.setGbif({ ...exact, usageKey: 910101, scientificName: 'Testoria alpha Inventor', canonicalName: 'Testoria alpha' });
+  const site = await (await request('/api/sites', 'POST', { name: 'Test unmatched order room', location: 'indoor', light: 'part_sun', humidity: 'normal', grow_light: false, draft: false })).json();
+  const search = await (await request('/api/species/search?q=Testoria%20alpha')).json();
+  expect((await request('/api/plants', 'POST', { ...fixturePlant, site_id: site.id, search_id: search.search_id, gbif_key: 910101 })).status).toBe(201);
+  expect((await request('/api/species/910101/names', 'POST', { name: 'Tiny synthetic', language: 'en' })).status).toBe(201);
+  const pool = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try { await pool.query("INSERT INTO open_plantbook_matches (gbif_key, status, checked_at) VALUES (910101, 'no_match', now())"); }
+  finally { await pool.end(); }
+  expect((await (await request('/api/species/unmatched')).json()).map((row: { common_name: string }) => row.common_name)).toEqual(['Synthetic sensor', 'Tiny synthetic']);
   harness.setGbif(exact);
 });

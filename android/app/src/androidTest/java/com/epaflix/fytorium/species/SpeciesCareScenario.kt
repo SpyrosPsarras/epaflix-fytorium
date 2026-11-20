@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.selectTab
 import com.epaflix.fytorium.waitForNode
 import com.epaflix.fytorium.waitForState
 import org.json.JSONArray
@@ -31,18 +32,20 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
     fun waterBasis() = app.repository.state.value.today?.sections?.flatMap { it.tasks }
         ?.firstOrNull { it.plantId == plantId && it.taskType == "water" }?.basedOn?.firstOrNull { it.input == "wateringIntervalDays" }
     fun openPlant() {
-        compose.onNodeWithText("Plants").performClick()
+        compose.selectTab("Plants")
         compose.waitForState("Species fixture plant row visible", 30_000) { compose.onAllNodesWithTag("plant:$plantId").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("plant:$plantId").performScrollTo().performClick()
         compose.waitForState("Species plant settings visible", 30_000) { compose.onAllNodesWithContentDescription("Plant settings").fetchSemanticsNodes().isNotEmpty() }
     }
     fun openCare() {
-        compose.onNodeWithContentDescription("Plant settings").performClick()
-        compose.onNodeWithText("Species care").performClick()
-        enabled("Refresh care data")
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Details"))
+        if (compose.onAllNodesWithText("Care defaults for this species").fetchSemanticsNodes().isEmpty()) compose.onNodeWithText("Details").performClick()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Care defaults for this species"))
+        compose.onNodeWithText("Care defaults for this species").performClick()
+        enabled("Override watering interval in days")
     }
     fun showTodayRow() {
-        compose.onNodeWithText("Today").performClick()
+        compose.selectTab("Today")
         val task = hasAnyAncestor(hasTestTag("task:$plantId:water"))
         compose.waitForNode(task and hasContentDescription("Open $plantName")).performScrollTo().assertHasClickAction().performClick()
         compose.onNode(task and hasText("Based on")).assertDoesNotExist()
@@ -50,6 +53,8 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
     }
     fun showPlantBasis() {
         openPlant()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("Details"))
+        if (compose.onAllNodesWithTag("basis:water").fetchSemanticsNodes().isEmpty()) compose.onNodeWithText("Details").performClick()
         compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasTestTag("basis:water"))
         compose.onNode(hasAnyAncestor(hasTestTag("basis:water")) and hasText("Based on")).performScrollTo().performClick()
     }
@@ -79,7 +84,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         openPlant()
         openCare()
         compose.waitForNode(hasText("Override watering interval in days") and isEnabled()).performScrollTo().performClick()
-        compose.onNodeWithText("Value").performTextReplacement("9")
+        compose.onNodeWithText("Days").performTextReplacement("9")
         compose.onNodeWithText("Save override").performClick()
         compose.waitForState("Watering override applied to Today", 30_000) { waterBasis()?.source == "override" && (waterBasis()?.value as? Number)?.toInt() == 9 }
         showTodayRow()
@@ -93,7 +98,7 @@ fun runSpeciesCareScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<
         compose.waitForNode(water and hasText("Source: override", substring = true)).performScrollTo().assertIsDisplayed()
         openCare()
         compose.waitForNode(hasText("Remove override for watering interval in days") and isEnabled()).performScrollTo().performClick()
-        compose.onNodeWithText("Confirm reset").performClick()
+        compose.onNodeWithText("Remove").performClick()
         compose.waitForState("Watering basis reset to original", 30_000) { waterBasis()?.source == original.source && waterBasis()?.value == original.value }
         showTodayRow()
         val resetTasks = JSONObject(json("/api/plants/$plantId/tasks")).getJSONObject("water").getJSONArray("basedOn")

@@ -24,12 +24,17 @@ internal fun FeedState.keepingStripOf(shown: FeedState) =
     if (shown.member == member && shown.todayCards().isEmpty() != todayCards().isEmpty()) copy(cards = shown.cards) else this
 private data class Why(val title: String, val lines: List<String>, val technical: List<String>, val plants: List<Pair<String, String>> = emptyList())
 
-@Composable fun HomeFeed(state: FeedState, today: String? = null, offline: Boolean = state.offline, connectionNotice: Boolean = true, sites: Map<String, String?> = emptyMap(),
+// Today explains these lines from the connection line under its title instead, so a connection change never moves the strip or the rows below it.
+internal fun FeedState.connectionText(offline: Boolean, connectionNotice: Boolean): String? = when {
+    member == null || member.role == Role.sitter -> null
+    offline -> "Weather and tips need a connection"
+    unavailable -> feedNotice(this).takeIf { connectionNotice }
+    else -> null
+}
+
+@Composable fun HomeFeed(state: FeedState, today: String? = null, sites: Map<String, String?> = emptyMap(),
                          onOpen: (String) -> Unit = {}, onWater: () -> Unit = {}, onUndo: () -> Unit = {}) {
     if (state.member == null || state.member.role == Role.sitter) return
-    if (offline) Text("Weather and tips need a connection", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-    else FeedNotice(state, connectionNotice)
     val cards = state.todayCards()
     if (cards.isEmpty()) return
     val latestRain = cards.lastOrNull { it.rain }?.id
@@ -104,12 +109,11 @@ private data class Why(val title: String, val lines: List<String>, val technical
     }
 }
 
-@Composable internal fun FeedNotice(state: FeedState, connectionNotice: Boolean = true) {
-    val message = when {
-        state.offline -> if (!connectionNotice) null else if (state.loaded) "Feed is offline. Showing last loaded cards. Actions are unavailable offline." else "Actions are unavailable offline."
-        state.unavailable -> if (!connectionNotice) null
-            else "Fytorium isn't responding. " + (if (state.todayCards().isEmpty()) "" else "Showing last loaded cards. ") + "Refresh to try again."
-        else -> state.message
-    }
-    message?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+@Composable internal fun FeedNotice(state: FeedState) {
+    feedNotice(state)?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+}
+private fun feedNotice(state: FeedState): String? = when {
+    state.offline -> if (state.loaded) "Feed is offline. Showing last loaded cards. Actions are unavailable offline." else "Actions are unavailable offline."
+    state.unavailable -> "Fytorium isn't responding. " + (if (state.todayCards().isEmpty()) "" else "Showing last loaded cards. ") + "Refresh to try again."
+    else -> state.message
 }

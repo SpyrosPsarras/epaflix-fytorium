@@ -1129,6 +1129,31 @@ describe('Today and Upcoming list every completion the member made today', () =>
     }
   });
 
+  test('an Undo of a skip that kept the due date names the unpostponed occurrence it brought back', async () => {
+    await start('2027-01-25T09:00:00Z');
+    const id = await plant('Test restored same-date skip');
+    const polish = await (await request('/api/custom-tasks', 'POST', { plant_id: id, name: 'Test same-date polish', interval_days: 7 })).json();
+    const skipped = await (await request(`/api/plants/${id}/tasks/${polish.id}/skip`, 'POST', { request_id: randomUUID() })).json();
+    expect([skipped.event.due_on, skipped.task.postponed]).toEqual([skipped.task.dueOn, 'skipped']);
+    const body = await (await undo(skipped.event.id)).json();
+    expect(body.task).toMatchObject({ dueOn: skipped.task.dueOn, postponed: null });
+    expect(body.restored).toEqual([{ event_id: skipped.event.id, occurrence: { plant_id: id, task_type: null, custom_task_id: polish.id, due_on: skipped.task.dueOn } }]);
+  });
+
+  test('an Undo of a skip after a snooze to the same date names the snoozed occurrence it brought back', async () => {
+    await start('2027-02-01T09:00:00Z');
+    const id = await plant('Test restored snooze then skip');
+    const mist = await (await request('/api/custom-tasks', 'POST', { plant_id: id, name: 'Test two-day mist', interval_days: 2 })).json();
+    await start('2027-02-03T09:00:00Z');
+    const postponeMist = async (action: string) => (await request(`/api/plants/${id}/tasks/${mist.id}/${action}`, 'POST', { request_id: randomUUID() })).json();
+    expect((await postponeMist('snooze')).task).toMatchObject({ dueOn: '2027-02-05', postponed: 'snoozed' });
+    const skipped = await postponeMist('skip');
+    expect(skipped.task).toMatchObject({ dueOn: '2027-02-05', postponed: 'skipped' });
+    const body = await (await undo(skipped.event.id)).json();
+    expect(body.task).toMatchObject({ dueOn: '2027-02-05', postponed: 'snoozed' });
+    expect(body.restored).toEqual([{ event_id: skipped.event.id, occurrence: { plant_id: id, task_type: null, custom_task_id: mist.id, due_on: '2027-02-05' } }]);
+  });
+
   test('an Undo of liquid fertilizing names the occurrence it brought back for the fertilizing and for its linked water', async () => {
     await start('2026-06-10T09:00:00Z');
     const id = await plant('Test restored liquid');

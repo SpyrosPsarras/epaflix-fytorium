@@ -118,11 +118,23 @@ class SiteRepositoryTest {
             assertFalse(repository.delete("site-one"))
             assertEquals(1, repository.state.value.sites.size)
             assertTrue(repository.state.value.blocked)
+            assertEquals("Could not reach the server. Try again.", repository.state.value.readError)
+            assertEquals(emptyMap<String, String>(), repository.state.value.errors)
             if (status == 426) assertTrue(repository.state.value.updateRequired)
             else {
                 server.enqueue(MockResponse().setBody("[$siteFixture]")); repository.refresh()
                 assertFalse(repository.state.value.blocked)
+                assertNull(repository.state.value.readError)
             }
+        }
+    }
+    // C30: a sites read, like the retry once Fytorium answers again, keeps the form's field and save errors, whether it loads or fails.
+    @Test fun aSitesReadKeepsTheFormsErrors() = withSites { repository, server ->
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"errors":{"name":"Enter a site name."}}"""))
+        assertFalse(repository.save(Site()))
+        for (response in listOf(MockResponse().setResponseCode(503).setBody("{}"), MockResponse().setBody("[$siteFixture]"))) {
+            server.enqueue(response); repository.refresh()
+            assertEquals(mapOf("name" to "Enter a site name."), repository.state.value.errors)
         }
     }
     @Test fun listReadsServerCountsAndEveryCondition() {

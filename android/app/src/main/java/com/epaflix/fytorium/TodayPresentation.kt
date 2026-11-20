@@ -16,10 +16,14 @@ data class TodayPresentation(val sections: List<TaskSection>, val emptyTitle: St
 internal fun TaskList.keepingLayoutOf(shown: TaskList?, transitions: Map<String, String> = emptyMap()): TaskList {
     if (shown == null || shown.settings != settings || shown.today != today) return this
     val left = sections.flatMap { it.tasks }.associateByTo(mutableMapOf()) { it.occurrence }
-    val same = shown.sections.map { section -> section.tasks.map { left.remove(it.occurrence) } }
-    fun followed(occurrence: String) = generateSequence(transitions[occurrence]) { transitions[it] }.take(transitions.size).firstNotNullOfOrNull { left.remove(it) }
-    return copy(sections = shown.sections.zip(same) { section, rows -> section.copy(tasks = section.tasks.zip(rows) { held, row ->
-        (row ?: followed(held.occurrence))?.copy(plantName = held.plantName, siteName = held.siteName, customTaskName = held.customTaskName) ?: held
+    val held = shown.sections.flatMap { it.tasks }
+    val rows = held.mapTo(mutableListOf()) { left.remove(it.occurrence) }
+    val paths = held.map { row -> generateSequence(transitions[row.occurrence]) { transitions[it] }.take(transitions.size).toList() }
+    // A row one change away takes an occurrence before a row that reaches it through more of this device's changes.
+    for (step in 0 until transitions.size) held.indices.forEach { i -> if (rows[i] == null) paths[i].getOrNull(step)?.let { rows[i] = left.remove(it) } }
+    val next = rows.iterator()
+    return copy(sections = shown.sections.map { section -> section.copy(tasks = section.tasks.map { shownRow ->
+        next.next()?.copy(plantName = shownRow.plantName, siteName = shownRow.siteName, customTaskName = shownRow.customTaskName) ?: shownRow
     }) })
 }
 

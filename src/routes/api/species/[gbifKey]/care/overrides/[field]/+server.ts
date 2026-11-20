@@ -8,7 +8,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
   checkOrigin(request);
   const body = await readJson(request, { requireContentType: false, message: 'Send valid JSON' });
   if (!body || typeof body !== 'object' || !('value' in body)) error(422, 'Send a value');
-  return json(await setCareOverride(params.gbifKey, params.field, body.value, locals.identity.household.id));
+  return json(await setCareOverride(params.gbifKey, params.field, body.value, locals.identity.household.id, locals.identity.language));
 };
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.identity) error(401, 'Login required');

@@ -1,5 +1,6 @@
 package com.epaflix.fytorium.photos
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -30,6 +31,7 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
     val scope = rememberCoroutineScope()
     var pending by rememberSaveable { mutableStateOf<String?>(null) }
     var captures by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var picked by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     val currentPhotos by rememberUpdatedState(onPhotos)
     val currentError by rememberUpdatedState(onError)
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
@@ -37,21 +39,45 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
         pending = null
         if (path != null) {
             val file = File(path)
-            if (success) currentPhotos(listOf(FileProvider.getUriForFile(context, context.packageName + ".photos", file)))
-            else { file.delete(); captures = captures - path }
+            if (success) runCatching {
+                File(path + ".draft").createNewFile()
+                currentPhotos(listOf(FileProvider.getUriForFile(context, context.packageName + ".photos", file)))
+            }.onFailure { deleteCameraCapture(file); captures = captures - path; currentError("Could not keep this photo. Try again.") }
+            else { deleteCameraCapture(file); captures = captures - path }
         }
     }
+    fun releasePicked(uri: Uri) {
+        runCatching { context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+    }
+    fun choosePhotos(uris: List<Uri>) {
+        runCatching {
+            uris.forEach { uri ->
+                try {
+                    context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    picked = (picked + uri.toString()).distinct()
+                } catch (_: SecurityException) {
+                    // shortcut: a temporary gallery grant is lost on process death, so a restored draft cannot upload it; copy the input into draft storage when such providers matter.
+                }
+            }
+            currentPhotos(uris)
+        }.onFailure { currentError("Could not keep this photo. Choose it again or take another photo.") }
+    }
     val singlePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) currentPhotos(listOf(uri))
+        if (uri != null) choosePhotos(listOf(uri))
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
-        if (uris.isNotEmpty()) currentPhotos(uris)
+        if (uris.isNotEmpty()) choosePhotos(uris)
     }
-    LaunchedEffect(selected, pending) {
+    LaunchedEffect(selected, pending, captures, picked) {
         captures = captures.filter { path ->
             val file = File(path)
             val keep = path == pending || FileProvider.getUriForFile(context, context.packageName + ".photos", file).toString() in selected
-            if (!keep) file.delete()
+            if (!keep) deleteCameraCapture(file)
+            keep
+        }
+        picked = picked.filter { uri ->
+            val keep = uri in selected
+            if (!keep) releasePicked(Uri.parse(uri))
             keep
         }
     }
@@ -59,7 +85,8 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
         onDispose {
             // Rotation while the camera is open must not remove its output file.
             if ((context as? android.app.Activity)?.isChangingConfigurations != true) {
-                captures.forEach { File(it).delete() }; pending?.let { File(it).delete() }
+                captures.forEach { deleteCameraCapture(File(it)) }; pending?.let { deleteCameraCapture(File(it)) }
+                picked.forEach { releasePicked(Uri.parse(it)) }
             }
         }
     }
@@ -72,7 +99,7 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
                 val file = File.createTempFile("camera-", ".jpg", directory)
                 captures = captures + file.path; pending = file.path
                 camera.launch(FileProvider.getUriForFile(context, context.packageName + ".photos", file))
-            }.onFailure { pending?.let { File(it).delete() }; pending = null; currentError("Could not open the camera. Try again.") }
+            }.onFailure { pending?.let { deleteCameraCapture(File(it)) }; pending = null; currentError("Could not open the camera. Try again.") }
         }
     }, choose = {
         runCatching {

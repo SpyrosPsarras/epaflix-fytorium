@@ -10,7 +10,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
 data class PhotoUpdate(val id: String, val plantId: String, val plantName: String, val note: String,
-    val health: String?, val takenOn: String, val cover: Boolean)
+    val health: String?, val takenOn: String, val cover: Boolean) : java.io.Serializable
 data class PhotoState(val photos: List<PhotoUpdate> = emptyList(), val loading: Boolean = false,
     val saving: Boolean = false, val uploading: Boolean = false, val loaded: Boolean = false, val blocked: Boolean = false,
     val updateRequired: Boolean = false, val error: String? = null, val progress: Float? = null,

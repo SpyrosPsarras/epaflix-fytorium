@@ -9,6 +9,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -21,9 +22,13 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.clickable
 import androidx.lifecycle.compose.LifecycleStartEffect
 import com.epaflix.fytorium.feed.FeedState
 import com.epaflix.fytorium.feed.keepingStripOf
+import com.epaflix.fytorium.feed.connectionText
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -37,7 +42,6 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Eco
-import androidx.compose.material.icons.outlined.WarningAmber
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
@@ -61,16 +65,12 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                                thumbnails?.load(id)?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
                            } }, feed: FeedState? = null, feedContent: @Composable (FeedState) -> Unit = {}) {
     val pullState = rememberPullToRefreshState()
-    // Layout changes wait for a moment the user picked: the end of a pull, the app coming back to the foreground, a view switch or a return to Today.
-    var moment by remember { mutableIntStateOf(0) }
     // Zero-duration device animations can leave the refresh indicator at its shown offset.
-    LaunchedEffect(refreshing) { if (!refreshing) { pullState.snapTo(0f); moment++ } }
-    LifecycleStartEffect(Unit) { moment++; onStopOrDispose {} }
+    val moment = rememberApplyMoment(refreshing) { pullState.snapTo(0f) }
     val live = if (view == "upcoming") care.upcoming else care.today
-    val since = remember(view, moment, care.member) { care.transitions.size }
-    val list = rememberHeld(live, view, moment, care.member) { shown, next -> next?.keepingLayoutOf(shown, care.transitions.drop(since).toMap()) }
-    // Losing the last plant or share removes the toggle and every row, so it waits for the same moment.
-    val noPlants = rememberHeld(care.plants.isEmpty().takeIf { care.today != null }, view, moment, care.member) { shown, next -> shown ?: next } == true
+    val list = rememberHeldList(live, care, view, moment)
+    // Losing the last plant or share removes the toggle and every row, so it changes with them: at the same moment, or when a new day or task view applies the list at once.
+    val noPlants = rememberHeld(care.plants.isEmpty().takeIf { care.today != null }, view, moment, care.member, list?.today, list?.settings) { shown, next -> shown ?: next } == true
     // A row the server no longer lists stays in place until then, without controls that would act on it again.
     val listed = live?.sections.orEmpty().flatMapTo(mutableSetOf()) { section -> section.tasks.map { it.occurrence } }
     val state = if (view == "upcoming") care.copy(upcoming = list) else care.copy(today = list)
@@ -112,15 +112,9 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     val sections = if (view == "today") presentation.sections else list?.sections.orEmpty().filter { it.tasks.isNotEmpty() }
     fun saveView(settings: TaskSettings) { scope.launch { onSettings(settings) } }
     var settingsOpen by remember { mutableStateOf(false) }
-    fun needs(action: String, update: String, retry: String = "", verb: String = "needs") = when {
-        !deviceOnline || state.offline -> "$action $verb a connection."
-        state.serverUnavailable -> "$action $verb Fytorium to respond.$retry"
-        !state.writable -> "Update Fytorium to $update."
-        else -> null
-    }
-    val viewBlocked = needs("Task view", "change the task view")
-    val blocked = needs("Adding a plant", "add plants", " Pull down to try again.")
-    val rowBlocked = if (state.writable) null else needs("Changes", "make changes", verb = "need")
+    val viewBlocked = state.needs("Task view", "change the task view", online = deviceOnline)
+    val blocked = state.needs("Adding a plant", "add plants", " Pull down to try again.", online = deviceOnline)
+    val rowBlocked = if (state.writable) null else state.needs("Changes", "make changes", verb = "need", online = deviceOnline)
     val subtitleLine = subtitleLineHeight()
     val canAdd = editor && blocked == null
     // The sheet has no pull, so while it waits for Fytorium it asks again by itself.
@@ -135,8 +129,16 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     val addingLook = Modifier.semantics { if (!canAdd) { disabled(); blocked?.let { stateDescription = it } } }
     val blockedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     ReceiptSnackbar(state.receipt, snackbar, onUndoReceipt, onReceiptDone, onReceiptGone)
+    val todayFeed = feed?.takeIf { view == "today" && it.member?.role in listOf(Role.owner, Role.family) }
+    val feedLine = todayFeed?.connectionText(offline = todayFeed.offline || state.offline, connectionNotice = !state.offline && !state.serverUnavailable)
+    val message = state.message ?: todayFeed?.message
+    val status = state.connectionLine()?.let { it to listOfNotNull(state.todayConnectionNotice(), feedLine).joinToString("\n") }
+        ?: feedLine?.let { (if (todayFeed?.offline == true) "Offline" else "Fytorium isn't responding") to it }
+        ?: message?.let { it to it }
     Scaffold(snackbarHost = { if (receipts == null) SnackbarHost(own) }, topBar = {
-        CenterAlignedTopAppBar(title = { Text(if (view == "upcoming") "Upcoming" else "Today") }, navigationIcon = {
+        CenterAlignedTopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), center = true, retry = onRetry.takeIf { status?.first == message && state.message != null }) {
+            Text(if (view == "upcoming") "Upcoming" else "Today") } },
+            expandedHeight = barHeight(), navigationIcon = {
             IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search plants") }
         }, actions = {
             if (editor && list != null && !noPlants) IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Default.Tune, contentDescription = "Task view") }
@@ -157,7 +159,6 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                 if (view == "today" && shownFeed != null) feedContent(shownFeed)
                 if (!noPlants) ViewToggle(view, onView)
                 if (!noPlants) list?.settings?.let { settings -> ActiveView(settings, editor, state.writable) { saveView(TaskSettings()) } }
-                TodayNotice(state)
                 if (sections.isEmpty()) Column(Modifier.fillMaxWidth().padding(vertical = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Icon(Icons.Outlined.Eco, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
@@ -195,7 +196,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
                                 title = if (by == "plant") task.label else task.plantName,
                                 details = listOfNotNull(task.label.takeIf { by == "day" || by == "site" }, task.siteName.takeIf { by != "site" }),
                                 showPostponed = view == "upcoming" || sort != "task", listed = task.occurrence in listed, subtitleLine = subtitleLine,
-                                blocked = if (task.occurrence in listed) rowBlocked else "This task changed elsewhere. Pull to refresh.", onBlocked = ::explain,
+                                blocked = if (task.occurrence in listed) rowBlocked else ChangedElsewhere, onBlocked = ::explain,
                                 photoLoading = task.coverPhotoId != null && !photos.containsKey(task.coverPhotoId)) }
                         }
                         val due = section.tasks.any { task -> task.status == "due" && task.dueOn != null && task.dueOn <= list.today && task.completedEvent == null }
@@ -220,7 +221,44 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
     }
 }
 
-@Composable private fun <T> rememberHeld(live: T, vararg keys: Any?, keep: (shown: T, live: T) -> T): T {
+internal fun Pair<String, String>?.withNote(note: Pair<String, String>?) =
+    if (this != null && note != null) first to listOf(second, note.first, note.second).filter { it != first }.joinToString("\n") else this ?: note
+
+// A page-level status shows as a line under the title, in a bar always tall enough for both, so it never moves or covers the content.
+@Composable internal fun BarTitle(line: String?, explanation: String, center: Boolean = false, retry: (() -> Unit)? = null, title: @Composable () -> Unit) {
+    var explaining by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.heightIn(min = 48.dp).then(if (line == null) Modifier else Modifier.clickable(onClickLabel = "Explain") { explaining = true }.minimumInteractiveComponentSize()),
+        verticalArrangement = Arrangement.Center, horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start) {
+        title()
+        line?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+    }
+    val close: @Composable () -> Unit = { TextButton(onClick = { explaining = false }) { Text("Close") } }
+    if (explaining && line != null) AlertDialog(onDismissRequest = { explaining = false }, title = { DialogTitle("Status") }, text = { DialogBody { Text(line); if (explanation != line) Text(explanation) } },
+        confirmButton = { if (retry == null) close() else TextButton(onClick = { explaining = false; retry() }) { Text("Try again") } },
+        dismissButton = close.takeIf { retry != null })
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable internal fun barHeight() = with(LocalDensity.current) {
+    maxOf(TopAppBarDefaults.TopAppBarExpandedHeight, MaterialTheme.typography.titleLarge.lineHeight.toDp() + MaterialTheme.typography.labelMedium.lineHeight.toDp() + 16.dp)
+}
+
+// Layout changes wait for a moment the user picked: the end of a pull, the app coming back to the foreground, or a return to the screen.
+@Composable internal fun rememberApplyMoment(refreshing: Boolean, onStart: () -> Unit = {}, settle: suspend () -> Unit = {}): Int {
+    var moment by remember { mutableIntStateOf(0) }
+    val started by rememberUpdatedState(onStart)
+    // The moment comes first: the indicator's own hide animation can interrupt settle(), which cancels this effect.
+    LaunchedEffect(refreshing) { if (!refreshing) { moment++; settle() } }
+    LifecycleStartEffect(Unit) { moment++; started(); onStopOrDispose {} }
+    return moment
+}
+
+@Composable internal fun rememberHeldList(live: TaskList?, care: CareState, vararg keys: Any?): TaskList? {
+    val since = remember(*keys, care.member) { care.transitions.size }
+    return rememberHeld(live, *keys, care.member) { shown, next -> next?.keepingLayoutOf(shown, care.transitions.drop(since).toMap()) }
+}
+
+@Composable internal fun <T> rememberHeld(live: T, vararg keys: Any?, keep: (shown: T, live: T) -> T): T {
     val shown = remember(*keys) { mutableStateOf(live) }
     val next = keep(shown.value, live)
     SideEffect { shown.value = next }
@@ -240,7 +278,7 @@ private fun Modifier.steadyScroll(state: ScrollState) = verticalScroll(state).la
     LaunchedEffect(receipt) {
         if (receipt == null) return@LaunchedEffect
         try {
-            val result = host.showSnackbar(receipt.text, actionLabel = if (receipt.undo != null) "Undo" else null, withDismissAction = !receipt.short,
+            val result = host.showSnackbar(receipt.text, actionLabel = if (receipt.undoable) "Undo" else null, withDismissAction = !receipt.short,
                 duration = if (receipt.short) SnackbarDuration.Short else SnackbarDuration.Long)
             gone()
             if (result == SnackbarResult.ActionPerformed) undo(receipt) else done(receipt)
@@ -248,32 +286,6 @@ private fun Modifier.steadyScroll(state: ScrollState) = verticalScroll(state).la
             // Leaving the screen ends the receipt, so returning later does not replay an old one.
             done(receipt)
             throw cancelled
-        }
-    }
-}
-
-@Composable fun OfflineNotice(state: CareState) {
-    if (state.offline || state.serverUnavailable) WarningNotice {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (state.offline) state.offlineBanner() else state.serverBanner(), style = MaterialTheme.typography.titleSmall)
-            Text(if (state.offline) "Actions are unavailable offline. Reconnect and refresh to make changes."
-                else "Actions are unavailable until Fytorium responds. Refresh to try again.")
-        }
-    } else state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-}
-
-@Composable private fun TodayNotice(state: CareState) {
-    val banner = state.todayBanner()
-    if (banner != null) WarningNotice { Text(banner, style = MaterialTheme.typography.bodyMedium) }
-    else state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-}
-
-@Composable private fun WarningNotice(content: @Composable () -> Unit) {
-    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
-        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(Icons.Outlined.WarningAmber, contentDescription = "Warning", tint = MaterialTheme.colorScheme.tertiary)
-            content()
         }
     }
 }
@@ -367,7 +379,7 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
 }
 
 @Composable internal fun Choice(label: String, value: String, choices: List<Pair<String, String>>, enabled: Boolean, change: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Column {
         OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
             Text("$label: " + (choices.firstOrNull { it.first == value }?.second ?: value))
@@ -385,6 +397,6 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
         Text((basis.value?.toString() ?: "not set") + (basis.factor?.let { " · ×$it" } ?: ""))
         Text(basis.adjustment)
         Text("Source: ${basis.source}" + (basis.ruleId?.let { " · $it" } ?: "") + (basis.fetchedAt?.let { " · Fetched $it" } ?: ""))
-        basis.reason?.let { Text(it) }
+        basis.reason?.takeIf { it != basis.adjustment }?.let { Text(it) }
     }
 }

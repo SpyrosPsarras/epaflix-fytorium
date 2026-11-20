@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -66,14 +66,14 @@ class TaskScreenTest {
             compose.onRoot().captureRoboImage("src/test/screenshots/$name-${if (dark) "dark" else "light"}.png")
         }
         compose.onNodeWithText("1d late").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Snooze 2 days").assertHeightIsAtLeast(48.dp).assertHasClickAction()
+        compose.onNodeWithContentDescription("Snooze Water for Synthetic fern, Synthetic site by 2 days").assertHeightIsAtLeast(48.dp).assertHasClickAction()
         capture("tasks-today")
         compose.runOnIdle { current.value = state("upcoming"); view.value = "upcoming" }
         compose.onNode(hasText("Today") and isHeading()).assertIsDisplayed()
         compose.onNode(hasText("Next 14 calendar days", substring = true)).assertDoesNotExist()
         capture("upcoming")
         compose.runOnIdle { current.value = state(offline = true); view.value = "today" }
-        compose.onNodeWithText(current.value.todayBanner()!!).assertIsDisplayed()
+        compose.onNodeWithText(current.value.connectionLine()!!).assertIsDisplayed()
         compose.onNode(hasText("Actions are unavailable offline", substring = true)).assertDoesNotExist()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
         capture("offline")
@@ -211,12 +211,12 @@ class TaskScreenTest {
         }
         val done = "Water done for Synthetic fern, Synthetic site"
         assertTrue(LightColors.primary in colours(hasContentDescription("$done. Double tap to undo")))
-        assertTrue(LightColors.primary in colours(hasContentDescription("Snooze 2 days")))
+        assertTrue(LightColors.primary in colours(hasContentDescription("Snooze Water for Second fern, Synthetic site by 2 days")))
         compose.runOnIdle { current.value = current.value.copy(offline = true) }
         compose.onNode(hasContentDescription("Double tap", substring = true)).assertDoesNotExist()
         compose.onNodeWithContentDescription(done).assertIsNotEnabled()
         assertFalse("A disabled check is drawn as enabled", LightColors.primary in colours(hasContentDescription(done)))
-        assertFalse("A disabled snooze is drawn as enabled", LightColors.primary in colours(hasContentDescription("Snooze 2 days")))
+        assertFalse("A disabled snooze is drawn as enabled", LightColors.primary in colours(hasContentDescription("Snooze Water for Second fern, Synthetic site by 2 days")))
         compose.onRoot().captureRoboImage("src/test/screenshots/offline-checks-light.png")
     }
     @Test fun rowsOpenWithoutInlineActionsAndUndoFollowsTheServer() {
@@ -397,7 +397,7 @@ class TaskScreenTest {
         compose.onNode(hasText("until Sun 9 Jun") and inRow("plant-two"), useUnmergedTree = true).assertIsDisplayed()
         compose.onNode(hasText("until Tue 4 Jun") and inRow("plant-three"), useUnmergedTree = true).assertIsDisplayed()
         compose.onNode(hasContentDescription(" done for", substring = true)).assertDoesNotExist()
-        compose.onNodeWithContentDescription("Snooze 2 days").assertDoesNotExist()
+        compose.onNode(hasContentDescription("by 2 days", substring = true)).assertDoesNotExist()
         compose.onNodeWithText("1d late").assertDoesNotExist()
         compose.onNode(hasContentDescription("Undo", substring = true) and inRow("plant-three")).assertDoesNotExist()
         compose.onNodeWithContentDescription("Undo watering skip for Second fern, Synthetic site").assertHeightIsAtLeast(48.dp).performClick()
@@ -425,8 +425,8 @@ class TaskScreenTest {
         compose.setContent { TaskTestTheme { TaskScreen(current.value, "today", onAction = { task, action -> actions.add("${task.plantId}:$action") }) } }
         compose.onNodeWithContentDescription("Saving Water for Synthetic fern, Synthetic site").assertIsDisplayed()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertDoesNotExist()
-        compose.onNode(hasContentDescription("Snooze 2 days") and hasAnyAncestor(hasTestTag("task:plant-one:water"))).assertIsNotEnabled()
-        compose.onNode(hasContentDescription("Snooze 2 days") and hasAnyAncestor(hasTestTag("task:plant-two:water"))).assertIsEnabled()
+        compose.onNode(hasContentDescription("by 2 days", substring = true) and hasAnyAncestor(hasTestTag("task:plant-one:water"))).assertIsNotEnabled()
+        compose.onNode(hasContentDescription("by 2 days", substring = true) and hasAnyAncestor(hasTestTag("task:plant-two:water"))).assertIsEnabled()
         compose.onNodeWithContentDescription("Handle all Water tasks").assertIsEnabled()
         compose.onNodeWithContentDescription("Mark Water done for Second fern, Synthetic site").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf("plant-two:complete"), actions) }
@@ -468,13 +468,13 @@ class TaskScreenTest {
     @Test fun offlineAndServerBannersBeforeAndAfterRefreshDisableActions() {
         val current = mutableStateOf(state(offline = true).copy(lastUpdated = null))
         compose.setContent { TaskTestTheme { TaskScreen(current.value, "today") } }
-        compose.onNodeWithText("Offline. Changes need a connection.").assertIsDisplayed()
+        compose.explains("Offline", "This phone can't reach Fytorium. Tasks have not loaded yet. Changes need a connection.")
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
         compose.runOnIdle { current.value = state(offline = true) }
-        compose.onNodeWithText(current.value.todayBanner()!!).assertIsDisplayed()
+        compose.explains(current.value.connectionLine()!!, current.value.todayConnectionNotice()!!)
         for (time in listOf(null, state().lastUpdated)) {
             compose.runOnIdle { current.value = state().copy(serverUnavailable = true, lastUpdated = time) }
-            compose.onNodeWithText(current.value.todayBanner()!!).assertIsDisplayed()
+            compose.explains("Fytorium isn't responding", current.value.todayConnectionNotice()!!)
             compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
             compose.onNode(hasText("Offline", substring = true)).assertDoesNotExist()
         }
@@ -484,21 +484,48 @@ class TaskScreenTest {
     private fun plants(dark: Boolean) {
         compose.enableAccessibilityChecks()
         val plant = parsePlant(org.json.JSONObject(plantFixture))
-        val detail = PlantDetail(plant, listOf(parseEvent(org.json.JSONObject(eventFixture))), emptyMap())
-        compose.setContent { TaskTestTheme(dark) { CachedPlants(state().copy(plants = listOf(plant), detail = detail, offline = true), {}, null) } }
+        val detail = PlantDetail(plant, listOf(parseEvent(org.json.JSONObject(eventFixture))), parseSchedule(org.json.JSONObject(scheduleFixture)))
+        // Offline, the Plants list and the plant page read from the cache, with every write turned off.
+        val offline = state().copy(plants = listOf(plant), detail = detail, offline = true)
+        val request = mutableStateOf(com.epaflix.fytorium.plants.PlantsRequestState(online = false))
+        val care = mutableStateOf(offline)
+        val opened = mutableStateOf(false)
+        compose.setContent { TaskTestTheme(dark) {
+            if (opened.value) com.epaflix.fytorium.plants.PlantDetailScreen(care.value, detail, {}, { _, _ -> }, {}, {}, enabled = false, onBack = { opened.value = false }, request = request.value)
+            else com.epaflix.fytorium.plants.PlantsList(care.value, care.value.plants, false, { opened.value = true }, {}, {}, {}, enabled = false, request = request.value)
+        } }
+        val theme = if (dark) "dark" else "light"
+        fun explained(line: String, name: String) {
+            compose.onNode(hasText(line) and hasClickAction()).performClick()
+            compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+            compose.captureDialog("src/test/screenshots/$name-explained-$theme.png")
+            compose.onNodeWithText("Close").performClick()
+        }
+        compose.onNodeWithText(offline.connectionLine()!!).assertIsDisplayed()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         compose.onRoot().captureRoboImage("src/test/screenshots/cached-plants-${if (dark) "dark" else "light"}.png")
-        compose.onNodeWithText(plant.displayName).performClick()
-        compose.onNodeWithText("Care history").assertIsDisplayed()
+        compose.onNodeWithTag("plant:${plant.id}").performClick()
+        // History says this member watered it today, so the row shows that completion, with writes off.
+        compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site").assertIsNotEnabled()
+        compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("History") and isHeading())
+        compose.onNode(hasText("History") and isHeading()).assertIsDisplayed()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
         compose.onRoot().captureRoboImage("src/test/screenshots/plant-detail-${if (dark) "dark" else "light"}.png")
-        compose.onNodeWithText("Back to plants").performClick()
+        explained(offline.connectionLine()!!, "plant-offline")
+        compose.runOnIdle { care.value = offline.copy(offline = false); request.value = com.epaflix.fytorium.plants.PlantsRequestState(blocked = true,
+            errors = mapOf("_form" to "Your permissions no longer allow this change. Refresh your account before editing.")) }
+        compose.onNode(hasText("Fytorium refused the last request") and hasClickAction()).assertIsDisplayed()
+        compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
+        compose.onRoot().captureRoboImage("src/test/screenshots/plant-refused-$theme.png")
+        explained("Fytorium refused the last request", "plant-refused")
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithTag("plant:${plant.id}").assertIsDisplayed()
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
     @Test fun futureTaskHasNoSnoozeOrInlineDetails() {
         val upcoming = parseTaskList(taskListFixture("upcoming", "2030-06-04", basis = """[{"input":"wateringIntervalDays","value":7,"source":"perenual","adjustment":"Species interval","fetchedAt":"2030-06-01T10:00:00Z"}]"""))
         compose.setContent { TaskTestTheme { TaskScreen(state().copy(upcoming = upcoming), "upcoming") } }
-        compose.onNodeWithContentDescription("Snooze 2 days").assertDoesNotExist()
+        compose.onNode(hasContentDescription("by 2 days", substring = true)).assertDoesNotExist()
         compose.onNodeWithContentDescription("Open Synthetic fern").performScrollTo().performClick()
         compose.onNodeWithText("Based on").assertDoesNotExist()
         compose.onNodeWithText("Skip").assertDoesNotExist()

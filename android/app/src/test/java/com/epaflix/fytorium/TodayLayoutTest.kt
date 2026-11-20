@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -14,7 +15,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -255,9 +256,11 @@ class TodayLayoutTest {
         compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
         if (swiped) compose.onNodeWithText("Watered Fern 1").performTouchInput { swipeRight() } else compose.mainClock.advanceTimeBy(10_000)
         compose.onNodeWithText("Watered Fern 1").assertDoesNotExist()
+        compose.onNodeWithTag("bar-paused").assertExists()
         compose.onRoot().performTouchInput { click(more) }
         compose.onNodeWithTag("task-list").assertIsDisplayed()
         compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithTag("bar-paused").assertDoesNotExist()
         compose.onRoot().performTouchInput { click(more) }
         compose.onNodeWithTag("task-list").assertDoesNotExist()
         compose.onNode(hasText("More") and !hasClickAction()).assertIsDisplayed()
@@ -561,7 +564,7 @@ class TodayLayoutTest {
             state(tasks = tasks).copy(serverUnavailable = true) to "Changes need Fytorium to respond.",
             state(tasks = tasks).copy(updateRequired = true) to "Update Fytorium to make changes.")) {
             compose.runOnIdle { current.value = blocked }
-            for (control in listOf("Mark Water done for Fern 0, Synthetic site", "Snooze 2 days", "Water done for Fern 1, Synthetic site",
+            for (control in listOf("Mark Water done for Fern 0, Synthetic site", "Snooze Water for Fern 0, Synthetic site by 2 days", "Water done for Fern 1, Synthetic site",
                 "Undo watering snooze for Fern 2, Synthetic site")) {
                 compose.onNodeWithContentDescription(control).assertIsNotEnabled()
                     .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, message)).performClick()
@@ -629,14 +632,13 @@ class TodayLayoutTest {
             val offline = state().copy(offline = true, lastUpdated = java.time.LocalDate.now().atTime(8, 12).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = offline, feed = feed, deviceOnline = false) } }
             val time = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(offline.lastUpdated!!))
-            compose.onNodeWithText("Offline. Showing tasks from $time. Changes need a connection.").assertIsDisplayed()
+            compose.explains("Offline \u00b7 updated $time", "You can still see the tasks from the last update. Changes need a connection.\nWeather and tips need a connection")
             compose.onNode(hasText("Feed is offline", substring = true)).assertDoesNotExist()
             compose.onNode(hasText("Actions are unavailable offline", substring = true)).assertDoesNotExist()
-            compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
             assertTrue("The cached cards stay", compose.onAllNodes(feedCard).fetchSemanticsNodes().isNotEmpty())
             compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled().performClick()
             compose.onNodeWithText("Adding a plant needs a connection.").assertIsDisplayed()
-            compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
+            compose.onNode(hasText("Today") and isSelectable() and !hasTestTag("view-today")).assertIsSelected()
         }
     }
 
@@ -878,8 +880,7 @@ class TodayLayoutTest {
     @Test fun anOfflineColdStartSaysWeatherAndTipsNeedAConnection() {
         val feed = FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}, { false })
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = state().copy(offline = true), feed = feed, deviceOnline = false) } }
-        compose.onNodeWithText("Weather and tips need a connection").assertIsDisplayed()
-        compose.onNode(hasText("Offline.", substring = true)).assertIsDisplayed()
+        compose.explains(state().copy(offline = true).connectionLine()!!, "Weather and tips need a connection", "This phone can't reach Fytorium.")
         compose.onAllNodes(feedCard).assertCountEquals(0)
     }
 
@@ -1013,6 +1014,32 @@ class TodayLayoutTest {
     private val loadedFeed = FeedState(member = owner, loaded = true, weather = parseWeather(JSONObject(weatherFixture)),
         cards = JSONObject(feedFixture).getJSONArray("cards").mapObjects { parseFeedCard(it) }.filterNotNull())
 
+    @Test fun aPullWhoseRefreshEndsWhileTheIndicatorStillMovesShowsTheNewRows() {
+        val screen = screen(state(tasks = rows(1)))
+        compose.runOnIdle { screen.care.value = state(tasks = rows(2)) }
+        compose.onNodeWithText("Fern 1").assertDoesNotExist()
+        compose.mainClock.autoAdvance = false
+        fun refreshing(value: Boolean) = compose.runOnUiThread { screen.refreshing.value = value; Snapshot.sendApplyNotifications() }
+        refreshing(true)
+        repeat(2) { compose.mainClock.advanceTimeByFrame() }
+        refreshing(false)
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("Fern 1").assertIsDisplayed()
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertCountEquals(0)
+    }
+
+    @Test fun theFirstPlantArrivingWithANewDayShowsTheToggleWithItsRows() = firstPlantApplies { it.copy(today = "2030-06-03") }
+    @Test fun theFirstPlantArrivingWithANewTaskViewShowsTheToggleWithItsRows() = firstPlantApplies { it.copy(settings = TaskSettings(showCompleted = true)) }
+    private fun firstPlantApplies(change: (TaskList) -> TaskList) {
+        val screen = screen(state(tasks = emptyList()).copy(plants = emptyList()))
+        compose.onNodeWithText("Add plant").assertIsDisplayed()
+        compose.onNodeWithTag("view-today").assertDoesNotExist()
+        compose.runOnIdle { screen.care.value = state(tasks = rows(1)).let { it.copy(today = change(it.today!!)) } }
+        compose.onNodeWithText("Fern 0").assertIsDisplayed()
+        compose.onNodeWithTag("view-today").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Task view").assertIsDisplayed()
+    }
+
     @Test fun aSnoozeInUpcomingMovesNoRowUntilAViewSwitch() = postponedOccurrenceWaits(Moment.Switch)
     @Test fun aSnoozeInUpcomingMovesNoRowUntilAPull() = postponedOccurrenceWaits(Moment.Pull)
     private fun postponedOccurrenceWaits(moment: Moment) {
@@ -1134,7 +1161,7 @@ class TodayLayoutTest {
         compose.onNodeWithTag("feed-strip").assertDoesNotExist()
         server.enqueue(MockResponse().setResponseCode(500))
         feed.refresh(owner)
-        compose.onNodeWithText("Fytorium isn't responding. Refresh to try again.").assertIsDisplayed()
+        compose.explains("Fytorium isn't responding", "Fytorium isn't responding. Refresh to try again.")
         server.enqueue(MockResponse().setResponseCode(422).setBody("""{"message":"Synthetic feed failure"}"""))
         feed.refresh(owner)
         compose.onNodeWithText("Synthetic feed failure").assertIsDisplayed()
@@ -1181,6 +1208,76 @@ class TodayLayoutTest {
         server.enqueue(MockResponse().setBody(body)); server.enqueue(MockResponse().setBody(weatherFixture))
         FeedRepository(api, { true }, cache = cache).refresh(owner)
         return FeedRepository(api, { true }, cache = cache).apply { restore() }
+    }
+
+    // C1: going offline and back adds a line under the title, in a bar that keeps its height, so mid-list no row or control moves or is covered.
+    @Test fun connectionChangesMoveNoRowOnToday() = connectionChangesMoveNoRow(1f)
+    @Test fun connectionChangesMoveNoRowOnTodayAtLargeText() = connectionChangesMoveNoRow(1.3f)
+    private fun connectionChangesMoveNoRow(fontScale: Float) = withCache { cache, api, server ->
+        val feed = cachedFeed(api, server, cache, feedFixture)
+        val care = mutableStateOf(state(tasks = rows(8)))
+        val online = mutableStateOf(true)
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+            FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed, deviceOnline = online.value) } } }
+        compose.onNodeWithTag("feed-strip").assertIsDisplayed()
+        scrollList(200f)
+        compose.waitUntil(5_000) { compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f }
+        val controls = hasAnyAncestor(hasTestTag("task-list")) and hasClickAction()
+        fun places() = compose.onAllNodes(controls).fetchSemanticsNodes().map { it.boundsInRoot } + bounds(hasTestTag("task-list"))
+        val before = places()
+        compose.runOnIdle { feed.connectivityChanged(false); online.value = false; care.value = care.value.copy(offline = true) }
+        val line = care.value.connectionLine()!!
+        assertTrue("The line sits above the list", bounds(hasText(line) and hasClickAction()).bottom <= bounds(hasTestTag("task-list")).top + 0.5f)
+        assertEquals("A row or control moved when the connection went at ${fontScale}x text", before, places())
+        compose.explains(line, care.value.todayConnectionNotice()!!, "Weather and tips need a connection")
+        compose.runOnIdle { feed.connectivityChanged(true); online.value = true; care.value = care.value.copy(offline = false) }
+        compose.onNode(hasText("Offline", substring = true)).assertDoesNotExist()
+        compose.onNode(hasText("Weather and tips need a connection", substring = true)).assertDoesNotExist()
+        assertEquals("A row or control moved when the connection came back at ${fontScale}x text", before, places())
+    }
+
+    // C1b: Today's care and feed messages show in the line under the title, so no card or row moves as one starts or ends.
+    @Test fun aRefusedRefreshMovesNoRow() = messageMovesNoRow(1f, rain = false)
+    @Test fun aRefusedRefreshMovesNoRowAtLargeText() = messageMovesNoRow(1.3f, rain = false)
+    // Try again refreshes, which would not resend a feed write, so a feed message offers none; tapping Mark watered again resends it.
+    @Test fun aRainWateringConflictMovesNoRowAndOffersNoTryAgain() = messageMovesNoRow(1f, rain = true)
+    @Test fun aRainWateringConflictMovesNoRowAndOffersNoTryAgainAtLargeText() = messageMovesNoRow(1.3f, rain = true)
+    @Test fun aSavedMessageMovesNoRowAndOffersNoTryAgain() = messageMovesNoRow(1f, rain = false, saved = true)
+    @Test fun aSavedMessageMovesNoRowAndOffersNoTryAgainAtLargeText() = messageMovesNoRow(1.3f, rain = false, saved = true)
+    private fun messageMovesNoRow(fontScale: Float, rain: Boolean, saved: Boolean = false) = withCache { cache, api, server ->
+        val feed = cachedFeed(api, server, cache, feedFixture)
+        val care = mutableStateOf(state(tasks = rows(8)))
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+            FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed, deviceOnline = true) } } }
+        compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsDisplayed()
+        scrollList(120f)
+        compose.waitUntil(5_000) { compose.onNodeWithTag("task-list").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f }
+        val controls = hasAnyAncestor(hasTestTag("task-list")) and hasClickAction()
+        fun places() = compose.onAllNodes(controls).fetchSemanticsNodes().map { it.boundsInRoot } + bounds(hasTestTag("task-list"))
+        val before = places()
+        // The repository keeps a refused refresh's message for Today; a 409 to Mark watered leaves the feed's.
+        val message = if (saved) "Feed settings saved." else if (rain) "Rain watering is not ready. Try again in a moment." else "Synthetic refusal"
+        if (saved) {
+            server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+            assertTrue(feed.saveSettings(feed.state.value.settings!!))
+        } else if (rain) {
+            server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready"}"""))
+            assertFalse(feed.water())
+        } else compose.runOnIdle { care.value = care.value.copy(message = message) }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isNotEmpty() }
+        assertEquals("A card or row moved when the message showed at ${fontScale}x text", before, places())
+        assertTrue("The line sits above the list", bounds(hasText(message) and hasClickAction()).bottom <= bounds(hasTestTag("task-list")).top + 0.5f)
+        compose.onNode(hasText(message) and hasClickAction()).performClick()
+        compose.onNode(hasText(message) and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        val retry = compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog()))
+        if (saved || rain) retry.assertDoesNotExist() else retry.assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        if (rain || saved) {
+            server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+            feed.refresh(owner)
+        } else compose.runOnIdle { care.value = care.value.copy(message = null) }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isEmpty() }
+        assertEquals("A card or row moved when the message cleared at ${fontScale}x text", before, places())
     }
 
     @Test fun aColdStartWithACachedEmptyFeedShowsNoStripUntilAViewSwitch() = withCache { cache, api, server ->
@@ -1235,7 +1332,7 @@ class TodayLayoutTest {
 
     @Test fun undoingASnoozeAndThenItsCompletedPostponedOccurrenceGivesThePendingRowOnlyToTheCompletionsSlot() = withCache { cache, api, server ->
         val pending = taskJson("2030-06-01", late = 1)
-        val snooze = eventJson("event-snooze", "snoozed")
+        val snooze = eventJson("event-snooze", "snoozed").put("postponed_until", "2030-06-04")
         val completion = eventJson("event-postponed").put("due_on", "2030-06-04")
         val snoozed = pending.acted(snooze, "2030-06-04")
         val postponed = taskJson("2030-06-04", postponed = "snoozed")
@@ -1267,7 +1364,12 @@ class TodayLayoutTest {
             served.responses["/api/care-events/event-snooze/undo"] = undoBody(snooze, nextJson("2030-06-11"), listOf(completed),
                 "2030-06-04:water" to listOf(completed), "2030-06-11:water" to listOf(next)).restoring(restoredJson("event-snooze", null))
             assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.first { it.completedEvent?.id == "event-snooze" }, "undo"))
-            compose.onNodeWithContentDescription(undoSnooze).assertIsNotEnabled()
+            // The snooze's row says it is undone, with no snooze label and no second control for the occurrence the completion's row holds.
+            val undone = hasText("Undone") and hasAnyAncestor(taskRow)
+            compose.onNode(undone).assertIsDisplayed()
+            compose.onNodeWithContentDescription(undoSnooze).assertDoesNotExist()
+            compose.onAllNodes(hasText("until", substring = true) and hasAnyAncestor(taskRow)).assertCountEquals(0)
+            compose.onAllNodes(hasAnyAncestor(taskRow) and hasClickAction() and isEnabled() and !hasContentDescription("Open ", substring = true)).assertCountEquals(1)
             compose.onNode(check).assertIsEnabled()
             // The completion's Undo brings back the occurrence due today, which is what the completion's row became.
             served.responses["/api/care-events/event-postponed/undo"] = undoBody(completion, nextJson("2030-06-01"), listOf(pending), "2030-06-02:water" to listOf(pending))
@@ -1275,9 +1377,80 @@ class TodayLayoutTest {
             assertTrue(repository.act(repository.state.value.today!!.sections.single().tasks.single(), "undo"))
             compose.waitForIdle()
             compose.onNode(check).assertDoesNotExist()
-            val held = compose.onNodeWithContentDescription(undoSnooze).assertIsNotEnabled().fetchSemanticsNode().boundsInRoot
+            val held = compose.onNode(undone).fetchSemanticsNode().boundsInRoot
             val restored = compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertIsEnabled().fetchSemanticsNode().boundsInRoot
             assertTrue("The pending row takes the completion's slot, below the snooze's", restored.top > held.bottom)
+            assertEquals("A row moved", tops, rowBounds())
+        }
+    }
+
+    // C18: an Undo that brought nothing back follows only this device's own writes, so another member's snooze to the same date stays theirs.
+    @Test fun undoingASnoozeLeavesAnotherMembersSnoozeToTheSameDateAlone() = withCache { cache, api, server ->
+        val pending = taskJson("2030-06-01", late = 1)
+        val snooze = eventJson("event-snooze", "snoozed").put("postponed_until", "2030-06-04")
+        val snoozed = pending.acted(snooze, "2030-06-04")
+        val theirs = taskJson("2030-06-04", postponed = "snoozed")
+        ServedLists(server, listJson("today", "water" to listOf(pending)), listJson("upcoming", "2030-06-02:water" to listOf(pending)), "[$plantFixture]").use { served ->
+            val repository = Repository(api, cache, { true })
+            repository.refresh()
+            compose.setContent { Themed { val care by repository.state.collectAsState(); TaskScreen(care, "upcoming") } }
+            served.responses["/api/plants/plant-one/tasks/water/snooze"] = actedBody(snooze, nextJson("2030-06-04", "snoozed"))
+            served.today = listJson("today", "water" to listOf(snoozed))
+            served.upcoming = listJson("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-04:water" to listOf(theirs))
+            assertTrue(repository.act(repository.state.value.upcoming!!.sections.single().tasks.single(), "snooze"))
+            served.await { repository.state.value.upcoming!!.sections.size == 2 }
+            val undoSnooze = "Undo watering snooze for Synthetic fern, Synthetic site"
+            compose.onNodeWithContentDescription(undoSnooze).assertIsEnabled()
+            // Another member then snoozed Water to the same date, so this Undo leaves it pending there and brings nothing back.
+            served.responses["/api/care-events/event-snooze/undo"] = undoBody(snooze, nextJson("2030-06-04", "snoozed"), emptyList(), "2030-06-04:water" to listOf(theirs))
+                .restoring(restoredJson("event-snooze", null))
+            assertTrue(repository.act(repository.state.value.upcoming!!.sections.first().tasks.single(), "undo"))
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription(undoSnooze).assertIsNotEnabled()
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, ChangedElsewhere))
+            compose.onAllNodesWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertCountEquals(0)
+        }
+    }
+
+    // C18: undoing this device's snooze gives its row what this device's liquid fertilizing made of the snoozed occurrence: the water it recorded.
+    @Test fun undoingASnoozeAfterAnOwnLiquidFertilizingShowsTheWateringInTheSnoozesRow() = withCache { cache, api, server ->
+        val water = taskJson("2030-06-01", late = 1)
+        val fertilize = taskJson("2030-06-02", type = "fertilize")
+        val snooze = eventJson("event-snooze", "snoozed").put("postponed_until", "2030-06-04")
+        val fertilized = eventJson("event-fertilize").put("task_type", "fertilize").put("due_on", "2030-06-02")
+        val watered = eventJson("event-water").put("due_on", "2030-06-04").put("linked_event_id", "event-fertilize")
+        val snoozed = water.acted(snooze, "2030-06-04")
+        val wateredRow = taskJson("2030-06-09").acted(watered)
+        val fertilizedRow = taskJson("2030-06-11", type = "fertilize").acted(fertilized)
+        ServedLists(server, listJson("today", "water" to listOf(water), "fertilize" to listOf(fertilize)),
+            listJson("upcoming", "2030-06-02:water" to listOf(water), "2030-06-02:fertilize" to listOf(fertilize)), "[$plantFixture]").use { served ->
+            val repository = Repository(api, cache, { true })
+            repository.refresh()
+            compose.setContent { Themed { val care by repository.state.collectAsState(); TaskScreen(care, "today") } }
+            served.responses["/api/plants/plant-one/tasks/water/snooze"] = actedBody(snooze, nextJson("2030-06-04", "snoozed"))
+            served.today = listJson("today", "water" to listOf(snoozed), "fertilize" to listOf(fertilize))
+            served.upcoming = listJson("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-02:fertilize" to listOf(fertilize),
+                "2030-06-04:water" to listOf(taskJson("2030-06-04", postponed = "snoozed")))
+            assertTrue(repository.act(repository.state.value.today!!.sections.first().tasks.single(), "snooze"))
+            served.await { repository.state.value.upcoming!!.sections.size == 3 }
+            served.responses["/api/plants/plant-one/tasks/fertilize/complete"] = JSONObject().put("event", fertilized)
+                .put("linked_events", JSONArray().put(watered)).put("task", nextJson("2030-06-11")).toString()
+            served.today = listJson("today", "water" to listOf(snoozed, wateredRow), "fertilize" to listOf(fertilizedRow))
+            served.upcoming = listJson("upcoming", "2030-06-02:water" to listOf(snoozed), "2030-06-02:fertilize" to listOf(fertilizedRow), "2030-06-04:water" to listOf(wateredRow))
+            assertTrue(repository.act(repository.state.value.today!!.sections.last().tasks.single(), "complete"))
+            served.await { served.paths.count { it == "/api/tasks?view=upcoming" } == 3 }
+            val undoSnooze = "Undo watering snooze for Synthetic fern, Synthetic site"
+            compose.onNodeWithContentDescription(undoSnooze).assertIsEnabled()
+            val tops = rowBounds()
+            // Nothing is pending after the Undo, because the fertilizing's water completed the occurrence the snooze had postponed.
+            served.responses["/api/care-events/event-snooze/undo"] = JSONObject().put("event", snooze).put("task", nextJson("2030-06-09"))
+                .put("today", JSONObject(listJson("today", "water" to listOf(wateredRow), "fertilize" to listOf(fertilizedRow))))
+                .put("upcoming", JSONObject(listJson("upcoming", "2030-06-02:fertilize" to listOf(fertilizedRow), "2030-06-04:water" to listOf(wateredRow))))
+                .toString().restoring(restoredJson("event-snooze", null))
+            assertTrue(repository.act(repository.state.value.today!!.sections.first().tasks.first { it.completedEvent?.id == "event-snooze" }, "undo"))
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription("Water done for Synthetic fern, Synthetic site. Double tap to undo").assertIsEnabled()
+            compose.onNodeWithContentDescription(undoSnooze).assertDoesNotExist()
             assertEquals("A row moved", tops, rowBounds())
         }
     }
@@ -1602,7 +1775,7 @@ class TodayLayoutTest {
                 .restoring(restoredJson("event-postponed", "2030-06-01"))
             assertTrue(repository.act(repository.state.value.upcoming!!.sections.flatMap { it.tasks }.single { it.completedEvent?.id == "event-postponed" }, "undo"))
             compose.waitForIdle()
-            compose.onNodeWithContentDescription("Snooze 2 days").assertIsEnabled()
+            compose.onNode(hasContentDescription("by 2 days", substring = true)).assertIsEnabled()
             assertEquals("The future row changed when the overdue occurrence came back into it at ${fontScale}x text", before, layout())
         }
     }

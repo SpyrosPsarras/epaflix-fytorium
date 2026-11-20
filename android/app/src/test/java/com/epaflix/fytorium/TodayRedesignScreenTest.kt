@@ -14,7 +14,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -128,7 +128,7 @@ class TodayRedesignScreenTest {
         compose.onNodeWithContentDescription("No cover photo for Synthetic fern", useUnmergedTree = true).performTouchInput { click() }
         compose.onNodeWithText("Synthetic fern", useUnmergedTree = true).performTouchInput { click() }
         compose.runOnIdle { assertEquals(2, opened); assertTrue(actions.isEmpty()) }
-        compose.onNodeWithContentDescription("Snooze 2 days").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithContentDescription("Snooze Water for Synthetic fern, Synthetic site by 2 days").assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithContentDescription("Mark Water done for Synthetic fern, Synthetic site").assertHeightIsAtLeast(48.dp).performClick()
         compose.runOnIdle { assertEquals(2, opened); assertEquals(listOf("snooze", "complete"), actions) }
         compose.onNodeWithText("Skip").assertDoesNotExist()
@@ -282,7 +282,7 @@ class TodayRedesignScreenTest {
         compose.onNodeWithText("Import from Planta").performClick()
         assertEquals(1, adds); assertEquals(1, imports)
         compose.runOnIdle { state.value = full.copy(today = mixed, offline = true) }
-        compose.onNodeWithText(state.value.todayBanner()!!).assertExists()
+        compose.onNodeWithText(state.value.connectionLine()!!).assertExists()
         compose.onAllNodes(hasContentDescription("Mark Water done for Fern, Living room") or hasContentDescription("Mark Fertilize done for Fern, Living room"))
             .assertCountEquals(2).assertAll(isNotEnabled())
         compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
