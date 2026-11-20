@@ -115,7 +115,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     suspend fun refreshDetail(key: String) { withContext(Dispatchers.IO) { repository?.openPlant(key, full = true) } }
     suspend fun loadSpecies(key: Long) { withContext(Dispatchers.IO) { repository?.species(key) }?.takeIf { it.key == namesKey }?.let { species = it } }
     // A species chosen for a new plant or a species change is unsaved too, however it was chosen.
-    fun unsaved() = formChanged() || (selection != null && (page == "change-species" || (page == "form" && id == null)))
+    // A new plant's form with nothing entered goes back to its results without asking (W4-P18).
+    fun unsaved() = formChanged() || (selection != null && page == "change-species")
     fun follow(link: String) {
         if (link == "species-care") speciesCareFrom = "care"
         if (link == "identify") identifyReturn = page
@@ -132,6 +133,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             page == "graveyard" -> page = "list"
             page == "detail" -> { forms.removeState("detail:$id"); page = from; id = null }
             page == "sites" -> page = sitesReturn
+            page == "form" && id == null -> page = pickedFrom
             page == "search" || id == null -> { page = "list"; id = null }
             else -> page = "detail"
         }

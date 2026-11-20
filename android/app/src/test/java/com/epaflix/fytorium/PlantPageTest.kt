@@ -3039,13 +3039,21 @@ class PlantPageTest {
             compose.onNodeWithText("Yes, this one").performClick()
             val name = hasText("Name") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
+            // W4-P18: with nothing entered, Back returns to the results without asking.
+            compose.onNodeWithContentDescription("Back").performClick()
+            val results = hasText("Best matches") and isHeading()
+            compose.waitUntil(5_000) { compose.onAllNodes(results).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasContentDescription("Choose this species.", substring = true)).performScrollTo().performClick()
+            compose.onNodeWithText("Yes, this one").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(name).performTextInput("Synthetic named")
             compose.onNodeWithContentDescription("Back").performClick()
             compose.assertNewPlantDiscard()
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertIsDisplayed()
             compose.onNodeWithContentDescription("Back").performClick()
             compose.onNodeWithText("Discard").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(add).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(results).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).assertDoesNotExist()
         }
     }
