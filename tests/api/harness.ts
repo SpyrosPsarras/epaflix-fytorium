@@ -31,6 +31,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
   let gbifDelay = 0;
   const gbifMatches = new Map<string, unknown>();
   let wikidataSearchStalled = false;
+  let gbifSpeciesStalled = false;
   const gbifSpecies = new Map<number, unknown>();
   const gbifOccurrences = new Map<number, { payload: unknown; status: number }>();
   const occurrenceRequests: URL[] = [];
@@ -75,6 +76,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     }
     if (url.pathname === '/nortaxa/api/v1/TaxonName/Search' && url.searchParams.has('Search')) return nameResponse('nortaxa', response, url.searchParams.get('Search')!);
     if (/^\/species\/\d+$/.test(url.pathname)) {
+      if (gbifSpeciesStalled) return;
       const payload = gbifSpecies.get(Number(url.pathname.split('/').pop()));
       response.writeHead(payload ? 200 : 404, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload ?? {}));
@@ -97,7 +99,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
   let plantnetResponse: unknown = identificationResponse;
   let plantnetStatus = 200;
   let plantnetDelay = 0;
-  const identificationRequests: { bytes: Buffer; contentType: string; pathname: string; relatedImages: string | null }[] = [];
+  const identificationRequests: { bytes: Buffer; contentType: string; pathname: string; relatedImages: string | null; language: string | null }[] = [];
   const plantnet = createServer(async (request, response) => {
     const url = new URL(request.url!, 'http://fake');
     if (request.method !== 'POST' || url.pathname !== '/identify/all' || url.searchParams.get('api-key') !== plantnetKey) {
@@ -106,7 +108,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     }
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk);
-    identificationRequests.push({ bytes: Buffer.concat(chunks), contentType: request.headers['content-type'] ?? '', pathname: url.pathname, relatedImages: url.searchParams.get('include-related-images') });
+    identificationRequests.push({ bytes: Buffer.concat(chunks), contentType: request.headers['content-type'] ?? '', pathname: url.pathname, relatedImages: url.searchParams.get('include-related-images'), language: url.searchParams.get('lang') });
     const payload = plantnetResponse;
     const status = plantnetStatus;
     setTimeout(() => {
@@ -270,6 +272,7 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     setGbif(payload: unknown, status = 200, delay = 0) { gbifResponse = payload; gbifStatus = status; gbifDelay = delay; },
     setGbifMatch(name: string, payload: unknown) { gbifMatches.set(name, payload); },
     stallWikidataSearch(stalled: boolean) { wikidataSearchStalled = stalled; },
+    stallGbifSpecies(stalled: boolean) { gbifSpeciesStalled = stalled; },
     identificationRequests,
     setPlantnet(payload: unknown = identificationResponse, status = 200, delay = 0) { plantnetResponse = payload; plantnetStatus = status; plantnetDelay = delay; },
     setGbifSpecies(key: number, payload: unknown) { gbifSpecies.set(key, payload); },

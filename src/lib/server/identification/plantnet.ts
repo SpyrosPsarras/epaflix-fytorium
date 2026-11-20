@@ -10,12 +10,13 @@ type Result = {
 };
 
 export const plantnet: Identifier = {
-  async identify(images, organs) {
+  async identify(images, { organs, language } = {}) {
     const settings = config();
     if (!settings.plantnetApiKey.trim()) error(503, 'Photo identification is not configured. Search by name or configure Pl@ntNet.');
     const base = settings.plantnetBaseUrl.href;
     const url = new URL('identify/all', base.endsWith('/') ? base : base + '/');
     url.search = new URLSearchParams({ 'api-key': settings.plantnetApiKey, 'include-related-images': 'false' }).toString();
+    if (language) url.searchParams.set('lang', language);
     const form = new FormData();
     for (const [index, image] of images.entries()) {
       form.append('images', new Blob([new Uint8Array(image)], { type: 'image/jpeg' }), `image-${index}.jpg`);

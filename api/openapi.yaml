@@ -1112,7 +1112,7 @@ paths:
       summary: POST /api/plants/{id}/photos
       responses:
         "201":
-          description: JSON response
+          description: Photo update. It becomes the cover if the plant has none.
           content:
             application/json:
               schema:
@@ -1173,7 +1173,7 @@ paths:
       summary: DELETE /api/photos/{id}
       responses:
         "204":
-          description: No content
+          description: Photo deleted. If it was the cover, the remaining photo with the latest taken date, then upload time, becomes the cover.
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -1234,10 +1234,20 @@ paths:
   /api/photos/{id}/{variant}:
     get:
       operationId: get_api_photos__id___variant_
-      summary: GET /api/photos/{id}/{variant}
+      summary: Read a photo in the member's household
       responses:
         "200":
-          description: Sanitised original or thumbnail JPEG. variant is original or thumb.
+          description: Sanitised JPEG. The thumbnail is at most 400 px. The display JPEG is generated from the stored original at quality 80 and at most 1080 px on its long edge, without enlargement.
+          headers:
+            Cache-Control:
+              description: Display uses private, max-age=604800. Original and thumbnail use no-store.
+              schema:
+                type: string
+                enum: ['private, max-age=604800', 'no-store']
+            Vary:
+              description: Display responses vary by Cookie, Authorization and X-App-Version.
+              schema:
+                type: string
           content:
             image/jpeg:
               schema:
@@ -1266,6 +1276,7 @@ paths:
           required: true
           schema:
             type: string
+            enum: [original, thumb, display]
         - name: X-App-Version
           in: header
           required: false
@@ -1333,10 +1344,10 @@ paths:
             type: string
     post:
       operationId: post_api_identification
-      summary: POST /api/identification
+      summary: Identify photos using the member's language
       responses:
         "200":
-          description: JSON response
+          description: Ranked candidates. GBIF synonyms use the accepted key and names, and the original identified name is kept separately.
           content:
             application/json:
               schema:
@@ -4067,7 +4078,7 @@ components:
         requires_confirmation:
           type: boolean
         common_name:
-          description: For stored species, the chosen common name in the request language with English fallback. Species search can also return a name from Wikidata labels and aliases in the request language for an unstored species. Null when no name is available.
+          description: For stored species, the chosen common name in the request language with English fallback. Identification falls back to Pl@ntNet's first common name. Species search can return a Wikidata label or alias for an unstored species. Null when no name is available.
           anyOf:
             - type: string
             - type: "null"
@@ -4077,6 +4088,10 @@ components:
             type: string
         identification_name:
           type: string
+          description: Pl@ntNet's scientific name including authorship when provided.
+        identification_canonical_name:
+          type: string
+          description: Pl@ntNet's scientific name without authorship. Compare with canonical_name for an accepted-name change.
         matched_name:
           type: string
         matched_language:

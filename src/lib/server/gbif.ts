@@ -55,9 +55,16 @@ async function speciesRecord(key: number, deadline?: AbortSignal) {
   return species;
 }
 
-export async function speciesRank(key: number): Promise<string | undefined> {
+export async function identificationTaxonomy(key: number): Promise<{ rank?: string; accepted?: Candidate | null; unresolved?: boolean }> {
   const species = await speciesRecord(key).catch(() => null);
-  if (species?.kingdom === 'Plantae' && ranks.includes(species.rank)) return species.rank;
+  if (species?.kingdom !== 'Plantae') return {};
+  const distinct = species.taxonomicStatus !== 'DOUBTFUL' && isGbifKey(species.acceptedKey) && species.acceptedKey !== key;
+  // A known synonym of any rank is offered only through its accepted species.
+  if (distinct || String(species.taxonomicStatus).includes('SYNONYM')) {
+    const accepted = distinct ? await acceptedSpecies(species.acceptedKey).catch(() => null) : null;
+    return { rank: species.rank, accepted, unresolved: !accepted };
+  }
+  return ranks.includes(species.rank) ? { rank: species.rank } : {};
 }
 
 export async function acceptedSpecies(key: number, { deadline, synonyms = false, onSynonymNames }: {

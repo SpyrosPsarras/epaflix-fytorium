@@ -38,6 +38,7 @@ test('Today and Upcoming carry the current cover ID, clear it after deletion, an
   }
   expect((await sitter.request(`/api/photos/${photo.id}/thumb`)).status).toBe(403);
   expect((await sitter.request(`/api/photos/${photo.id}/original`)).status).toBe(403);
+  expect((await sitter.request(`/api/photos/${photo.id}/display`)).status).toBe(403);
   expect((await owner.request(`/api/photos/${photo.id}`, 'DELETE')).status).toBe(204);
   for (const view of ['today', 'upcoming']) expect(await row(view)).toHaveProperty('cover_photo_id', null);
 });
