@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
     onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {},
     onFormDirty: (() -> String?) -> Unit = {}, onReceipt: (String) -> Unit = {}, onAdd: (() -> Unit)? = null, onUploaded: () -> Unit = onBack,
-    cached: (String) -> String? = { null }, keep: (String, String) -> Unit = { _, _ -> },
+    cached: (String) -> String? = { null }, keep: (String, String) -> Unit = { _, _ -> }, onFirstPhoto: (String?) -> Unit = {},
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
@@ -69,7 +69,7 @@ import kotlinx.coroutines.withContext
             result = null
             if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
         } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null },
-        onSelect = onSelect, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
+        onSelect = { candidate, search, confirmed -> onFirstPhoto(selected.firstOrNull()); onSelect(candidate, search, confirmed) }, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
         onDiscard = { selected = emptyList(); result = null; repository.clearResult() }, care = care, api = api)
     else PhotoScreen(shown, online, plantName, selected.size, thumbnails, onBack,
         onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {

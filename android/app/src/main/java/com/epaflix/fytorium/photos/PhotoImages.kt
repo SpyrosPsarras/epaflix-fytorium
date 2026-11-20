@@ -76,6 +76,10 @@ internal fun decodeUriPreview(context: Context, uri: Uri, width: Int, height: In
     }
 } catch (_: Exception) { null } catch (_: OutOfMemoryError) { null }
 
+// shortcut: a copy left by a plant form Android dropped (force stop) stays until logout clears the app's files; sweep old copies at startup if storage use grows.
+internal fun keepDraftPhoto(context: Context, uri: Uri): File =
+    File(File(context.noBackupFilesDir, "photo-drafts").apply { mkdirs() }, java.util.UUID.randomUUID().toString() + ".jpg").apply { writeBytes(preparePhoto(context, uri)) }
+
 // Bound downloaded originals; camera inputs are decoded directly from their URI.
 internal fun readPhotoBytes(input: java.io.InputStream, limit: Int): ByteArray {
     val output = ByteArrayOutputStream()

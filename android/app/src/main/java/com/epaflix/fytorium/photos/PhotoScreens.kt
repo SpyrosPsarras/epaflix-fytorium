@@ -421,3 +421,6 @@ private fun matchLines(candidate: SpeciesCandidate) = listOfNotNull(
         bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
     }
 }
+
+@Composable internal fun FilePhoto(path: String, modifier: Modifier) =
+    UriImage(android.net.Uri.fromFile(java.io.File(path)).toString(), modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)), "Photo from Identify")

@@ -3040,7 +3040,7 @@ class PlantPageTest {
             val name = hasText("Name") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.assertDiscard("Your changes to this new plant are not saved yet.")
+            compose.assertNewPlantDiscard()
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertIsDisplayed()
             compose.onNodeWithContentDescription("Back").performClick()
@@ -4875,7 +4875,7 @@ class PlantPageTest {
                 reveal(choose).assertIsDisplayed()
             }
             compose.onNodeWithContentDescription("Back").performClick()
-            compose.assertDiscard(if (add) "Your changes to this new plant are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
+            if (add) compose.assertNewPlantDiscard() else compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
         }
     }
 

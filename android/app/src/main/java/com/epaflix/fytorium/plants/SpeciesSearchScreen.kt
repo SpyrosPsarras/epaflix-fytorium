@@ -178,6 +178,20 @@ import com.epaflix.fytorium.*
         confirmButton = { TextButton(onClick = onConfirm, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Yes, this one") } })
 }
 
+// The add form's species: reference photo, names and Change, which returns to the search or Identify it came from.
+@Composable internal fun ChosenSpecies(api: ApiClient?, key: Long, headline: String, scientific: String, onChange: () -> Unit) {
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            SearchSpeciesPhoto(api, key, Modifier.size(72.dp))
+            Column(Modifier.weight(1f)) {
+                Heading(headline, MaterialTheme.typography.titleMedium)
+                if (scientific != headline) Text(scientific, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = onChange, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Change species" }) { Text("Change") }
+        }
+    }
+}
+
 @Composable private fun SearchSpeciesPhoto(api: ApiClient?, species: Long, modifier: Modifier, description: String? = null): PhotoCredit? = key(api, species) {
     val creditResult = referencePhotoCredit(api, species)
     val credit = creditResult?.getOrNull()

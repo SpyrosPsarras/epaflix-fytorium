@@ -551,7 +551,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         var saved: Plant? = null
         write(if (id == null) "/api/plants" else "/api/plants/${requireSafeId(id)}", if (id == null) "POST" else "PUT", body, refreshAfter = true, plantsScreen = true) {
             saved = parsePlant(JSONObject(it)).also { plant ->
-                mutable.value = mutable.value.copy(receipt = Receipt((if (id == null) "Added " else "Saved ") + plant.displayName, short = true))
+                mutable.value = mutable.value.copy(receipt = Receipt(if (id == null) "Added ${plant.displayName}" + plant.siteName?.let { " to $it" }.orEmpty() else "Saved ${plant.displayName}", short = true))
             }
         }
         return saved

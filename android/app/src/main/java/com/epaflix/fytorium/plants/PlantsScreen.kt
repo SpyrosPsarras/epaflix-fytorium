@@ -55,6 +55,18 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     val namesDraft = rememberSaveable { mutableStateOf("") }
     var chosenName by rememberSaveable { mutableStateOf("") }
     var chosenLabel by rememberSaveable { mutableStateOf("") }
+    var chosenScientific by rememberSaveable { mutableStateOf("") }
+    // Where the new plant's species came from, so Change returns there with its query, results and photos.
+    var pickedFrom by rememberSaveable { mutableStateOf("search") }
+    var sitesReturn by rememberSaveable { mutableStateOf("restore") }
+    // Identify's first photo, copied into app storage so it survives until the plant is saved or discarded.
+    var keepPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var keepPhoto by rememberSaveable { mutableStateOf(true) }
+    fun dropKeepPhoto() { keepPhotoPath?.let { java.io.File(it).delete() }; keepPhotoPath = null; keepPhoto = true }
+    fun choose(candidate: SpeciesCandidate) {
+        chosenName = candidate.headline.ifBlank { candidate.scientificName }; chosenLabel = speciesLabel(candidate.commonName, candidate.canonicalName)
+        chosenScientific = candidate.identificationCanonicalName ?: candidate.canonicalName
+    }
     var selection by rememberSaveable { mutableStateOf<String?>(null) }
     var reading by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -64,6 +76,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     var discarding by rememberSaveable { mutableStateOf(false) }
     // A page opened from a form or the plant page returns to it as the user left it, with what was typed, chosen or unfolded.
     val forms = rememberSaveableStateHolder()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val detailScroll = key(id) { rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() } }
     var speciesCareFrom by rememberSaveable { mutableStateOf("detail") }
     var leavingFor by rememberSaveable { mutableStateOf<String?>(null) }
@@ -118,7 +131,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             page == "list" || (page == "detail" && returnToToday) -> onBack()
             page == "graveyard" -> page = "list"
             page == "detail" -> { forms.removeState("detail:$id"); page = from; id = null }
-            page == "sites" -> page = "restore"
+            page == "sites" -> page = sitesReturn
             page == "search" || id == null -> { page = "list"; id = null }
             else -> page = "detail"
         }
@@ -127,7 +140,10 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     LaunchedEffect(page) {
         if (page !in formPages && page !in formSubpages) formChanged = { false }
         if (page !in listOf("care", "species-care")) id?.let { forms.removeState("care:$it") }
-        if (page !in listOf("search", "change-species", "identify")) listOf("search", "change-species").forEach { forms.removeState("search:$it") }
+        if (page !in listOf("search", "change-species", "identify", "sites") && !(page == "form" && id == null)) {
+            listOf("search", "change-species").forEach { forms.removeState("search:$it") }
+            forms.removeState("identify")
+        }
     }
     val discardBody = if (id == null) "Your changes to this new plant are not saved yet." else "Your changes to ${plant?.displayName ?: "this plant"} are not saved yet."
     val currentDirty by rememberUpdatedState(onFormDirty)
@@ -220,17 +236,23 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     if (page in listOf("photos", "photo-form", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
         val photos = page != "identify"
-        com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
+        // Identify keeps its photos and results while the add form is open, so Change and Back return to them.
+        forms.SaveableStateProvider(if (photos) "photos:$id" else "identify") { com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
             plantId = if (photos) id else null, plantName = if (photos) plant?.displayName else null, formOnly = page == "photo-form",
             identifying = page == "identify", onBack = { page = if (photos) "detail" else identifyReturn }, onUpdateRequired = { repository?.requireUpdate() },
             onFormDirty = { subpageDraft = it }, onReceipt = { repository?.showReceipt(it) },
             cached = { repository?.cachedJson(it) }, keep = { resource, json -> repository?.saveJson(resource, json) }, grid = photoGrid,
             onChanged = { scope.launch { withContext(Dispatchers.IO) { repository?.refreshPlants() }; id?.let { refreshDetail(it) } } },
+            onFirstPhoto = { uri -> if (identifyReturn != "change-species" && uri != null) scope.launch {
+                val copy = withContext(Dispatchers.IO) { runCatching { com.epaflix.fytorium.photos.keepDraftPhoto(context, android.net.Uri.parse(uri)) }.getOrNull() }
+                keepPhotoPath?.takeIf { it != copy?.path }?.let { java.io.File(it).delete() }
+                keepPhotoPath = copy?.path; keepPhoto = true
+            } },
             onSelect = { candidate, searchId, confirmed ->
                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
-                chosenName = candidate.headline.ifBlank { candidate.scientificName }; chosenLabel = speciesLabel(candidate.commonName, candidate.canonicalName)
+                choose(candidate); pickedFrom = "identify"
                 page = if (identifyReturn == "change-species") "change-species" else "form"
-            })
+            }) }
         return
     }
     if (page == "species-care" && plant != null && speciesApi != null && state.member != null && state.member.role != Role.sitter) {
@@ -241,7 +263,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     val sitesApi = photosApi ?: speciesApi
     if (page == "sites" && sitesApi != null && state.member != null && state.member.role != Role.sitter) {
-        com.epaflix.fytorium.sites.SitesRoute(sitesApi, state, photosConnected, onBack = { page = "restore"; run { loadOptions() } }, creating = true,
+        com.epaflix.fytorium.sites.SitesRoute(sitesApi, state, photosConnected, onBack = { page = sitesReturn; run { loadOptions() } }, creating = true,
             onCreated = { restoreSite = it }, onFormDirty = { subpageDraft = it }, onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers)
         return
     }
@@ -327,15 +349,21 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         },
                             onSelect = { candidate, searchId, confirmed ->
                                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
-                                if (page == "change-species") { chosenName = candidate.headline.ifBlank { candidate.scientificName }
-                                    chosenLabel = speciesLabel(candidate.commonName, candidate.canonicalName) }
-                                else page = "form"
+                                choose(candidate)
+                                if (page != "change-species") { pickedFrom = "search"; dropKeepPhoto(); page = "form" }
                             }, imageApi = speciesApi, onDirty = { formChanged = it }, autoFocus = page == "search", searching = searching,
                             answeredQuery = answeredQuery, answerVersion = answerVersion, onIdentify = identify, identifyEnabled = identifyEnabled,
                             currentSpecies = current, searchEnabled = state.member != null && state.member.role != Role.sitter && !state.updateRequired && !saving && !request.saving)
                     }
                 }
-                "form" -> options?.takeIf { id == null || plant != null }?.let { choices -> PlantForm(if (id == null) null else plant, choices, sites, enabled, errors = request.errors, onDirty = { formChanged = it }, onSave = { input ->
+                "form" -> options?.takeIf { id == null || plant != null }?.let { choices -> forms.SaveableStateProvider("form:${id ?: "new"}") { PlantForm(if (id == null) null else plant, choices, sites, enabled,
+                    errors = request.errors, onDirty = { formChanged = it }, today = state.today?.today?.let(java.time.LocalDate::parse) ?: java.time.LocalDate.now(),
+                    species = selection?.takeIf { id == null }?.let { json -> { ChosenSpecies(speciesApi, JSONObject(json).getLong("gbif_key"), chosenName, chosenScientific) {
+                        page = pickedFrom
+                    } } },
+                    nameStandIn = chosenName.takeIf { id == null && it.isNotBlank() }, onCreateSite = { sitesReturn = "form"; leaveFor("sites") }.takeIf { id == null },
+                    createdSite = restoreSite.takeIf { id == null }, blocked = addBlocked.takeIf { id == null }, onBlocked = ::explain,
+                    keepPhoto = keepPhotoPath?.takeIf { id == null }?.let { path -> { KeepPhoto(path, keepPhoto, enabled) { keepPhoto = it } } }, onSave = { input ->
                     selection?.takeIf { id == null }?.let { json ->
                         val chosen = JSONObject(json)
                         listOf("gbif_key", "search_id", "confirmed").forEach { input.put(it, chosen.get(it)) }
@@ -344,16 +372,23 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         val previousId = id
                         val saved = withContext(Dispatchers.IO) { repository!!.savePlant(id, input) }
                         if (saved != null) {
-                            id = saved.id; selection = null; formChanged = { false }
+                            val photo = keepPhotoPath?.takeIf { previousId == null && keepPhoto && photosApi != null }
+                            id = saved.id; selection = null; formChanged = { false }; forms.removeState("form:new")
+                            if (photo != null) scope.launch {
+                                val uploaded = withContext(Dispatchers.IO) { com.epaflix.fytorium.photos.PhotoRepository(photosApi!!, { true }, photosConnected, saved.id)
+                                    .let { photos -> photos.options() && photos.upload(context, android.net.Uri.fromFile(java.io.File(photo)), "", "", photos.state.value.today.orEmpty()) } }
+                                if (!uploaded) repository?.showReceipt("Added ${saved.displayName} to ${saved.siteName ?: "your household"}. Its photo didn't upload.")
+                                dropKeepPhoto(); refreshDetail(saved.id)
+                            } else dropKeepPhoto()
                             scope.launch { if (previousId == saved.id) refreshDetail(saved.id); page = "detail" }
                         }
                     }
-                }) }
+                }) } }
                 "care" -> careJson?.let { json -> forms.SaveableStateProvider("care:$id") { PlantCareSettings(json, enabled, onSave = { body -> command("care-settings", body) }, tasks = detail?.tasks.orEmpty(),
                     plantName = plant?.displayName.orEmpty(), onSpeciesCare = speciesApi?.let { { leaveFor("species-care") } }, onBack = ::back,
                     barTitle = { title -> PlantBarTitle(state, request, ::retry, title = title) }, error = request.errors["_form"], onDirty = { formChanged = it }) } }
                     ?: PlantColumn { Text("Connect to load this plant's schedule.") }
-                "restore" -> plant?.let { RestoreForm(it, sites, enabled, { body -> command("restore-save", body) }, onCreateSite = { leaveFor("sites") }, error = request.errors["_form"],
+                "restore" -> plant?.let { RestoreForm(it, sites, enabled, { body -> command("restore-save", body) }, onCreateSite = { sitesReturn = "restore"; leaveFor("sites") }, error = request.errors["_form"],
                     chosen = { restoreSite }, onChoose = { site -> restoreSite = site }, onDirty = { formChanged = it }) }
                 "repot" -> plant?.let { p -> options?.let { PlantRepotForm(p, it, enabled, errors = request.errors, onSave = { body -> command("repot", body) }, onDirty = { formChanged = it }) } }
                 // A pinned draft keeps its place until the page follows the plant's new species.
@@ -378,14 +413,21 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         val name = detail?.plant?.displayName ?: "this plant"
         val (title, text, go) = when (link) {
             "species-care" -> Triple("Open care defaults for this species?", "Your changes to $name's schedule are not saved yet. They stay here when you come back.", "Open care defaults")
-            "sites" -> Triple("Create a site?", "$name is not restored yet. If you come back without creating a site, your choice stays. A site you create is chosen instead.", "Create a site")
+            "sites" -> if (sitesReturn == "form") Triple("Create a site?", "${chosenName.ifBlank { "This plant" }} is not added yet. Your choices stay here when you come back.", "Create a site")
+                else Triple("Create a site?", "$name is not restored yet. If you come back without creating a site, your choice stays. A site you create is chosen instead.", "Create a site")
             else -> Triple("Identify from photos?", "Your species search for ${if (page == "change-species") name else "this new plant"} stays here when you come back.", "Identify from photos")
         }
         AlertDialog(onDismissRequest = { leavingFor = null }, title = { DialogTitle(title) }, text = { DialogBody { Text(text) } },
             confirmButton = { TextButton(onClick = { leavingFor = null; follow(link) }) { Text(go) } },
             dismissButton = { TextButton(onClick = { leavingFor = null }) { Text("Keep editing") } })
     }
-    if (discarding) DiscardDialog("Discard changes?", discardBody, onKeep = { discarding = false }) { discarding = false; formChanged = { false }; selection = null; back() }
+    val newPlant = page == "form" && id == null
+    if (discarding) DiscardDialog(if (newPlant) "Discard this plant?" else "Discard changes?", if (newPlant) "${chosenName.ifBlank { "This plant" }} is not added yet." else discardBody,
+        onKeep = { discarding = false }) {
+        discarding = false; formChanged = { false }; selection = null
+        if (newPlant) { forms.removeState("form:new"); dropKeepPhoto() }
+        back()
+    }
 }
 
 @Composable internal fun DiscardDialog(title: String, body: String, onKeep: () -> Unit, onDiscard: () -> Unit) {
