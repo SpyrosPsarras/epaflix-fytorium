@@ -125,36 +125,52 @@ import com.epaflix.fytorium.*
     }
 }
 
-@Composable private fun SpeciesSearchCard(candidate: SpeciesCandidate, scientific: String, api: ApiClient?, enabled: Boolean, onClick: () -> Unit) {
+@Composable internal fun SpeciesSearchCard(candidate: SpeciesCandidate, scientific: String, api: ApiClient?, enabled: Boolean,
+    photo: androidx.compose.ui.unit.Dp = 80.dp, lines: List<String> = emptyList(), onClick: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Card(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).semantics {
         contentDescription = "${candidate.headline}, ${endSentence(scientific)} Choose this species."
     }) {
         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.size(80.dp))
+            val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.size(photo))
             Column(Modifier.weight(1f)) {
                 Heading(candidate.headline, MaterialTheme.typography.titleMedium)
                 Text(scientific, color = muted)
                 candidate.matchNote?.let { Text(it, color = muted, style = MaterialTheme.typography.bodySmall) }
-                if (candidate.matchType == "FUZZY") Text("Close match", color = muted, style = MaterialTheme.typography.bodySmall)
+                if (candidate.matchType == "FUZZY" && candidate.score == null) Text("Close match", color = muted, style = MaterialTheme.typography.bodySmall)
+                lines.forEach { Text(it, color = muted, style = MaterialTheme.typography.bodySmall) }
                 Text(credit?.label.orEmpty(), color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
 }
 
-@Composable private fun ConfirmSearchSpecies(candidate: SpeciesCandidate, scientific: String, api: ApiClient?, writable: Boolean, onBack: () -> Unit, onConfirm: () -> Unit) {
+@Composable internal fun ConfirmSearchSpecies(candidate: SpeciesCandidate, scientific: String, api: ApiClient?, writable: Boolean, onBack: () -> Unit,
+    lines: List<String> = emptyList(), yourPhoto: (@Composable (Modifier) -> Unit)? = null, onConfirm: () -> Unit) {
     val uriHandler = LocalUriHandler.current
     AlertDialog(modifier = Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth(),
         properties = DialogProperties(usePlatformDefaultWidth = false), onDismissRequest = onBack, title = { DialogTitle("Is this your plant?") }, text = {
         DialogBody(keepOpeningHeight = true) {
-            val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.fillMaxWidth().aspectRatio(4f / 3f), "Reference photo of ${candidate.canonicalName}")
+            var credit: PhotoCredit? = null
+            if (yourPhoto == null) credit = SearchSpeciesPhoto(api, candidate.key, Modifier.fillMaxWidth().aspectRatio(4f / 3f), "Reference photo of ${candidate.canonicalName}")
+            // The user's photo and the reference sit side by side at the same size, so they compare at a glance.
+            else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    yourPhoto(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)))
+                    Text("Your photo", style = MaterialTheme.typography.labelMedium)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    credit = SearchSpeciesPhoto(api, candidate.key, Modifier.fillMaxWidth().aspectRatio(1f), "Reference photo of ${candidate.canonicalName}")
+                    Text("Reference photo", style = MaterialTheme.typography.labelMedium)
+                }
+            }
             Heading(candidate.headline, MaterialTheme.typography.titleMedium)
             if (scientific != candidate.headline) Text(scientific)
-            if (candidate.matchType == "FUZZY") Text("Close match")
-            credit?.let {
-                TextButton(onClick = { uriHandler.openUri(credit.source) }, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(credit.label, style = MaterialTheme.typography.labelSmall)
+            if (candidate.matchType == "FUZZY" && candidate.score == null) Text("Close match")
+            lines.forEach { Text(it) }
+            credit?.let { shown ->
+                TextButton(onClick = { uriHandler.openUri(shown.source) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(shown.label, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }

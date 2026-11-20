@@ -17,13 +17,6 @@ import com.epaflix.fytorium.FytoriumApplication
 import kotlinx.coroutines.launch
 import java.io.File
 
-@Composable fun PhotoSourceButtons(enabled: Boolean, take: () -> Unit, choose: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = take, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Take photo") }
-        OutlinedButton(onClick = choose, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose photos") }
-    }
-}
-
 internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> Unit)
 
 @Composable internal fun rememberPhotoSources(multiple: Boolean, selected: List<String>, onPhotos: (List<Uri>) -> Unit, onError: (String) -> Unit): PhotoSourceActions {

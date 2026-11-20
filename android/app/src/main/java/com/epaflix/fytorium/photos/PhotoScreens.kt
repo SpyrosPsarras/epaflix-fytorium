@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -22,7 +23,9 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -49,22 +52,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun PhotoBar(title: String, onBack: () -> Unit) {
-    TopAppBar(title = { Heading(title) }, navigationIcon = {
-        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-    })
-}
-@Composable private fun PhotoNotice(state: PhotoState, online: Boolean, onRefresh: () -> Unit, refreshLabel: String = "Refresh photos") {
-    if (!online) Text("Actions are unavailable offline. Reconnect and refresh to make changes.")
-    PlantError(state.error)
-    if (state.saving) {
-        if (state.progress != null) LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth())
-        else LinearProgressIndicator(Modifier.fillMaxWidth())
-        Text(if (!state.uploading) "Saving changes…" else if (state.progress == 1f) "Upload sent. Waiting for the server." else "Uploading…")
-    } else if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-    OutlinedButton(onClick = onRefresh, enabled = !state.saving, modifier = Modifier.heightIn(min = 48.dp)) { Text(refreshLabel) }
-}
 // The card keeps its 4:3 space before the photo loads, so nothing below it moves.
 @Composable private fun CardPhoto(photo: PhotoUpdate, thumbnails: Thumbnails?, onOpen: () -> Unit) {
     val bytes by produceState<ByteArray?>(null, photo.id, thumbnails) { value = withContext(Dispatchers.IO) { thumbnails?.load(photo.id, "display") } }
@@ -145,21 +132,6 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
         }
     }
 }
-@Composable private fun UriPreview(uri: String, description: String) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(MaterialTheme.colorScheme.surfaceVariant).semantics { contentDescription = description }) {
-        val width = with(LocalDensity.current) { maxWidth.roundToPx() }.coerceAtLeast(1)
-        val bitmap by produceState<Bitmap?>(null, uri, width) {
-            var decoded: Bitmap? = null
-            try {
-                withContext(Dispatchers.IO) { decoded = decodeUriPreview(context, android.net.Uri.parse(uri), width, width) }
-                value = decoded
-                awaitDispose {}
-            } finally { decoded?.recycle() }
-        }
-        bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-    }
-}
 internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): Pair<String, String>? = when {
     !online -> (care?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. You can still see the photos shown here. Photo changes need a connection."
     state.error == null || state.saving -> null
@@ -183,7 +155,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PhotoScreen(state: PhotoState, online: Boolean, plantName: String?, selectedCount: Int,
-    sourceControls: @Composable () -> Unit = {}, thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
+    thumbnails: Thumbnails? = null, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
     onUpload: (String, String, String) -> Unit = { _, _, _ -> }, onChange: (String, String) -> Unit = { _, _ -> },
     onOriginal: (String) -> Unit = {}, onCloseOriginal: () -> Unit = {}, onPlant: (String) -> Unit = {},
     onFormDirty: (() -> String?) -> Unit = {}, onDiscard: () -> Unit = {}, originalOpen: Boolean = state.original != null,
@@ -274,7 +246,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.weight(1f), onTake)
                     SourceTile("Choose photo", Icons.Outlined.PhotoLibrary, enabled, Modifier.weight(1f), onChoose)
                 } else {
-                    UriPreview(selectedUri, "Chosen photo for ${plantName ?: "this plant"}")
+                    UriImage(selectedUri, Modifier.fillMaxWidth().aspectRatio(4f / 3f), "Chosen photo for ${plantName ?: "this plant"}")
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         var replacing by remember { mutableStateOf(false) }
                         Box {
@@ -320,47 +292,132 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     }
 }
 
-@Composable fun IdentificationScreen(state: PhotoState, online: Boolean, selectedCount: Int,
-    sourceControls: @Composable () -> Unit = {}, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
-    onIdentify: () -> Unit = {}, onRemove: (Int) -> Unit = {}, onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }) {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable fun IdentificationScreen(state: PhotoState, online: Boolean, selected: List<String>, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
+    onIdentify: () -> Unit = {}, onRemove: (Int) -> Unit = {}, onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> },
+    onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onSearchByName: () -> Unit = onBack, onExplain: (String) -> Unit = {},
+    onDiscard: () -> Unit = {}, care: CareState? = null, api: com.epaflix.fytorium.ApiClient? = null) {
     var chosen by rememberSaveable { mutableStateOf<SpeciesCandidate?>(null) }
     var searchId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showing by rememberSaveable { mutableStateOf(state.result != null) }
+    var details by rememberSaveable { mutableStateOf(false) }
+    var discarding by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.result?.id) {
-        state.result?.id?.let { if (searchId != it) chosen = null }
+        state.result?.id?.let { if (searchId != it) chosen = null; showing = true } ?: run { if (!state.saving) showing = false }
     }
+    val quotaGone = state.failureStatus == 429 || state.remaining == 0
     val enabled = online && !state.saving && !state.blocked && !state.updateRequired
-    BackHandler { if (chosen != null) chosen = null else onBack() }
+    val back = { if (selected.isNotEmpty() && state.result == null) discarding = true else onBack() }
+    BackHandler(onBack = back)
+    val status = when {
+        !online -> (care?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. Identifying needs a connection."
+        state.failureStatus == 503 -> "Pl@ntNet isn't responding" to (state.error ?: "Pl@ntNet didn't answer. Try again.")
+        state.blocked && state.error != null -> "Fytorium isn't responding" to state.error
+        else -> null
+    }
     Column(Modifier.fillMaxSize()) {
-        PhotoBar("Identify from photos") { if (chosen != null) chosen = null else onBack() }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            PhotoNotice(state, online, onRefresh, "Refresh quota")
-            state.remaining?.takeIf { it <= 50 }?.let { Text(if (it == 0) "Pl@ntNet identification quota is exhausted. Try again tomorrow or search by name." else "$it identifications remaining today.") }
-            if (chosen != null) {
-                val candidate = chosen!!
-                Heading("Confirm species")
-                Text("Pl@ntNet suggested ${candidate.identificationName ?: candidate.scientificName}, ${Math.round((candidate.score ?: 0.0) * 100)}% identification score.")
-                Text("This match needs your confirmation. Is ${candidate.scientificName} the species you meant?")
-                Button(onClick = { onSelect(candidate, checkNotNull(searchId), true) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm ${candidate.canonicalName}") }
-                TextButton(onClick = { chosen = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }
-            } else {
-                sourceControls()
-                for (index in 0 until selectedCount) OutlinedButton(onClick = { onRemove(index) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove photo ${index + 1}") }
-                Text("Take or upload one to five photos of the same plant. Photos are shrunk before upload, with a 15 MB per-photo and 40 MB total upload limit. Metadata is removed before sending to Pl@ntNet. These photos are not saved.")
-                Button(onClick = onIdentify, enabled = enabled && selectedCount in 1..5, modifier = Modifier.heightIn(min = 48.dp)) { Text("Identify plant") }
-                state.result?.let { result ->
-                    Heading("Choose a species")
-                    result.candidates.forEachIndexed { index, candidate ->
-                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Heading("${index + 1}. ${candidate.identificationName ?: candidate.scientificName}")
-                            Text("${Math.round((candidate.score ?: 0.0) * 100)}% identification score")
-                            if (candidate.commonNames.isNotEmpty()) Text(candidate.commonNames.joinToString(", "))
-                            if (candidate.matchType != null) Text("GBIF accepted name: ${candidate.scientificName} · ${candidate.matchType.lowercase()} · ${candidate.confidence}% confidence · ${candidate.rank.lowercase()}")
-                            Button(onClick = { chosen = candidate; searchId = result.id }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose ${candidate.canonicalName}") }
-                        } }
+        TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = (if (state.failureStatus == 503) onIdentify else onRefresh).takeIf { online && status != null }) {
+            Heading("Identify from photos") } }, expandedHeight = barHeight(),
+            navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
+        Box(Modifier.weight(1f)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val result = state.result
+                if (showing && result != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        selected.forEachIndexed { index, uri -> UriThumb(uri, 56.dp, "Photo ${index + 1} of ${selected.size}") }
+                        TextButton(onClick = { showing = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
+                    }
+                    Heading("Best matches")
+                    result.candidates.forEach { candidate ->
+                        SpeciesSearchCard(candidate, candidate.identificationCanonicalName ?: candidate.canonicalName, api, enabled, 96.dp, matchLines(candidate)) {
+                            chosen = candidate; searchId = result.id
+                        }
+                    }
+                } else {
+                    Text("Add one to five photos of the same plant. Leaves and flowers work best.")
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        selected.forEachIndexed { index, uri ->
+                            Box {
+                                UriThumb(uri, 96.dp, "Photo ${index + 1} of ${selected.size}")
+                                Box(Modifier.align(Alignment.TopEnd).size(48.dp).clickable(enabled = !state.saving, role = androidx.compose.ui.semantics.Role.Button) { onRemove(index) }
+                                    .semantics { contentDescription = "Remove photo ${index + 1} of ${selected.size}" }, contentAlignment = Alignment.Center) {
+                                    Surface(shape = androidx.compose.foundation.shape.CircleShape, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)) {
+                                        Icon(Icons.Default.Close, null, Modifier.padding(4.dp).size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                        if (selected.size < 5) {
+                            SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.size(96.dp), onTake)
+                            SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled, Modifier.size(96.dp), onChoose)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Photos go to Pl@ntNet to identify the plant, without location data.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { details = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Details") }
+                    }
+                    val ready = enabled && selected.isNotEmpty() && !quotaGone
+                    Button(onClick = { if (ready) onIdentify() else onExplain(when {
+                        quotaGone -> "No identifications left today."
+                        selected.isEmpty() -> "Add a photo first."
+                        else -> "Identifying needs a connection."
+                    }) }, colors = if (ready) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                        contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)), modifier = Modifier.heightIn(min = 48.dp).semantics { if (!ready) disabled() }) { Text("Identify") }
+                    state.remaining?.takeIf { it in 1..50 }?.let { Text("$it identifications left today.") }
+                    when {
+                        quotaGone -> {
+                            Heading("No identifications left today.", MaterialTheme.typography.titleMedium)
+                            Text("Search by name instead.")
+                            OutlinedButton(onClick = onSearchByName, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search by name") }
+                        }
+                        state.failureStatus == 422 && !state.blocked -> {
+                            Heading("Pl@ntNet didn't recognise this plant.", MaterialTheme.typography.titleMedium)
+                            Text("Try a clear photo of a leaf or flower, or search by name.")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = onChoose, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
+                                OutlinedButton(onClick = onSearchByName, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search by name") }
+                            }
+                        }
+                        state.error != null && !state.blocked && state.failureStatus != 503 -> PlantError(state.error)
                     }
                 }
             }
-            Text("Names from GBIF, CC BY 4.0.")
+            if (state.saving) state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) }
+                ?: LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
+    }
+    chosen?.let { candidate ->
+        ConfirmSearchSpecies(candidate, candidate.identificationCanonicalName ?: candidate.canonicalName, api, enabled, onBack = { chosen = null },
+            lines = matchLines(candidate), yourPhoto = selected.firstOrNull()?.let { uri -> { modifier -> UriImage(uri, modifier, "Your photo") } }) {
+            searchId?.let { onSelect(candidate, it, true) }
+        }
+    }
+    if (details) AlertDialog(onDismissRequest = { details = false }, title = { DialogTitle("About identify photos") },
+        text = { DialogBody { Text("Up to 5 photos, 15 MB each and 40 MB in total. Fytorium shrinks them and removes location and camera data before sending. Fytorium keeps a photo only if you tick Keep this photo when you add the plant.") } },
+        confirmButton = { TextButton(onClick = { details = false }) { Text("Close") } })
+    if (discarding) DiscardDialog("Discard these photos?", "Your ${selected.size} ${if (selected.size == 1) "photo is" else "photos are"} not used yet.",
+        onKeep = { discarding = false }) { discarding = false; onDiscard(); onBack() }
+}
+
+private fun matchLines(candidate: SpeciesCandidate) = listOfNotNull(
+    candidate.score?.let { "${Math.round(it * 100)}% match" },
+    candidate.canonicalName.takeIf { accepted -> candidate.identificationCanonicalName?.let { it != accepted } == true }?.let { "Now called $it" })
+
+@Composable private fun UriThumb(uri: String, size: androidx.compose.ui.unit.Dp, description: String) =
+    UriImage(uri, Modifier.size(size).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)), description)
+
+@Composable private fun UriImage(uri: String, modifier: Modifier, description: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    BoxWithConstraints(modifier.background(MaterialTheme.colorScheme.surfaceVariant).semantics { contentDescription = description }) {
+        val width = with(LocalDensity.current) { maxWidth.roundToPx() }.coerceAtLeast(1)
+        val bitmap by produceState<Bitmap?>(null, uri, width) {
+            var decoded: Bitmap? = null
+            try {
+                withContext(Dispatchers.IO) { decoded = decodeUriPreview(context, android.net.Uri.parse(uri), width * 2, width * 2) }
+                value = decoded
+                awaitDispose {}
+            } finally { decoded?.recycle() }
+        }
+        bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
     }
 }

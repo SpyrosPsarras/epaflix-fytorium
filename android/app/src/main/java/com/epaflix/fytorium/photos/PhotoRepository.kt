@@ -15,7 +15,8 @@ data class PhotoState(val photos: List<PhotoUpdate> = emptyList(), val loading: 
     val saving: Boolean = false, val uploading: Boolean = false, val loaded: Boolean = false, val blocked: Boolean = false,
     val updateRequired: Boolean = false, val error: String? = null, val progress: Float? = null,
     val result: com.epaflix.fytorium.plants.SpeciesSearch? = null, val remaining: Int? = null,
-    val today: String? = null, val healthChoices: List<String> = emptyList(), val original: ByteArray? = null, val uploadRevision: Int = 0)
+    val today: String? = null, val healthChoices: List<String> = emptyList(), val original: ByteArray? = null, val uploadRevision: Int = 0,
+    val failureStatus: Int? = null)
 private class PhotoFailure(val status: Int, val messageText: String) : Exception()
 
 // One member and one gallery. Neither metadata nor original images are persisted here.
@@ -106,12 +107,13 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
     private fun run(write: Boolean, work: () -> Unit): Boolean {
         if (!allowed()) { mutable.value = PhotoState(); return false }
         if (write && (state.value.blocked || state.value.updateRequired || state.value.saving)) return false
-        mutable.value = mutable.value.copy(loading = !write, saving = write, error = null, progress = if (write) null else state.value.progress)
+        mutable.value = mutable.value.copy(loading = !write, saving = write, error = null, failureStatus = null, progress = if (write) null else state.value.progress)
         return try {
             if (!connected()) throw java.io.IOException()
             work(); allowed()
         } catch (error: Exception) {
             if (allowed()) mutable.value = mutable.value.copy(remaining = if (error is PhotoFailure && error.status == 429) 0 else state.value.remaining,
+                failureStatus = (error as? PhotoFailure)?.status,
                 error = if (error is PhotoFailure) error.messageText else if (error is PhotoInputException) error.message else if (error is IllegalArgumentException) "Choose a decodable still image." else "Could not reach Fytorium. Try again.",
                 blocked = (error !is PhotoFailure && error !is IllegalArgumentException) || (error is PhotoFailure && (error.status >= 500 || error.status in listOf(401, 403, 426))),
                 updateRequired = state.value.updateRequired || (error is PhotoFailure && error.status == 426))

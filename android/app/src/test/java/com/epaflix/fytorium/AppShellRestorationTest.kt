@@ -219,7 +219,7 @@ class AppShellRestorationTest {
                     compose.onNodeWithContentDescription("Add plant").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("Identify from photos").fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Identify from photos").performClick()
-                    compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications remaining today.").fetchSemanticsNodes().isNotEmpty() }
+                    compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications left today.").fetchSemanticsNodes().isNotEmpty() }
                 }
                 "journal", "journal-plant" -> {
                     compose.onNodeWithText("Journal").performClick()
@@ -377,7 +377,7 @@ class AppShellRestorationTest {
                 compose.onNode(hasText("Journal") and isHeading()).assertDoesNotExist()
                 compose.onNodeWithText("Add a photo of", substring = true).assertDoesNotExist()
                 compose.onNodeWithText("Unsaved photo note").assertDoesNotExist()
-                compose.onNodeWithText("Identify plant").assertDoesNotExist()
+                compose.onNodeWithText("Identify").assertDoesNotExist()
                 compose.onNodeWithText("Create invite").assertDoesNotExist()
                 compose.onNodeWithText("Save my feed").assertDoesNotExist()
                 compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()

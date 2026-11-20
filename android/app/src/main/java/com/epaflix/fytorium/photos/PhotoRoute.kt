@@ -65,15 +65,13 @@ import kotlinx.coroutines.withContext
                 repository.clearResult(); result = null; localError = null
             }
         }, onError = { localError = it })
-    val controls: @Composable () -> Unit = {
-        PhotoSourceButtons(online && !shown.saving && !state.blocked && !state.updateRequired, sources.take, sources.choose)
-    }
-    if (identifying) IdentificationScreen(shown, online, selected.size, controls, onBack,
-        onRefresh = { launch { refresh() } }, onIdentify = { launch(true) {
+    if (identifying) IdentificationScreen(shown, online, selected, onBack, onRefresh = { launch { refresh() } }, onIdentify = { launch(true) {
             result = null
             if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
-        } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null }, onSelect = onSelect)
-    else PhotoScreen(shown, online, plantName, selected.size, controls, thumbnails, onBack,
+        } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null },
+        onSelect = onSelect, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
+        onDiscard = { selected = emptyList(); result = null; repository.clearResult() }, care = care, api = api)
+    else PhotoScreen(shown, online, plantName, selected.size, thumbnails, onBack,
         onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch
             if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) {

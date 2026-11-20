@@ -16,7 +16,8 @@ data class PlantsRequestState(val online: Boolean = true, val refreshing: Boolea
 // Match acceptance belongs to the server, including partial names and all languages.
 data class SpeciesCandidate(val key: Long, val scientificName: String, val canonicalName: String, val rank: String,
     val matchType: String?, val confidence: Int?, val requiresConfirmation: Boolean, val matchedName: String?, val matchedLanguage: String?,
-    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null) : java.io.Serializable {
+    val score: Double? = null, val identificationName: String? = null, val commonNames: List<String> = emptyList(), val commonName: String? = null,
+    val identificationCanonicalName: String? = null) : java.io.Serializable {
     val headline get() = commonName ?: canonicalName
     // A name that matched but is neither name on the card tells the user why this species answered.
     val matchNote get() = matchedName?.takeIf { matched -> listOf(headline, canonicalName).none { squash(it) == squash(matched) } }?.let { "Matches \u201c$it\u201d" }
@@ -31,7 +32,7 @@ fun parseSpeciesSearch(json: String): SpeciesSearch {
             it.getBoolean("requires_confirmation"), it.nullable("matched_name"), it.nullable("matched_language"),
             if (it.isNull("score")) null else it.getDouble("score"), it.nullable("identification_name"),
             it.optJSONArray("common_names")?.let { names -> (0 until names.length()).map { n -> names.getString(n) } }.orEmpty(),
-            it.nullable("common_name"))
+            it.nullable("common_name"), it.nullable("identification_canonical_name"))
     })
 }
 data class PlantOptions(val choices: Map<String, List<String>>, val labels: Map<String, String>, val numbers: List<String>,

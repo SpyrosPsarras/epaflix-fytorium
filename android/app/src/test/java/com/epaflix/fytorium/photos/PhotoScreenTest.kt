@@ -52,15 +52,15 @@ class PhotoScreenTest {
     @Test fun offlineAndOwnSavingDisableIdentificationButOwnReadsDoNot() {
         val state = mutableStateOf(PhotoState(loading = true))
         val online = mutableStateOf(true)
-        compose.setContent { FytoriumTheme { IdentificationScreen(state.value, online.value, 1) } }
-        compose.onNodeWithText("Refresh quota").assertExists()
-        compose.onNodeWithText("Refresh photos").assertDoesNotExist()
-        compose.onNodeWithText("Identify plant").performScrollTo().assertIsEnabled()
+        val explained = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { IdentificationScreen(state.value, online.value, listOf("content://synthetic/one"), onExplain = { explained += it }) } }
+        compose.onNodeWithText("Identify").performScrollTo().assertIsEnabled()
         compose.runOnIdle { state.value = state.value.copy(loading = false, saving = true, progress = 0.5f) }
-        compose.onNodeWithText("Identify plant").assertIsNotEnabled()
+        compose.onNodeWithText("Identify").assertIsNotEnabled()
         compose.runOnIdle { state.value = state.value.copy(saving = false); online.value = false }
-        compose.onNodeWithText("Identify plant").assertIsNotEnabled()
-        compose.onNodeWithText("Actions are unavailable offline. Reconnect and refresh to make changes.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Identify").assertIsNotEnabled().performClick()
+        compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
+        compose.runOnIdle { assertEquals(listOf("Identifying needs a connection."), explained) }
     }
     // C11: photo updates show readable dates.
     @Test fun photoUpdatesShowReadableDates() {
@@ -267,18 +267,93 @@ class PhotoScreenTest {
         compose.onNodeWithText("Delete this photo?").assertDoesNotExist()
     }
 
+    // W4-P20: photos as a strip with remove buttons, a short privacy line with Details, and Identify that says what is missing.
+    @Test fun identifyInputShowsPhotosAndExplains() {
+        val selected = mutableStateOf(listOf("content://synthetic/one", "content://synthetic/two"))
+        val removed = mutableListOf<Int>()
+        val explained = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(remaining = 12), true, selected.value,
+            onRemove = { removed += it }, onExplain = { explained += it }) } }
+        compose.onNodeWithText("Add one to five photos of the same plant. Leaves and flowers work best.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Photo 2 of 2").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Remove photo 2 of 2").assertHeightIsAtLeast(48.dp).performClick()
+        compose.onNodeWithText("Take photo").assertIsDisplayed()
+        compose.onNodeWithText("Choose photos").assertIsDisplayed()
+        compose.onNodeWithText("12 identifications left today.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Details").performClick()
+        compose.onNodeWithText("About identify photos").assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.runOnIdle { selected.value = listOf("content://synthetic/1", "content://synthetic/2", "content://synthetic/3", "content://synthetic/4", "content://synthetic/5") }
+        compose.onNodeWithText("Choose photos").assertDoesNotExist()
+        compose.runOnIdle { selected.value = emptyList() }
+        compose.onNodeWithText("Identify").performScrollTo().assertIsNotEnabled().performClick()
+        compose.runOnIdle { assertEquals(listOf(1), removed); assertEquals(listOf("Add a photo first."), explained) }
+    }
+
+    // W4-P21-P23: results replace the inputs; cards say how sure and the new name; the confirm shows both photos.
+    @Test fun identifyResultsCompareYourPhotoWithTheReference() {
+        val renamed = SpeciesCandidate(900002, "Testoria nova Inventor", "Testoria nova", "SPECIES", null, null, true, null, null, 0.97,
+            "Testoria prior Inventor", commonName = "Synthetic star", identificationCanonicalName = "Testoria prior")
+        var picked: Boolean? = null
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(result = SpeciesSearch("synthetic-search", listOf(renamed))), true,
+            listOf("content://synthetic/one"), onSelect = { _, _, confirmed -> picked = confirmed }) } }
+        compose.onNode(hasText("Best matches") and isHeading()).assertIsDisplayed()
+        compose.onNodeWithText("Add one to five photos of the same plant. Leaves and flowers work best.").assertDoesNotExist()
+        compose.onNodeWithText("97% match").assertIsDisplayed()
+        compose.onNodeWithText("Now called Testoria nova").assertIsDisplayed()
+        compose.onNodeWithText("Testoria prior").assertIsDisplayed()
+        compose.onNode(hasContentDescription("Choose this species.", substring = true)).performClick()
+        compose.onNodeWithText("Your photo").assertIsDisplayed()
+        compose.onNodeWithText("Reference photo").assertIsDisplayed()
+        compose.onNodeWithText("Yes, this one").performClick()
+        compose.runOnIdle { assertEquals(true, picked) }
+        compose.onNodeWithText("Change photos").performClick()
+        compose.onNodeWithText("Add one to five photos of the same plant. Leaves and flowers work best.").assertIsDisplayed()
+    }
+
+    // W4-P25: no match and a used-up quota answer in the page; Pl@ntNet down goes to the line with Try again.
+    @Test fun identifyOutcomesSayWhatToDoNext() {
+        val state = mutableStateOf(PhotoState(error = "No plant species could be identified.", failureStatus = 422))
+        var identified = 0
+        val explained = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { IdentificationScreen(state.value, true, listOf("content://synthetic/one"),
+            onIdentify = { identified++ }, onExplain = { explained += it }) } }
+        compose.onNodeWithText("Pl@ntNet didn't recognise this plant.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Search by name").assertIsDisplayed()
+        compose.runOnIdle { state.value = PhotoState(error = "Quota exhausted.", failureStatus = 429) }
+        compose.onNodeWithText("No identifications left today.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Identify").assertIsNotEnabled().performClick()
+        compose.runOnIdle { state.value = PhotoState(error = "Pl@ntNet did not answer.", failureStatus = 503, blocked = true) }
+        compose.onNodeWithText("Pl@ntNet isn't responding").performClick()
+        compose.onNodeWithText("Try again").performClick()
+        compose.runOnIdle { assertEquals(1, identified); assertEquals(listOf("No identifications left today."), explained) }
+    }
+
+    // W4-P26: Back with photos chosen asks before dropping them.
+    @Test fun identifyAsksBeforeDroppingPhotos() {
+        var left = 0
+        var dropped = 0
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(), true, listOf("content://synthetic/one", "content://synthetic/two"),
+            onBack = { left++ }, onDiscard = { dropped++ }) } }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.assertDialogBody("Your 2 photos are not used yet.")
+        compose.onNodeWithText("Discard these photos?").assertIsDisplayed()
+        compose.onNodeWithText("Discard").performClick()
+        compose.runOnIdle { assertEquals(1, left); assertEquals(1, dropped) }
+    }
+
     @Test fun identificationChoiceAndSearchSurviveRecreationWhileResultsReload() {
         val candidate = SpeciesCandidate(900001, "Testoria nebulosa", "Testoria nebulosa", "SPECIES", null, null, true, null, null, 0.91)
         val state = mutableStateOf(PhotoState(result = SpeciesSearch("synthetic-search", listOf(candidate))))
         var selected: String? = null
         val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
-        restoration.setContent { FytoriumTheme { IdentificationScreen(state.value, true, 1, onSelect = { chosen, search, confirmed ->
+        restoration.setContent { FytoriumTheme { IdentificationScreen(state.value, true, listOf("content://synthetic/one"), onSelect = { chosen, search, confirmed ->
             assertEquals(900001L, chosen.key); assertTrue(confirmed); selected = search
         }) } }
-        compose.onNodeWithText("Choose Testoria nebulosa").performScrollTo().performClick()
+        compose.onNode(hasContentDescription("Choose this species.", substring = true)).performScrollTo().performClick()
         compose.runOnIdle { state.value = PhotoState(loading = true) }
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+        compose.onNodeWithText("Yes, this one").performClick()
         assertEquals("synthetic-search", selected)
     }
 
@@ -498,9 +573,7 @@ class PhotoScreenTest {
         var selection: Boolean? = null
         val candidate = SpeciesCandidate(900001, "Testoria nebulosa", "Testoria nebulosa", "SPECIES", null, null, true, null, null, 0.91, "Testoria nebulosa", listOf("Synthetic cloud plant"))
         compose.setContent { FytoriumTheme(dark) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            if (mode.value == "identify") IdentificationScreen(state.value, true, 1, sourceControls = {
-                PhotoSourceButtons(!state.value.saving, {}, {})
-            }, onSelect = { _, _, confirmed -> selection = confirmed })
+            if (mode.value == "identify") IdentificationScreen(state.value, true, listOf("content://synthetic/one"), onSelect = { _, _, confirmed -> selection = confirmed })
             else key(mode.value) { PhotoScreen(state.value, true, if (mode.value == "journal") null else "Synthetic sprout", 1,
                 selectedUri = "content://synthetic/photo", onChange = { _, action -> command = action },
                 onUpload = { _, _, _ -> state.value = state.value.copy(blocked = true, error = "Could not reach Fytorium. Try again.") },
@@ -555,12 +628,12 @@ class PhotoScreenTest {
         compose.runOnIdle { mode.value = "identify"; state.value = state.value.copy(original = null, saving = true, uploading = true, progress = 0.5f) }
         capture("identify-upload")
         compose.runOnIdle { state.value = state.value.copy(saving = false, result = SpeciesSearch("synthetic-search", listOf(candidate)), remaining = 20) }
-        compose.onNodeWithText("91% identification score").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("91% match").performScrollTo().assertIsDisplayed()
         capture("identify-results")
-        compose.onNodeWithText("Choose Testoria nebulosa").performScrollTo().performClick()
+        compose.onNode(hasContentDescription("Choose this species.", substring = true)).performScrollTo().performClick()
         assertNull(selection)
         capture("confirm")
-        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+        compose.onNodeWithText("Yes, this one").performClick()
         assertEquals(true, selection)
     }
 }

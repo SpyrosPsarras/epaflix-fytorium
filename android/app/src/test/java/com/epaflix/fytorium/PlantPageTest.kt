@@ -2867,11 +2867,11 @@ class PlantPageTest {
         compose.onNode(identify).performClick()
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose photos") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Choose photos").performScrollTo().performClick()
-        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Identify plant").performScrollTo().performClick()
-        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose Testoria nebulosa") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Choose Testoria nebulosa").performScrollTo().performClick()
-        compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Identify").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Choose this species.", substring = true) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasContentDescription("Choose this species.", substring = true)).performScrollTo().performClick()
+        compose.onNodeWithText("Yes, this one").performClick()
         val chosen = hasText("Chosen species", substring = true)
         compose.waitUntil(5_000) { compose.onAllNodes(chosen).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(identify).performClick()
@@ -3032,11 +3032,11 @@ class PlantPageTest {
             compose.onNodeWithText("Identify from photos").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose photos") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Choose photos").performScrollTo().performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Identify plant").performScrollTo().performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose Testoria nebulosa") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Choose Testoria nebulosa").performScrollTo().performClick()
-            compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Identify") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Identify").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Choose this species.", substring = true) and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasContentDescription("Choose this species.", substring = true)).performScrollTo().performClick()
+            compose.onNodeWithText("Yes, this one").performClick()
             val name = hasText("Name") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("Back").performClick()

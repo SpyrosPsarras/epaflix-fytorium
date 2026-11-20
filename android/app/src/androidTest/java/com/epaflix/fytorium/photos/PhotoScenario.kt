@@ -47,7 +47,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
     bitmap.eraseColor(Color.rgb(90, 160, 100))
     file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
     val uri = FileProvider.getUriForFile(app, app.packageName + ".photos", file)
-    fun chooseInjectedPhoto() {
+    fun chooseInjectedPhoto(label: String = "Choose photos") {
         val filter = IntentFilter().apply {
             addAction("android.provider.action.PICK_IMAGES")
             addAction("androidx.activity.result.contract.action.PICK_IMAGES")
@@ -57,7 +57,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val result = Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         val monitor = instrumentation.addMonitor(filter, result, true)
         try {
-            click("Choose photos")
+            click(label)
             compose.waitUntil(30_000) { monitor.hits == 1 }
             compose.waitForIdle()
             assertEquals("Picker intent was intercepted exactly once", 1, monitor.hits)
@@ -100,8 +100,8 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         click("Synthetic A06 sprout")
         click("See all")
         compose.onNodeWithContentDescription("Add a photo of Synthetic A06 sprout").performClick()
-        chooseInjectedPhoto()
-        compose.waitUntil(30_000) { runCatching { compose.onNodeWithText("Selected photos: 1").assertExists(); true }.getOrDefault(false) }
+        chooseInjectedPhoto("Choose photo")
+        compose.waitUntil(30_000) { runCatching { compose.onNodeWithContentDescription("Chosen photo for Synthetic A06 sprout").assertExists(); true }.getOrDefault(false) }
         scroll(hasText("Note")).performTextReplacement("Synthetic A06 photo note")
         click("Photo health")
         compose.onNodeWithText("good").performClick()
@@ -130,10 +130,10 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         click("Identify from photos")
         chooseInjectedPhoto()
         takeInjectedPhoto()
-        click("Identify plant")
-        click("Choose Testoria picta")
+        click("Identify")
+        compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Testoria picta", substring = true)).performClick(); true }.getOrDefault(false) }
         compose.onNodeWithText("Save plant").assertDoesNotExist()
-        click("Confirm Testoria picta")
+        click("Yes, this one")
         scroll(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic A06 identified sprout")
         click("Site")
         compose.onNodeWithText("Synthetic A06 site").performClick()
