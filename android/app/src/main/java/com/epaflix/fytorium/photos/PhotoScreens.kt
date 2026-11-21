@@ -52,10 +52,18 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
+// Two photos of one plant from one day carry their place among that day's photos, so the actions and Delete name the right one.
+internal fun photoPlace(photo: PhotoUpdate, photos: List<PhotoUpdate>): Pair<Int, Int>? {
+    val same = photos.filter { it.plantId == photo.plantId && it.takenOn == photo.takenOn }
+    return if (same.size < 2) null else same.indexOfFirst { it.id == photo.id } + 1 to same.size
+}
+internal fun photoName(photo: PhotoUpdate, photos: List<PhotoUpdate>) = photoPlace(photo, photos)
+    ?.let { (n, of) -> "${photo.plantName}'s photo $n of $of from ${dayMonthYear(photo.takenOn)}" } ?: "the ${dayMonthYear(photo.takenOn)} photo of ${photo.plantName}"
+
 // The card keeps its 4:3 space before the photo loads, so nothing below it moves.
-@Composable private fun CardPhoto(photo: PhotoUpdate, thumbnails: Thumbnails?, modifier: Modifier = Modifier.fillMaxWidth(), onOpen: (() -> Unit)?) {
+@Composable private fun CardPhoto(photo: PhotoUpdate, thumbnails: Thumbnails?, modifier: Modifier = Modifier.fillMaxWidth(), place: Pair<Int, Int>? = null, onOpen: (() -> Unit)?) {
     val bytes by produceState<ByteArray?>(null, photo.id, thumbnails) { value = withContext(Dispatchers.IO) { thumbnails?.load(photo.id, "display") } }
-    val label = "Photo of ${photo.plantName}, ${dayMonthYear(photo.takenOn)}"
+    val label = "Photo of ${photo.plantName}, ${dayMonthYear(photo.takenOn)}" + (place?.let { (n, of) -> ", $n of $of" } ?: "")
     BoxWithConstraints(modifier.aspectRatio(4f / 3f).background(MaterialTheme.colorScheme.surfaceVariant)
         .then(if (onOpen != null) Modifier.clickable(onClickLabel = "Open photo") { onOpen() } else Modifier).semantics { contentDescription = label }) {
         val density = LocalDensity.current
@@ -213,7 +221,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                 items(state.photos, key = { it.id }) { photo ->
                     val day = dayMonthYear(photo.takenOn)
                     Card(Modifier.fillMaxWidth()) {
-                        CardPhoto(photo, thumbnails) { onOriginal(photo.id) }
+                        CardPhoto(photo, thumbnails, place = photoPlace(photo, state.photos)) { onOriginal(photo.id) }
                         Column(Modifier.padding(start = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (plantName == null) Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -226,7 +234,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                                 Box {
                                     // A full 48 dp target, since IconButton's own node is 40 dp.
                                     Box(Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { act { menu = true } }
-                                        .semantics { contentDescription = "Actions for the $day photo of ${photo.plantName}"; if (!enabled) { disabled(); blockedReason?.let { stateDescription = it } } }, contentAlignment = Alignment.Center) {
+                                        .semantics { contentDescription = "Actions for ${photoName(photo, state.photos)}"; if (!enabled) { disabled(); blockedReason?.let { stateDescription = it } } }, contentAlignment = Alignment.Center) {
                                         Icon(Icons.Default.MoreVert, null, tint = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                                     }
                                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
@@ -285,9 +293,9 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     }
     if (discarding) DiscardDialog("Discard changes?", discardBody, onKeep = { discarding = false }) { clear() }
     deleting?.let { photo ->
-        val day = dayMonthYear(photo.takenOn)
         AlertDialog(onDismissRequest = { if (!state.saving) deleting = null }, title = { DialogTitle("Delete this photo?") },
-            text = { DialogBody { CardPhoto(photo, thumbnails, Modifier.width(160.dp), null); Text("Delete the $day photo of ${photo.plantName}? This can't be undone."); PlantError(state.error) } },
+            text = { DialogBody { CardPhoto(photo, thumbnails, Modifier.width(160.dp), photoPlace(photo, state.photos), null)
+                Text("Delete ${photoName(photo, state.photos)}? This can't be undone."); PlantError(state.error) } },
             confirmButton = { TextButton(onClick = { onChange(photo.id, "delete") }, enabled = enabled) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deleting = null }, enabled = !state.saving) { Text("Cancel") } })
     }

@@ -208,7 +208,7 @@ class PhotoScreenTest {
     @Test fun aLongPlantNameKeepsTheDateAndActionsInTheJournalCard() {
         RuntimeEnvironment.setFontScale(1.3f)
         val long = photo.copy(plantName = "Synthetic sprout with a very long name from the windowsill shelf")
-        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(long, photo.copy(id = "photo-two")), loaded = true), true, null, 0) } }
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(long, photo.copy(id = "photo-two", plantId = "plant-two")), loaded = true), true, null, 0) } }
         val actions = compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of ${long.plantName}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val date = compose.onAllNodesWithText(" \u00b7 13 Oct 2026")[0].assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val card = compose.onNodeWithContentDescription("Photo of ${long.plantName}, 13 Oct 2026").fetchSemanticsNode().boundsInRoot
@@ -362,6 +362,19 @@ class PhotoScreenTest {
         compose.runOnIdle { assertEquals("Your 1 photo is not used yet.", dirty()) }
         compose.runOnIdle { selected.value = emptyList() }
         compose.runOnIdle { assertEquals(null, dirty()) }
+    }
+
+    // Two photos of one plant from one day are told apart by their place that day, on the actions, the photo and in Delete.
+    @Test fun sameDayPhotosOfOnePlantNameTheirPlace() {
+        var command: String? = null
+        val second = photo.copy(id = "photo-two", note = "")
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo, second), loaded = true), true, null, 0, onChange = { id, action -> command = "$id $action" }) } }
+        compose.onNodeWithContentDescription("Photo of Synthetic sprout, 13 Oct 2026, 2 of 2").assertExists()
+        compose.onNodeWithContentDescription("Actions for Synthetic sprout's photo 2 of 2 from 13 Oct 2026").performScrollTo().performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.onNodeWithText("Delete Synthetic sprout's photo 2 of 2 from 13 Oct 2026? This can't be undone.").assertIsDisplayed()
+        compose.onNodeWithText("Delete").performClick()
+        compose.runOnIdle { assertEquals("photo-two delete", command) }
     }
 
     // W4-P21-P23: results replace the inputs; cards say how sure and the new name; the confirm shows both photos.
