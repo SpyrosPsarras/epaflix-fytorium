@@ -146,7 +146,7 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
     }
 }
 internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): Pair<String, String>? = when {
-    !online -> (care?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. You can still see the photos shown here. Photo changes need a connection."
+    !online -> (care?.copy(lastUpdated = state.updatedAt)?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. You can still see the photos shown here. Photo changes need a connection."
     state.error == null || state.saving -> null
     state.blocked -> "Fytorium isn't responding" to "${state.error} Pull down or tap Try again."
     else -> "Fytorium refused the last request" to state.error
@@ -226,8 +226,10 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                         Column(Modifier.padding(start = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (plantName == null) Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                    TextButton(onClick = { onPlant(photo.plantId) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp)) {
-                                        Text(photo.plantName)
+                                    // Starts at the card's text edge whatever the name's length; a TextButton centres short names in its minimum width.
+                                    Box(Modifier.weight(1f, fill = false).heightIn(min = 48.dp).widthIn(min = 48.dp)
+                                        .clickable(role = androidx.compose.ui.semantics.Role.Button) { onPlant(photo.plantId) }, contentAlignment = Alignment.CenterStart) {
+                                        Text(photo.plantName, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
                                     }
                                     Text(" \u00b7 $day", maxLines = 1)
                                 } else Text(day, Modifier.weight(1f))
@@ -362,6 +364,11 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     }
                 } else {
                     Text("Add one to five photos of the same plant. Leaves and flowers work best.")
+                    // Side by side above the photos, as on the photo form, so both labels fit; they stay (off at five photos) so removing a photo never moves anything under the finger.
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled && selected.size < 5, Modifier.weight(1f), onTake)
+                        SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled && selected.size < 5, Modifier.weight(1f), onChoose)
+                    }
                     if (selected.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         selected.forEachIndexed { index, uri ->
                             Box {
@@ -374,11 +381,6 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                                 }
                             }
                         }
-                    }
-                    // Side by side under the photos, as on the photo form, so both labels fit and neither scrolls away.
-                    if (selected.size < 5) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.weight(1f), onTake)
-                        SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled, Modifier.weight(1f), onChoose)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Photos go to Pl@ntNet to identify the plant, without location data.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)

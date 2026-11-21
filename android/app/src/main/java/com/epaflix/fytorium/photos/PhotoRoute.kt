@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
     onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {},
     onFormDirty: (() -> String?) -> Unit = {}, onReceipt: (String) -> Unit = {}, onAdd: (() -> Unit)? = null, onUploaded: () -> Unit = onBack,
-    cached: (String) -> String? = { null }, keep: (String, String) -> Unit = { _, _ -> }, onFirstPhoto: ((String?) -> Unit)? = null,
+    cached: (String) -> Pair<String, Long>? = { null }, keep: (String, String) -> Unit = { _, _ -> }, onFirstPhoto: ((String?) -> Unit)? = null,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)

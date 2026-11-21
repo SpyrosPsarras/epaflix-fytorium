@@ -155,13 +155,15 @@ class PhotoScreenTest {
         }
     }
 
-    // W4-P35: the last list shows offline from the phone's copy.
+    // W4-P35: the last list shows offline from the phone's copy, with the time that list was read, not Today's.
     @Test fun theLastPhotoListShowsOffline() {
         val api = ApiClient("http://127.0.0.1:9", MemoryCredentials()) {}
-        compose.setContent { FytoriumTheme { PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner), offline = true), { false }, null,
-            plantId = "plant-one", plantName = "Synthetic sprout", onBack = {}, cached = { if (it == "photos/plant-one") "[$photoFixture]" else null }) } }
+        val listAt = java.time.LocalDate.now().atTime(7, 5).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val todayAt = java.time.LocalDate.now().atTime(9, 40).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        compose.setContent { FytoriumTheme { PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner), offline = true, lastUpdated = todayAt), { false }, null,
+            plantId = "plant-one", plantName = "Synthetic sprout", onBack = {}, cached = { if (it == "photos/plant-one") "[$photoFixture]" to listAt else null }) } }
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic note").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Offline \u00b7 updated 07:05").assertIsDisplayed()
     }
 
     // W4-P30: zoom stays between 1x and 5x and pans no further than the photo's edges.
@@ -214,6 +216,15 @@ class PhotoScreenTest {
         val card = compose.onNodeWithContentDescription("Photo of ${long.plantName}, 13 Oct 2026").fetchSemanticsNode().boundsInRoot
         assertTrue(actions.right <= card.right + 1f)
         assertTrue(date.right <= actions.left + 1f)
+    }
+
+    // A short plant name starts at the same edge as the lines under it.
+    @Test fun aShortPlantNameStartsAtTheCardTextEdge() {
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo.copy(plantName = "Ivy")), loaded = true), true, null, 0) } }
+        val name = compose.onNodeWithText("Ivy", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val health = compose.onNodeWithText("Health: good", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertEquals(health.left, name.left, 1f)
+        compose.onNodeWithText("Ivy").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp).assertHasClickAction()
     }
 
     // A photo added on this phone while the list shows its top stays in view; one from elsewhere waits above, so the shown card stays put.
@@ -347,8 +358,11 @@ class PhotoScreenTest {
         compose.onNodeWithText("Details").performClick()
         compose.onNodeWithText("About identify photos").assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
+        val tile = compose.onNodeWithText("Choose photos").fetchSemanticsNode().boundsInRoot
         compose.runOnIdle { selected.value = listOf("content://synthetic/1", "content://synthetic/2", "content://synthetic/3", "content://synthetic/4", "content://synthetic/5") }
-        compose.onNodeWithText("Choose photos").assertDoesNotExist()
+        // At five photos the tiles stay where they were, switched off, so removing a photo never moves them under the finger.
+        compose.onNodeWithText("Choose photos").assertIsNotEnabled()
+        assertEquals(tile, compose.onNodeWithText("Choose photos").fetchSemanticsNode().boundsInRoot)
         compose.runOnIdle { selected.value = emptyList() }
         compose.onNodeWithText("Identify").performScrollTo().assertIsNotEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf(1), removed); assertEquals(listOf("Add a photo first."), explained) }

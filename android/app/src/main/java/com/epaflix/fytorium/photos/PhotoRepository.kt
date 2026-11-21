@@ -16,6 +16,8 @@ data class PhotoState(val photos: List<PhotoUpdate> = emptyList(), val loading: 
     val updateRequired: Boolean = false, val error: String? = null, val progress: Float? = null,
     val result: com.epaflix.fytorium.plants.SpeciesSearch? = null, val remaining: Int? = null,
     val today: String? = null, val healthChoices: List<String> = emptyList(), val original: ByteArray? = null, val uploadRevision: Int = 0,
+    // When the shown list was last read from Fytorium, so the offline line names the list's own age.
+    val updatedAt: Long? = null,
     val originalId: String? = null,
     val failureStatus: Int? = null)
 private class PhotoFailure(val status: Int, val messageText: String) : Exception()
@@ -26,7 +28,7 @@ internal val addedHere: MutableSet<String> = java.util.concurrent.ConcurrentHash
 
 class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boolean,
     private val connected: () -> Boolean, private val plantId: String? = null,
-    private val cached: (String) -> String? = { null }, private val keep: (String, String) -> Unit = { _, _ -> }) {
+    private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Unit = { _, _ -> }) {
     private val mutable = MutableStateFlow(PhotoState())
     val state = mutable.asStateFlow()
     private fun safe(id: String): String { require(id.matches(Regex("[A-Za-z0-9_-]+"))); return id }
@@ -46,11 +48,11 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
     private fun load() {
         val json = response(api.request(listPath))
         val photos = parse(json)
-        if (allowed()) { keep(cacheKey, json); mutable.value = mutable.value.copy(photos = photos, loaded = true, blocked = false) }
+        if (allowed()) { keep(cacheKey, json); mutable.value = mutable.value.copy(photos = photos, loaded = true, blocked = false, updatedAt = System.currentTimeMillis()) }
     }
     @Synchronized fun refresh(): Boolean {
         // The last saved list shows at once and stays when the read fails.
-        if (!state.value.loaded) cached(cacheKey)?.let { json -> runCatching { parse(json) }.getOrNull()?.let { if (allowed()) mutable.value = mutable.value.copy(photos = it, loaded = true) } }
+        if (!state.value.loaded) cached(cacheKey)?.let { (json, at) -> runCatching { parse(json) }.getOrNull()?.let { if (allowed()) mutable.value = mutable.value.copy(photos = it, loaded = true, updatedAt = at) } }
         return run(false) { load() }
     }
     @Synchronized fun options(): Boolean = run(false) {
