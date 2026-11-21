@@ -64,7 +64,7 @@ import org.json.JSONObject
     onAdd: () -> Unit, onGraveyard: () -> Unit, onRefresh: () -> Unit, thumbnails: Thumbnails? = null, enabled: Boolean = true,
     search: MutableState<String>? = null, focusSearch: Boolean = false, onFocused: () -> Unit = {}, onBack: () -> Unit = {},
     refreshing: Boolean = false, addBlocked: String? = null, onBlocked: (String) -> Unit = {}, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {},
-    chooseTitle: String? = null) {
+    chooseTitle: String? = null, grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState()) {
     val query = search ?: rememberSaveable { mutableStateOf("") }
     val editor = state.member?.role != Role.sitter
     val canAdd = enabled && addBlocked == null
@@ -83,9 +83,9 @@ import org.json.JSONObject
     }
     val focus = remember { FocusRequester() }
     LaunchedEffect(focusSearch) { if (focusSearch) { focus.requestFocus(); onFocused() } }
-    val grid = rememberLazyGridState()
-    // Results for a new query start at their first match, not at the old offset.
-    LaunchedEffect(wanted) { grid.scrollToItem(0) }
+    // Results for a new query start at their first match, not at the old offset; coming back keeps the place.
+    var searchedFor by rememberSaveable { mutableStateOf(wanted) }
+    LaunchedEffect(wanted) { if (wanted != searchedFor) { searchedFor = wanted; grid.scrollToItem(0) } }
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title = { PlantBarTitle(state, request, onRetry) { Heading(chooseTitle ?: if (graveyard) "Graveyard" else "Plants") } }, expandedHeight = barHeight(), navigationIcon = {

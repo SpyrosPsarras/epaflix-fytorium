@@ -1895,6 +1895,70 @@ class PlantPageTest {
         }
     }
 
+    // W4-P9: every picked species is sent as confirmed, so Save works after the search receipt expires.
+    @Test fun anExactPickIsSentAsConfirmed() {
+        val bodies = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+        withPlantServer(served = { path -> speciesSearch.takeIf { path == "/api/species/search" } }, respond = { request ->
+            if (request.method == "POST" && request.requestUrl?.encodedPath == "/api/plants") { bodies += JSONObject(request.body.readUtf8()); MockResponse().setBody(plantFixture) } else null
+        }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(starResult).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Save plant").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Save plant").performScrollTo().performClick()
+            compose.waitUntil(5_000) { bodies.isNotEmpty() }
+            assertTrue(bodies.single().getBoolean("confirmed"))
+        }
+    }
+
+    // W4-P13: Create a site asks first even on an untouched form.
+    @Test fun createASiteFromAnUntouchedAddFormAsksFirst() {
+        withPlantServer(served = { path -> when (path) { "/api/species/search" -> speciesSearch; "/api/sites" -> "[]"; else -> null } }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true, photosApi = api, photosConnected = { true }) } }
+            compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(starResult).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Create a site").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Create a site").performScrollTo().performClick()
+            compose.onNodeWithText("Create a site?").assertIsDisplayed()
+            compose.assertDialogBody("Synthetic star is not added yet. Your choices stay here when you come back.")
+        }
+    }
+
+    // The plant photos page and the Add photo tile keep separate saved state, so the tile always opens the form.
+    @Test fun theAddPhotoTileOpensTheFormAfterSeeAll() {
+        withPlantServer { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            reveal(hasText("See all")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Photos of Synthetic fern") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            reveal(hasText("Add photo")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Add a photo of Synthetic fern") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
+        }
+    }
+
+    // A discarded edit is gone when Edit plant opens again.
+    @Test fun aDiscardedEditReopensClean() = withPlantServer { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+        compose.onNodeWithContentDescription("Edit plant").performClick()
+        val name = hasText("Name") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(name).performTextReplacement("Synthetic discarded")
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Edit plant").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithText("Synthetic discarded").assertCountEquals(0)
+    }
+
     @Test fun mixedSearchKeepsServerOrderAndReplacesTheAnswerOnNoMatch() {
         val started = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)

@@ -192,9 +192,9 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
     val texts = savedFields(plant?.id) { startTexts }
     val choices = savedFields(plant?.id) { startChoices }
     val flags = savedFields(plant?.id) { startFlags }
-    SideEffect { onDirty { texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags } }
     var more by rememberSaveable(plant?.id) { mutableStateOf(false) }
     var watered by rememberSaveable(plant?.id) { mutableStateOf("") }
+    SideEffect { onDirty { texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags || watered.isNotEmpty() } }
     var siteMissing by rememberSaveable(plant?.id) { mutableStateOf(false) }
     LaunchedEffect(createdSite) { createdSite?.let { choices["site_id"] = it; siteMissing = false } }
     LaunchedEffect(errors) { if (errors.keys.any { it !in leadingFields }) more = true }
@@ -214,7 +214,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
         } else Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
             supporting = { PlantError(siteError, keep = "Choose a site in your household.") }) { choices["site_id"] = it; siteMissing = false }
         if (sites.isEmpty() && onCreateSite == null) Text("Create a site under More before adding or restoring a plant.")
-        if (plant == null) LastWatered(watered, today, writable) { watered = it }
+        if (plant == null) { LastWatered(watered, today, writable) { watered = it }; PlantError(errors["last_watered_on"]) }
         keepPhoto?.invoke()
         val ready = writable && blocked == null
         Button(onClick = {

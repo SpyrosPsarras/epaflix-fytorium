@@ -19,7 +19,8 @@ import java.io.File
 
 internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> Unit)
 
-@Composable internal fun rememberPhotoSources(multiple: Boolean, selected: List<String>, onPhotos: (List<Uri>) -> Unit, onError: (String) -> Unit): PhotoSourceActions {
+@Composable internal fun rememberPhotoSources(multiple: Boolean, selected: List<String>, onPhotos: (List<Uri>) -> Unit, onError: (String) -> Unit,
+    keepOnLeave: Boolean = false): PhotoSourceActions {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pending by rememberSaveable { mutableStateOf<String?>(null) }
@@ -76,8 +77,9 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
     }
     DisposableEffect(Unit) {
         onDispose {
-            // Rotation while the camera is open must not remove its output file.
-            if ((context as? android.app.Activity)?.isChangingConfigurations != true) {
+            // Rotation while the camera is open must not remove its output file; Identify keeps its photos while the add form is open.
+            // shortcut: Identify photos left when the add flow ends without Discard stay until logout or startup cleanup; clear them when the flow ends if storage use grows.
+            if ((context as? android.app.Activity)?.isChangingConfigurations != true && !keepOnLeave) {
                 captures.forEach { deleteCameraCapture(File(it)) }; pending?.let { deleteCameraCapture(File(it)) }
                 picked.forEach { releasePicked(Uri.parse(it)) }
             }

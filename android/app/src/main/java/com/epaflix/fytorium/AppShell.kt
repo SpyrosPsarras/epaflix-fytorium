@@ -65,6 +65,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var journalAdd by rememberSaveable { mutableStateOf<String?>(null) }
     val pickerQuery = rememberSaveable { mutableStateOf("") }
     val journalGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val pickerGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     var unmatched by rememberSaveable { mutableStateOf(false) }
     var plantaImport by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -215,13 +216,15 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && careState?.member != null && careState.member.role != Role.sitter && tab == "Journal" && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                // Journal receipts and explanations show over the navigation bar, as on Today and Plants.
+                ReceiptSnackbar(careState.receipt, receipts, onUndo = {}, onDone = { controller?.repository?.clearReceipt(it) }, onGone = { receiptsGone++ })
                 val adding = journalAdd
                 val picked = adding?.takeIf { it.isNotEmpty() }?.let { id -> careState.plants.firstOrNull { it.id == id } }
                 if (adding == "" || (adding != null && picked == null)) {
                     BackHandler { journalAdd = null }
                     com.epaflix.fytorium.plants.PlantsList(careState, careState.plants, false, onPlant = { journalAdd = it }, onAdd = {}, onGraveyard = {},
                         onRefresh = { controller?.refresh(pulled = true) }, thumbnails = thumbnails, search = pickerQuery, onBack = { journalAdd = null },
-                        refreshing = controller?.pulling?.collectAsState()?.value == true, chooseTitle = "Choose a plant")
+                        refreshing = controller?.pulling?.collectAsState()?.value == true, chooseTitle = "Choose a plant", grid = pickerGrid)
                 } else key(careState.member, plantsDiscards, picked?.id) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
                     plantId = picked?.id, plantName = picked?.displayName, formOnly = picked != null,
                     onBack = { if (picked != null) journalAdd = "" else tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },

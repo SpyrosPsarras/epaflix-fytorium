@@ -56,6 +56,15 @@ class AddPlantFormTest {
         compose.runOnIdle { for (key in listOf("pot_type", "soil_type", "plant_size", "growth_stage", "fertilizer_type", "drainage")) assertTrue(key, saved!!.isNull(key)) }
     }
 
+    // Choosing a last watering counts as an entry, so Back asks first.
+    @Test fun aLastWateringMakesTheFormChanged() {
+        var changed: () -> Boolean = { false }
+        compose.setContent { FytoriumTheme { PlantForm(null, syntheticOptions(), listOf(site), true, onSave = {}, today = today, onDirty = { changed = it }) } }
+        compose.runOnIdle { assertFalse(changed()) }
+        compose.onNodeWithText("Yesterday").performScrollTo().performClick()
+        compose.runOnIdle { assertTrue(changed()) }
+    }
+
     @Test fun saveWithoutASiteSaysWhyAndSendsNothing() {
         var saves = 0
         form(sites = listOf(site, PlantSite("site-two", "Synthetic balcony"))) { saves++ }

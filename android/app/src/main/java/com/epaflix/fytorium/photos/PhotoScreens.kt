@@ -160,7 +160,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     onOriginal: (String) -> Unit = {}, onCloseOriginal: () -> Unit = {}, onPlant: (String) -> Unit = {},
     onFormDirty: (() -> String?) -> Unit = {}, onDiscard: () -> Unit = {}, originalOpen: Boolean = state.original != null,
     care: CareState? = null, refreshing: Boolean = false, onExplain: (String) -> Unit = {}, onAdd: (() -> Unit)? = null, openPhotoId: String? = null,
-    formOnly: Boolean = false, onUploaded: () -> Unit = onBack, selectedUri: String? = null, onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onRemovePhoto: () -> Unit = {},
+    formOnly: Boolean = false, onUploaded: () -> Unit = {}, selectedUri: String? = null, onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onRemovePhoto: () -> Unit = {},
     // Held above the viewer and form, so the list returns to the card the user left.
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState()) {
     var form by rememberSaveable { mutableStateOf(formOnly) }
@@ -182,7 +182,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     // A lambda, not ::back: equal function references let Back keep the first composition's state, which skipped an open original.
     val back = { if (originalOpen) onCloseOriginal() else if (changed()) discarding = true else if (form && !formOnly) clear() else onBack() }
     BackHandler(onBack = back)
-    if (originalOpen) PhotoViewer(state.photos.firstOrNull { it.id == openPhotoId }, state.original, online, thumbnails, back)
+    if (originalOpen) PhotoViewer(state.photos.firstOrNull { it.id == openPhotoId }, state.original?.takeIf { state.originalId == openPhotoId }, online, thumbnails, back)
     else if (!form) Column(Modifier.fillMaxSize()) {
         val title = plantName?.let { "Photos of $it" } ?: "Journal"
         val status = photoStatus(care, online, state)
@@ -287,7 +287,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     // A successful upload closes the form. A failed upload keeps every entered field.
     var uploaded by remember { mutableIntStateOf(state.uploadRevision) }
     LaunchedEffect(state.uploadRevision) {
-        if (uploaded != state.uploadRevision) { form = false; note = ""; health = ""; date = ""; if (formOnly) onUploaded() }
+        if (uploaded != state.uploadRevision) { form = false; note = ""; health = ""; date = ""; onUploaded() }
         uploaded = state.uploadRevision
     }
 }
@@ -307,7 +307,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     }
     val quotaGone = state.failureStatus == 429 || state.remaining == 0
     val enabled = online && !state.saving && !state.blocked && !state.updateRequired
-    val back = { if (selected.isNotEmpty() && state.result == null) discarding = true else onBack() }
+    val back = { if (selected.isNotEmpty()) discarding = true else onBack() }
     BackHandler(onBack = back)
     val status = when {
         !online -> (care?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. Identifying needs a connection."
@@ -323,10 +323,10 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 val result = state.result
                 if (showing && result != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         selected.forEachIndexed { index, uri -> UriThumb(uri, 56.dp, "Photo ${index + 1} of ${selected.size}") }
-                        TextButton(onClick = { showing = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
                     }
+                    TextButton(onClick = { showing = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
                     Heading("Best matches")
                     result.candidates.forEach { candidate ->
                         SpeciesSearchCard(candidate, candidate.identificationCanonicalName ?: candidate.canonicalName, api, enabled, 96.dp, matchLines(candidate)) {
@@ -389,7 +389,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     chosen?.let { candidate ->
         ConfirmSearchSpecies(candidate, candidate.identificationCanonicalName ?: candidate.canonicalName, api, enabled, onBack = { chosen = null },
             lines = matchLines(candidate), yourPhoto = selected.firstOrNull()?.let { uri -> { modifier -> UriImage(uri, modifier, "Your photo") } }) {
-            searchId?.let { onSelect(candidate, it, true) }
+            searchId?.let { chosen = null; onSelect(candidate, it, true) }
         }
     }
     if (details) AlertDialog(onDismissRequest = { details = false }, title = { DialogTitle("About identify photos") },

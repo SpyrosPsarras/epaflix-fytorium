@@ -16,6 +16,7 @@ data class PhotoState(val photos: List<PhotoUpdate> = emptyList(), val loading: 
     val updateRequired: Boolean = false, val error: String? = null, val progress: Float? = null,
     val result: com.epaflix.fytorium.plants.SpeciesSearch? = null, val remaining: Int? = null,
     val today: String? = null, val healthChoices: List<String> = emptyList(), val original: ByteArray? = null, val uploadRevision: Int = 0,
+    val originalId: String? = null,
     val failureStatus: Int? = null)
 private class PhotoFailure(val status: Int, val messageText: String) : Exception()
 
@@ -58,13 +59,15 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
         val json = JSONObject(response(api.request("/api/identification")))
         if (allowed()) mutable.value = mutable.value.copy(remaining = if (json.isNull("remaining")) null else json.getInt("remaining"), blocked = false)
     }
-    fun clearOriginal() { mutable.value = mutable.value.copy(original = null) }
+    fun clearOriginal() { mutable.value = mutable.value.copy(original = null, originalId = null) }
+    // An explicit retry may resend after a failure that turned writes off.
+    fun clearFailure() { mutable.value = mutable.value.copy(blocked = false, error = null, failureStatus = null) }
     @Synchronized fun openOriginal(id: String): Boolean = run(false) {
         api.request("/api/photos/${safe(id)}/original").use { reply ->
             if (!reply.isSuccessful) response(reply)
             val bytes = reply.body?.byteStream()?.use { readPhotoBytes(it, 15 * 1024 * 1024) }
             require(bytes != null && bytes.size <= 15 * 1024 * 1024)
-            if (allowed()) mutable.value = mutable.value.copy(original = bytes)
+            if (allowed()) mutable.value = mutable.value.copy(original = bytes, originalId = id)
         }
     }
     fun clearResult() { mutable.value = mutable.value.copy(result = null) }

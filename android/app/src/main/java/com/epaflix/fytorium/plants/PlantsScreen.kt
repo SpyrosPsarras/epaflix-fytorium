@@ -116,7 +116,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     suspend fun loadSpecies(key: Long) { withContext(Dispatchers.IO) { repository?.species(key) }?.takeIf { it.key == namesKey }?.let { species = it } }
     // A species chosen for a new plant or a species change is unsaved too, however it was chosen.
     // A new plant's form with nothing entered goes back to its results without asking (W4-P18).
-    fun unsaved() = formChanged() || (selection != null && page == "change-species")
+    fun unsaved() = formChanged() || (selection != null && page == "change-species") || (page == "form" && id == null && keepPhotoPath != null && !keepPhoto)
     fun follow(link: String) {
         if (link == "species-care") speciesCareFrom = "care"
         if (link == "identify") identifyReturn = page
@@ -236,22 +236,25 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             }
         }
     }
+    // Receipts and explanations show on every page here, the photo pages included.
+    ReceiptSnackbar(state.receipt, host, onUndo = { receipt -> scope.launch(Dispatchers.IO) { repository?.undoReceipt(receipt) } },
+        onDone = { repository?.clearReceipt(it) }, onGone = onReceiptGone)
     if (page in listOf("photos", "photo-form", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
         val photos = page != "identify"
         // Identify keeps its photos and results while the add form is open, so Change and Back return to them.
-        forms.SaveableStateProvider(if (photos) "photos:$id" else "identify") { com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
+        forms.SaveableStateProvider(if (photos) "$page:$id" else "identify") { com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
             plantId = if (photos) id else null, plantName = if (photos) plant?.displayName else null, formOnly = page == "photo-form",
             identifying = page == "identify", onBack = { page = if (photos) "detail" else identifyReturn }, onUpdateRequired = { repository?.requireUpdate() },
             onFormDirty = { subpageDraft = it }, onReceipt = { repository?.showReceipt(it) },
             cached = { repository?.cachedJson(it) }, keep = { resource, json -> repository?.saveJson(resource, json) }, grid = photoGrid,
             onChanged = { scope.launch { withContext(Dispatchers.IO) { repository?.refreshPlants() }; id?.let { refreshDetail(it) } } },
-            onFirstPhoto = { uri -> if (identifyReturn != "change-species" && uri != null) scope.launch {
-                val copy = withContext(Dispatchers.IO) { runCatching { com.epaflix.fytorium.photos.keepDraftPhoto(context, android.net.Uri.parse(uri)) }.getOrNull() }
-                keepPhotoPath?.takeIf { it != copy?.path }?.let { java.io.File(it).delete() }
-                keepPhotoPath = copy?.path; keepPhoto = true
-            } },
+            onFirstPhoto = { path ->
+                keepPhotoPath?.takeIf { it != path }?.let { java.io.File(it).delete() }
+                if (identifyReturn == "change-species") { path?.let { java.io.File(it).delete() }; keepPhotoPath = null } else keepPhotoPath = path
+                keepPhoto = true
+            },
             onSelect = { candidate, searchId, confirmed ->
-                selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
+                selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", true).toString()
                 choose(candidate); pickedFrom = "identify"
                 page = if (identifyReturn == "change-species") "change-species" else "form"
             }) }
@@ -275,8 +278,6 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         "change-species" -> "Change species"; "care" -> "This plant's schedule"; "repot" -> "Repot plant"
         "restore" -> "Restore ${detail?.plant?.displayName ?: "plant"}"; "species-care" -> "Care defaults for this species"; else -> "Species names"
     }
-    ReceiptSnackbar(state.receipt, host, onUndo = { receipt -> scope.launch(Dispatchers.IO) { repository?.undoReceipt(receipt) } },
-        onDone = { repository?.clearReceipt(it) }, onGone = onReceiptGone)
     fun retry() = run { reload() }
     val refused = "$refusedLine. Try again first."
     val addBlocked = when {
@@ -350,7 +351,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                             if (!searching) { searched = query; run { loadSearch(query) } }
                         },
                             onSelect = { candidate, searchId, confirmed ->
-                                selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
+                                selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", true).toString()
                                 choose(candidate)
                                 if (page != "change-species") { pickedFrom = "search"; dropKeepPhoto(); page = "form" }
                             }, imageApi = speciesApi, onDirty = { formChanged = it }, autoFocus = page == "search", searching = searching,
@@ -363,7 +364,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     species = selection?.takeIf { id == null }?.let { json -> { ChosenSpecies(speciesApi, JSONObject(json).getLong("gbif_key"), chosenName, chosenScientific) {
                         page = pickedFrom
                     } } },
-                    nameStandIn = chosenName.takeIf { id == null && it.isNotBlank() }, onCreateSite = { sitesReturn = "form"; leaveFor("sites") }.takeIf { id == null },
+                    nameStandIn = chosenName.takeIf { id == null && it.isNotBlank() }, onCreateSite = { sitesReturn = "form"; leavingFor = "sites" }.takeIf { id == null },
                     createdSite = restoreSite.takeIf { id == null }, blocked = addBlocked.takeIf { id == null }, onBlocked = ::explain,
                     keepPhoto = keepPhotoPath?.takeIf { id == null }?.let { path -> { KeepPhoto(path, keepPhoto, enabled) { keepPhoto = it } } }, onSave = { input ->
                     selection?.takeIf { id == null }?.let { json ->
@@ -375,7 +376,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         val saved = withContext(Dispatchers.IO) { repository!!.savePlant(id, input) }
                         if (saved != null) {
                             val photo = keepPhotoPath?.takeIf { previousId == null && keepPhoto && photosApi != null }
-                            id = saved.id; selection = null; formChanged = { false }; forms.removeState("form:new")
+                            forms.removeState("form:${previousId ?: "new"}")
+                            id = saved.id; selection = null; formChanged = { false }
                             if (photo != null) scope.launch {
                                 val uploaded = withContext(Dispatchers.IO) { com.epaflix.fytorium.photos.PhotoRepository(photosApi!!, { true }, photosConnected, saved.id)
                                     .let { photos -> photos.options() && photos.upload(context, android.net.Uri.fromFile(java.io.File(photo)), "", "", photos.state.value.today.orEmpty()) } }
@@ -427,7 +429,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     if (discarding) DiscardDialog(if (newPlant) "Discard this plant?" else "Discard changes?", if (newPlant) "${chosenName.ifBlank { "This plant" }} is not added yet." else discardBody,
         onKeep = { discarding = false }) {
         discarding = false; formChanged = { false }; selection = null
-        if (newPlant) { forms.removeState("form:new"); dropKeepPhoto() }
+        if (page == "form") forms.removeState("form:${id ?: "new"}")
+        if (newPlant) dropKeepPhoto()
         back()
     }
 }

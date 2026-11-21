@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
     onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {},
     onFormDirty: (() -> String?) -> Unit = {}, onReceipt: (String) -> Unit = {}, onAdd: (() -> Unit)? = null, onUploaded: () -> Unit = onBack,
-    cached: (String) -> String? = { null }, keep: (String, String) -> Unit = { _, _ -> }, onFirstPhoto: (String?) -> Unit = {},
+    cached: (String) -> String? = { null }, keep: (String, String) -> Unit = { _, _ -> }, onFirstPhoto: ((String?) -> Unit)? = null,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
@@ -52,6 +52,9 @@ import kotlinx.coroutines.withContext
         scope.launch { try { action() } finally { if (write) submitting = false } }
     }
     LaunchedEffect(repository) { refresh() }
+    // Changes from another device show when the app comes back, as on Today.
+    var resumed by remember(repository) { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(repository) { if (resumed) scope.launch { refresh() }; resumed = true; onPauseOrDispose {} }
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) refresh(); wasOnline = online }
     LaunchedEffect(repository, originalId, online) {
@@ -59,24 +62,28 @@ import kotlinx.coroutines.withContext
     }
     if (member == null || member.role == Role.sitter) return
     val sources = rememberPhotoSources(identifying, selected, onPhotos = { photos ->
-            if (identifying && selected.size + photos.size > 5) localError = "Choose at most five photos. Remove a photo before adding more."
-            else {
-                selected = if (identifying) selected + photos.map { it.toString() } else listOf(photos.first().toString())
-                repository.clearResult(); result = null; localError = null
-            }
-        }, onError = { localError = it })
-    if (identifying) IdentificationScreen(shown, online, selected, onBack, onRefresh = { launch { refresh() } }, onIdentify = { launch(true) {
+            val room = 5 - selected.size
+            selected = if (identifying) selected + photos.take(room).map { it.toString() } else listOf(photos.first().toString())
+            repository.clearResult(); result = null
+            localError = "Only 5 photos fit, so the first $room were added.".takeIf { identifying && photos.size > room }
+        }, onError = { localError = it }, keepOnLeave = identifying && onFirstPhoto != null)
+    if (identifying) IdentificationScreen(shown, online, selected, onBack, onRefresh = { launch { refresh() } }, onIdentify = { repository.clearFailure(); launch(true) {
             result = null
             if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
         } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null },
-        onSelect = { candidate, search, confirmed -> onFirstPhoto(selected.firstOrNull()); onSelect(candidate, search, confirmed) }, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
+        onSelect = { candidate, search, confirmed ->
+            // The first photo is copied before the add form opens, so it never depends on this route's sources.
+            val keepFirst = onFirstPhoto
+            if (keepFirst == null) onSelect(candidate, search, confirmed) else scope.launch {
+                keepFirst(selected.firstOrNull()?.let { uri -> withContext(Dispatchers.IO) { runCatching { keepDraftPhoto(context, Uri.parse(uri)).path }.getOrNull() } })
+                onSelect(candidate, search, confirmed)
+            }
+        }, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
         onDiscard = { selected = emptyList(); result = null; repository.clearResult() }, care = care, api = api)
     else PhotoScreen(shown, online, plantName, selected.size, thumbnails, onBack,
         onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch
-            if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) {
-                selected = emptyList(); onChanged(); onReceipt("Added a photo of ${plantName ?: "this plant"}")
-            }
+            if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) { selected = emptyList(); onChanged() }
         } }, onChange = { id, action -> launch(true) {
             val photo = state.photos.firstOrNull { it.id == id }
             if (withContext(Dispatchers.IO) { repository.change(id, action) }) {
@@ -87,6 +94,6 @@ import kotlinx.coroutines.withContext
         onCloseOriginal = { originalId = null; repository.clearOriginal() }, onPlant = onPlant,
         onFormDirty = onFormDirty, onDiscard = { selected = emptyList(); localError = null; repository.clearError() },
         originalOpen = originalId != null, care = care, refreshing = pulling, onExplain = onReceipt, openPhotoId = originalId,
-        formOnly = formOnly, onAdd = onAdd, onUploaded = onUploaded, grid = grid, selectedUri = selected.firstOrNull(), onTake = sources.take, onChoose = sources.choose,
+        formOnly = formOnly, onAdd = onAdd, onUploaded = { onReceipt("Added a photo of ${plantName ?: "this plant"}"); if (formOnly) onUploaded() }, grid = grid, selectedUri = selected.firstOrNull(), onTake = sources.take, onChoose = sources.choose,
         onRemovePhoto = { selected = emptyList(); localError = null; repository.clearError() })
 }

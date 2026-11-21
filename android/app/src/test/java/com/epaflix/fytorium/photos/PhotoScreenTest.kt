@@ -348,6 +348,30 @@ class PhotoScreenTest {
         compose.runOnIdle { assertEquals(1, identified); assertEquals(listOf("No identifications left today."), explained) }
     }
 
+    // W4-P26, P23: a confirmed match closes its dialog, and Back from the results still asks about the photos.
+    @Test fun aConfirmedMatchClosesItsDialogAndBackAsks() {
+        val candidate = SpeciesCandidate(900001, "Testoria nebulosa", "Testoria nebulosa", "SPECIES", null, null, true, null, null, 0.91)
+        var picked = 0
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(result = SpeciesSearch("synthetic-search", listOf(candidate))), true,
+            listOf("content://synthetic/one"), onSelect = { _, _, _ -> picked++ }) } }
+        compose.onNode(hasContentDescription("Choose this species.", substring = true)).performClick()
+        compose.onNodeWithText("Yes, this one").performClick()
+        compose.onNodeWithText("Is this your plant?").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard these photos?").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(1, picked) }
+    }
+
+    // A slow original never shows under another photo's title.
+    @Test fun theViewerShowsOnlyItsOwnOriginal() {
+        val bitmap = android.graphics.Bitmap.createBitmap(20, 20, android.graphics.Bitmap.Config.ARGB_8888)
+        val bytes = java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray(); bitmap.recycle()
+        val other = photo.copy(id = "photo-two", takenOn = "2026-10-14")
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo, other), loaded = true, original = bytes, originalId = "photo-one"), false, "Synthetic sprout", 0,
+            originalOpen = true, openPhotoId = "photo-two") } }
+        compose.onNodeWithText("Offline \u00b7 showing a smaller copy").assertIsDisplayed()
+    }
+
     // W4-P26: Back with photos chosen asks before dropping them.
     @Test fun identifyAsksBeforeDroppingPhotos() {
         var left = 0
