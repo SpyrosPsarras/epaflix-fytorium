@@ -46,7 +46,8 @@ import kotlinx.coroutines.withContext
         }
     }
     fun launch(write: Boolean = false, action: suspend () -> Unit) {
-        if (submitting || !allowed || (write && (!online || state.blocked || state.updateRequired))) return
+        // The repository's own state, so a retry that just cleared a failure is not stopped by the last frame's copy.
+        if (submitting || !allowed || (write && (!online || repository.state.value.blocked || repository.state.value.updateRequired))) return
         localError = null
         if (write) submitting = true
         scope.launch { try { action() } finally { if (write) submitting = false } }
@@ -66,7 +67,8 @@ import kotlinx.coroutines.withContext
             selected = if (identifying) selected + photos.take(room).map { it.toString() } else listOf(photos.first().toString())
             repository.clearResult(); result = null
             localError = "Only 5 photos fit, so the first $room were added.".takeIf { identifying && photos.size > room }
-        }, onError = { localError = it }, keepOnLeave = identifying && onFirstPhoto != null)
+        }, onError = { localError = it }, keepOnLeave = identifying && onFirstPhoto != null, limit = if (identifying) 5 - selected.size else 1,
+        folder = if (identifying && onFirstPhoto != null) "captures/identify" else "captures")
     if (identifying) IdentificationScreen(shown, online, selected, onBack, onRefresh = { launch { refresh() } }, onIdentify = { repository.clearFailure(); launch(true) {
             result = null
             if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
@@ -83,7 +85,7 @@ import kotlinx.coroutines.withContext
     else PhotoScreen(shown, online, plantName, selected.size, thumbnails, onBack,
         onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch
-            if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) { selected = emptyList(); onChanged() }
+            withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }
         } }, onChange = { id, action -> launch(true) {
             val photo = state.photos.firstOrNull { it.id == id }
             if (withContext(Dispatchers.IO) { repository.change(id, action) }) {
@@ -94,6 +96,7 @@ import kotlinx.coroutines.withContext
         onCloseOriginal = { originalId = null; repository.clearOriginal() }, onPlant = onPlant,
         onFormDirty = onFormDirty, onDiscard = { selected = emptyList(); localError = null; repository.clearError() },
         originalOpen = originalId != null, care = care, refreshing = pulling, onExplain = onReceipt, openPhotoId = originalId,
-        formOnly = formOnly, onAdd = onAdd, onUploaded = { onReceipt("Added a photo of ${plantName ?: "this plant"}"); if (formOnly) onUploaded() }, grid = grid, selectedUri = selected.firstOrNull(), onTake = sources.take, onChoose = sources.choose,
+        // Runs as soon as the server took the photo, before the list reload, so leaving cannot cut it short.
+        formOnly = formOnly, onAdd = onAdd, onUploaded = { selected = emptyList(); onChanged(); onReceipt("Added a photo of ${plantName ?: "this plant"}"); if (formOnly) onUploaded() }, grid = grid, selectedUri = selected.firstOrNull(), onTake = sources.take, onChoose = sources.choose,
         onRemovePhoto = { selected = emptyList(); localError = null; repository.clearError() })
 }

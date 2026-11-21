@@ -93,6 +93,10 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
             app.repository.connectivityChanged(true)
             app.repository.refresh()
         }
+        // The network comes back in steps after airplane mode; wait until the app has it and has refreshed, so the tap is not explained away.
+        compose.waitForState("Online again after airplane mode", 30_000) {
+            app.care.connected() && app.repository.state.value.let { !it.offline && !it.busy } && app.repository.plantState.value.online
+        }
         compose.waitForState("Add plant enabled", 30_000) { compose.onAllNodes(hasContentDescription("Add plant") and !hasStateDescription("Adding a plant needs a connection.")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Add plant").performClick()
         compose.waitForState("Search gets initial focus", 10_000) {

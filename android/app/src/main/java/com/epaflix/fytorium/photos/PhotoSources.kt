@@ -20,7 +20,7 @@ import java.io.File
 internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> Unit)
 
 @Composable internal fun rememberPhotoSources(multiple: Boolean, selected: List<String>, onPhotos: (List<Uri>) -> Unit, onError: (String) -> Unit,
-    keepOnLeave: Boolean = false): PhotoSourceActions {
+    keepOnLeave: Boolean = false, limit: Int = 5, folder: String = "captures"): PhotoSourceActions {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pending by rememberSaveable { mutableStateOf<String?>(null) }
@@ -59,7 +59,8 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
     val singlePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) choosePhotos(listOf(uri))
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
+    // The picker offers only the slots still free.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(limit.coerceAtLeast(2))) { uris ->
         if (uris.isNotEmpty()) choosePhotos(uris)
     }
     LaunchedEffect(selected, pending, captures, picked) {
@@ -78,7 +79,7 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
     DisposableEffect(Unit) {
         onDispose {
             // Rotation while the camera is open must not remove its output file; Identify keeps its photos while the add form is open.
-            // shortcut: Identify photos left when the add flow ends without Discard stay until logout or startup cleanup; clear them when the flow ends if storage use grows.
+            // The add flow deletes captures/identify when it ends; shortcut: gallery grants it took stay until Android drops them, release them too if the grant limit matters.
             if ((context as? android.app.Activity)?.isChangingConfigurations != true && !keepOnLeave) {
                 captures.forEach { deleteCameraCapture(File(it)) }; pending?.let { deleteCameraCapture(File(it)) }
                 picked.forEach { releasePicked(Uri.parse(it)) }
@@ -90,7 +91,7 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
             // Startup cleanup must finish before a new capture can be created.
             (context.applicationContext as FytoriumApplication).capturesCleared.join()
             runCatching {
-                val directory = File(context.cacheDir, "captures").apply { mkdirs() }
+                val directory = File(context.cacheDir, folder).apply { mkdirs() }
                 val file = File.createTempFile("camera-", ".jpg", directory)
                 captures = captures + file.path; pending = file.path
                 camera.launch(FileProvider.getUriForFile(context, context.packageName + ".photos", file))
@@ -99,7 +100,7 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
     }, choose = {
         runCatching {
             val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            if (multiple) picker.launch(request) else singlePicker.launch(request)
+            if (multiple && limit > 1) picker.launch(request) else singlePicker.launch(request)
         }
             .onFailure { currentError("Could not open the photo picker. Try again.") }
     })

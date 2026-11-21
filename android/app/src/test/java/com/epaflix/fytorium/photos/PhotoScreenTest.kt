@@ -372,6 +372,86 @@ class PhotoScreenTest {
         compose.onNodeWithText("Offline \u00b7 showing a smaller copy").assertIsDisplayed()
     }
 
+    // A route whose picker returns one synthetic file, for Identify and the photo form.
+    private fun pickedFile(): android.net.Uri {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        val file = java.io.File(app.cacheDir, "synthetic-pick.png")
+        val bitmap = android.graphics.Bitmap.createBitmap(120, 90, android.graphics.Bitmap.Config.ARGB_8888)
+        file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        return android.net.Uri.fromFile(file)
+    }
+    private fun pickerOwner(uri: android.net.Uri) = object : androidx.activity.result.ActivityResultRegistryOwner {
+        override val activityResultRegistry = object : androidx.activity.result.ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: androidx.activity.result.contract.ActivityResultContract<I, O>, input: I,
+                options: androidx.core.app.ActivityOptionsCompat?) {
+                dispatchResult(requestCode, if (contract is androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia) listOf(uri) else uri)
+            }
+        }
+    }
+
+    // W4-P25: Try again after Pl@ntNet was down sends the same photos again, through the route's own gate.
+    @Test fun tryAgainAfterAnOutageIdentifiesAgain() {
+        val uri = pickedFile()
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val posts = java.util.concurrent.atomic.AtomicInteger()
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = when {
+                    request.method == "POST" && posts.incrementAndGet() == 1 -> okhttp3.mockwebserver.MockResponse().setResponseCode(503).setBody("""{"message":"Pl@ntNet did not answer."}""")
+                    request.method == "POST" -> okhttp3.mockwebserver.MockResponse().setBody("""{"search_id":"synthetic-search","candidates":[{"gbif_key":900001,"scientific_name":"Testoria nebulosa","canonical_name":"Testoria nebulosa","rank":"SPECIES","match_type":null,"confidence":null,"requires_confirmation":true,"source":"identification","score":0.91,"identification_name":"Testoria nebulosa","common_names":[]}]}""")
+                    else -> okhttp3.mockwebserver.MockResponse().setBody("""{"remaining":20}""")
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            compose.setContent { CompositionLocalProvider(androidx.activity.compose.LocalActivityResultRegistryOwner provides pickerOwner(uri)) { FytoriumTheme {
+                PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { true }, null, identifying = true, onBack = {})
+            } } }
+            compose.onNodeWithText("Choose photos").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Photo 1 of 1").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Identify").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Pl@ntNet isn't responding").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Pl@ntNet isn't responding").performClick()
+            compose.onNodeWithText("Try again").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Best matches") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(2, posts.get())
+        }
+    }
+
+    // W4-P31: the direct form stays a form after an upload, and the upload finishes even when the list reload is slow.
+    @Test fun aDirectUploadFinishesBeforeTheSlowListAndTheFormStaysAForm() {
+        val uri = pickedFile()
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val lists = java.util.concurrent.atomic.AtomicInteger()
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = when {
+                    request.method == "POST" -> okhttp3.mockwebserver.MockResponse().setBody(photoFixture)
+                    request.path == "/api/plants/plant-one/photos" ->
+                        okhttp3.mockwebserver.MockResponse().setBody("[]").setBodyDelay(if (lists.incrementAndGet() > 1) 3 else 0, java.util.concurrent.TimeUnit.SECONDS)
+                    request.path == "/api/meta" -> okhttp3.mockwebserver.MockResponse().setBody("""{"today":"2026-10-13"}""")
+                    else -> okhttp3.mockwebserver.MockResponse().setBody("""{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":[]},"nameLanguages":{}}""")
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val open = mutableStateOf(true)
+            var changed = 0
+            val receipts = mutableListOf<String>()
+            compose.setContent { CompositionLocalProvider(androidx.activity.compose.LocalActivityResultRegistryOwner provides pickerOwner(uri)) { FytoriumTheme {
+                if (open.value) PhotosRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { true }, null, plantId = "plant-one", plantName = "Synthetic sprout",
+                    formOnly = true, onBack = {}, onUploaded = { open.value = false }, onChanged = { changed++ }, onReceipt = { receipts += it })
+                else Text("Plant page")
+            } } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Choose photo") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Choose photo").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Add photo update") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Add photo update").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Plant page").fetchSemanticsNodes().isNotEmpty() }
+            compose.runOnIdle { assertEquals(1, changed); assertEquals(listOf("Added a photo of Synthetic sprout"), receipts) }
+            compose.runOnIdle { open.value = true }
+            compose.onNode(hasText("Add a photo of Synthetic sprout") and isHeading()).assertIsDisplayed()
+        }
+    }
+
     // W4-P26: Back with photos chosen asks before dropping them.
     @Test fun identifyAsksBeforeDroppingPhotos() {
         var left = 0

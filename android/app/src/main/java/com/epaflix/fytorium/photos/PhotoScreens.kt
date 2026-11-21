@@ -183,7 +183,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     val back = { if (originalOpen) onCloseOriginal() else if (changed()) discarding = true else if (form && !formOnly) clear() else onBack() }
     BackHandler(onBack = back)
     if (originalOpen) PhotoViewer(state.photos.firstOrNull { it.id == openPhotoId }, state.original?.takeIf { state.originalId == openPhotoId }, online, thumbnails, back)
-    else if (!form) Column(Modifier.fillMaxSize()) {
+    else if (!form && !formOnly) Column(Modifier.fillMaxSize()) {
         val title = plantName?.let { "Photos of $it" } ?: "Journal"
         val status = photoStatus(care, online, state)
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { online && status != null }) { Heading(title) } },

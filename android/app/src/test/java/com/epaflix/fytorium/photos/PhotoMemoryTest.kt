@@ -80,6 +80,8 @@ class PhotoMemoryTest {
     @Test fun largeContentUriIsSubsampledWithoutBufferingTheInput() {
         val app = RuntimeEnvironment.getApplication() as FytoriumApplication
         runBlocking { app.capturesCleared.join() }
+        // FileProvider caches its roots per authority; an earlier test's data directory must not answer for this one.
+        org.robolectric.util.ReflectionHelpers.getStaticField<MutableMap<String, Any>>(androidx.core.content.FileProvider::class.java, "sCache").clear()
         val file = File(app.cacheDir, "captures/synthetic-large.bmp").apply { parentFile!!.mkdirs() }
         // Write a 144 MB, 48-megapixel BMP one scanline at a time, without allocating its bitmap.
         val width = 8000; val height = 6000

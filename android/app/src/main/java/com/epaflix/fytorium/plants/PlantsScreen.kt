@@ -145,6 +145,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         if (page !in listOf("search", "change-species", "identify", "sites") && !(page == "form" && id == null)) {
             listOf("search", "change-species").forEach { forms.removeState("search:$it") }
             forms.removeState("identify")
+            // The add flow is over, so Identify's own camera photos go too.
+            java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
         }
     }
     val discardBody = if (id == null) "Your changes to this new plant are not saved yet." else "Your changes to ${plant?.displayName ?: "this plant"} are not saved yet."
@@ -251,7 +253,6 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             onFirstPhoto = { path ->
                 keepPhotoPath?.takeIf { it != path }?.let { java.io.File(it).delete() }
                 if (identifyReturn == "change-species") { path?.let { java.io.File(it).delete() }; keepPhotoPath = null } else keepPhotoPath = path
-                keepPhoto = true
             },
             onSelect = { candidate, searchId, confirmed ->
                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", true).toString()
