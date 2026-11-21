@@ -25,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -137,9 +138,13 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
     }
     }
 }
-@Composable private fun SourceTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    OutlinedCard(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 96.dp)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+// A tile that is off still says why on tap and to TalkBack, as the page's other controls do.
+@Composable private fun SourceTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, modifier: Modifier,
+    blocked: String? = null, onBlocked: (String) -> Unit = {}, onClick: () -> Unit) {
+    val explains = !enabled && blocked != null
+    OutlinedCard(onClick = { if (enabled) onClick() else blocked?.let(onBlocked) }, enabled = enabled || explains,
+        modifier = modifier.heightIn(min = 96.dp).semantics { if (explains) stateDescription = blocked!! }) {
+        Column(Modifier.fillMaxWidth().padding(16.dp).alpha(if (enabled) 1f else 0.38f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(icon, contentDescription = null)
             Text(label)
         }
@@ -264,8 +269,8 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
         Box(Modifier.weight(1f)) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (selectedUri == null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.weight(1f), onTake)
-                    SourceTile("Choose photo", Icons.Outlined.PhotoLibrary, enabled, Modifier.weight(1f), onChoose)
+                    SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.weight(1f), blockedReason, onExplain, onTake)
+                    SourceTile("Choose photo", Icons.Outlined.PhotoLibrary, enabled, Modifier.weight(1f), blockedReason, onExplain, onChoose)
                 } else {
                     UriImage(selectedUri, Modifier.fillMaxWidth().aspectRatio(4f / 3f), "Chosen photo for ${plantName ?: "this plant"}")
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -366,8 +371,9 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     Text("Add one to five photos of the same plant. Leaves and flowers work best.")
                     // Side by side above the photos, as on the photo form, so both labels fit; they stay (off at five photos) so removing a photo never moves anything under the finger.
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled && selected.size < 5, Modifier.weight(1f), onTake)
-                        SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled && selected.size < 5, Modifier.weight(1f), onChoose)
+                        val tilesOff = if (selected.size >= 5) "Only 5 photos fit. Remove one to add another." else if (!online) "Identifying needs a connection." else null
+                        SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled && selected.size < 5, Modifier.weight(1f), tilesOff, onExplain, onTake)
+                        SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled && selected.size < 5, Modifier.weight(1f), tilesOff, onExplain, onChoose)
                     }
                     // Once a photo was chosen, its strip keeps its height when the last one goes, so nothing on a scrolled page slides under the finger.
                     var hadPhotos by rememberSaveable { mutableStateOf(false) }

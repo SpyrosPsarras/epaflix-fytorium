@@ -102,6 +102,14 @@ class PhotoScreenTest {
         compose.runOnIdle { assertEquals(1, added) }
     }
 
+    // Offline the photo form's tiles look off and say why on tap.
+    @Test fun offlinePhotoFormTilesExplainWhy() {
+        val explained = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(loaded = true), false, "Synthetic sprout", 0, formOnly = true, onExplain = { explained += it }) } }
+        compose.onNodeWithText("Take photo").assert(hasStateDescription("Photo changes need a connection.")).performClick()
+        compose.runOnIdle { assertEquals(listOf("Photo changes need a connection."), explained) }
+    }
+
     // W4-P35: offline the list stays and photo changes look off and say why.
     @Test fun offlinePhotoChangesExplainWhy() {
         val explained = mutableListOf<String>()
@@ -374,11 +382,11 @@ class PhotoScreenTest {
         val tile = compose.onNodeWithText("Choose photos").fetchSemanticsNode().boundsInRoot
         compose.runOnIdle { selected.value = listOf("content://synthetic/1", "content://synthetic/2", "content://synthetic/3", "content://synthetic/4", "content://synthetic/5") }
         // At five photos the tiles stay where they were, switched off, so removing a photo never moves them under the finger.
-        compose.onNodeWithText("Choose photos").assertIsNotEnabled()
+        compose.onNodeWithText("Choose photos").assert(hasStateDescription("Only 5 photos fit. Remove one to add another.")).performClick()
         assertEquals(tile, compose.onNodeWithText("Choose photos").fetchSemanticsNode().boundsInRoot)
         compose.runOnIdle { selected.value = emptyList() }
         compose.onNodeWithText("Identify").performScrollTo().assertIsNotEnabled().performClick()
-        compose.runOnIdle { assertEquals(listOf(1), removed); assertEquals(listOf("Add a photo first."), explained) }
+        compose.runOnIdle { assertEquals(listOf(1), removed); assertEquals(listOf("Only 5 photos fit. Remove one to add another.", "Add a photo first."), explained) }
     }
 
     // A tab switch from Identify with photos asks first, as its Back does.
