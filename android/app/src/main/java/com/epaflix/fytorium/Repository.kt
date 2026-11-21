@@ -294,7 +294,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     }
     // Photo lists keep their last answer per member, so the Journal and plant photos read offline.
     fun cachedJson(resource: String): Pair<String, Long>? = state.value.member?.let { cache.get(it.id, resource) }?.let { it.json to it.refreshedAt }
-    fun saveJson(resource: String, json: String) { state.value.member?.let { cache.save(it.id, mapOf(resource to json), clock()) } }
+    // Returns the time it stored, so a page that shows the list's age names the same time as the cache.
+    fun saveJson(resource: String, json: String): Long? = state.value.member?.let { member -> clock().also { cache.save(member.id, mapOf(resource to json), it) } }
     fun showReceipt(text: String) = synchronized(monitor) { mutable.value = mutable.value.copy(receipt = Receipt(text, short = true)) }
     fun clearReceipt(receipt: Receipt) = synchronized(monitor) {
         if (state.value.receipt?.id == receipt.id) mutable.value = mutable.value.copy(receipt = null)

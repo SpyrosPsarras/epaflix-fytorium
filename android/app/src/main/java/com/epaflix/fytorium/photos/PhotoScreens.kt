@@ -369,7 +369,10 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                         SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled && selected.size < 5, Modifier.weight(1f), onTake)
                         SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled && selected.size < 5, Modifier.weight(1f), onChoose)
                     }
-                    if (selected.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Once a photo was chosen, its strip keeps its height when the last one goes, so nothing on a scrolled page slides under the finger.
+                    var hadPhotos by rememberSaveable { mutableStateOf(false) }
+                    LaunchedEffect(selected.isNotEmpty()) { if (selected.isNotEmpty()) hadPhotos = true }
+                    if (selected.isNotEmpty() || hadPhotos) Row(Modifier.heightIn(min = 96.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         selected.forEachIndexed { index, uri ->
                             Box {
                                 UriThumb(uri, 96.dp, "Photo ${index + 1} of ${selected.size}")

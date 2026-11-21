@@ -241,6 +241,19 @@ class PhotoScreenTest {
         if (!here) compose.onNodeWithContentDescription("Photo of Synthetic sprout, 6 Oct 2026").assertIsDisplayed()
     }
 
+    // Removing the last photo on a scrolled landscape page moves nothing under the finger.
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun removingTheLastIdentifyPhotoMovesNothingInLandscape() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        val selected = mutableStateOf(listOf("content://synthetic/one"))
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(remaining = 12), true, selected.value, onRemove = { selected.value = emptyList() }) } }
+        compose.onNodeWithText("12 identifications left today.").performScrollTo()
+        val tile = compose.onNodeWithText("Take photo").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithContentDescription("Remove photo 1 of 1").performClick()
+        compose.runOnIdle { assertEquals(emptyList<String>(), selected.value) }
+        assertEquals(tile, compose.onNodeWithText("Take photo").fetchSemanticsNode().boundsInRoot)
+    }
+
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
     @Test fun photoDeleteScrollsInsideInLandscapeWithLargeText() {
         RuntimeEnvironment.setFontScale(1.3f)
