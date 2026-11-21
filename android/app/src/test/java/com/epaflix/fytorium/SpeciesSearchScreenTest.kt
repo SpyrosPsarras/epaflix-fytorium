@@ -89,7 +89,7 @@ class SpeciesSearchScreenTest {
         compose.setContent { FytoriumTheme { Surface { SpeciesPicker(false, search, {}, { candidate, _, _ -> selected = candidate },
             blockedReason = "Choosing a species needs a connection.", onBlocked = { explained += it }) } } }
         compose.onNodeWithContentDescription("Synthetic star, Testoria nova Maker. Choose this species.")
-            .assert(hasStateDescription("Choosing a species needs a connection.")).assertHasClickAction().performClick()
+            .assert(hasStateDescription("Choosing a species needs a connection.")).assertIsEnabled().assertHasClickAction().performClick()
         compose.runOnIdle { assertEquals(listOf("Choosing a species needs a connection."), explained); assertEquals(null, selected) }
     }
 

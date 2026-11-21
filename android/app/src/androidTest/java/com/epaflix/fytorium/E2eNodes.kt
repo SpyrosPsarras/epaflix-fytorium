@@ -111,7 +111,9 @@ internal fun ComposeContentTestRule.selectTab(title: String) {
             onAllNodes(receipt).onFirst().performTouchInput { swipeRight() }
         }
         swiped = covered
-        !covered && onAllNodes(hasTestTag("bar-paused")).fetchSemanticsNodes().isEmpty()
+        // The bar also hides while the keyboard is open, so wait until it is back.
+        !covered && onAllNodes(hasTestTag("bar-paused")).fetchSemanticsNodes().isEmpty() &&
+            onAllNodes(hasText(title) and hasClickAction() and !hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty()
     }
     onNode(hasText(title) and hasClickAction() and !hasTestTag("view-today")).performClick().assertIsSelected()
 }
