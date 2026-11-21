@@ -147,6 +147,18 @@ class PlantaRepositoryTest {
             assertFalse(repo.state.value.toString().contains("synthetic-secret-code"))
         }
     }
+    @Test fun aMissingPotOrSoilReadsUnknownNotNull() {
+        MockWebServer().use { server ->
+            server.start()
+            val bare = JSONObject(importFixture).apply { getJSONObject("mapped").put("pot_type", JSONObject.NULL).put("soil_type", JSONObject.NULL) }
+            server.enqueue(MockResponse().setBody("[$bare]"))
+            val repo = repository(server)
+            assertTrue(repo.refresh())
+            val row = repo.state.value.rows.single()
+            assertEquals("unknown" to "unknown", row.pot to row.soil)
+        }
+    }
+
     @Test fun aReviewCardIsHeadedByTheNameTheServerSaysThePlantWillHave() {
         MockWebServer().use { server ->
             server.start()

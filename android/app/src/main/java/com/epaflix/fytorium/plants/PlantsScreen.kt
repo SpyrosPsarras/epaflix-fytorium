@@ -260,7 +260,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             onChanged = { scope.launch { withContext(Dispatchers.IO) { repository?.refreshPlants() }; id?.let { refreshDetail(it) } } },
             onFirstPhoto = { path ->
                 keepPhotoPath?.takeIf { it != path }?.let { java.io.File(it).delete() }
-                if (identifyReturn == "change-species") { path?.let { java.io.File(it).delete() }; keepPhotoPath = null } else keepPhotoPath = path
+                if (path == null) dropKeepPhoto() else if (identifyReturn == "change-species") { java.io.File(path).delete(); keepPhotoPath = null } else keepPhotoPath = path
             },
             onSelect = { candidate, searchId, confirmed ->
                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", true).toString()

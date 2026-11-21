@@ -41,7 +41,7 @@ private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
     val care = mapped.getJSONObject("care")
     ImportRow(row.getString("id"), row.getString("display_name"),
         mapped.getString("scientific_name"), mapped.getString("site_name"), mapped.nullable("cultivar"),
-        mapped.getString("pot_type"), mapped.nullable("pot_size_cm") ?: "unknown", mapped.getString("soil_type"),
+        mapped.nullable("pot_type") ?: "unknown", mapped.nullable("pot_size_cm") ?: "unknown", mapped.nullable("soil_type") ?: "unknown",
         care.keys().asSequence().associateWith { care.getString(it) }, row.getString("status"), row.getString("cover_status"),
         row.nullable("cover_error"), row.nullable("plant_id"), candidates, row.optJSONObject("selected")?.getString("canonical_name"),
         row.getBoolean("can_commit"), row.getBoolean("can_review"), mapped.optBoolean("has_cover"), row.optJSONObject("selected")?.getLong("gbif_key"),
