@@ -87,6 +87,8 @@ class PhotoScreenTest {
         compose.onNodeWithText("Use as cover").assertDoesNotExist()
         compose.onNodeWithText("Delete").performClick()
         compose.onNodeWithText("Delete the 13 Oct 2026 photo of Synthetic sprout? This can't be undone.").assertIsDisplayed()
+        // The dialog shows the photo itself, so two photos from one day can be told apart.
+        compose.onNode(hasContentDescription("Photo of Synthetic sprout, 13 Oct 2026") and !hasClickAction()).assertIsDisplayed()
         compose.onNodeWithText("Delete").performClick()
         compose.runOnIdle { assertEquals("delete", command) }
     }
@@ -106,8 +108,8 @@ class PhotoScreenTest {
             care = CareState(member = Member("synthetic-member", Role.owner), offline = true), onExplain = { explained += it }) } }
         compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Add a photo of Synthetic sprout").assertIsNotEnabled().performClick()
-        photoAction("Delete")
-        compose.onNodeWithText("Delete this photo?").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of Synthetic sprout").assertIsNotEnabled().performClick()
+        compose.onNodeWithText("Delete").assertDoesNotExist()
         compose.runOnIdle { assertEquals(listOf("Photo changes need a connection.", "Photo changes need a connection."), explained) }
     }
 
@@ -185,6 +187,18 @@ class PhotoScreenTest {
         compose.onNodeWithText("Discard").assertIsDisplayed()
         compose.onNodeWithText("Keep editing").assertIsDisplayed()
         compose.checkDialogTextScale("Discard", 1.3f)
+    }
+
+    // W4-P29, K7: a phone in landscape (731 dp wide) shows two columns of cards at large text.
+    @Config(qualifiers = "w731dp-h411dp-land-xxhdpi")
+    @Test fun photoCardsSitSideBySideOnAPhoneInLandscape() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        val second = photo.copy(id = "photo-two", takenOn = "2026-10-14")
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo, second), loaded = true), true, "Synthetic sprout", 0) } }
+        val first = compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of Synthetic sprout").fetchSemanticsNode().boundsInRoot
+        val next = compose.onNodeWithContentDescription("Actions for the 14 Oct 2026 photo of Synthetic sprout").fetchSemanticsNode().boundsInRoot
+        assertEquals(first.top, next.top, 1f)
+        assertTrue(next.left > first.right)
     }
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")
@@ -331,7 +345,7 @@ class PhotoScreenTest {
         compose.onNodeWithText("97% match").assertIsDisplayed()
         compose.onNodeWithText("Now called Testoria nova").assertIsDisplayed()
         compose.onNodeWithText("Testoria prior").assertIsDisplayed()
-        compose.onNode(hasContentDescription("Choose this species.", substring = true)).performClick()
+        compose.onNodeWithContentDescription("Synthetic star, Testoria prior. 97% match. Now called Testoria nova. Choose this species.").performClick()
         compose.onNodeWithText("Your photo").assertIsDisplayed()
         compose.onNodeWithText("Reference photo").assertIsDisplayed()
         compose.onNodeWithText("Yes, this one").performClick()
@@ -380,6 +394,18 @@ class PhotoScreenTest {
         compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(photo, other), loaded = true, original = bytes, originalId = "photo-one"), false, "Synthetic sprout", 0,
             originalOpen = true, openPhotoId = "photo-two") } }
         compose.onNodeWithText("Offline \u00b7 showing a smaller copy").assertIsDisplayed()
+    }
+
+    // W4-P30: the viewer is full screen, so the app's tabs go while it shows and come back after.
+    @Test fun theViewerHidesTheTabsUntilItCloses() {
+        val hidden = mutableStateOf(false)
+        val open = mutableStateOf(true)
+        compose.setContent { CompositionLocalProvider(LocalHideTabs provides hidden) { FytoriumTheme {
+            PhotoScreen(PhotoState(listOf(photo), loaded = true), true, "Synthetic sprout", 0, originalOpen = open.value, openPhotoId = "photo-one")
+        } } }
+        compose.runOnIdle { assertTrue(hidden.value) }
+        compose.runOnIdle { open.value = false }
+        compose.runOnIdle { assertFalse(hidden.value) }
     }
 
     // A route whose picker returns one synthetic file, for Identify and the photo form.

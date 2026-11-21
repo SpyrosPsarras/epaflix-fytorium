@@ -41,7 +41,9 @@ export async function referencePhotos(key: number): Promise<ReferencePhoto[]> {
         : /^https?:\/\/creativecommons\.org\/publicdomain\/zero\/1\.0\/?$/.test(media.license) ? 'CC0' : null;
       if (!license) continue;
       const creator = [media.creator, media.rightsHolder].find(value => typeof value === 'string' && value.trim());
-      photos.push({ identifier: media.identifier, creator: creator?.trim().slice(0, 500) ?? 'Unknown photographer', license, source_url: source.href });
+      // iNaturalist originals run to several MB; its 500 px copy is enough for a 400 px thumbnail and downloads within the time limit.
+      const identifier = media.identifier.replace(/^(https:\/\/inaturalist-open-data\.s3\.amazonaws\.com\/photos\/\d+\/)original(\.\w+)$/, '$1medium$2');
+      photos.push({ identifier, creator: creator?.trim().slice(0, 500) ?? 'Unknown photographer', license, source_url: source.href });
     }
   }
   return photos;

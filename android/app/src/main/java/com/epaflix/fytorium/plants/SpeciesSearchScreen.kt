@@ -129,7 +129,7 @@ import com.epaflix.fytorium.*
     photo: androidx.compose.ui.unit.Dp = 80.dp, lines: List<String> = emptyList(), onClick: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Card(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).semantics {
-        contentDescription = "${candidate.headline}, ${endSentence(scientific)} Choose this species."
+        contentDescription = (listOf("${candidate.headline}, ${endSentence(scientific)}") + lines.map(::endSentence) + "Choose this species.").joinToString(" ")
     }) {
         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.size(photo))

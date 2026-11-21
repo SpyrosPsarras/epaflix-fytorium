@@ -35,6 +35,9 @@ import kotlinx.coroutines.withContext
 internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolean) =
     tab == "Today" && taskView == "today" && !feedSettings
 
+// A full-screen page, such as the photo viewer, hides the tabs while it shows.
+internal val LocalHideTabs = compositionLocalOf<MutableState<Boolean>> { mutableStateOf(false) }
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
@@ -119,7 +122,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var barPaused by remember { mutableStateOf(false) }
     var receiptsGone by remember { mutableIntStateOf(0) }
     LaunchedEffect(receiptsGone) { if (receiptsGone > 0) { barPaused = true; delay(500); barPaused = false } }
-    val showTabs = !WindowInsets.isImeVisible
+    val hideTabs = remember { mutableStateOf(false) }
+    val showTabs = !WindowInsets.isImeVisible && !hideTabs.value
+    CompositionLocalProvider(LocalHideTabs provides hideTabs) {
     Scaffold(topBar = {
         if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
             TopAppBar(title = { Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) })
@@ -300,6 +305,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             message?.let { Text(it) }
             if (busy) Text("Please wait…")
         }
+    }
     }
 }
 

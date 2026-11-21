@@ -53,11 +53,11 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 
 // The card keeps its 4:3 space before the photo loads, so nothing below it moves.
-@Composable private fun CardPhoto(photo: PhotoUpdate, thumbnails: Thumbnails?, onOpen: () -> Unit) {
+@Composable private fun CardPhoto(photo: PhotoUpdate, thumbnails: Thumbnails?, modifier: Modifier = Modifier.fillMaxWidth(), onOpen: (() -> Unit)?) {
     val bytes by produceState<ByteArray?>(null, photo.id, thumbnails) { value = withContext(Dispatchers.IO) { thumbnails?.load(photo.id, "display") } }
     val label = "Photo of ${photo.plantName}, ${dayMonthYear(photo.takenOn)}"
-    BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(MaterialTheme.colorScheme.surfaceVariant)
-        .clickable(onClickLabel = "Open photo") { onOpen() }.semantics { contentDescription = label }) {
+    BoxWithConstraints(modifier.aspectRatio(4f / 3f).background(MaterialTheme.colorScheme.surfaceVariant)
+        .then(if (onOpen != null) Modifier.clickable(onClickLabel = "Open photo") { onOpen() } else Modifier).semantics { contentDescription = label }) {
         val density = LocalDensity.current
         val width = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1)
         val bitmap by produceState<Bitmap?>(null, bytes, width) {
@@ -82,6 +82,8 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun PhotoViewer(photo: PhotoUpdate?, original: ByteArray?, online: Boolean, thumbnails: Thumbnails?, onBack: () -> Unit) {
     val display by produceState<ByteArray?>(null, photo?.id, thumbnails) { value = photo?.let { withContext(Dispatchers.IO) { thumbnails?.load(it.id, "display") } } }
+    val hideTabs = com.epaflix.fytorium.LocalHideTabs.current
+    DisposableEffect(hideTabs) { hideTabs.value = true; onDispose { hideTabs.value = false } }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
@@ -200,7 +202,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("No photos yet", style = MaterialTheme.typography.headlineSmall)
                 Button(onClick = { act(add) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add your first photo") }
-            } else LazyVerticalGrid(GridCells.Adaptive(360.dp), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
+            } else LazyVerticalGrid(GridCells.Adaptive(320.dp), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(state.photos, key = { it.id }) { photo ->
                     val day = dayMonthYear(photo.takenOn)
@@ -215,9 +217,9 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                                 var menu by remember { mutableStateOf(false) }
                                 Box {
                                     // A full 48 dp target, since IconButton's own node is 40 dp.
-                                    Box(Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { menu = true }
-                                        .semantics { contentDescription = "Actions for the $day photo of ${photo.plantName}" }, contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.MoreVert, null)
+                                    Box(Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { act { menu = true } }
+                                        .semantics { contentDescription = "Actions for the $day photo of ${photo.plantName}"; if (!enabled) disabled() }, contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.MoreVert, null, tint = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                                     }
                                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                                         if (!photo.cover) DropdownMenuItem(text = { Text("Use as cover") }, onClick = { menu = false; act { onChange(photo.id, "cover") } })
@@ -277,7 +279,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     deleting?.let { photo ->
         val day = dayMonthYear(photo.takenOn)
         AlertDialog(onDismissRequest = { if (!state.saving) deleting = null }, title = { DialogTitle("Delete this photo?") },
-            text = { DialogBody { Text("Delete the $day photo of ${photo.plantName}? This can't be undone."); PlantError(state.error) } },
+            text = { DialogBody { CardPhoto(photo, thumbnails, Modifier.width(160.dp), null); Text("Delete the $day photo of ${photo.plantName}? This can't be undone."); PlantError(state.error) } },
             confirmButton = { TextButton(onClick = { onChange(photo.id, "delete") }, enabled = enabled) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deleting = null }, enabled = !state.saving) { Text("Cancel") } })
     }

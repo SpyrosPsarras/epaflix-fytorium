@@ -79,7 +79,8 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         try {
             click("Take photo")
             compose.waitUntil(30_000) { monitor.hits == 1 }
-            click("Remove photo 2")
+            compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Remove photo 2 of 2")).assertIsDisplayed(); true }.getOrDefault(false) }
+            compose.onNodeWithContentDescription("Remove photo 2 of 2").performClick()
             // Restore the camera photo to exercise a two-photo identification upload.
             click("Take photo")
             compose.waitUntil(30_000) { monitor.hits == 2 }
@@ -135,8 +136,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Yes, this one")
         scroll(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic A06 identified sprout")
-        click("Site")
-        compose.onNodeWithText("Synthetic A06 site").performClick()
+        compose.onNode(hasText("Site") and hasText("Synthetic A06 site")).assertIsDisplayed()
         click("Save plant")
         compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A06 identified sprout" }
         val identified = rows("/api/plants").single { it.optString("nickname") == "Synthetic A06 identified sprout" }

@@ -3,16 +3,20 @@ import type { Candidate } from '$lib/plants';
 import { identificationLimits, identificationQuotaExhausted } from '$lib/identification';
 import type { Identity } from '../auth';
 import { db } from '../db';
+import { now } from '../clock';
 import { imageForm, sanitiseImage } from '../images';
 import { identificationTaxonomy, matchSpecies } from '../gbif';
 import { recordSpeciesSearch, withCommonNames } from '../species';
 import { plantnet } from './plantnet';
 
+const utcDay = () => now().toISOString().slice(0, 10);
 export async function storeQuota(remaining: number) {
-  await db().query('INSERT INTO identification_quota (singleton, remaining) VALUES (true, $1) ON CONFLICT (singleton) DO UPDATE SET remaining = EXCLUDED.remaining', [remaining]);
+  await db().query(`INSERT INTO identification_quota (singleton, remaining, stored_on) VALUES (true, $1, $2)
+    ON CONFLICT (singleton) DO UPDATE SET remaining = EXCLUDED.remaining, stored_on = EXCLUDED.stored_on`, [remaining, utcDay()]);
 }
 export async function identificationQuota(): Promise<{ remaining?: number }> {
-  const result = await db().query('SELECT remaining FROM identification_quota WHERE singleton');
+  // Pl@ntNet counts per day, so yesterday's count says nothing about today.
+  const result = await db().query('SELECT remaining FROM identification_quota WHERE singleton AND stored_on = $1', [utcDay()]);
   const remaining: number | undefined = result.rows[0]?.remaining;
   return remaining !== undefined && remaining <= 50 ? { remaining } : {};
 }

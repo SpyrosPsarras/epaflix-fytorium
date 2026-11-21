@@ -4130,6 +4130,7 @@ components:
       properties:
         remaining:
           type: integer
+          description: Pl@ntNet identifications left today, from the last answer stored today (UTC). Absent when 50 or more are left or nothing was stored today.
       required: []
       additionalProperties: false
     CareField:

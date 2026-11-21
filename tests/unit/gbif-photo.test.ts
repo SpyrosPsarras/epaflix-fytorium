@@ -36,3 +36,12 @@ test('reports upstream failure instead of caching it as no photo', async () => {
   vi.stubGlobal('fetch', async () => new Response('', { status: 503 }));
   await expect(referencePhotos(910701)).rejects.toMatchObject({ status: 503 });
 });
+
+test('asks iNaturalist for its 500 px copy instead of the full original', async () => {
+  vi.stubGlobal('fetch', async () => Response.json({ results: [{ references: 'https://www.inaturalist.org/observations/1', media: [
+    { identifier: 'https://inaturalist-open-data.s3.amazonaws.com/photos/604529562/original.jpg', license: 'http://creativecommons.org/publicdomain/zero/1.0/', creator: 'Synthetic creator' },
+    { identifier: 'https://images.example/original.jpg', license: 'http://creativecommons.org/publicdomain/zero/1.0/', creator: 'Synthetic creator' },
+  ] }] }));
+  expect((await referencePhotos(910701)).map(photo => photo.identifier)).toEqual([
+    'https://inaturalist-open-data.s3.amazonaws.com/photos/604529562/medium.jpg', 'https://images.example/original.jpg']);
+});

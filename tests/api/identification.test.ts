@@ -249,6 +249,15 @@ test('stores the last quota across app restart, returns it when low and hides it
   expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 50 });
 });
 
+test('forgets a stored quota the next day, since Pl@ntNet counts per day', async () => {
+  harness.setPlantnet({}, 429);
+  expect((await identify([gpsImage])).status).toBe(429);
+  expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 0 });
+  await owner.request('/__test/clock', 'POST', { action: 'advance', milliseconds: 86400000 });
+  try { expect(await (await owner.request('/api/identification')).json()).toEqual({}); }
+  finally { await owner.request('/__test/clock', 'POST', { action: 'reset' }); harness.setPlantnet(); }
+});
+
 test('reports exhausted quota, upstream rejection, service errors, invalid responses and bounded timeout clearly', async () => {
   for (const [status, delay, payload, expected, message] of [
     [429, 0, {}, 429, 'quota is exhausted'],
