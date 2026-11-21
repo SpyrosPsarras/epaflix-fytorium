@@ -55,7 +55,8 @@ import java.time.ZoneOffset
 // Two photos of one plant from one day carry their place among that day's photos, so the actions and Delete name the right one.
 internal fun photoPlace(photo: PhotoUpdate, photos: List<PhotoUpdate>): Pair<Int, Int>? {
     val same = photos.filter { it.plantId == photo.plantId && it.takenOn == photo.takenOn }
-    return if (same.size < 2) null else same.indexOfFirst { it.id == photo.id } + 1 to same.size
+    val index = same.indexOfFirst { it.id == photo.id }
+    return if (same.size < 2 || index < 0) null else index + 1 to same.size
 }
 internal fun photoName(photo: PhotoUpdate, photos: List<PhotoUpdate>) = photoPlace(photo, photos)
     ?.let { (n, of) -> "${photo.plantName}'s photo $n of $of from ${dayMonthYear(photo.takenOn)}" } ?: "the ${dayMonthYear(photo.takenOn)} photo of ${photo.plantName}"
