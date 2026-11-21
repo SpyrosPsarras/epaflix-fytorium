@@ -170,7 +170,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     var deleting by rememberSaveable { mutableStateOf<PhotoUpdate?>(null) }
     var discarding by rememberSaveable { mutableStateOf(false) }
     val discardBody = "Your photo update for ${plantName ?: "this plant"} is not saved yet."
-    fun changed() = form && (note.isNotEmpty() || health.isNotEmpty() || date.isNotEmpty() || selectedCount > 0)
+    fun changed() = (form || formOnly) && (note.isNotEmpty() || health.isNotEmpty() || date.isNotEmpty() || selectedCount > 0)
     fun clear() { form = formOnly; note = ""; health = ""; date = ""; discarding = false; onDiscard(); if (formOnly) onBack() }
     SideEffect { onFormDirty { discardBody.takeIf { changed() } } }
     val currentDirty by rememberUpdatedState(onFormDirty)

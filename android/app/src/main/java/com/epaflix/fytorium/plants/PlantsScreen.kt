@@ -77,6 +77,14 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     // A page opened from a form or the plant page returns to it as the user left it, with what was typed, chosen or unfolded.
     val forms = rememberSaveableStateHolder()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val currentKeepPath by rememberUpdatedState(keepPhotoPath)
+    // Leaving Plants (a tab switch the user confirmed) ends the add flow too; rotation keeps it.
+    DisposableEffect(Unit) { onDispose {
+        if ((context as? android.app.Activity)?.isChangingConfigurations != true) {
+            java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
+            currentKeepPath?.let { java.io.File(it).delete() }
+        }
+    } }
     val detailScroll = key(id) { rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() } }
     var speciesCareFrom by rememberSaveable { mutableStateOf("detail") }
     var leavingFor by rememberSaveable { mutableStateOf<String?>(null) }

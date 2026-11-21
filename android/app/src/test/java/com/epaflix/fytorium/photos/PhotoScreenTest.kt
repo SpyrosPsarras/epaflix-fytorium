@@ -452,6 +452,18 @@ class PhotoScreenTest {
         }
     }
 
+    // A direct form reopened after an upload still asks before dropping a new note.
+    @Test fun aDirectFormAfterAnUploadStillAsksBeforeDroppingANote() {
+        val state = mutableStateOf(PhotoState(today = "2026-10-13"))
+        var left = 0
+        compose.setContent { FytoriumTheme { PhotoScreen(state.value, true, "Synthetic sprout", 0, formOnly = true, onBack = { left++ }) } }
+        compose.runOnIdle { state.value = state.value.copy(uploadRevision = 1) }
+        compose.onNodeWithText("Note").performScrollTo().performTextInput("Synthetic second note")
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard changes?").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, left) }
+    }
+
     // W4-P26: Back with photos chosen asks before dropping them.
     @Test fun identifyAsksBeforeDroppingPhotos() {
         var left = 0
