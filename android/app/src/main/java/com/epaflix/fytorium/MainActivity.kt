@@ -8,8 +8,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 
 class MainActivity : ComponentActivity() {
     private lateinit var session: SessionController
@@ -30,14 +34,16 @@ class MainActivity : ComponentActivity() {
             val careState by app.repository.state.collectAsState()
             val online by care.online.collectAsState()
             FytoriumTheme {
-                AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
-                    onLogin = { login() }, onLogout = session::logout,
-                    careState = careState, controller = care, thumbnails = app.thumbnails, feed = app.feed,
-                    homeRequest = homeRequest.intValue, deviceOnline = state.loggedIn && online, sitesApi = app.api, sitesConnected = { app.store.tokens != null && care.connected() },
-                    onCopyDiagnostics = {
-                        getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                            ClipData.newPlainText("Fytorium diagnostics", session.copyDiagnostics()))
-                    })
+                Box(Modifier.fillMaxSize().imePadding()) {
+                    AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
+                        onLogin = { login() }, onLogout = session::logout,
+                        careState = careState, controller = care, thumbnails = app.thumbnails, feed = app.feed,
+                        homeRequest = homeRequest.intValue, deviceOnline = state.loggedIn && online, sitesApi = app.api, sitesConnected = { app.store.tokens != null && care.connected() },
+                        onCopyDiagnostics = {
+                            getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                                ClipData.newPlainText("Fytorium diagnostics", session.copyDiagnostics()))
+                        })
+                }
             }
         }
         if (savedInstanceState == null && intent.data != null) forwardRedirect(intent)

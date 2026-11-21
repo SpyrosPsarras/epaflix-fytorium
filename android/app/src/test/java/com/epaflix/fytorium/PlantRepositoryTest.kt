@@ -51,6 +51,17 @@ class PlantRepositoryTest {
         assertEquals(mapOf("nickname" to "Too long", "pot_size_cm" to "Invalid size"), repo.plantState.value.errors)
         assertFalse(repo.plantState.value.blocked)
     }
+    @Test fun aValidSearchWithNoMatchClearsThePreviousSearchFailure() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertNull(repo.searchSpecies("fern"))
+        assertNotNull(repo.plantState.value.reads["search"])
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"message":"No matching species"}"""))
+        assertEquals(emptyList<com.epaflix.fytorium.plants.SpeciesCandidate>(), repo.searchSpecies("zzqxw")?.candidates)
+        assertNull(repo.plantState.value.reads["search"])
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Search not allowed"}"""))
+        assertNull(repo.searchSpecies("fern"))
+        assertEquals("Search not allowed", repo.plantState.value.reads.getValue("search").message)
+    }
     @Test fun careFailureDoesNotBlockPlantWritesOnValidatedNetwork() = repository { repo, server ->
         server.enqueue(MockResponse().setResponseCode(503))
         repo.refresh()

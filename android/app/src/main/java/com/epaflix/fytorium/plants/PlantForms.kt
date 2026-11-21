@@ -41,7 +41,6 @@ import com.epaflix.fytorium.DialogTitle
 import com.epaflix.fytorium.ApiClient
 import com.epaflix.fytorium.barHeight
 import com.epaflix.fytorium.CareTask
-import com.epaflix.fytorium.ReferencePhoto
 import com.epaflix.fytorium.Plant
 import com.epaflix.fytorium.countLabel
 import com.epaflix.fytorium.dayMonthYear
@@ -195,44 +194,6 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
                 PlantError(errors[key])
             }
         }
-    }
-}
-@Composable fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit, onSelect: (SpeciesCandidate, String, Boolean) -> Unit, imageApi: ApiClient? = null,
-    onDirty: (() -> Boolean) -> Unit = {}) {
-    var query by rememberSaveable { mutableStateOf("") }
-    SideEffect { onDirty { query.isNotBlank() } }
-    var selectedKey by rememberSaveable { mutableStateOf<Long?>(null) }
-    val selected = result?.candidates?.firstOrNull { it.key == selectedKey }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Heading("Species search", style = MaterialTheme.typography.headlineSmall) }
-        item { OutlinedTextField(query, { query = it }, label = { Text("Species name") }, supportingText = { Text("Common or scientific name, English, Norwegian or Greek") }, singleLine = true, enabled = writable, modifier = Modifier.fillMaxWidth()) }
-        item { Button(onClick = { selectedKey = null; onSearch(query.trim()) }, enabled = writable && query.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search species") } }
-        if (result != null) {
-            if (selected == null) {
-                if (result.candidates.isEmpty()) item { Text("No species found.") }
-                items(result.candidates, key = { it.key }) { candidate ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
-                        Column(Modifier.weight(1f)) {
-                            Heading(candidate.headline, style = MaterialTheme.typography.titleMedium)
-                            if (candidate.commonName != null) Text(candidate.canonicalName)
-                            candidate.matchNote?.let { Text(it) }
-                            if (candidate.matchType == "FUZZY" && candidate.confidence != null) Text("Close match, ${candidate.confidence}%")
-                            OutlinedButton(onClick = {
-                                if (candidate.requiresConfirmation) selectedKey = candidate.key else onSelect(candidate, result.id, false)
-                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.headline) }
-                        }
-                    }
-                }
-            } else selected?.let { candidate -> item {
-                Heading("Confirm species")
-                ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
-                Text("This match needs your confirmation. Is " + candidate.scientificName + " the species you meant?")
-                Button(onClick = { onSelect(candidate, result.id, true) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm " + candidate.canonicalName) }
-                TextButton(onClick = { selectedKey = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }
-            } }
-        }
-        item { Text("Names from GBIF, CC BY 4.0") }
     }
 }
 // The plant's own intervals. Each task says how often it is due now and where that comes from, so a blank field means something.

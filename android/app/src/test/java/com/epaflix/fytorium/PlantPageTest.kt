@@ -1,16 +1,24 @@
 package com.epaflix.fytorium
 
-import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
+import android.graphics.Insets
 import android.os.Looper
+import android.os.Parcel
 import android.text.InputType
+import android.view.View
+import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
+import androidx.compose.runtime.saveable.SaveableStateRegistry
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -24,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.room.Room
 import com.epaflix.fytorium.plants.*
 import com.epaflix.fytorium.species.*
+import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.ThreadContextElement
 import okhttp3.mockwebserver.*
 import org.json.JSONArray
@@ -1681,13 +1690,460 @@ class PlantPageTest {
 
     private val speciesSearch = """{"search_id":"search-one","candidates":[{"gbif_key":910019,"scientific_name":"Testoria nova Inventor","canonical_name":"Testoria nova","rank":"SPECIES","match_type":"EXACT","confidence":99,"requires_confirmation":false,"matched_name":null,"matched_language":null,"common_name":"Synthetic star"}]}"""
     private val notResponding = hasText("Fytorium isn't responding") and hasClickAction()
+    private val starResult = hasContentDescription("Synthetic star, Testoria nova. Choose this species.")
+
+    @Test fun searchKeepsTheLastAnswerThroughProgressFailureAndDraftRestore() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val online = AtomicBoolean(true)
+        withPlantServer(connected = online::get, respond = { request ->
+            when (request.requestUrl?.queryParameter("q")) {
+                "nova" -> MockResponse().setBody(speciesSearch)
+                "unanswered" -> {
+                    started.countDown()
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                    MockResponse().setResponseCode(503)
+                }
+                else -> null
+            }
+        }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            val star = hasText("Synthetic star")
+            fun search(query: String) {
+                field.performTextReplacement(query)
+                compose.onNodeWithContentDescription("Search species").performClick()
+            }
+            search("nova")
+            compose.waitUntil(5_000) { compose.onAllNodes(star).fetchSemanticsNodes().isNotEmpty() }
+            try {
+                search("unanswered")
+                assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                compose.onNode(star).assertIsDisplayed()
+            } finally { release.countDown() }
+            compose.waitUntil(5_000) { compose.onAllNodes(notResponding).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(star).assertIsDisplayed()
+            online.set(false)
+            repo.connectivityChanged(false)
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Offline", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            restoration.emulateSavedInstanceStateRestore()
+            compose.waitUntil(5_000) { compose.onAllNodes(star).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(star).assertIsDisplayed()
+            compose.onNode(hasText("Species name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText)).assertTextContains("unanswered")
+        }
+    }
+
+    @Test fun offlineSpeciesSearchKeepsTheLastAnswerAndSendsNoRequest() {
+        val online = AtomicBoolean(true)
+        val paths = java.util.Collections.synchronizedList(mutableListOf<String>())
+        withPlantServer(served = { path -> speciesSearch.takeIf { path == "/api/species/search" } }, paths = paths, connected = online::get) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            val search = compose.onNodeWithContentDescription("Search species")
+            field.performTextInput("nova")
+            search.performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.runOnIdle { online.set(false); repo.connectivityChanged(false) }
+            field.assertIsEnabled().performClick().assertIsFocused().performTextReplacement("zzqxw")
+            search.assertIsEnabled().performClick()
+            compose.waitUntil(5_000) { repo.plantState.value.reads["search"]?.offline == true && Running.count.get() == 0 }
+            field.assertIsNotFocused().assertTextContains("zzqxw")
+            compose.onNode(starResult).assertIsDisplayed().assertIsNotEnabled()
+            compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
+            compose.onAllNodesWithText("No species called", substring = true).assertCountEquals(0)
+            assertEquals(1, synchronized(paths) { paths.count { it == "/api/species/search" } })
+            compose.onRoot().captureRoboImage("src/test/screenshots/native-plants-search-offline.png")
+        }
+    }
+
+    @Test fun aSearchUnansweredWhenThePageIsRecreatedIsSentAgain() {
+        val releases = listOf(java.util.concurrent.CountDownLatch(1), java.util.concurrent.CountDownLatch(1))
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val alba = """{"search_id":"search-two","candidates":[{"gbif_key":910022,"scientific_name":"Testoria alba Maker","canonical_name":"Testoria alba","rank":"SPECIES","match_type":"EXACT","confidence":100,"requires_confirmation":false,"common_name":"Synthetic snow"}]}"""
+        // Calls 1 and 3 are held until the page has been recreated; calls 2 and 4 answer at once.
+        withPlantServer(respond = { request ->
+            if (request.requestUrl?.queryParameter("q") != "nova") null
+            else when (calls.incrementAndGet()) {
+                1, 3 -> { releases[calls.get() / 2].await(10, java.util.concurrent.TimeUnit.SECONDS); MockResponse().setBody(speciesSearch) }
+                2 -> MockResponse().setBody(speciesSearch)
+                else -> MockResponse().setBody(alba)
+            }
+        }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            field.performTextInput("nova")
+            val search = compose.onNodeWithContentDescription("Search species")
+            try {
+                search.performClick()
+                compose.waitUntil(5_000) { calls.get() == 1 }
+                restoration.emulateSavedInstanceStateRestore()
+                releases[0].countDown()
+                compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() && calls.get() == 2 }
+                // The same query again: the earlier answer must not count as this submission's answer.
+                compose.onNodeWithContentDescription("Search species").performClick()
+                compose.waitUntil(5_000) { calls.get() == 3 }
+                restoration.emulateSavedInstanceStateRestore()
+                releases[1].countDown()
+                compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic snow").fetchSemanticsNodes().isNotEmpty() }
+                assertEquals(4, calls.get())
+            } finally { releases.forEach { it.countDown() } }
+        }
+    }
+
+    @Test fun aRetryAfterOtherReloadsDoesNotResendANewerSearchThatAnswered() {
+        val holdPlants = AtomicBoolean(false)
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val novaCalls = java.util.concurrent.atomic.AtomicInteger()
+        withPlantServer(respond = { request ->
+            when {
+                request.requestUrl?.encodedPath == "/api/plants" && holdPlants.getAndSet(false) -> {
+                    started.countDown()
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                    null
+                }
+                request.requestUrl?.queryParameter("q") == "unanswered" -> MockResponse().setResponseCode(503)
+                request.requestUrl?.queryParameter("q") == "nova" -> MockResponse().setBody(speciesSearch).also { novaCalls.incrementAndGet() }
+                else -> null
+            }
+        }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            fun search(query: String) {
+                field.performTextReplacement(query)
+                compose.onNodeWithContentDescription("Search species").performClick()
+            }
+            search("unanswered")
+            compose.waitUntil(5_000) { compose.onAllNodes(notResponding).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            holdPlants.set(true)
+            compose.onNode(notResponding).performClick()
+            compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
+            try {
+                assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                // Queued behind the held reload read; it answers before the reload's own retry.
+                search("nova")
+            } finally { release.countDown() }
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { Running.count.get() == 0 && !repo.plantState.value.refreshing }
+            compose.waitForIdle()
+            assertEquals(1, novaCalls.get())
+        }
+    }
+
+    @Test fun aRetryCutShortByRecreationIsSentAgainWithProgress() {
+        val online = AtomicBoolean(false)
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val retried = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        withPlantServer(connected = online::get, respond = { request ->
+            if (request.requestUrl?.queryParameter("q") != "nova") null
+            else if (calls.incrementAndGet() == 1) { retried.countDown(); release.await(10, java.util.concurrent.TimeUnit.SECONDS); MockResponse().setBody(speciesSearch) }
+            else MockResponse().setBody(speciesSearch)
+        }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            compose.runOnIdle { repo.connectivityChanged(false) }
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { repo.plantState.value.reads["search"]?.offline == true && Running.count.get() == 0 }
+            // The reconnect reload retries the search; recreation cuts that retry short.
+            compose.runOnIdle { online.set(true); repo.connectivityChanged(true) }
+            val progress = SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)
+            try {
+                compose.waitUntil(5_000) { retried.count == 0L }
+                restoration.emulateSavedInstanceStateRestore()
+                compose.waitUntil(5_000) { compose.onAllNodes(progress).fetchSemanticsNodes().isNotEmpty() }
+            } finally { release.countDown() }
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(2, calls.get())
+        }
+    }
+
+    @Test fun searchIsOffWhileASpeciesChangeSaves() {
+        val saving = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        withPlantServer(respond = { request ->
+            if (request.method == "POST" && request.requestUrl?.encodedPath == "/api/plants/plant-one/species") {
+                saving.countDown(); release.await(10, java.util.concurrent.TimeUnit.SECONDS); MockResponse().setResponseCode(503)
+            } else null
+        }, served = { path -> speciesSearch.takeIf { path == "/api/species/search" } }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id) } }
+            val settings = hasContentDescription("Plant settings") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(settings).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(settings).performClick()
+            compose.onNodeWithText("Change species").performClick()
+            val field = hasText("Species name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(field).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(field).performTextInput("nova")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(starResult).performScrollTo().performClick()
+            try {
+                compose.onNodeWithText("Change Synthetic fern to Synthetic star").performClick()
+                assertTrue(saving.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                compose.onNodeWithText("Choose another species").performClick()
+                val searchField = hasText("Species name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText)
+                compose.onNode(searchField).assertIsNotEnabled()
+                // Recreation forgets the screen's own saving flag, but the save is still running.
+                restoration.emulateSavedInstanceStateRestore()
+                compose.waitUntil(5_000) { compose.onAllNodes(searchField).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(searchField).assertIsNotEnabled()
+            } finally { release.countDown() }
+        }
+    }
+
+    @Test fun mixedSearchKeepsServerOrderAndReplacesTheAnswerOnNoMatch() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val mixed = """{"search_id":"5dec8cd4-5f18-4157-a8df-22207fe8a9f0","candidates":[
+            {"gbif_key":910019,"scientific_name":"Testoria nova Inventor","canonical_name":"Testoria nova","rank":"SPECIES","match_type":"FUZZY","confidence":90,"requires_confirmation":true,"common_name":"Synthetic star","matched_name":"Synthetic starlight","matched_language":"en"},
+            {"gbif_key":910022,"scientific_name":"Testoria alba Maker","canonical_name":"Testoria alba","rank":"SPECIES","match_type":"EXACT","confidence":100,"requires_confirmation":false}]}"""
+        withPlantServer(respond = { request ->
+            when (request.requestUrl?.queryParameter("q")) {
+                "starlight" -> MockResponse().setBody(mixed)
+                "zzqxw" -> {
+                    started.countDown()
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                    MockResponse().setResponseCode(422).setBody("""{"message":"No matching species"}""")
+                }
+                else -> null
+            }
+        }) { repo, showing ->
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            fun search(query: String) {
+                field.performTextReplacement(query)
+                compose.onNodeWithContentDescription("Search species").performClick()
+            }
+            val legacy = hasContentDescription("Testoria alba, Testoria alba. Choose this species.")
+            val progress = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
+            val title = compose.onNode(hasText("Add plant") and isHeading())
+            val alias = compose.onNodeWithText("Matches \u201cSynthetic starlight\u201d")
+            search("starlight")
+            compose.waitUntil(5_000) { compose.onAllNodes(legacy).fetchSemanticsNodes().isNotEmpty() }
+            alias.assertIsDisplayed()
+            val starBounds = compose.onNode(starResult).fetchSemanticsNode().boundsInRoot
+            assertTrue(starBounds.bottom < compose.onNode(legacy).fetchSemanticsNode().boundsInRoot.top)
+            val titleBounds = title.fetchSemanticsNode().boundsInRoot
+            try {
+                search("zzqxw")
+                assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                progress.assertIsDisplayed()
+                assertTrue(progress.fetchSemanticsNode().boundsInRoot.bottom < titleBounds.top)
+                assertEquals(titleBounds, title.fetchSemanticsNode().boundsInRoot)
+                assertEquals(starBounds, compose.onNode(starResult).fetchSemanticsNode().boundsInRoot)
+                alias.assertIsDisplayed()
+            } finally { release.countDown() }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No species called \u201czzqxw\u201d").fetchSemanticsNodes().isNotEmpty() }
+            progress.assertDoesNotExist()
+            compose.onNode(starResult).assertDoesNotExist()
+            compose.onNode(legacy).assertDoesNotExist()
+            compose.onNodeWithText(refused).assertDoesNotExist()
+        }
+    }
+
+    @Test fun coldSearchRestoreKeepsTheDraftConfirmationAndListOffset() {
+        val paths = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val template = JSONObject(speciesSearch).getJSONArray("candidates").getJSONObject(0).toString()
+        val results = JSONArray((1..10).map { n -> JSONObject(template).put("gbif_key", 910110 + n)
+            .put("common_name", "Synthetic plant $n").put("requires_confirmation", true) })
+        val answer = JSONObject(speciesSearch).put("candidates", results).toString()
+        withPlantServer(paths = paths, served = { path -> answer.takeIf { path == "/api/species/search" } }) { original, showing ->
+            val screen = mutableStateOf(original to SaveableStateRegistry(null) { true })
+            compose.setContent { if (showing.value) {
+                val (repo, saved) = screen.value
+                CompositionLocalProvider(LocalSaveableStateRegistry provides saved) {
+                    FytoriumTheme { val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialAdd = true) }
+                }
+            } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            field.performTextReplacement("nova")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            val first = hasContentDescription("Synthetic plant 1, Testoria nova. Choose this species.")
+            compose.waitUntil(5_000) { compose.onAllNodes(first).fetchSemanticsNodes().isNotEmpty() }
+            field.performTextReplacement("Unsaved fern search")
+            field.assertTextContains("Unsaved fern search")
+            val list = compose.onNode(hasScrollToIndexAction())
+            list.performScrollToIndex(7)
+            list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 26f) }
+            val card = compose.onNodeWithContentDescription("Synthetic plant 8, Testoria nova. Choose this species.")
+            val offset = card.fetchSemanticsNode().positionInRoot.y - list.fetchSemanticsNode().positionInRoot.y
+            val dialog = hasAnyAncestor(isDialog())
+            card.performClick()
+            compose.onNode(hasText("Synthetic plant 8") and dialog).assertIsDisplayed()
+            val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), CareDatabase::class.java).allowMainThreadQueries().build()
+            val cache = CareCache(db)
+            cache.bind("""{"member":{"id":"member-one","role":"owner"}}""")
+            val fresh = Repository(api, cache, { false }).apply { restore() }
+            try {
+                val restored = compose.runOnIdle {
+                    val parcel = Parcel.obtain()
+                    try {
+                        parcel.writeMap(screen.value.second.performSave())
+                        parcel.setDataPosition(0)
+                        val saved = parcel.readHashMap(javaClass.classLoader, String::class.java, List::class.java)!!
+                        showing.value = false
+                        SaveableStateRegistry(saved) { true }
+                    } finally { parcel.recycle() }
+                }
+                compose.runOnIdle { screen.value = fresh to restored; showing.value = true }
+                compose.onNode(hasText("Synthetic plant 8") and dialog).assertIsDisplayed()
+                compose.onNode(hasText("Back") and dialog).performClick()
+                assertEquals(offset, card.fetchSemanticsNode().positionInRoot.y - list.fetchSemanticsNode().positionInRoot.y, 0.5f)
+                list.performScrollToIndex(0)
+                compose.onNodeWithText("Species name").assertTextContains("Unsaved fern search")
+                assertEquals(1, synchronized(paths) { paths.count { it == "/api/species/search" } })
+            } finally {
+                compose.runOnIdle { showing.value = false }
+                compose.waitUntil(5_000) { Running.count.get() == 0 }
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun landscapeKeyboardLeavesSearchVisibleAndRestoresNavigation() = landscapeKeyboard(edit = false)
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun landscapeKeyboardLeavesEditNameVisibleAndRestoresNavigation() = landscapeKeyboard(edit = true)
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun addingASpeciesNameShowsItsReceiptWithTheKeyboardOpen() {
+        withLandscapeKeyboard(served = { path -> when (path) {
+            "/api/species/910001" -> """{"gbif_key":910001,"scientific_name":"Testoria lucida Inventor","canonical_name":"Testoria lucida","rank":"SPECIES","common_name":"Synthetic lantern","names":[]}"""
+            "/api/species/910001/names" -> "{}"
+            else -> null
+        } }) { _, ime ->
+            val plants = compose.onNode(hasText("Plants") and isSelectable())
+            plants.performClick()
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            reveal(hasText("Details")).performClick()
+            reveal(hasText("Species names")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Fytorium chose it from the names sources give.").fetchSemanticsNodes().isNotEmpty() }
+            reveal(hasText("Common name") and hasSetTextAction()).performClick().assertIsFocused().performTextInput("Synthetic star")
+            ime(true)
+            plants.assertDoesNotExist()
+            val add = compose.onNode(hasText("Add name") and hasClickAction())
+            add.performScrollTo().assertIsDisplayed().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Added the name \u201cSynthetic star\u201d").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Added the name \u201cSynthetic star\u201d").assertIsDisplayed()
+            plants.assertDoesNotExist()
+            compose.onRoot().captureRoboImage("src/test/screenshots/native-plants-name-receipt-ime.png")
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    fun offlineAddExplainsWhyWithPlantSearchFocusedAndTheKeyboardOpen() {
+        // Offline from the start, so the line keeps the cache's fixed time and the reference image never changes.
+        val online = AtomicBoolean(false)
+        withLandscapeKeyboard(connected = online::get) { repo, ime ->
+            val plants = compose.onNode(hasText("Plants") and isSelectable())
+            plants.performClick()
+            val field = compose.onNode(hasText("Search plants") and hasSetTextAction()).performClick().assertIsFocused()
+            compose.runOnIdle { online.set(false); repo.connectivityChanged(false) }
+            ime(true)
+            plants.assertDoesNotExist()
+            // The Offline line joins the top bar first; the explanation must not move the field after that.
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Offline", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            val bounds = field.fetchSemanticsNode().boundsInRoot
+            val message = "Adding a plant needs a connection."
+            compose.onNode(hasContentDescription("Add plant") and hasStateDescription(message)).assertIsNotEnabled().performClick()
+            compose.onNodeWithContentDescription(message).assertIsDisplayed()
+            field.assertIsFocused().assertIsDisplayed()
+            assertEquals(bounds, field.fetchSemanticsNode().boundsInRoot)
+            plants.assertDoesNotExist()
+            compose.onRoot().captureRoboImage("src/test/screenshots/native-plants-offline-add-ime.png")
+        }
+    }
+
+    private fun landscapeKeyboard(edit: Boolean) = withLandscapeKeyboard { _, ime ->
+        val plants = compose.onNode(hasText("Plants") and isSelectable())
+        plants.performClick()
+        if (edit) {
+            compose.onNodeWithTag("plant:plant-one").performClick()
+            val action = hasContentDescription("Edit plant") and isEnabled()
+            compose.waitUntil(5_000) { compose.onAllNodes(action).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(action).performClick()
+        } else compose.onNodeWithContentDescription("Add plant").performClick()
+        val matcher = hasText(if (edit) "Name" else "Species name") and hasSetTextAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(matcher and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        val field = reveal(matcher).performClick().assertIsFocused()
+        val height = field.fetchSemanticsNode().size.height.toFloat()
+        val keyboardTop = compose.onAllNodes(isRoot()).fetchSemanticsNodes().maxOf { it.boundsInRoot.bottom } - landscapeKeyboardHeight
+        ime(true)
+        plants.assertDoesNotExist()
+        field.assertIsFocused().assertIsDisplayed()
+        val visible = field.fetchSemanticsNode().boundsInRoot
+        assertEquals("Focused field must not be clipped by the keyboard", height, visible.height, 1f)
+        assertTrue("Focused field must sit above the keyboard: $visible, keyboard top $keyboardTop", visible.bottom <= keyboardTop)
+        ime(false)
+        plants.assertIsDisplayed().assertIsSelected()
+    }
+
+    private val landscapeKeyboardHeight = 174
+
+    private fun withLandscapeKeyboard(served: (String) -> String? = { null }, connected: () -> Boolean = { true },
+        test: (Repository, (Boolean) -> Unit) -> Unit) = withPlantServer(served = served, connected = connected) { repo, showing ->
+        lateinit var view: View
+        val app = RuntimeEnvironment.getApplication()
+        val credentials = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
+        val controller = CareController(app, credentials, repo, api)
+        fun ime(visible: Boolean) = compose.runOnUiThread {
+            val type = WindowInsets.Type.ime()
+            val inset = if (visible) landscapeKeyboardHeight else 0
+            val simulated = WindowInsets.Builder().setInsets(type, Insets.of(0, 0, 0, inset)).setVisible(type, visible).build()
+            assertEquals(inset, simulated.getInsets(type).bottom)
+            assertEquals(visible, simulated.isVisible(type))
+            view.dispatchApplyWindowInsets(simulated)
+        }
+        try {
+            compose.setContent { if (showing.value) {
+                CheckLandscape(1f)
+                view = LocalView.current
+                val care by repo.state.collectAsState()
+                FytoriumTheme { Box(Modifier.fillMaxSize().imePadding()) { AppShell(true, false, careState = care, controller = controller) } }
+            } }
+            test(repo, ::ime)
+        } finally { controller.close() }
+    }
+
+    @Test fun noMatchUsesTheSubmittedQueryAndOffersIdentifyWithoutAStatusFailure() {
+        withPlantServer(respond = { request ->
+            if (request.requestUrl?.queryParameter("q") == "zzqxw") MockResponse().setResponseCode(422).setBody("""{"message":"No matching species"}""") else null
+        }) { repo, showing ->
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { if (showing.value) FytoriumTheme { Surface { val care by repo.state.collectAsState()
+                PlantsScreen(care, repo, initialAdd = true, photosApi = api, photosConnected = { true }) } } }
+            val field = compose.onNode(hasText("Species name") and hasSetTextAction())
+            field.performTextReplacement("  zzqxw  ")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            val miss = "No species called \u201czzqxw\u201d"
+            compose.waitUntil(5_000) { compose.onAllNodesWithText(miss).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onRoot().captureRoboImage("src/test/screenshots/native-plants-search-no-match.png")
+            field.performTextReplacement("testoria")
+            restoration.emulateSavedInstanceStateRestore()
+            compose.onNodeWithText(miss).assertIsDisplayed()
+            compose.onNodeWithText("Check the spelling, try the scientific name, or identify it from photos.").assertIsDisplayed()
+            compose.onNodeWithText(refused).assertDoesNotExist()
+            compose.onNodeWithText("Identify from photos").performClick()
+            compose.onNodeWithText("Identify from photos?").assertIsDisplayed()
+        }
+    }
     private fun searchChangeSpecies() {
         compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Plant settings").performClick()
         compose.onNodeWithText("Change species").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic fern is currently", substring = true).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
-        compose.onNodeWithText("Search species").performClick()
+        compose.onNode(hasText("Species name") and hasSetTextAction()).assertIsNotFocused().performTextInput("nova")
+        compose.onNodeWithContentDescription("Search species").performClick()
     }
 
     // C1b: a species search Fytorium did not answer shows in the line, and Try again runs it again.
@@ -1700,7 +2156,7 @@ class PlantPageTest {
             failing.set(false)
             compose.onNode(notResponding).performClick()
             compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasText("isn't responding", substring = true)).assertDoesNotExist()
         }
     }
@@ -1735,11 +2191,11 @@ class PlantPageTest {
                 fun searches() = synchronized(paths()) { paths().count { it == "/api/species/search" } }
                 val before = searches()
                 compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
-                compose.onNodeWithText("Search species").performClick()
+                compose.onNodeWithContentDescription("Search species").performClick()
                 compose.waitUntil(5_000) { searches() > before }
                 compose.onNode(hasText("isn't responding", substring = true)).assertDoesNotExist()
             } finally { hold.countDown() }
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
         }
     }
 
@@ -2794,9 +3250,9 @@ class PlantPageTest {
             compose.onNodeWithText("Change species").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Species name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
-            compose.onNodeWithText("Search species").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(starResult).performScrollTo().performClick()
             val change = hasText("Change Synthetic fern to Synthetic star")
             val before = compose.onNode(change).fetchSemanticsNode().boundsInRoot
             compose.onNode(change).performClick()
@@ -3310,9 +3766,9 @@ class PlantPageTest {
                 val query = hasText("Species name") and hasSetTextAction()
                 compose.waitUntil(5_000) { compose.onAllNodes(query and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNode(query).performTextInput("nova")
-                compose.onNodeWithText("Search species").performClick()
-                compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+                compose.onNodeWithContentDescription("Search species").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(starResult).performScrollTo().performClick()
                 compose.waitUntil(5_000) { compose.onAllNodesWithText("Save plant").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
                 compose.onAllNodes(hasText(refused, substring = true)).assertCountEquals(0)
             } finally { controller.close() }
@@ -3339,9 +3795,9 @@ class PlantPageTest {
             compose.onNodeWithText("Change species").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic fern is currently Synthetic lantern (Testoria lucida).", substring = true).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
-            compose.onNodeWithText("Search species").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(starResult).performScrollTo().performClick()
             compose.onNodeWithText("Chosen species: Synthetic star (Testoria nova)").assertIsDisplayed()
             compose.onAllNodes(hasText("Inventor", substring = true)).assertCountEquals(0)
             compose.onNodeWithText("Change Synthetic fern to Synthetic star").performClick()
@@ -3379,9 +3835,9 @@ class PlantPageTest {
                 compose.onNodeWithText("Change species").performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(hasText("Species name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNode(hasText("Species name") and hasSetTextAction()).performTextInput("nova")
-                compose.onNodeWithText("Search species").performClick()
-                compose.waitUntil(5_000) { compose.onAllNodesWithText("Choose Synthetic star").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("Choose Synthetic star").performScrollTo().performClick()
+                compose.onNodeWithContentDescription("Search species").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(starResult).performScrollTo().performClick()
                 compose.onNodeWithText("Change Synthetic fern to Synthetic star").performClick()
                 val receipt = "Changed Synthetic fern to Synthetic star"
                 compose.waitUntil(5_000) { compose.onAllNodesWithText(receipt).fetchSemanticsNodes().isNotEmpty() }
@@ -4398,11 +4854,11 @@ class PlantPageTest {
             val query = hasText("Species name") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(query and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(query).performTextInput("Synthetic cloud plant")
-            compose.onNodeWithText("Search species").performClick()
-            val choose = hasText("Choose Synthetic cloud plant") and isEnabled()
+            compose.onNodeWithContentDescription("Search species").performClick()
+            val choose = hasContentDescription("Synthetic cloud plant, Testoria nebulosa. Choose this species.") and isEnabled()
             compose.waitUntil(5_000) { compose.onAllNodes(choose).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
             reveal(choose).performClick()
-            if (confirm) compose.onNodeWithText("Confirm Testoria nebulosa").performScrollTo().performClick()
+            if (confirm) compose.onNodeWithText("Yes, this one").performClick()
             if (add) {
                 compose.waitUntil(5_000) { compose.onAllNodes(hasText("Name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic glow")
@@ -4410,10 +4866,14 @@ class PlantPageTest {
             recreated.set(true)
             if (offline) online.set(false)
             restoration.emulateSavedInstanceStateRestore()
-            val kept = when { add -> hasText("Name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText); confirm -> hasText("Chosen species: Synthetic cloud plant (Testoria nebulosa)"); else -> hasText("Confirm Testoria nebulosa") }
+            val kept = when { add -> hasText("Name") and SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText); confirm -> hasText("Chosen species: Synthetic cloud plant (Testoria nebulosa)"); else -> hasText("Is this your plant?") }
             compose.waitUntil(5_000) { compose.onAllNodes(kept).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
             if (add) compose.onNode(kept).assertTextContains("Synthetic glow") else reveal(kept).assertIsDisplayed()
-            if (!confirm) compose.onNode(query).assertTextContains("Synthetic cloud plant")
+            if (!confirm) {
+                compose.onNode(hasText("Back") and hasAnyAncestor(isDialog())).performClick()
+                compose.onNode(query).assertTextContains("Synthetic cloud plant")
+                reveal(choose).assertIsDisplayed()
+            }
             compose.onNodeWithContentDescription("Back").performClick()
             compose.assertDiscard(if (add) "Your changes to this new plant are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
         }

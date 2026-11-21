@@ -1,10 +1,14 @@
 package com.epaflix.fytorium.sites
 
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.hideIme
+import com.epaflix.fytorium.imeVisible
 import com.epaflix.fytorium.selectTab
 import com.epaflix.fytorium.waitForNode
 import com.epaflix.fytorium.waitForState
@@ -30,8 +34,8 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
     }
     fun type(label: String, value: String) {
         enabled(label)
-        compose.onNodeWithText(label).performScrollTo()
-        compose.onNodeWithText(label).performTextReplacement(value)
+        compose.onNode(hasText(label) and hasSetTextAction()).performScrollTo()
+            .performSemanticsAction(SemanticsActions.SetText) { assertTrue(it(AnnotatedString(value))) }
     }
     try {
         rows(json("/api/plants")).filter { it.optString("nickname") == plantName }.forEach {
@@ -44,12 +48,16 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         compose.onNodeWithText("Create site").performScrollTo().performClick()
         compose.onNodeWithText("Save site").performScrollTo().performClick()
         waitText("Enter a site name.")
-        type("Name", names[0])
-        compose.onNodeWithText("Grow light").performScrollTo().assertIsOff().performClick()
+        val name = compose.onNode(hasText("Name") and hasSetTextAction())
+        name.performScrollTo().performClick().performTextReplacement(names[0])
+        compose.waitForState("Site form keyboard opened") { compose.activity.imeVisible() == true }
+        compose.runOnUiThread { compose.activity.hideIme() }
+        compose.waitForState("Site form keyboard closed before Grow light") { compose.activity.imeVisible() == false }
+        compose.onNodeWithText("Grow light").performScrollTo().assertIsOff().performClick().assertIsOn()
         for ((label, value) in listOf("Warm minimum °C" to "18", "Warm maximum °C" to "25", "Cold minimum °C" to "5", "Cold maximum °C" to "20")) {
             type(label, value)
         }
-        compose.onNodeWithText("Draft").performScrollTo().performClick()
+        compose.onNodeWithText("Draft").performScrollTo().assertIsOff().performClick().assertIsOn()
         compose.onNodeWithText("Save site").performScrollTo().performClick()
         waitText(names[0])
         val created = rows(json("/api/sites")).single { it.getString("name") == names[0] }
@@ -62,12 +70,6 @@ fun runSiteScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAct
         button("Edit").performScrollTo().performClick()
         compose.onNodeWithText("Name").assertTextContains(names[0])
         type("Name", names[1])
-        val device = androidx.test.uiautomator.UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
-        val keyboard = androidx.test.uiautomator.By.pkg("com.google.android.inputmethod.latin")
-        if (compose.waitForState("Site form keyboard appeared", 2_000, required = false) { device.hasObject(keyboard) }) {
-            device.pressBack()
-            compose.waitForState("Site form keyboard closed", 5_000) { !device.hasObject(keyboard) }
-        }
         for ((label, old, value) in listOf(Triple("Location", "indoor", "outdoor"), Triple("Light level", "part sun", "full sun"), Triple("Humidity", "normal", "humid"))) {
             compose.onNodeWithText("$label: $old").performScrollTo().performClick()
             waitText(value)

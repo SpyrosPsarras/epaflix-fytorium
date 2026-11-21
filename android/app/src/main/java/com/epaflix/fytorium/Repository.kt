@@ -485,12 +485,15 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
         true
     }
-    private fun <T> plantRead(path: String, resource: String, query: Map<String, String> = emptyMap(), parse: (String) -> T): T? = synchronized(workLock) {
+    private fun <T> plantRead(path: String, resource: String, query: Map<String, String> = emptyMap(),
+        unprocessable: T? = null, parse: (String) -> T): T? = synchronized(workLock) {
         val epoch = synchronized(monitor) { generation }
         if (state.value.member == null || state.value.member?.role == Role.sitter) return null
         try {
             if (!connected()) throw OfflineFailure()
-            val result = parse(read(path, query = query))
+            val result = try { parse(read(path, query = query)) } catch (failure: ApiFailure) {
+                if (failure.status == 422 && unprocessable != null) unprocessable else throw failure
+            }
             synchronized(monitor) {
                 if (epoch != generation) null else { plantLoaded(resource); result }
             }
@@ -522,7 +525,11 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
     }
     fun plantSites(): List<PlantSite>? = plantRead("/api/sites", "sites") { JSONArray(it).mapObjects { site -> PlantSite(site.getString("id"), site.getString("name")) } }
-    fun searchSpecies(query: String): SpeciesSearch? = plantRead("/api/species/search", "search", mapOf("q" to query), ::parseSpeciesSearch)
+    fun searchSpecies(query: String): SpeciesSearch? {
+        if (query.length !in 1..200 || query.isBlank()) return null
+        return plantRead("/api/species/search", "search", mapOf("q" to query),
+            unprocessable = SpeciesSearch("", emptyList()), parse = ::parseSpeciesSearch)
+    }
     fun species(key: Long): Species? { require(key > 0); return plantRead("/api/species/$key", "species/$key", parse = ::parseSpecies) }
     fun graveyard(): List<Plant> = synchronized(workLock) {
         val member = state.value.member ?: return emptyList()

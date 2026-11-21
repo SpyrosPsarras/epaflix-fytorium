@@ -44,6 +44,12 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     var sites by rememberSaveable { mutableStateOf<List<PlantSite>>(emptyList()) }
     var result by rememberSaveable { mutableStateOf<SpeciesSearch?>(null) }
     var searched by rememberSaveable { mutableStateOf<String?>(null) }
+    var answeredQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    var answerVersion by rememberSaveable { mutableIntStateOf(0) }
+    // The latest submission until its request ends; a request cut short by recreation is sent again.
+    var pendingSearch by rememberSaveable { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
+    fun clearSearch() { result = null; searched = null; answeredQuery = null; pendingSearch = false }
     var species by rememberSaveable { mutableStateOf<Species?>(null) }
     var namesKey by rememberSaveable { mutableStateOf<Long?>(null) }
     val namesDraft = rememberSaveable { mutableStateOf("") }
@@ -105,6 +111,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     fun back() {
         if (page in formPages && unsaved()) { discarding = true; return }
         repository?.clearPlantErrors()
+        if (page == "search" || page == "change-species") clearSearch()
         when {
             page == "list" || (page == "detail" && returnToToday) -> onBack()
             page == "graveyard" -> page = "list"
@@ -143,6 +150,21 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     // Reads never change the form's saving gate or discard its remembered input. Every entry and return to the plant page reads the plant, so changes made elsewhere meanwhile show.
     LaunchedEffect(id, page == "detail") { id?.takeIf { page == "detail" }?.let { refreshDetail(it) } }
+    suspend fun loadSearch(query: String) {
+        if (searching || searched != query) return
+        searching = true
+        pendingSearch = true
+        try {
+            val answer = withContext(Dispatchers.IO) { repository?.searchSpecies(query) }
+            if (searched == query) pendingSearch = false
+            if (answer != null && searched == query) {
+                result = answer
+                answeredQuery = query
+                answerVersion++
+            }
+        } finally { searching = false }
+    }
+    LaunchedEffect(page) { searched?.takeIf { pendingSearch && page in listOf("search", "change-species") }?.let { loadSearch(it) } }
     // Try again, a pull, app resume and a reconnect reload what the page shows, so a read that failed there loads once Fytorium answers.
     suspend fun reload() {
         val repo = repository ?: return
@@ -151,7 +173,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         id?.let { refreshDetail(it) }
         if (page == "graveyard") graveyard = withContext(Dispatchers.IO) { repo.graveyard() }
         namesKey?.takeIf { page == "names" }?.let { loadSpecies(it) }
-        searched?.takeIf { "search" in request.reads }?.let { query -> withContext(Dispatchers.IO) { repo.searchSpecies(query) }?.let { result = it } }
+        // The failure is read after the other reloads, so a newer search that answered meanwhile is not sent again.
+        searched?.takeIf { page in listOf("search", "change-species") && "search" in repo.plantState.value.reads }?.let { loadSearch(it) }
     }
     // Once Fytorium answers a request from outside the last such reload, a page whose own reads it left unanswered loads them again without a tap.
     LaunchedEffect(request.answers) {
@@ -181,7 +204,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             "care-form" -> page = "care"
             "repot-form", "restore", "change-species" -> run {
                 loadOptions()
-                if (options != null) { result = null; selection = null; searched = null; restoreSite = null; page = when (action) { "repot-form" -> "repot"; "restore" -> "restore"; else -> "change-species" } }
+                if (options != null) { clearSearch(); selection = null; restoreSite = null; page = when (action) { "repot-form" -> "repot"; "restore" -> "restore"; else -> "change-species" } }
             }
             "handle-all" -> scope.launch { if (withContext(Dispatchers.IO) { repository?.handleAll(key, plantsScreen = true) } == true) refreshDetail(key) }
             else -> run(save = true) {
@@ -250,7 +273,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             when (page) {
                 "list", "graveyard" -> PlantsList(state, if (page == "graveyard") graveyard else state.plants, page == "graveyard",
                     onPlant = { from = page; id = it; page = "detail" },
-                    onAdd = { repository?.clearPlantErrors(); id = null; selection = null; result = null; searched = null; run { loadOptions(); if (options != null) page = "search" } },
+                    onAdd = { repository?.clearPlantErrors(); id = null; selection = null; clearSearch(); run { loadOptions(); if (options != null) page = "search" } },
                     onGraveyard = { page = "graveyard" },
                     onRefresh = {
                         pulling = true
@@ -277,25 +300,37 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     Text("Connect to load the care defaults for this species.")
                     OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
                 }
-                "search", "change-species" -> forms.SaveableStateProvider("search:$page") { Column(Modifier.weight(1f)) {
-                    if (photosApi != null && state.member?.role != Role.sitter) OutlinedButton(onClick = { leaveFor("identify") },
-                        enabled = photosConnected() && !state.updateRequired && !saving, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) { Text("Identify from photos") }
-                    val current = detail?.plant?.let { plant -> JSONObject(plant.attributesJson).let { speciesLabel(it.nullable("common_name"), it.nullable("canonical_name") ?: plant.scientificName) } }
-                    if (page == "change-species") Text("${detail?.plant?.displayName} is currently ${endSentence(current.orEmpty())} Care history, photos and custom intervals will stay. The schedule will use the new species.", Modifier.padding(16.dp))
+                "search", "change-species" -> Column(Modifier.weight(1f)) {
+                    val identify: (() -> Unit)? = if (photosApi != null && state.member?.role != Role.sitter) { { leaveFor("identify") } } else null
+                    val identifyEnabled = photosConnected() && !state.updateRequired && !saving
+                    val current = plant?.takeIf { page == "change-species" }?.let { p ->
+                        val attributes = JSONObject(p.attributesJson)
+                        val label = speciesLabel(attributes.nullable("common_name"), attributes.nullable("canonical_name") ?: p.scientificName)
+                        "${p.displayName} is currently ${endSentence(label)} Care history, photos and custom intervals will stay. The schedule will use the new species."
+                    }
                     if (page == "change-species" && selection != null) {
+                        identify?.let { Box(Modifier.padding(horizontal = 16.dp)) { IdentifyFromPhotos(identifyEnabled, it) } }
+                        current?.let { Text(it, Modifier.padding(16.dp)) }
                         Text("Chosen species: ${chosenLabel.ifBlank { chosenName }}", Modifier.padding(16.dp))
                         Button(onClick = { command("species", JSONObject(selection!!)) }, enabled = enabled, modifier = Modifier.padding(16.dp).heightIn(min = 48.dp)) {
                             Text("Change ${detail?.plant?.displayName ?: "plant"} to $chosenName")
                         }
                         Box(Modifier.padding(horizontal = 16.dp)) { PlantError(request.errors["_form"]) }
                         TextButton(onClick = { selection = null }) { Text("Choose another species") }
-                    } else SpeciesPicker(enabled, result, onSearch = { query -> searched = query; run { result = withContext(Dispatchers.IO) { repository!!.searchSpecies(query) } } }, onSelect = { candidate, searchId, confirmed ->
-                        selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
-                        if (page == "change-species") { chosenName = candidate.headline.ifBlank { candidate.scientificName }
-                            chosenLabel = speciesLabel(candidate.commonName, candidate.canonicalName) }
-                        else page = "form"
-                    }, imageApi = speciesApi, onDirty = { formChanged = it })
-                } }
+                    } else forms.SaveableStateProvider("search:$page") {
+                        SpeciesPicker(enabled, result, onSearch = { query ->
+                            if (!searching) { searched = query; run { loadSearch(query) } }
+                        },
+                            onSelect = { candidate, searchId, confirmed ->
+                                selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", confirmed).toString()
+                                if (page == "change-species") { chosenName = candidate.headline.ifBlank { candidate.scientificName }
+                                    chosenLabel = speciesLabel(candidate.commonName, candidate.canonicalName) }
+                                else page = "form"
+                            }, imageApi = speciesApi, onDirty = { formChanged = it }, autoFocus = page == "search", searching = searching,
+                            answeredQuery = answeredQuery, answerVersion = answerVersion, onIdentify = identify, identifyEnabled = identifyEnabled,
+                            currentSpecies = current, searchEnabled = state.member != null && state.member.role != Role.sitter && !state.updateRequired && !saving && !request.saving)
+                    }
+                }
                 "form" -> options?.takeIf { id == null || plant != null }?.let { choices -> PlantForm(if (id == null) null else plant, choices, sites, enabled, errors = request.errors, onDirty = { formChanged = it }, onSave = { input ->
                     selection?.takeIf { id == null }?.let { json ->
                         val chosen = JSONObject(json)
@@ -332,7 +367,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
             }
         }
         // Progress the user asked for overlays the top edge, so nothing below it moves.
-        if (reading || saving || request.saving) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
+        if (reading || saving || searching || request.saving) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         if (receipts == null) SnackbarHost(own, Modifier.align(Alignment.BottomCenter))
     }
     leavingFor?.let { link ->

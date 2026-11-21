@@ -1,5 +1,6 @@
 package com.epaflix.fytorium
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,49 +21,61 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-@Composable fun AuthenticatedThumbnail(api: ApiClient?, path: String?, description: String, placeholder: String, size: Dp = 120.dp) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null, api, path) {
-        value = null
-        value = withContext(Dispatchers.IO) {
-            if (api == null || path == null) null else runCatching {
-                api.request(path).use { response ->
-                    if (!response.isSuccessful) return@use null
-                    val bytes = response.body?.byteStream()?.use { input ->
-                        val output = java.io.ByteArrayOutputStream()
-                        val buffer = ByteArray(8192)
-                        while (output.size() <= 1_048_576) {
-                            val count = input.read(buffer, 0, minOf(buffer.size, 1_048_577 - output.size()))
-                            if (count == -1) break
-                            output.write(buffer, 0, count)
-                        }
-                        output.toByteArray()
-                    } ?: return@use null
-                    if (bytes.size > 1_048_576) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+@Composable internal fun authenticatedBitmap(api: ApiClient?, path: String?): Result<Bitmap?>? {
+    if (api == null || path == null) return Result.success(null)
+    return key(api, path) {
+        val bitmap by produceState<Result<Bitmap?>?>(null) {
+            value = withContext(Dispatchers.IO) {
+                runCatching {
+                    api.request(path).use { response ->
+                        if (!response.isSuccessful) return@use null
+                        val bytes = response.body?.byteStream()?.use { input ->
+                            val output = java.io.ByteArrayOutputStream()
+                            val buffer = ByteArray(8192)
+                            while (output.size() <= 1_048_576) {
+                                val count = input.read(buffer, 0, minOf(buffer.size, 1_048_577 - output.size()))
+                                if (count == -1) break
+                                output.write(buffer, 0, count)
+                            }
+                            output.toByteArray()
+                        } ?: return@use null
+                        if (bytes.size > 1_048_576) null else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }
                 }
-            }.getOrNull()
+            }
         }
+        bitmap
     }
-    val image = bitmap
+}
+
+@Composable fun AuthenticatedThumbnail(api: ApiClient?, path: String?, description: String, placeholder: String, size: Dp = 120.dp) {
+    val image = authenticatedBitmap(api, path)?.getOrNull()
     if (image != null) Image(image.asImageBitmap(), description, contentScale = ContentScale.Crop, modifier = Modifier.size(size))
     else Box(Modifier.size(size).background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp)) { Text(placeholder) }
 }
 
-private data class PhotoCredit(val creator: String, val license: String, val source: String)
-@Composable fun ReferencePhoto(api: ApiClient?, key: Long, name: String, showName: Boolean = false, displayPhoto: Boolean = true, size: Dp = 120.dp,
-                               commonName: String? = null, matchNote: String? = null) {
-    val path = "/api/species/$key/photo"
-    val credit by produceState<PhotoCredit?>(null, api, key) {
+internal data class PhotoCredit(val creator: String, val license: String, val source: String)
+
+@Composable internal fun referencePhotoCredit(api: ApiClient?, key: Long): Result<PhotoCredit?>? {
+    val credit by produceState<Result<PhotoCredit?>?>(null, api, key) {
         value = null
         value = withContext(Dispatchers.IO) {
-            if (api == null) null else runCatching {
-                api.request("$path/credit").use { response ->
+            runCatching {
+                api?.request("/api/species/$key/photo/credit")?.use { response ->
                     if (!response.isSuccessful) return@use null
                     JSONObject(response.body?.string().orEmpty()).optJSONObject("photo")
                         ?.let { PhotoCredit(it.getString("creator"), it.getString("license"), it.getString("source_url")) }
                 }
-            }.getOrNull()
+            }
         }
     }
+    return credit
+}
+
+@Composable fun ReferencePhoto(api: ApiClient?, key: Long, name: String, showName: Boolean = false, displayPhoto: Boolean = true, size: Dp = 120.dp,
+                               commonName: String? = null, matchNote: String? = null) {
+    val path = "/api/species/$key/photo"
+    val credit = referencePhotoCredit(api, key)?.getOrNull()
     val uriHandler = LocalUriHandler.current
     Column(if (displayPhoto) Modifier.width(size) else Modifier) {
         if (displayPhoto) AuthenticatedThumbnail(api, if (credit != null) path else null, "Reference photo of $name", "No reference photo", size)
