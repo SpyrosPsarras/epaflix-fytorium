@@ -55,7 +55,7 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/plants/[id]/photos': { GET: edit(404), POST: edit(404) },
   '/api/plants/[id]/repot': { POST: edit(404) },
   '/api/plants/[id]/restore': { POST: edit(404) },
-  '/api/plants/[id]/species': { POST: edit(404) },
+  '/api/plants/[id]/species': { POST: edit(404), PUT: edit(404) },
   '/api/plants/[id]/species-changes': { GET: edit(404) },
   '/api/plants/[id]/tasks': { GET: shared(200) },
   '/api/plants/[id]/tasks/[taskType]/[action]': { POST: shared(422) },

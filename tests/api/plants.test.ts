@@ -123,7 +123,7 @@ test('rejects invalid attributes on add and edit without writing anything', asyn
   const before = await (await request('/api/plants')).json();
   const cases: [string, unknown][] = [
     ['pot_type', 'stone'], ['soil_type', 'sand'], ['plant_size', 'huge'], ['growth_stage', 'old'], ['fertilizer_type', 'powder'],
-    ['pot_type', null], ['pot_size_cm', 0], ['pot_size_cm', -1], ['pot_size_cm', 2.5], ['window_distance_cm', '70'], ['window_distance_cm', 2147483648],
+    ['pot_type', false], ['pot_size_cm', 0], ['pot_size_cm', -1], ['pot_size_cm', 2.5], ['window_distance_cm', '70'], ['window_distance_cm', 2147483648],
     ['drainage', 'true'], ['grow_light', 1], ['near_ac', null], ['near_heater', undefined],
     ['nickname', 42], ['cultivar', false], ['birthday', '2999-01-01'], ['birthday', '2020-02-30'], ['birthday', 'tomorrow'],
     ['site_id', null], ['site_id', 'not-an-id'], ['site_id', '00000000-0000-4000-8000-000000000000'],
@@ -171,7 +171,7 @@ test('GBIF outages, timeout and malformed payloads return a clear bounded error'
     const start = performance.now();
     const response = await request('/api/species/search?q=Outageia');
     expect(response.status).toBe(503);
-    expect((await response.json()).message).toContain('GBIF');
+    expect((await response.json()).message).toBe('Species search is unavailable. Try again in a minute.');
     expect(performance.now() - start).toBeLessThan(5000);
   }
 });
@@ -215,7 +215,7 @@ test('fetches an omitted accepted name without replacing a stored name with the 
   ]);
 });
 
-test('search expires and birthdays use the controllable clock', async () => {
+test('unconfirmed selections expire and birthdays use the controllable clock', async () => {
   const result = await search();
   await request('/__test/clock', 'POST', { action: 'advance', milliseconds: 300001 });
   expect((await add(result.search_id)).status).toBe(422);

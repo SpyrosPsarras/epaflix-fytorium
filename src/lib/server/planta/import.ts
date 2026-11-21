@@ -1,9 +1,9 @@
 import { requirePermission } from '../policy';
-import { error, isHttpError } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import type { Identity } from '../auth';
 import { db, withTransaction } from '../db';
-import { now, calendarDate } from '../clock';
-import { chosenSpecies, recordSpeciesSearch, searchSpecies, withCommonNames } from '../species';
+import { now, calendarDate, isCalendarDate } from '../clock';
+import { chosenSpecies, matchPlantaSpecies, recordSpeciesSearch, withCommonNames } from '../species';
 import { squash } from '../common-name';
 import type { Candidate } from '$lib/plants';
 import type { CommonNameLanguage } from '$lib/names';
@@ -43,8 +43,8 @@ export function namesAfterImport(plantaName: string | null, plant?: PlantaNames)
 function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
   if (typeof raw?.id !== 'string' || !raw.id || raw.id.length > 200) error(502, 'Planta returned an invalid plant ID.');
   const pot = raw.environment?.pot;
-  const potType = text(pot?.type)?.toLowerCase() ?? '';
-  const soilType = text(pot?.soil)?.toLowerCase() ?? '';
+  const potType = text(pot?.type)?.toLowerCase();
+  const soilType = text(pot?.soil)?.toLowerCase();
   const care: ImportedFields['care'] = {};
   for (const [action, task] of Object.entries(actions)) {
     const value = raw.actions?.[action]?.completed?.date;
@@ -52,9 +52,8 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
     if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(value)) error(422, 'Planta supplied an invalid last care date.');
     const date = new Date(value);
     const day = value.slice(0, 10);
-    const validDay = day >= '0001-01-01' && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day;
     const dateOnly = value.length === 10;
-    if (!validDay || !Number.isFinite(date.getTime()) || (dateOnly ? day > calendarDate(now()) : date.getTime() > now().getTime())) error(422, 'Planta supplied an invalid or future last care date.');
+    if (!isCalendarDate(day) || !Number.isFinite(date.getTime()) || (dateOnly ? day > calendarDate(now()) : date.getTime() > now().getTime())) error(422, 'Planta supplied an invalid or future last care date.');
     care[task] = dateOnly ? day : date.toISOString();
   }
   const localized = text(raw.names?.localizedName);
@@ -63,7 +62,8 @@ function mapPlant(raw: any): { id: string; mapped: ImportedFields } {
   return { id: raw.id, mapped: {
     nickname: null, custom_name: custom, localized_name: localized, cultivar: text(raw.names?.variety), scientific_name: scientific ?? localized ?? '',
     site_name: text(raw.site?.name) ?? 'Imported plants',
-    pot_type: Object.hasOwn(pots, potType) ? pots[potType] : 'other', soil_type: Object.hasOwn(soils, soilType) ? soils[soilType] : 'other',
+    pot_type: potType ? (Object.hasOwn(pots, potType) ? pots[potType] : 'other') : null,
+    soil_type: soilType ? (Object.hasOwn(soils, soilType) ? soils[soilType] : 'other') : null,
     pot_size_cm: Number.isInteger(pot?.size) && pot.size > 0 && pot.size <= 2147483647 ? pot.size : null,
     care, cover_url: typeof raw.image?.url === 'string' && raw.image.url.length <= 4096 ? raw.image.url : null,
   } };
@@ -111,17 +111,8 @@ export async function stageImport(code: string, household: string, language: Com
   } finally { api.discard(); }
   const mappedRows: { id: string; mapped: ImportedFields; candidates: ImportStaging['candidates']; selected: ImportStaging['selected'] }[] = [];
   for (const plant of plants) {
-    let candidates: ImportStaging['candidates'] = [];
-    let selected: ImportStaging['selected'] = null;
-    if (plant.mapped.scientific_name) {
-      try {
-        const search = await searchSpecies(plant.mapped.scientific_name, household, language);
-        candidates = search.candidates;
-        const exact = candidates.find(candidate => !candidate.requires_confirmation);
-        if (exact) selected = chosenSpecies(search.search_id, exact.gbif_key, household, false);
-      }
-      catch (cause) { if (!isHttpError(cause) || ![422, 503].includes(cause.status)) throw cause; }
-    }
+    const candidates = plant.mapped.scientific_name ? await matchPlantaSpecies(plant.mapped.scientific_name) : [];
+    const selected = candidates.find(candidate => !candidate.requires_confirmation) ?? null;
     plant.mapped.nickname = importNickname(plant.mapped, ...(selected ? [selected] : []));
     mappedRows.push({ id: plant.id, mapped: plant.mapped, candidates, selected });
   }
@@ -150,9 +141,8 @@ export async function reviewImport(id: string, household: string, input: Record<
     let selected = null;
     let status = 'skipped';
     if (input.skip !== true) {
-      selected = input.search_id !== undefined
-        ? chosenSpecies(input.search_id, input.gbif_key, household, input.confirmed)
-        : chosenSpecies(recordSpeciesSearch([...row.candidates, ...(row.suggestion?.candidates ?? []), ...(row.suggestion?.genus ? [row.suggestion.genus] : [])], household).search_id, input.gbif_key, household, input.confirmed);
+      const searchId = input.search_id !== undefined ? input.search_id : recordSpeciesSearch([...row.candidates, ...(row.suggestion?.candidates ?? []), ...(row.suggestion?.genus ? [row.suggestion.genus] : [])], household).search_id;
+      selected = await chosenSpecies(searchId, input.gbif_key, household, input.confirmed, { requireReceipt: true });
       if (!selected) error(422, 'Choose a species from the candidates or search again.');
       if (selected.requires_confirmation && input.confirmed !== true) error(422, 'Confirm this species before importing.');
       status = 'confirmed';

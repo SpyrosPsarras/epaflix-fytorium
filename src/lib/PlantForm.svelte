@@ -14,8 +14,8 @@
     const input: Record<string, unknown> = { site_id: form.get('site_id') || null, gbif_key: candidate?.gbif_key, search_id: searchId, confirmed };
     for (const field of ['nickname', 'cultivar', 'birthday']) input[field] = form.get(field) || null;
     input.health = form.get('health') || null;
-    for (const field of choices) input[field] = form.get(field);
-    for (const field of plantBooleans) input[field] = form.has(field);
+    for (const field of choices) input[field] = form.get(field) || null;
+    for (const field of plantBooleans) input[field] = form.get(field) === '' ? null : form.has(field) && form.get(field) !== 'false';
     for (const field of plantNumbers) input[field] = form.get(field) === '' ? null : Number(form.get(field));
     busy = true;
     errors = {};
@@ -53,7 +53,8 @@
     {#each choices as field}
       <label for={field}>{plantLabels[field]}</label>
       <select id={field} name={field} aria-invalid={!!errors[field]} aria-describedby={errors[field] ? field + '-error' : undefined}>
-        {#each plantChoices[field] as value}<option {value} selected={value === (plant?.[field] ?? plantChoices[field][0])}>{value.replaceAll('_', ' ')}</option>{/each}
+        {#if plant?.[field] === null}<option value="" selected>Not set</option>{/if}
+        {#each plantChoices[field] as value}<option {value} selected={value === (plant ? plant[field] : plantChoices[field][0])}>{value.replaceAll('_', ' ')}</option>{/each}
       </select>
       {#if errors[field]}<p id={field + '-error'} class="error" role="alert">{errors[field]}</p>{/if}
     {/each}
@@ -63,7 +64,14 @@
       {#if errors[field]}<p id={field + '-error'} class="error" role="alert">{errors[field]}</p>{/if}
     {/each}
     {#each plantBooleans as field}
-      <label class="check"><input type="checkbox" name={field} checked={plant?.[field] ?? false} aria-invalid={!!errors[field]} aria-describedby={errors[field] ? field + '-error' : undefined} /> {plantLabels[field]}</label>
+      {#if field === 'drainage' && plant?.drainage === null}
+        <label for={field}>{plantLabels[field]}</label>
+        <select id={field} name={field} aria-invalid={!!errors[field]} aria-describedby={errors[field] ? field + '-error' : undefined}>
+          <option value="">Not set</option><option value="true">Yes</option><option value="false">No</option>
+        </select>
+      {:else}
+        <label class="check"><input type="checkbox" name={field} checked={plant?.[field] ?? false} aria-invalid={!!errors[field]} aria-describedby={errors[field] ? field + '-error' : undefined} /> {plantLabels[field]}</label>
+      {/if}
       {#if errors[field]}<p id={field + '-error'} class="error" role="alert">{errors[field]}</p>{/if}
     {/each}
   </fieldset>

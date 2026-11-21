@@ -98,7 +98,7 @@ test('requires explicit fuzzy confirmation, accepts an alternative and persists 
   expect(history).toContainEqual(expect.objectContaining({ task_type: 'water', kind: 'completed', source: 'planta', occurred_on: '2026-06-01' }));
   // Like any completion, an imported one keeps its task's due date at import. Planta reports this watering on 1 June, before the 10 June due date.
   expect(Object.fromEntries(history.map((event: { task_type: string; due_on: string }) => [event.task_type, event.due_on])))
-    .toEqual({ water: '2026-06-10', fertilize: '2026-06-24', clean_leaves: '2026-07-10', repot: '2028-06-09' });
+    .toEqual({ water: '2026-06-10', fertilize: '2026-06-20', clean_leaves: '2026-07-10', repot: '2028-06-09' });
   expect((await owner.request('/api/plants/' + imported[0].id + '/care-settings', 'PUT', { customIntervals: { water: 10 } })).status).toBe(200);
   const tasks = await (await owner.request('/api/plants/' + imported[0].id + '/tasks')).json();
   expect(tasks.water).toMatchObject({ intervalDays: 10, dueOn: '2026-06-11' });
@@ -867,6 +867,73 @@ test('Planta staging candidates and selections use the current request language,
   const committed = await fetch(harness.base + endpoint + '/commit', { method: 'POST', headers: { cookie: owner.cookie, origin: harness.base, 'accept-language': 'el', 'content-type': 'application/json' }, body: '{}' });
   expect(committed.status).toBe(200);
   expect((await committed.json())[0].selected.common_name).toBe('Greek staged leaf');
+});
+
+test('re-imports four uniquely stored species within the client timeout without calling remote taxonomy', async () => {
+  const names = ['Reimportia alba', 'Reimportia fusca', 'Reimportia rubra', 'Reimportia viridis'];
+  const keys = [910901, 910902, 910903, 910904];
+  fake.setPlants(names.map((scientific, index) => ({
+    ...syntheticPlant('synthetic-reimport-' + index), names: { scientific },
+  })));
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    await database.query(`INSERT INTO species (gbif_key, scientific_name, canonical_name, rank, fetched_at)
+      SELECT key, name || ' Inventor', name, 'SPECIES', now() FROM unnest($1::int[], $2::text[]) AS taxa(key, name)`, [keys, names]);
+    expect((await owner.request(endpoint, 'POST', { code: fake.code })).status).toBe(200);
+    const committed = await owner.request(endpoint + '/commit', 'POST', {});
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toEqual(keys.map(gbif_key => expect.objectContaining({ status: 'committed', selected: expect.objectContaining({ gbif_key }) })));
+    await database.query(`INSERT INTO species_search_cache (query, candidates, expires_at)
+      SELECT lower(name), '[]', '-infinity' FROM unnest($1::text[]) AS name
+      ON CONFLICT (query) DO UPDATE SET expires_at = EXCLUDED.expires_at`, [names]);
+  } finally { await database.end(); }
+
+  harness.setGbif({ matchType: 'NONE', confidence: 0 }, 200, 4000);
+  const before = harness.taxonomySearchRequests.length;
+  const start = performance.now();
+  const response = await owner.request(endpoint, 'POST', { code: fake.code });
+  expect.soft(performance.now() - start).toBeLessThan(10000);
+  const lookups = harness.taxonomySearchRequests.slice(before).filter(url => names.some(name =>
+    url.searchParams.get('name') === name || url.searchParams.get('srsearch') === name + ' haswbstatement:P846'));
+  expect.soft(lookups).toHaveLength(0);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(keys.map(gbif_key => expect.objectContaining({ status: 'confirmed', selected: expect.objectContaining({ gbif_key }) })));
+});
+
+test('stages four new species within the client timeout when Wikidata stalls', async () => {
+  const taxa = [
+    ['Stagingia alba', 910911], ['Stagingia fusca', 910912],
+    ['Stagingia rubra', 910913], ['Stagingia viridis', 910914],
+  ] as const;
+  fake.setPlants(taxa.map(([scientific], index) => ({
+    ...syntheticPlant('synthetic-new-species-' + index), names: { scientific },
+  })));
+  harness.setGbif({ matchType: 'NONE', confidence: 0 });
+  for (const [name, key] of taxa) {
+    harness.setGbifMatch(name, { usageKey: key, scientificName: name + ' Inventor', canonicalName: name,
+      rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  }
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  const queries = taxa.map(([name]) => name.toLowerCase());
+  const cached = () => database.query('SELECT query FROM species_search_cache WHERE query = ANY($1::text[])', [queries]);
+  const before = harness.taxonomySearchRequests.length;
+  harness.stallWikidataSearch(true);
+  try {
+    expect((await cached()).rowCount).toBe(0);
+    const start = performance.now();
+    const response = await owner.request(endpoint, 'POST', { code: fake.code });
+    expect.soft(performance.now() - start).toBeLessThan(10000);
+    const lookups = harness.taxonomySearchRequests.slice(before);
+    expect.soft(lookups.filter(url => url.searchParams.has('srsearch'))).toHaveLength(0);
+    expect(lookups.flatMap(url => url.searchParams.getAll('name'))).toEqual(taxa.map(([name]) => name));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(taxa.map(([, gbif_key]) =>
+      expect.objectContaining({ status: 'confirmed', selected: expect.objectContaining({ gbif_key }) })));
+    expect((await cached()).rowCount).toBe(0);
+  } finally {
+    harness.stallWikidataSearch(false);
+    await database.end();
+  }
 });
 
 function importPlant(id: string) {

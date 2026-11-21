@@ -760,6 +760,7 @@ paths:
                   pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
                 pot_type:
                   enum:
+                    - null
                     - plastic
                     - terracotta
                     - ceramic
@@ -775,6 +776,7 @@ paths:
                     - type: "null"
                 soil_type:
                   enum:
+                    - null
                     - all_purpose
                     - cactus
                     - orchid
@@ -867,10 +869,11 @@ paths:
               required: []
               additionalProperties: false
   /api/plants/{id}/species:
-    post:
-      operationId: post_api_plants__id__species
-      summary: POST /api/plants/{id}/species
-      responses:
+    put:
+      operationId: put_api_plants__id__species
+      summary: Change a plant species
+      description: A live receipt must list the selected key. Without a live receipt, confirmed must be true and the key must already be stored or identify an accepted plant species in GBIF.
+      responses: &plant_species_responses
         "200":
           description: JSON response
           content:
@@ -889,7 +892,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-      parameters:
+      parameters: &plant_species_parameters
         - name: id
           in: path
           required: true
@@ -900,7 +903,7 @@ paths:
           required: false
           schema:
             type: string
-      requestBody:
+      requestBody: &plant_species_request
         required: true
         content:
           application/json:
@@ -915,9 +918,14 @@ paths:
                 confirmed:
                   type: boolean
               required:
-                - search_id
                 - gbif_key
               additionalProperties: false
+    post:
+      operationId: post_api_plants__id__species
+      summary: Change a plant species (same as PUT)
+      responses: *plant_species_responses
+      parameters: *plant_species_parameters
+      requestBody: *plant_species_request
   /api/plants/{id}/species-changes:
     get:
       operationId: get_api_plants__id__species_changes
@@ -1104,7 +1112,7 @@ paths:
       summary: POST /api/plants/{id}/photos
       responses:
         "201":
-          description: JSON response
+          description: Photo update. It becomes the cover if the plant has none.
           content:
             application/json:
               schema:
@@ -1165,7 +1173,7 @@ paths:
       summary: DELETE /api/photos/{id}
       responses:
         "204":
-          description: No content
+          description: Photo deleted. If it was the cover, the remaining photo with the latest taken date, then upload time, becomes the cover.
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -1226,10 +1234,20 @@ paths:
   /api/photos/{id}/{variant}:
     get:
       operationId: get_api_photos__id___variant_
-      summary: GET /api/photos/{id}/{variant}
+      summary: Read a photo in the member's household
       responses:
         "200":
-          description: Sanitised original or thumbnail JPEG. variant is original or thumb.
+          description: Sanitised JPEG. The thumbnail is at most 400 px. The display JPEG is generated from the stored original at quality 80 and at most 1080 px on its long edge, without enlargement.
+          headers:
+            Cache-Control:
+              description: Display uses private, max-age=604800. Original and thumbnail use no-store.
+              schema:
+                type: string
+                enum: ['private, max-age=604800', 'no-store']
+            Vary:
+              description: Display responses vary by Cookie, Authorization and X-App-Version.
+              schema:
+                type: string
           content:
             image/jpeg:
               schema:
@@ -1258,6 +1276,7 @@ paths:
           required: true
           schema:
             type: string
+            enum: [original, thumb, display]
         - name: X-App-Version
           in: header
           required: false
@@ -1325,10 +1344,10 @@ paths:
             type: string
     post:
       operationId: post_api_identification
-      summary: POST /api/identification
+      summary: Identify photos using the member's language
       responses:
         "200":
-          description: JSON response
+          description: Ranked candidates. GBIF synonyms use the accepted key and names, and the original identified name is kept separately.
           content:
             application/json:
               schema:
@@ -1848,14 +1867,27 @@ paths:
   /api/species/search:
     get:
       operationId: get_api_species_search
-      summary: GET /api/species/search
+      summary: Search by common or scientific name
+      description: Exact names rank first, then local word-prefix matches, Wikidata results and GBIF matches. Local fuzzy matching runs only when those stages find nothing. When different species share an exact name match, all choices require confirmation. Partial upstream outages may return results from the other sources.
       responses:
         "200":
-          description: JSON response
+          description: Distinct, ranked candidates and a search receipt. At most ten candidates unless more than ten species share an exact name.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Search"
+        "422":
+          description: The query is invalid or no plant species matched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Local search found nothing and neither external source could answer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -3060,6 +3092,7 @@ paths:
     post:
       operationId: post_api_import_planta
       summary: POST /api/import/planta
+      description: Stages plants using stored species and GBIF matching, without Wikidata or the interactive search cache.
       responses:
         "200":
           description: JSON response
@@ -3652,6 +3685,7 @@ components:
             - type: "null"
         pot_type:
           enum:
+            - null
             - plastic
             - terracotta
             - ceramic
@@ -3666,9 +3700,10 @@ components:
             - type: integer
             - type: "null"
         drainage:
-          type: boolean
+          type: [boolean, "null"]
         soil_type:
           enum:
+            - null
             - all_purpose
             - cactus
             - orchid
@@ -3676,12 +3711,14 @@ components:
             - other
         plant_size:
           enum:
+            - null
             - small
             - medium
             - large
             - very_large
         growth_stage:
           enum:
+            - null
             - seedling
             - young
             - mature
@@ -3697,6 +3734,7 @@ components:
           type: boolean
         fertilizer_type:
           enum:
+            - null
             - liquid
             - sticks
             - slow_release
@@ -3708,24 +3746,24 @@ components:
                 - good
                 - very_good
             - type: "null"
+        last_watered_on:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: On create only. A household calendar date no more than 365 days ago, not in the future or before the birthday. Records one watering without sending notices.
         search_id:
+          description: Required on create unless confirmed is true and the GBIF key can be verified without a live receipt.
           type: string
           pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
         gbif_key:
           type: integer
+          description: Required on create.
         confirmed:
           type: boolean
       required:
         - site_id
-        - pot_type
-        - drainage
-        - soil_type
-        - plant_size
-        - growth_stage
         - grow_light
         - near_ac
         - near_heater
-        - fertilizer_type
       additionalProperties: false
     PlantHeader:
       type: object
@@ -3789,6 +3827,7 @@ components:
             - type: "null"
         pot_type:
           enum:
+            - null
             - plastic
             - terracotta
             - ceramic
@@ -3803,9 +3842,10 @@ components:
             - type: integer
             - type: "null"
         drainage:
-          type: boolean
+          type: [boolean, "null"]
         soil_type:
           enum:
+            - null
             - all_purpose
             - cactus
             - orchid
@@ -3813,12 +3853,14 @@ components:
             - other
         plant_size:
           enum:
+            - null
             - small
             - medium
             - large
             - very_large
         growth_stage:
           enum:
+            - null
             - seedling
             - young
             - mature
@@ -3834,6 +3876,7 @@ components:
           type: boolean
         fertilizer_type:
           enum:
+            - null
             - liquid
             - sticks
             - slow_release
@@ -4035,7 +4078,7 @@ components:
         requires_confirmation:
           type: boolean
         common_name:
-          description: Chosen common name in the request language with English fallback. Null for unstored species or missing chosen names.
+          description: For stored species, the chosen common name in the request language with English fallback. Identification falls back to Pl@ntNet's first common name. Species search can return a Wikidata label or alias for an unstored species. Null when no name is available.
           anyOf:
             - type: string
             - type: "null"
@@ -4045,6 +4088,10 @@ components:
             type: string
         identification_name:
           type: string
+          description: Pl@ntNet's scientific name including authorship when provided.
+        identification_canonical_name:
+          type: string
+          description: Pl@ntNet's scientific name without authorship. Compare with canonical_name for an accepted-name change.
         matched_name:
           type: string
         matched_language:
@@ -4433,6 +4480,7 @@ components:
               properties:
                 pot_type:
                   enum:
+                    - null
                     - plastic
                     - terracotta
                     - ceramic
@@ -4448,6 +4496,7 @@ components:
                     - type: "null"
                 soil_type:
                   enum:
+                    - null
                     - all_purpose
                     - cactus
                     - orchid
@@ -5536,6 +5585,7 @@ components:
               type: string
             pot_type:
               enum:
+                - null
                 - plastic
                 - terracotta
                 - ceramic
@@ -5551,6 +5601,7 @@ components:
                 - type: "null"
             soil_type:
               enum:
+                - null
                 - all_purpose
                 - cactus
                 - orchid

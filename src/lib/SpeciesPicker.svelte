@@ -105,7 +105,7 @@
         {/if}
       {:else}
         {#if candidate.matched_name && candidate.matched_language}<p>Matched {candidate.matched_name} · {nameLanguages[candidate.matched_language]}</p>{/if}
-        {#if !hideMatchDetails}<p>{candidate.match_type === null ? 'Stored species' : candidate.match_type.toLowerCase()}{candidate.confidence === null ? '' : ' · ' + candidate.confidence + '% confidence'} · {candidate.rank.toLowerCase()}{index > 0 ? ' · alternative' : ''}</p>{/if}
+        {#if !hideMatchDetails}<p>{candidate.match_type === null ? 'Name match' : candidate.match_type.toLowerCase()}{candidate.confidence === null ? '' : ' · ' + candidate.confidence + '% confidence'} · {candidate.rank.toLowerCase()}{index > 0 ? ' · alternative' : ''}</p>{/if}
       {/if}
       <button onclick={() => { chosen = candidate; confirmed = false; }}>Choose {candidate.canonical_name}</button></div>
     </article>
@@ -127,7 +127,7 @@
     {@render children(chosen, result.search_id, confirmed)}
   {/if}
 {/if}
-<p>Names from <a href="https://www.gbif.org">GBIF</a>, CC BY 4.0.</p>
+<p>Names from <a href="https://www.gbif.org">GBIF</a> (CC BY 4.0) and <a href="https://www.wikidata.org">Wikidata</a> (CC0).</p>
 <style>
   label { display: block; margin-top: 1rem; }
   input { box-sizing: border-box; width: 100%; font: inherit; padding: .75rem; border: 1px solid #78716c; border-radius: .5rem; margin-bottom: 1rem; }

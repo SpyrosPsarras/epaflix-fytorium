@@ -1,18 +1,21 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { referencePhoto } from '../../src/lib/server/gbif';
-vi.mock('../../src/lib/server/config', () => ({ config: () => ({ gbifBaseUrl: new URL('https://gbif.example/v1/') }) }));
+vi.mock('../../src/lib/server/config', () => ({ config: () => ({ gbifBaseUrl: new URL('https://gbif.example/v1/'), origin: new URL('https://app.example') }) }));
 afterEach(() => vi.unstubAllGlobals());
 
 test('reads the first occurrence media with credit and restricts the request to reusable still images', async () => {
   let requested: URL | undefined;
-  vi.stubGlobal('fetch', async (url: URL) => {
+  let headers: Headers | undefined;
+  vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
     requested = url;
+    headers = new Headers(init.headers);
     return Response.json({ results: [{ references: 'https://example.org/observation', media: [
       { identifier: 'https://images.example/photo.jpg', license: 'http://creativecommons.org/licenses/by/4.0/', rightsHolder: 'Synthetic rights holder' },
     ] }] });
   });
   expect(await referencePhoto(910701)).toEqual({ identifier: 'https://images.example/photo.jpg', creator: 'Synthetic rights holder', license: 'CC BY 4.0', source_url: 'https://example.org/observation' });
   expect(requested?.pathname).toBe('/v1/occurrence/search');
+  expect(headers?.get('User-Agent')).toBe('Fytorium (+https://app.example)');
   expect(requested?.searchParams.get('taxonKey')).toBe('910701');
   expect(requested?.searchParams.getAll('license')).toEqual(['CC0_1_0', 'CC_BY_4_0']);
   expect(requested?.searchParams.get('mediaType')).toBe('StillImage');

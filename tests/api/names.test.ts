@@ -1,4 +1,4 @@
-import { beforeAll, expect, test } from 'vitest';
+import { beforeAll, beforeEach, expect, test } from 'vitest';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import { createApiHarness } from './harness';
@@ -30,6 +30,10 @@ beforeAll(async () => {
     name: 'Test name room', location: 'indoor', light: 'part_sun', grow_light: false, humidity: 'normal', draft: false,
   })).json()).id;
 });
+beforeEach(async () => {
+  expect((await request('/__test/clock', 'POST', { action: 'advance', milliseconds: 60000 })).status).toBe(200);
+});
+
 async function search(query: string) {
   const response = await request('/api/species/search?q=' + encodeURIComponent(query));
   expect(response.status).toBe(200);
