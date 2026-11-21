@@ -367,7 +367,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                                 if (page != "change-species") { pickedFrom = "search"; dropKeepPhoto(); page = "form" }
                             }, imageApi = speciesApi, onDirty = { formChanged = it }, autoFocus = page == "search", searching = searching,
                             answeredQuery = answeredQuery, answerVersion = answerVersion, onIdentify = identify, identifyEnabled = identifyEnabled,
-                            currentSpecies = current, searchEnabled = state.member != null && state.member.role != Role.sitter && !state.updateRequired && !saving && !request.saving)
+                            currentSpecies = current, searchEnabled = state.member != null && state.member.role != Role.sitter && !state.updateRequired && !saving && !request.saving,
+                            blockedReason = "Choosing a species needs a connection.".takeIf { !request.online }, onBlocked = ::explain)
                     }
                 }
                 "form" -> options?.takeIf { id == null || plant != null }?.let { choices -> forms.SaveableStateProvider("form:${id ?: "new"}") { PlantForm(if (id == null) null else plant, choices, sites, enabled,

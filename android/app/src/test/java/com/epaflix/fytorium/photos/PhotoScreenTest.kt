@@ -8,6 +8,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import com.epaflix.fytorium.*
 import com.epaflix.fytorium.plants.*
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -339,7 +340,9 @@ class PhotoScreenTest {
         compose.onNodeWithContentDescription("Photo 2 of 2").assertIsDisplayed()
         compose.onNodeWithContentDescription("Remove photo 2 of 2").assertHeightIsAtLeast(48.dp).performClick()
         compose.onNodeWithText("Take photo").assertIsDisplayed()
+        // The tiles grow to fit their labels on one line.
         compose.onNodeWithText("Choose photos").assertIsDisplayed()
+        listOf("Take photo", "Choose photos").forEach { assertTrue(compose.onNodeWithText(it, useUnmergedTree = true).getUnclippedBoundsInRoot().height < 30.dp) }
         compose.onNodeWithText("12 identifications left today.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Details").performClick()
         compose.onNodeWithText("About identify photos").assertIsDisplayed()
@@ -380,6 +383,12 @@ class PhotoScreenTest {
         compose.runOnIdle { assertEquals(true, picked) }
         compose.onNodeWithText("Change photos").performClick()
         compose.onNodeWithText("Add one to five photos of the same plant. Leaves and flowers work best.").assertIsDisplayed()
+        // The same photos' results come back without another identification.
+        compose.onNodeWithText("Back to results").performClick()
+        compose.onNode(hasText("Best matches") and isHeading()).assertIsDisplayed()
+        compose.onNodeWithText("Change photos").performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNode(hasText("Best matches") and isHeading()).assertIsDisplayed()
     }
 
     // W4-P25: no match and a used-up quota answer in the page; Pl@ntNet down goes to the line with Try again.
@@ -424,16 +433,14 @@ class PhotoScreenTest {
         compose.onNodeWithText("Offline \u00b7 showing a smaller copy").assertIsDisplayed()
     }
 
-    // W4-P30: the viewer is full screen, so the app's tabs go while it shows and come back after.
-    @Test fun theViewerHidesTheTabsUntilItCloses() {
-        val hidden = mutableStateOf(false)
-        val open = mutableStateOf(true)
-        compose.setContent { CompositionLocalProvider(LocalHideTabs provides hidden) { FytoriumTheme {
-            PhotoScreen(PhotoState(listOf(photo), loaded = true), true, "Synthetic sprout", 0, originalOpen = open.value, openPhotoId = "photo-one")
-        } } }
-        compose.runOnIdle { assertTrue(hidden.value) }
-        compose.runOnIdle { open.value = false }
-        compose.runOnIdle { assertFalse(hidden.value) }
+    // W4-P30: the viewer is its own full-screen window over the app tabs, so the list under it keeps its size and place.
+    @Test fun theViewerCoversTheTabsInItsOwnWindow() {
+        var closed = 0
+        compose.setContent { FytoriumTheme {
+            PhotoScreen(PhotoState(listOf(photo), loaded = true), true, "Synthetic sprout", 0, originalOpen = true, openPhotoId = "photo-one", onCloseOriginal = { closed++ })
+        } }
+        compose.onNode(hasContentDescription("Back") and hasAnyAncestor(isDialog())).performClick()
+        compose.runOnIdle { assertEquals(1, closed) }
     }
 
     // A route whose picker returns one synthetic file, for Identify and the photo form.

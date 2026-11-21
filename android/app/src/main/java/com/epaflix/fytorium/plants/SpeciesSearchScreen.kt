@@ -28,7 +28,10 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,7 +42,8 @@ import com.epaflix.fytorium.*
 @Composable internal fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit,
     onSelect: (SpeciesCandidate, String, Boolean) -> Unit, imageApi: ApiClient? = null, onDirty: (() -> Boolean) -> Unit = {},
     autoFocus: Boolean = false, searching: Boolean = false, answeredQuery: String? = null, answerVersion: Int = 0,
-    onIdentify: (() -> Unit)? = null, identifyEnabled: Boolean = true, currentSpecies: String? = null, searchEnabled: Boolean = writable) {
+    onIdentify: (() -> Unit)? = null, identifyEnabled: Boolean = true, currentSpecies: String? = null, searchEnabled: Boolean = writable,
+    blockedReason: String? = null, onBlocked: (String) -> Unit = {}) {
     var query by rememberSaveable { mutableStateOf("") }
     SideEffect { onDirty { query.isNotBlank() } }
     var focusPending by rememberSaveable { mutableStateOf(autoFocus) }
@@ -101,7 +105,7 @@ import com.epaflix.fytorium.*
         }
         onIdentify?.let { identify -> item("identify") { IdentifyFromPhotos(identifyEnabled) { closeKeyboard(); identify() } } }
         if (result != null) items(candidates, key = { it.key }) { candidate ->
-            SpeciesSearchCard(candidate, scientific(candidate), imageApi, writable && !searching) {
+            SpeciesSearchCard(candidate, scientific(candidate), imageApi, writable && !searching, blockedReason = blockedReason.takeIf { !writable }, onBlocked = onBlocked) {
                 closeKeyboard()
                 if (candidate.requiresConfirmation) selectedKey = candidate.key else onSelect(candidate, result.id, false)
             }
@@ -126,12 +130,15 @@ import com.epaflix.fytorium.*
 }
 
 @Composable internal fun SpeciesSearchCard(candidate: SpeciesCandidate, scientific: String, api: ApiClient?, enabled: Boolean,
-    photo: androidx.compose.ui.unit.Dp = 80.dp, lines: List<String> = emptyList(), onClick: () -> Unit) {
+    photo: androidx.compose.ui.unit.Dp = 80.dp, lines: List<String> = emptyList(), blockedReason: String? = null, onBlocked: (String) -> Unit = {}, onClick: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Card(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).semantics {
+    // A card that can't be chosen fades whole and, when there is a reason, says it on tap.
+    val explains = !enabled && blockedReason != null
+    Card(onClick = { if (enabled) onClick() else blockedReason?.let(onBlocked) }, enabled = enabled || explains, modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).semantics {
         contentDescription = (listOf("${candidate.headline}, ${endSentence(scientific)}") + lines.map(::endSentence) + "Choose this species.").joinToString(" ")
+        if (explains) { disabled(); stateDescription = blockedReason!! }
     }) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(12.dp).alpha(if (enabled) 1f else 0.38f), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.size(photo))
             Column(Modifier.weight(1f)) {
                 Heading(candidate.headline, MaterialTheme.typography.titleMedium)

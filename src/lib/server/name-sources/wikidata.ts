@@ -4,14 +4,17 @@ import { commonNameLanguages, nameValidationError } from '$lib/names';
 import { sourceUrl, taxonomyFetch, type NameSource, type FetchedName } from './shared';
 
 // shortcut: limits are per process; share the counters before scaling to multiple replicas.
-let requests: number[] = [];
+// Each request keeps its test-clock and real time: tests move the clock, and a frozen lab clock must not hold the limit once a real minute passes.
+let requests: { at: number; real: number }[] = [];
 let retryAt = 0;
+let retryReal = 0;
 export async function wikidataJson(params: Record<string, string>, deadline?: AbortSignal) {
   const time = now().getTime();
-  if (config().testClockEnabled && requests.some(at => at > time)) { requests = []; retryAt = 0; }
-  requests = requests.filter(at => time - at < 60000);
-  if (time < retryAt || requests.length >= 20) throw new Error('Wikidata request limit');
-  requests.push(time);
+  const real = Date.now();
+  if (config().testClockEnabled && requests.some(request => request.at > time)) { requests = []; retryAt = 0; }
+  requests = requests.filter(request => time - request.at < 60000 && real - request.real < 60000);
+  if ((time < retryAt && real < retryReal) || requests.length >= 20) throw new Error('Wikidata request limit');
+  requests.push({ at: time, real });
   const url = sourceUrl(config().wikidataBaseUrl, 'w/api.php');
   url.search = new URLSearchParams({ ...params, format: 'json' }).toString();
   const response = await taxonomyFetch(url, deadline);
@@ -20,6 +23,7 @@ export async function wikidataJson(params: Record<string, string>, deadline?: Ab
     const received = now().getTime();
     const next = retry && /^\d+$/.test(retry) ? received + Number(retry) * 1000 : Date.parse(retry ?? '');
     retryAt = Math.max(retryAt, Number.isFinite(next) ? next : received + 60000);
+    retryReal = Date.now() + (retryAt - received);
   }
   if (!response.ok) throw new Error('Wikidata unavailable');
   return response.json();

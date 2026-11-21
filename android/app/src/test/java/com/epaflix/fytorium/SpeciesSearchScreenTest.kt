@@ -82,6 +82,17 @@ class SpeciesSearchScreenTest {
         compose.runOnIdle { assertEquals(second, selected) }
     }
 
+    // Offline the cards fade whole and a tap says why.
+    @Test fun offlineResultCardsSayWhyOnTap() {
+        val explained = mutableListOf<String>()
+        var selected: SpeciesCandidate? = null
+        compose.setContent { FytoriumTheme { Surface { SpeciesPicker(false, search, {}, { candidate, _, _ -> selected = candidate },
+            blockedReason = "Choosing a species needs a connection.", onBlocked = { explained += it }) } } }
+        compose.onNodeWithContentDescription("Synthetic star, Testoria nova Maker. Choose this species.")
+            .assert(hasStateDescription("Choosing a species needs a connection.")).assertIsNotEnabled().performClick()
+        compose.runOnIdle { assertEquals(listOf("Choosing a species needs a connection."), explained); assertEquals(null, selected) }
+    }
+
     @Test fun newAnswerStartsAtTheTopEvenWhenTheServerReturnsTheSameCards() {
         val revision = mutableIntStateOf(1)
         val candidates = (1L..12L).map { n -> first.copy(key = 910100 + n, commonName = "Synthetic result $n") }

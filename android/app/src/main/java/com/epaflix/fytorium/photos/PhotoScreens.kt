@@ -82,8 +82,8 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun PhotoViewer(photo: PhotoUpdate?, original: ByteArray?, online: Boolean, thumbnails: Thumbnails?, onBack: () -> Unit) {
     val display by produceState<ByteArray?>(null, photo?.id, thumbnails) { value = photo?.let { withContext(Dispatchers.IO) { thumbnails?.load(it.id, "display") } } }
-    val hideTabs = com.epaflix.fytorium.LocalHideTabs.current
-    DisposableEffect(hideTabs) { hideTabs.value = true; onDispose { hideTabs.value = false } }
+    // Its own window covers the app tabs without resizing the list underneath, so the list returns to the same place.
+    androidx.compose.ui.window.Dialog(onDismissRequest = onBack, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
@@ -124,6 +124,7 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black.copy(alpha = 0.6f), titleContentColor = Color.White,
                 navigationIconContentColor = Color.White), expandedHeight = barHeight())
+    }
     }
 }
 @Composable private fun SourceTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
@@ -234,7 +235,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                                 }
                             }
                             Column(Modifier.padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                if (photo.cover) Text("Cover photo", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                if (photo.cover) Text("Cover photo", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 photo.health?.let { Text("Health: ${it.replace('_', ' ')}") }
                                 if (photo.note.isNotEmpty()) Text(photo.note)
                             }
@@ -315,7 +316,8 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     }
     val quotaGone = state.failureStatus == 429 || state.remaining == 0
     val enabled = online && !state.saving && !state.blocked && !state.updateRequired
-    val back = { if (selected.isNotEmpty()) discarding = true else onBack() }
+    // Results stay until the photos change, so Change photos can go back to them without another identification.
+    val back = { if (!showing && state.result != null) showing = true else if (selected.isNotEmpty()) discarding = true else onBack() }
     BackHandler(onBack = back)
     val discardBody = "Your ${selected.size} ${if (selected.size == 1) "photo is" else "photos are"} not used yet."
     SideEffect { onFormDirty { discardBody.takeIf { selected.isNotEmpty() } } }
@@ -341,13 +343,15 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     TextButton(onClick = { showing = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
                     Heading("Best matches")
                     result.candidates.forEach { candidate ->
-                        SpeciesSearchCard(candidate, candidate.identificationCanonicalName ?: candidate.canonicalName, api, enabled, 96.dp, matchLines(candidate)) {
+                        SpeciesSearchCard(candidate, candidate.identificationCanonicalName ?: candidate.canonicalName, api, enabled, 96.dp, matchLines(candidate),
+                            blockedReason = "Choosing a species needs a connection.".takeIf { !online }, onBlocked = onExplain) {
                             chosen = candidate; searchId = result.id
                         }
                     }
                 } else {
                     Text("Add one to five photos of the same plant. Leaves and flowers work best.")
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.result != null) TextButton(onClick = { showing = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to results") }
+                    if (selected.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         selected.forEachIndexed { index, uri ->
                             Box {
                                 UriThumb(uri, 96.dp, "Photo ${index + 1} of ${selected.size}")
@@ -359,10 +363,11 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                                 }
                             }
                         }
-                        if (selected.size < 5) {
-                            SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.size(96.dp), onTake)
-                            SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled, Modifier.size(96.dp), onChoose)
-                        }
+                    }
+                    // Side by side under the photos, as on the photo form, so both labels fit and neither scrolls away.
+                    if (selected.size < 5) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SourceTile("Take photo", Icons.Outlined.PhotoCamera, enabled, Modifier.weight(1f), onTake)
+                        SourceTile("Choose photos", Icons.Outlined.PhotoLibrary, enabled, Modifier.weight(1f), onChoose)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Photos go to Pl@ntNet to identify the plant, without location data.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
