@@ -391,6 +391,19 @@ class PhotoScreenTest {
         compose.onNode(hasText("Best matches") and isHeading()).assertIsDisplayed()
     }
 
+    // Change photos stays open through recreation, and photos that already have results lead back to them, not to another identification.
+    @Test fun changePhotosSurvivesRecreationAndOffersOnlyTheResults() {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        val candidate = SpeciesCandidate(900002, "Testoria nova Inventor", "Testoria nova", "SPECIES", null, null, true, null, null, 0.97, commonName = "Synthetic star")
+        restoration.setContent { FytoriumTheme { IdentificationScreen(PhotoState(result = SpeciesSearch("synthetic-search", listOf(candidate))), true, listOf("content://synthetic/one")) } }
+        compose.onNodeWithText("Change photos").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Add one to five photos of the same plant. Leaves and flowers work best.").assertIsDisplayed()
+        compose.onNodeWithText("Identify").assertDoesNotExist()
+        compose.onNodeWithText("Back to results").performScrollTo().performClick()
+        compose.onNode(hasText("Best matches") and isHeading()).assertIsDisplayed()
+    }
+
     // W4-P25: no match and a used-up quota answer in the page; Pl@ntNet down goes to the line with Try again.
     @Test fun identifyOutcomesSayWhatToDoNext() {
         val state = mutableStateOf(PhotoState(error = "No plant species could be identified.", failureStatus = 422))

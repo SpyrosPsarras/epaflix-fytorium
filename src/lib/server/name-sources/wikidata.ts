@@ -5,6 +5,7 @@ import { sourceUrl, taxonomyFetch, type NameSource, type FetchedName } from './s
 
 // shortcut: limits are per process; share the counters before scaling to multiple replicas.
 // Each request keeps its test-clock and real time: tests move the clock, and a frozen lab clock must not hold the limit once a real minute passes.
+export class WikidataLimit extends Error {}
 let requests: { at: number; real: number }[] = [];
 let retryAt = 0;
 let retryReal = 0;
@@ -13,7 +14,8 @@ export async function wikidataJson(params: Record<string, string>, deadline?: Ab
   const real = Date.now();
   if (config().testClockEnabled && requests.some(request => request.at > time)) { requests = []; retryAt = 0; }
   requests = requests.filter(request => time - request.at < 60000 && real - request.real < 60000);
-  if ((time < retryAt && real < retryReal) || requests.length >= 20) throw new Error('Wikidata request limit');
+  if (time >= retryAt || real >= retryReal) { retryAt = 0; retryReal = 0; }
+  if (retryAt || requests.length >= 20) throw new WikidataLimit('Wikidata request limit');
   requests.push({ at: time, real });
   const url = sourceUrl(config().wikidataBaseUrl, 'w/api.php');
   url.search = new URLSearchParams({ ...params, format: 'json' }).toString();

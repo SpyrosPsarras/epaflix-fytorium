@@ -1759,7 +1759,7 @@ class PlantPageTest {
             search.assertIsEnabled().performClick()
             compose.waitUntil(5_000) { repo.plantState.value.reads["search"]?.offline == true && Running.count.get() == 0 }
             field.assertIsNotFocused().assertTextContains("zzqxw")
-            compose.onNode(starResult).assertIsDisplayed().assertIsNotEnabled()
+            compose.onNode(starResult).assertIsDisplayed().assert(hasStateDescription("Choosing a species needs a connection."))
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
             compose.onAllNodesWithText("No species called", substring = true).assertCountEquals(0)
             assertEquals(1, synchronized(paths) { paths.count { it == "/api/species/search" } })

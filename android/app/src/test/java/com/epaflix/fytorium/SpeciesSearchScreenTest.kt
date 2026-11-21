@@ -82,14 +82,14 @@ class SpeciesSearchScreenTest {
         compose.runOnIdle { assertEquals(second, selected) }
     }
 
-    // Offline the cards fade whole and a tap says why.
+    // Offline a card keeps its text readable and says why, on tap and to TalkBack.
     @Test fun offlineResultCardsSayWhyOnTap() {
         val explained = mutableListOf<String>()
         var selected: SpeciesCandidate? = null
         compose.setContent { FytoriumTheme { Surface { SpeciesPicker(false, search, {}, { candidate, _, _ -> selected = candidate },
             blockedReason = "Choosing a species needs a connection.", onBlocked = { explained += it }) } } }
         compose.onNodeWithContentDescription("Synthetic star, Testoria nova Maker. Choose this species.")
-            .assert(hasStateDescription("Choosing a species needs a connection.")).assertIsNotEnabled().performClick()
+            .assert(hasStateDescription("Choosing a species needs a connection.")).assertHasClickAction().performClick()
         compose.runOnIdle { assertEquals(listOf("Choosing a species needs a connection."), explained); assertEquals(null, selected) }
     }
 

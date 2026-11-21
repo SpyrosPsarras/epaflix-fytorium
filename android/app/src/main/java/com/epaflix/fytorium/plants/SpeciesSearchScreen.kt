@@ -30,7 +30,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -132,14 +131,14 @@ import com.epaflix.fytorium.*
 @Composable internal fun SpeciesSearchCard(candidate: SpeciesCandidate, scientific: String, api: ApiClient?, enabled: Boolean,
     photo: androidx.compose.ui.unit.Dp = 80.dp, lines: List<String> = emptyList(), blockedReason: String? = null, onBlocked: (String) -> Unit = {}, onClick: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    // A card that can't be chosen fades whole and, when there is a reason, says it on tap.
+    // A card that can't be chosen keeps its text readable, dims its photo and, when there is a reason, says it on tap and to TalkBack.
     val explains = !enabled && blockedReason != null
     Card(onClick = { if (enabled) onClick() else blockedReason?.let(onBlocked) }, enabled = enabled || explains, modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).semantics {
         contentDescription = (listOf("${candidate.headline}, ${endSentence(scientific)}") + lines.map(::endSentence) + "Choose this species.").joinToString(" ")
-        if (explains) { disabled(); stateDescription = blockedReason!! }
+        if (explains) stateDescription = blockedReason!!
     }) {
-        Row(Modifier.padding(12.dp).alpha(if (enabled) 1f else 0.38f), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.size(photo))
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val credit = SearchSpeciesPhoto(api, candidate.key, Modifier.size(photo).alpha(if (enabled) 1f else 0.38f))
             Column(Modifier.weight(1f)) {
                 Heading(candidate.headline, MaterialTheme.typography.titleMedium)
                 Text(scientific, color = muted)

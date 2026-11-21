@@ -4,7 +4,7 @@ import { pickCommonName } from './common-name';
 import { db, withTransaction } from './db';
 import { now } from './clock';
 import { gbifNames } from './name-sources/gbif';
-import { wikidataNames } from './name-sources/wikidata';
+import { wikidataNames, WikidataLimit } from './name-sources/wikidata';
 import { nortaxaNames } from './name-sources/nortaxa';
 import { commonNameLanguages, nameValidationError, type SpeciesName } from '$lib/names';
 
@@ -83,7 +83,12 @@ async function fillNames() {
           for (const row of names) await client.query('INSERT INTO species_names (gbif_key, name, language, source) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING', [species.gbif_key, row.name.trim(), row.language, source.source]);
           await client.query('UPDATE species_name_fetches SET completed = true WHERE gbif_key = $1 AND source = $2 AND version = $3', [species.gbif_key, source.source, species.version]);
         }));
-      } catch {
+      } catch (cause) {
+        // The shared Wikidata limit is not this species' failure; it is due again at once and the next tick retries, even on a frozen test clock.
+        if (cause instanceof WikidataLimit) {
+          await db().query('UPDATE species_name_fetches SET retry_after = $4 WHERE gbif_key = $1 AND source = $2 AND version = $3', [species.gbif_key, source.source, species.version, time]);
+          return;
+        }
         const failures = species.failures + 1;
         const delay = Math.min(60000 * 2 ** (failures - 1), 86400000);
         await db().query('UPDATE species_name_fetches SET failures = $4, retry_after = $5 WHERE gbif_key = $1 AND source = $2 AND version = $3', [species.gbif_key, source.source, species.version, failures, new Date(now().getTime() + delay)]);

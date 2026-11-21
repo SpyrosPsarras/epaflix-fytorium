@@ -477,3 +477,24 @@ test('refuses unauthenticated name reads and writes and cross-origin owner write
   const response = await fetch(harness.base + path + '/names', { method: 'POST', headers: { cookie, origin: 'https://foreign.example', 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Test', language: 'en' }) });
   expect(response.status).toBe(403);
 });
+
+// Last in this file: it uses up the app's Wikidata limit for a real minute.
+test('a name job that meets the shared Wikidata limit waits without a failure and stays due on a frozen clock', async () => {
+  const clock = await (await request('/__test/clock')).json();
+  await request('/__test/clock', 'POST', { action: 'set', at: clock.now });
+  for (let i = 0; i < 25; i++) await request('/api/species/search?q=' + encodeURIComponent('Limitoria filler ' + i));
+  harness.setGbif({ usageKey: 910019, scientificName: 'Limitoria capped Inventor', canonicalName: 'Limitoria capped', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'EXACT', confidence: 99 });
+  harness.setNames('gbif', { results: [], endOfRecords: true });
+  harness.setNames('nortaxa', []);
+  expect((await add(await search('Limitoria capped'), 910019)).status).toBe(201);
+  const database = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
+  try {
+    // A pick raises the version and leases the job ahead; meeting the limit hands it back due at once, with no failure.
+    await expect.poll(async () => (await database.query("SELECT completed, failures, version > 1 AS picked, retry_after <= $1 AS due FROM species_name_fetches WHERE gbif_key = 910019 AND source = 'wikidata'", [clock.now])).rows,
+      { timeout: 15000 }).toEqual([{ completed: false, failures: 0, picked: true, due: true }]);
+    expect(harness.appOutput).not.toContain('Name fetch failed for wikidata species 910019');
+  } finally {
+    await database.end();
+    await request('/__test/clock', 'POST', { action: 'reset' });
+  }
+}, 60000);

@@ -122,6 +122,7 @@ internal fun clampZoom(scale: Float, x: Float, y: Float, fittedWidth: Float, fit
         TopAppBar(title = { BarTitle(line, "This phone can't reach Fytorium, so the full-size photo can't load. This copy is smaller.") {
             Text(photo?.let { "${it.plantName} \u00b7 ${dayMonthYear(it.takenOn)}" } ?: "Photo", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { heading() }) } },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+            windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black.copy(alpha = 0.6f), titleContentColor = Color.White,
                 navigationIconContentColor = Color.White), expandedHeight = barHeight())
     }
@@ -309,10 +310,12 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     var chosen by rememberSaveable { mutableStateOf<SpeciesCandidate?>(null) }
     var searchId by rememberSaveable { mutableStateOf<String?>(null) }
     var showing by rememberSaveable { mutableStateOf(state.result != null) }
+    // The result last brought into view, so recreation keeps Change photos open instead of showing the results again.
+    var shownId by rememberSaveable { mutableStateOf(state.result?.id) }
     var details by rememberSaveable { mutableStateOf(false) }
     var discarding by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.result?.id) {
-        state.result?.id?.let { if (searchId != it) chosen = null; showing = true } ?: run { if (!state.saving) showing = false }
+        state.result?.id?.let { if (searchId != it) chosen = null; if (shownId != it) { showing = true; shownId = it } } ?: run { if (!state.saving) showing = false }
     }
     val quotaGone = state.failureStatus == 429 || state.remaining == 0
     val enabled = online && !state.saving && !state.blocked && !state.updateRequired
@@ -350,7 +353,6 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     }
                 } else {
                     Text("Add one to five photos of the same plant. Leaves and flowers work best.")
-                    if (state.result != null) TextButton(onClick = { showing = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to results") }
                     if (selected.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         selected.forEachIndexed { index, uri ->
                             Box {
@@ -374,7 +376,9 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                         TextButton(onClick = { details = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Details") }
                     }
                     val ready = enabled && selected.isNotEmpty() && !quotaGone
-                    Button(onClick = { if (ready) onIdentify() else onExplain(when {
+                    // These photos already have results, so the way on is back to them rather than another identification.
+                    if (state.result != null) Button(onClick = { showing = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to results") }
+                    else Button(onClick = { if (ready) onIdentify() else onExplain(when {
                         quotaGone -> "No identifications left today."
                         selected.isEmpty() -> "Add a photo first."
                         else -> "Identifying needs a connection."
