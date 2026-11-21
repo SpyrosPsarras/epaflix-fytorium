@@ -81,7 +81,8 @@ import kotlinx.coroutines.withContext
                 onSelect(candidate, search, confirmed)
             }
         }, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
-        onDiscard = { selected = emptyList(); result = null; repository.clearResult() }, care = care, api = api)
+        // Discarding Identify's photos drops the add form's copy of photo 1 too.
+        onDiscard = { selected = emptyList(); result = null; repository.clearResult(); onFirstPhoto?.invoke(null) }, care = care, api = api, onFormDirty = onFormDirty)
     else PhotoScreen(shown, online, plantName, selected.size, thumbnails, onBack,
         onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch

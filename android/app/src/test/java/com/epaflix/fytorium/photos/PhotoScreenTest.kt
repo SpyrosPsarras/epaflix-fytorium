@@ -309,6 +309,16 @@ class PhotoScreenTest {
         compose.runOnIdle { assertEquals(listOf(1), removed); assertEquals(listOf("Add a photo first."), explained) }
     }
 
+    // A tab switch from Identify with photos asks first, as its Back does.
+    @Test fun identifyPhotosAskBeforeATabLeaves() {
+        val selected = mutableStateOf(listOf("content://synthetic/one"))
+        var dirty: () -> String? = { null }
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(), true, selected.value, onFormDirty = { dirty = it }) } }
+        compose.runOnIdle { assertEquals("Your 1 photo is not used yet.", dirty()) }
+        compose.runOnIdle { selected.value = emptyList() }
+        compose.runOnIdle { assertEquals(null, dirty()) }
+    }
+
     // W4-P21-P23: results replace the inputs; cards say how sure and the new name; the confirm shows both photos.
     @Test fun identifyResultsCompareYourPhotoWithTheReference() {
         val renamed = SpeciesCandidate(900002, "Testoria nova Inventor", "Testoria nova", "SPECIES", null, null, true, null, null, 0.97,

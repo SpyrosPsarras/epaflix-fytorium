@@ -296,7 +296,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
 @Composable fun IdentificationScreen(state: PhotoState, online: Boolean, selected: List<String>, onBack: () -> Unit = {}, onRefresh: () -> Unit = {},
     onIdentify: () -> Unit = {}, onRemove: (Int) -> Unit = {}, onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> },
     onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onSearchByName: () -> Unit = onBack, onExplain: (String) -> Unit = {},
-    onDiscard: () -> Unit = {}, care: CareState? = null, api: com.epaflix.fytorium.ApiClient? = null) {
+    onDiscard: () -> Unit = {}, care: CareState? = null, api: com.epaflix.fytorium.ApiClient? = null, onFormDirty: (() -> String?) -> Unit = {}) {
     var chosen by rememberSaveable { mutableStateOf<SpeciesCandidate?>(null) }
     var searchId by rememberSaveable { mutableStateOf<String?>(null) }
     var showing by rememberSaveable { mutableStateOf(state.result != null) }
@@ -309,6 +309,10 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     val enabled = online && !state.saving && !state.blocked && !state.updateRequired
     val back = { if (selected.isNotEmpty()) discarding = true else onBack() }
     BackHandler(onBack = back)
+    val discardBody = "Your ${selected.size} ${if (selected.size == 1) "photo is" else "photos are"} not used yet."
+    SideEffect { onFormDirty { discardBody.takeIf { selected.isNotEmpty() } } }
+    val currentDirty by rememberUpdatedState(onFormDirty)
+    DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     val status = when {
         !online -> (care?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. Identifying needs a connection."
         state.failureStatus == 503 -> "Pl@ntNet isn't responding" to (state.error ?: "Pl@ntNet didn't answer. Try again.")
@@ -395,7 +399,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     if (details) AlertDialog(onDismissRequest = { details = false }, title = { DialogTitle("About identify photos") },
         text = { DialogBody { Text("Up to 5 photos, 15 MB each and 40 MB in total. Fytorium shrinks them and removes location and camera data before sending. Fytorium keeps a photo only if you tick Keep this photo when you add the plant.") } },
         confirmButton = { TextButton(onClick = { details = false }) { Text("Close") } })
-    if (discarding) DiscardDialog("Discard these photos?", "Your ${selected.size} ${if (selected.size == 1) "photo is" else "photos are"} not used yet.",
+    if (discarding) DiscardDialog("Discard these photos?", discardBody,
         onKeep = { discarding = false }) { discarding = false; onDiscard(); onBack() }
 }
 

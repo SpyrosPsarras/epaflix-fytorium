@@ -122,8 +122,7 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Yes, this one")
         input("Name", "Synthetic A05 sprout")
-        click("Site")
-        compose.onNodeWithText("Synthetic A05 site").performClick()
+        compose.onNode(hasText("Site") and hasText("Synthetic A05 site")).assertIsDisplayed()
         click("Save plant")
         compose.waitForState("Added plant detail", 30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 sprout" && !app.repository.state.value.busy }
         val plantId = app.repository.state.value.detail!!.plant.id
