@@ -227,6 +227,8 @@ internal fun Pair<String, String>?.withNote(note: Pair<String, String>?) =
 // A page-level status shows as a line under the title, in a bar always tall enough for both, so it never moves or covers the content.
 @Composable internal fun BarTitle(line: String?, explanation: String, center: Boolean = false, retry: (() -> Unit)? = null, title: @Composable () -> Unit) {
     var explaining by rememberSaveable { mutableStateOf(false) }
+    // A status that clears closes its explanation, so a later one never opens by itself.
+    LaunchedEffect(line == null) { if (line == null) explaining = false }
     Column(Modifier.heightIn(min = 48.dp).then(if (line == null) Modifier else Modifier.clickable(onClickLabel = "Explain") { explaining = true }.minimumInteractiveComponentSize()),
         verticalArrangement = Arrangement.Center, horizontalAlignment = if (center) Alignment.CenterHorizontally else Alignment.Start) {
         title()

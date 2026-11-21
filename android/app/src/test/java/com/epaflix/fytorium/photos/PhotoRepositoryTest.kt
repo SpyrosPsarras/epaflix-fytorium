@@ -60,6 +60,7 @@ class PhotoRepositoryTest {
             val repository = PhotoRepository(ApiClient(server.url("").toString().trimEnd('/'), store) {}, { true }, { true }, "plant-one")
             server.enqueue(MockResponse().setBody(photoFixture)); server.enqueue(MockResponse().setBody("[$photoFixture]"))
             assertTrue(repository.upload(context, android.net.Uri.fromFile(file), "Synthetic note", "good", "2026-10-13"))
+            assertTrue(org.json.JSONObject(photoFixture).getString("id") in addedHere)
             val request = server.takeRequest()
             assertEquals("/api/plants/plant-one/photos", request.path)
             assertEquals("Bearer synthetic-access", request.getHeader("Authorization"))

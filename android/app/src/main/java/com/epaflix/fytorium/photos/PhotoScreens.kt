@@ -197,10 +197,10 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                         tint = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                 }
             })
-        // A list read from the top keeps its newest card in view when one arrives, such as the photo just added.
+        // A photo added on this phone shows at the top of a list read from the top; one from elsewhere waits, so nothing moves under the finger.
         val newest = state.photos.firstOrNull()?.id
         val atTop = remember(newest) { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
-        LaunchedEffect(newest) { if (atTop) grid.scrollToItem(0) }
+        LaunchedEffect(newest) { if (atTop && newest != null && newest in addedHere) grid.scrollToItem(0) }
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.fillMaxWidth().weight(1f)) {
             if (state.loaded && state.photos.isEmpty()) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {

@@ -21,6 +21,9 @@ data class PhotoState(val photos: List<PhotoUpdate> = emptyList(), val loading: 
 private class PhotoFailure(val status: Int, val messageText: String) : Exception()
 
 // One member and one gallery. Neither metadata nor original images are persisted here.
+// Photos uploaded from this phone in this process; the Journal and a plant's list each start their own repository.
+internal val addedHere: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
 class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boolean,
     private val connected: () -> Boolean, private val plantId: String? = null,
     private val cached: (String) -> String? = { null }, private val keep: (String, String) -> Unit = { _, _ -> }) {
@@ -92,9 +95,10 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
             val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("photo", "photo.jpg", image.toRequestBody("image/jpeg".toMediaType()))
                 .addFormDataPart("note", note).addFormDataPart("health", health).addFormDataPart("taken_on", takenOn).build()
-            response(api.request("/api/plants/${safe(key)}/photos", method = "POST", requestBody = UploadBody(multipart) {
+            val added = response(api.request("/api/plants/${safe(key)}/photos", method = "POST", requestBody = UploadBody(multipart) {
                 if (allowed()) mutable.value = mutable.value.copy(progress = it)
             }), "Could not upload the photo. Try again.")
+            runCatching { JSONObject(added).getString("id") }.getOrNull()?.let(addedHere::add)
             if (allowed()) mutable.value = mutable.value.copy(uploadRevision = state.value.uploadRevision + 1)
         }
         if (success) refresh()

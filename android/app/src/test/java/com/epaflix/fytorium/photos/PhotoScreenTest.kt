@@ -215,14 +215,18 @@ class PhotoScreenTest {
         assertTrue(date.right <= actions.left + 1f)
     }
 
-    // A photo added while the list shows its top stays in view, rather than landing above it.
-    @Test fun aNewNewestPhotoShowsWhenTheListIsAtTheTop() {
+    // A photo added on this phone while the list shows its top stays in view; one from elsewhere waits above, so the shown card stays put.
+    @Test fun aPhotoAddedHereShowsAtTheTop() = newestArrives(here = true)
+    @Test fun aPhotoFromElsewhereWaitsAboveTheShownCard() = newestArrives(here = false)
+    private fun newestArrives(here: Boolean) {
+        val id = "photo-new-$here"
+        if (here) addedHere += id
         val older = (1..6).map { photo.copy(id = "photo-old-$it", takenOn = "2026-10-0$it") }.reversed()
         val state = mutableStateOf(PhotoState(older, loaded = true))
         compose.setContent { FytoriumTheme { PhotoScreen(state.value, true, "Synthetic sprout", 0) } }
-        compose.runOnIdle { state.value = state.value.copy(photos = listOf(photo.copy(id = "photo-new", takenOn = "2026-10-14")) + older) }
-        compose.onNodeWithContentDescription("Photo of Synthetic sprout, 14 Oct 2026").assertIsDisplayed()
-        compose.onNodeWithText("Photos of Synthetic sprout").assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(photos = listOf(photo.copy(id = id, takenOn = "2026-10-14")) + older) }
+        compose.onNodeWithContentDescription("Photo of Synthetic sprout, 14 Oct 2026").apply { if (here) assertIsDisplayed() else assertIsNotDisplayed() }
+        if (!here) compose.onNodeWithContentDescription("Photo of Synthetic sprout, 6 Oct 2026").assertIsDisplayed()
     }
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")

@@ -75,6 +75,16 @@ class PlantPageTest {
         compose.onNodeWithText("Synthetic connection explanation").assertDoesNotExist()
     }
 
+    @Test fun aStatusThatClearsClosesItsExplanation() {
+        val line = mutableStateOf<String?>("Fytorium isn't responding")
+        compose.setContent { FytoriumTheme { BarTitle(line.value, "Synthetic connection explanation") { Text("Synthetic sprout") } } }
+        compose.onNodeWithText("Fytorium isn't responding").performClick()
+        compose.onNodeWithText("Synthetic connection explanation").assertExists()
+        compose.runOnIdle { line.value = null }
+        compose.runOnIdle { line.value = "Offline" }
+        compose.onNodeWithText("Synthetic connection explanation").assertDoesNotExist()
+    }
+
     private val plant = parsePlant(JSONObject(plantFixture))
     private val owner = CareState(member = Member("member-one", Role.owner), plants = listOf(plant))
     private val today = parseTaskList(taskListFixture("today"))
