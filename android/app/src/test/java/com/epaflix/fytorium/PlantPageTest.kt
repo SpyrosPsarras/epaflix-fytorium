@@ -1925,6 +1925,10 @@ class PlantPageTest {
             compose.onNodeWithText("Create a site").performScrollTo().performClick()
             compose.onNodeWithText("Create a site?").assertIsDisplayed()
             compose.assertDialogBody("Synthetic star is not added yet. Your choices stay here when you come back.")
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic window star")
+            compose.onNodeWithText("Create a site").performScrollTo().performClick()
+            compose.assertDialogBody("Synthetic window star is not added yet. Your choices stay here when you come back.")
         }
     }
 

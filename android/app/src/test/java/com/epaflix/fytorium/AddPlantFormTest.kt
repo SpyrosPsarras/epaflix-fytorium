@@ -21,7 +21,7 @@ class AddPlantFormTest {
     private val today = LocalDate.parse("2030-06-10")
     private val site = PlantSite("site-one", "Synthetic site")
 
-    private fun form(sites: List<PlantSite> = listOf(site), plant: Plant? = null, blocked: String? = null, onCreateSite: (() -> Unit)? = {},
+    private fun form(sites: List<PlantSite> = listOf(site), plant: Plant? = null, blocked: String? = null, onCreateSite: ((String) -> Unit)? = {},
         explained: MutableList<String> = mutableListOf(), keepPhoto: (@Composable () -> Unit)? = null, onSave: (JSONObject) -> Unit) {
         compose.setContent { FytoriumTheme { PlantForm(plant, syntheticOptions(), sites, true, onSave = onSave, today = today,
             species = if (plant == null) {{ ChosenSpecies(null, 910001, "Synthetic lantern", "Testoria lucida") {} }} else null,

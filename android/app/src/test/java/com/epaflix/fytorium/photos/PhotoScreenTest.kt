@@ -108,7 +108,8 @@ class PhotoScreenTest {
             care = CareState(member = Member("synthetic-member", Role.owner), offline = true), onExplain = { explained += it }) } }
         compose.onNodeWithText("Offline", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Add a photo of Synthetic sprout").assertIsNotEnabled().performClick()
-        compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of Synthetic sprout").assertIsNotEnabled().performClick()
+        compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of Synthetic sprout").assertIsNotEnabled()
+            .assert(hasStateDescription("Photo changes need a connection.")).performClick()
         compose.onNodeWithText("Delete").assertDoesNotExist()
         compose.runOnIdle { assertEquals(listOf("Photo changes need a connection.", "Photo changes need a connection."), explained) }
     }
@@ -199,6 +200,29 @@ class PhotoScreenTest {
         val next = compose.onNodeWithContentDescription("Actions for the 14 Oct 2026 photo of Synthetic sprout").fetchSemanticsNode().boundsInRoot
         assertEquals(first.top, next.top, 1f)
         assertTrue(next.left > first.right)
+    }
+
+    // A long plant name wraps beside the date and leaves the actions button in the card.
+    @Config(qualifiers = "w731dp-h411dp-land-xxhdpi")
+    @Test fun aLongPlantNameKeepsTheDateAndActionsInTheJournalCard() {
+        RuntimeEnvironment.setFontScale(1.3f)
+        val long = photo.copy(plantName = "Synthetic sprout with a very long name from the windowsill shelf")
+        compose.setContent { FytoriumTheme { PhotoScreen(PhotoState(listOf(long, photo.copy(id = "photo-two")), loaded = true), true, null, 0) } }
+        val actions = compose.onNodeWithContentDescription("Actions for the 13 Oct 2026 photo of ${long.plantName}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val date = compose.onAllNodesWithText(" \u00b7 13 Oct 2026")[0].assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val card = compose.onNodeWithContentDescription("Photo of ${long.plantName}, 13 Oct 2026").fetchSemanticsNode().boundsInRoot
+        assertTrue(actions.right <= card.right + 1f)
+        assertTrue(date.right <= actions.left + 1f)
+    }
+
+    // A photo added while the list shows its top stays in view, rather than landing above it.
+    @Test fun aNewNewestPhotoShowsWhenTheListIsAtTheTop() {
+        val older = (1..6).map { photo.copy(id = "photo-old-$it", takenOn = "2026-10-0$it") }.reversed()
+        val state = mutableStateOf(PhotoState(older, loaded = true))
+        compose.setContent { FytoriumTheme { PhotoScreen(state.value, true, "Synthetic sprout", 0) } }
+        compose.runOnIdle { state.value = state.value.copy(photos = listOf(photo.copy(id = "photo-new", takenOn = "2026-10-14")) + older) }
+        compose.onNodeWithContentDescription("Photo of Synthetic sprout, 14 Oct 2026").assertIsDisplayed()
+        compose.onNodeWithText("Photos of Synthetic sprout").assertIsDisplayed()
     }
 
     @Config(qualifiers = "w800dp-h360dp-land-mdpi")

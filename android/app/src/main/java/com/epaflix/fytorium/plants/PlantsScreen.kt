@@ -59,6 +59,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     // Where the new plant's species came from, so Change returns there with its query, results and photos.
     var pickedFrom by rememberSaveable { mutableStateOf("search") }
     var sitesReturn by rememberSaveable { mutableStateOf("restore") }
+    // The name typed on the add form, so Create a site names the plant as the user does.
+    var siteFor by rememberSaveable { mutableStateOf("") }
     // Identify's first photo, copied into app storage so it survives until the plant is saved or discarded.
     var keepPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
     var keepPhoto by rememberSaveable { mutableStateOf(true) }
@@ -373,7 +375,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     species = selection?.takeIf { id == null }?.let { json -> { ChosenSpecies(speciesApi, JSONObject(json).getLong("gbif_key"), chosenName, chosenScientific) {
                         page = pickedFrom
                     } } },
-                    nameStandIn = chosenName.takeIf { id == null && it.isNotBlank() }, onCreateSite = { sitesReturn = "form"; leavingFor = "sites" }.takeIf { id == null },
+                    nameStandIn = chosenName.takeIf { id == null && it.isNotBlank() }, onCreateSite = { typed: String -> siteFor = typed; sitesReturn = "form"; leavingFor = "sites" }.takeIf { id == null },
                     createdSite = restoreSite.takeIf { id == null }, blocked = addBlocked.takeIf { id == null }, onBlocked = ::explain,
                     keepPhoto = keepPhotoPath?.takeIf { id == null }?.let { path -> { KeepPhoto(path, keepPhoto, enabled) { keepPhoto = it } } }, onSave = { input ->
                     selection?.takeIf { id == null }?.let { json ->
@@ -426,7 +428,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         val name = detail?.plant?.displayName ?: "this plant"
         val (title, text, go) = when (link) {
             "species-care" -> Triple("Open care defaults for this species?", "Your changes to $name's schedule are not saved yet. They stay here when you come back.", "Open care defaults")
-            "sites" -> if (sitesReturn == "form") Triple("Create a site?", "${chosenName.ifBlank { "This plant" }} is not added yet. Your choices stay here when you come back.", "Create a site")
+            "sites" -> if (sitesReturn == "form") Triple("Create a site?", "${siteFor.ifBlank { chosenName }.ifBlank { "This plant" }} is not added yet. Your choices stay here when you come back.", "Create a site")
                 else Triple("Create a site?", "$name is not restored yet. If you come back without creating a site, your choice stays. A site you create is chosen instead.", "Create a site")
             else -> Triple("Identify from photos?", "Your species search for ${if (page == "change-species") name else "this new plant"} stays here when you come back.", "Identify from photos")
         }
@@ -485,5 +487,5 @@ internal fun CareState.plantStatus(request: PlantsRequestState): Pair<String, St
     val own = care.plantStatus(request)
     // A status takes the line, so its explanation carries the note too.
     val status = own.withNote(note)
-    BarTitle(status?.first, status?.second.orEmpty(), retry = onRetry.takeIf { status?.first == refusedLine || request.reads.isNotEmpty() }, title = title)
+    BarTitle(status?.first, status?.second.orEmpty(), retry = onRetry.takeIf { status?.first == refusedLine || request.reads.isNotEmpty() || (care.serverUnavailable && !care.offline) }, title = title)
 }

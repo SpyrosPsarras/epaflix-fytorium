@@ -135,6 +135,8 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Testoria picta", substring = true)).performClick(); true }.getOrDefault(false) }
         compose.onNodeWithText("Save plant").assertDoesNotExist()
         click("Yes, this one")
+        // The form opens once Identify's first photo is copied for Keep this photo.
+        compose.waitUntil(30_000) { compose.onAllNodes(hasText("Name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
         scroll(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic A06 identified sprout")
         compose.onNode(hasText("Site") and hasText("Synthetic A06 site")).assertIsDisplayed()
         click("Save plant")

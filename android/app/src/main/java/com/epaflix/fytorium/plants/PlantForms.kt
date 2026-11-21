@@ -179,7 +179,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 // Name, site and Save lead; everything else waits under More details, below Save, which opens by itself when one of its fields has an error.
 @Composable fun PlantForm(plant: Plant?, options: PlantOptions, sites: List<PlantSite>, writable: Boolean, errors: Map<String, String> = emptyMap(),
     onSave: (JSONObject) -> Unit, today: LocalDate = LocalDate.now(ZoneOffset.UTC), onDirty: (() -> Boolean) -> Unit = {},
-    species: (@Composable () -> Unit)? = null, nameStandIn: String? = null, onCreateSite: (() -> Unit)? = null, createdSite: String? = null,
+    species: (@Composable () -> Unit)? = null, nameStandIn: String? = null, onCreateSite: ((String) -> Unit)? = null, createdSite: String? = null,
     keepPhoto: (@Composable () -> Unit)? = null, blocked: String? = null, onBlocked: (String) -> Unit = {}) {
     val original = remember(plant?.id) { JSONObject(plant?.attributesJson ?: "{}") }
     val startTexts = remember(plant?.id) { (listOf("nickname", "cultivar", "birthday") + options.numbers).associateWith { key -> if (original.isNull(key)) "" else original.optString(key) } }
@@ -209,7 +209,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
         val siteError = errors["site_id"] ?: "Choose a site in your household.".takeIf { siteMissing }
         if (sites.isEmpty() && onCreateSite != null) {
             Text("Plants live in a site, such as Kitchen or Balcony.")
-            OutlinedButton(onClick = onCreateSite, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") }
+            OutlinedButton(onClick = { onCreateSite(texts["nickname"].orEmpty().trim()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") }
             PlantError(siteError, keep = "Choose a site in your household.")
         } else Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
             supporting = { PlantError(siteError, keep = "Choose a site in your household.") }) { choices["site_id"] = it; siteMissing = false }

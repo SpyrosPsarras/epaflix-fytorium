@@ -184,6 +184,15 @@ class PlantRepositoryTest {
         assertNull(repo.plantState.value.errors["_form"])
         assertEquals(true, repo.plantState.value.reads["plant/plant-one"]?.offline)
     }
+    // A plant list Fytorium answers shows it responds again, so the shared not-responding line goes.
+    @Test fun anAnsweredPlantListEndsTheNotRespondingLine() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(503))
+        repo.refresh()
+        assertTrue(repo.state.value.serverUnavailable)
+        server.enqueue(MockResponse().setBody("[$plantFixture]"))
+        repo.refreshPlants()
+        assertFalse(repo.state.value.serverUnavailable)
+    }
     // Not every plant write reloads the plant, so the write's own answer ends a plant not-responding state.
     @Test fun aPlantWriteFytoriumAnswersEndsItsNotRespondingState() = repository { repo, server ->
         server.enqueue(MockResponse().setResponseCode(503))

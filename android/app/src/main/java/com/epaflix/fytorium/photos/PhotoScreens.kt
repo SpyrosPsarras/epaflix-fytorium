@@ -197,6 +197,10 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                         tint = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                 }
             })
+        // A list read from the top keeps its newest card in view when one arrives, such as the photo just added.
+        val newest = state.photos.firstOrNull()?.id
+        val atTop = remember(newest) { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
+        LaunchedEffect(newest) { if (atTop) grid.scrollToItem(0) }
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.fillMaxWidth().weight(1f)) {
             if (state.loaded && state.photos.isEmpty()) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -210,15 +214,17 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                         CardPhoto(photo, thumbnails) { onOriginal(photo.id) }
                         Column(Modifier.padding(start = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (plantName == null) {
-                                    TextButton(onClick = { onPlant(photo.plantId) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp)) { Text(photo.plantName) }
-                                    Text(" \u00b7 $day", Modifier.weight(1f))
+                                if (plantName == null) Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(onClick = { onPlant(photo.plantId) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp)) {
+                                        Text(photo.plantName)
+                                    }
+                                    Text(" \u00b7 $day", maxLines = 1)
                                 } else Text(day, Modifier.weight(1f))
                                 var menu by remember { mutableStateOf(false) }
                                 Box {
                                     // A full 48 dp target, since IconButton's own node is 40 dp.
                                     Box(Modifier.size(48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { act { menu = true } }
-                                        .semantics { contentDescription = "Actions for the $day photo of ${photo.plantName}"; if (!enabled) disabled() }, contentAlignment = Alignment.Center) {
+                                        .semantics { contentDescription = "Actions for the $day photo of ${photo.plantName}"; if (!enabled) { disabled(); blockedReason?.let { stateDescription = it } } }, contentAlignment = Alignment.Center) {
                                         Icon(Icons.Default.MoreVert, null, tint = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                                     }
                                     DropdownMenu(menu, onDismissRequest = { menu = false }) {

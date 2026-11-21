@@ -512,7 +512,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             val plants = JSONArray(json).mapObjects(::parsePlant)
             synchronized(monitor) { if (epoch == generation) {
                 cache.save(member.id, mapOf("plants" to json), clock())
-                mutable.value = mutable.value.copy(plants = plants)
+                mutable.value = mutable.value.copy(plants = plants, serverUnavailable = false)
                 plantLoaded("plants")
             } }
         } catch (error: Exception) { plantFailed(error, epoch, "plants") }
