@@ -325,8 +325,10 @@ class PlantaScreenTest {
             compose.onNode(isTab("More")).performClick()
             compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
             compose.onNodeWithText("Complete them in Sites").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("No sites yet. Create a room, garden or terrace for your plants.").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Create site").assertIsEnabled()
+            // Sites live in the Plants tab (W5b-P1, P24).
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No sites yet").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Create site").assertIsEnabled()
+            compose.onNode(isTab("Plants")).assertIsSelected()
             compose.onNodeWithText("Import from Planta").assertDoesNotExist()
         }
     }

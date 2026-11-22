@@ -63,6 +63,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val moreScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     var tab by rememberSaveable { mutableStateOf("Today") }
     var household by rememberSaveable { mutableStateOf<String?>(null) }
+    // Plants opens on its Sites list (Planta's Check sites).
     var sites by rememberSaveable { mutableStateOf(false) }
     var journalPlantId by rememberSaveable { mutableStateOf<String?>(null) }
     // Journal +: "" is the plant picker, a plant id its photo form.
@@ -125,7 +126,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     LaunchedEffect(receiptsGone) { if (receiptsGone > 0) { barPaused = true; delay(500); barPaused = false } }
     val showTabs = !WindowInsets.isImeVisible
     Scaffold(topBar = {
-        if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
+        if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
             val line = careState?.takeIf { loggedIn && !updateRequired && !about }?.connectionLine(deviceOnline)
             TopAppBar(title = { BarTitle(line, careState?.connectionNotice(deviceOnline).orEmpty(), retry = { controller?.refresh(); Unit }.takeIf { line != null && deviceOnline }) {
                 Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) } },
@@ -160,7 +161,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             // A tap meant for a receipt that has just gone must not switch tabs.
             if (showTabs && barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
-        leaving?.let { body -> com.epaflix.fytorium.plants.DiscardDialog(if (body == "The location you typed is not saved.") "Discard these coordinates?" else "Discard changes?", body, onKeep = { leaving = null; destination = null }) {
+        leaving?.let { body -> val (title, keepLabel, leaveLabel) = com.epaflix.fytorium.household.leaveQuestion(body)
+            com.epaflix.fytorium.plants.LeaveDialog(title, body, keepLabel, leaveLabel, onKeep = { leaving = null; destination = null }) {
             val target = destination
             leaving = null; destination = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); target?.let(::go) } }
     }) { scaffoldPadding ->
@@ -184,7 +186,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     com.epaflix.fytorium.planta.PlantaRoute(sitesApi, careState, sitesConnected, onBack = { plantaImport = false },
                         onPlants = { plantaImport = false; journalPlantId = null; tab = "Plants"; controller?.refresh() },
                         onPlant = { plantaImport = false; journalPlantId = it; tab = "Plants"; controller?.refresh() },
-                        onSites = { plantaImport = false; sites = true })
+                        onSites = { plantaImport = false; journalPlantId = null; sites = true; tab = "Plants" })
                 }
             }
             return@Scaffold
@@ -192,7 +194,17 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val householdArea = com.epaflix.fytorium.household.HouseholdArea.entries.firstOrNull { it.name == household }
         if (loggedIn && !updateRequired && tab == "More" && householdArea != null && careState?.member != null && sitesApi != null && careState.member.role != Role.sitter && (householdArea != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner)) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member, householdArea) { com.epaflix.fytorium.household.HouseholdRoute(sitesApi, householdArea, careState, sitesConnected) { household = null } }
+                // Not keyed by the member object: a member change closes this screen in the shell, and its hash changes per process (W5b-P29).
+                if (householdArea == com.epaflix.fytorium.household.HouseholdArea.Members) com.epaflix.fytorium.household.MembersRoute(sitesApi, careState, sitesConnected,
+                    onBack = { household = null }, onFormDirty = { plantsDiscard = it }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0,
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, thumbnails = thumbnails,
+                    cached = { controller?.repository?.cachedJson(it, careState.member.id) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) })
+                else com.epaflix.fytorium.household.CustomTasksRoute(sitesApi, careState, sitesConnected,
+                    onBack = { household = null }, onFormDirty = { plantsDiscard = it }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0,
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, thumbnails = thumbnails,
+                    cached = { controller?.repository?.cachedJson(it, careState.member.id) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) })
             }
             return@Scaffold
         }
@@ -214,13 +226,6 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it },
                     onUpdateRequired = { controller?.repository?.requireUpdate() }, answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0)
-            }
-            return@Scaffold
-        }
-        if (loggedIn && !updateRequired && tab == "More" && sites && careState?.member != null && careState.member.role != Role.sitter && sitesApi != null) {
-            Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                com.epaflix.fytorium.sites.SitesRoute(sitesApi, careState, sitesConnected, onBack = { sites = false }, onFormDirty = { plantsDiscard = it },
-                    onUpdateRequired = { controller?.repository?.requireUpdate() })
             }
             return@Scaffold
         }
@@ -263,9 +268,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                             onWater = { scope.launch(Dispatchers.IO) { if (feed?.water() == true) controller?.rainWatered(feed.state.value.weather?.lastBatchId) } },
                             onUndo = { scope.launch(Dispatchers.IO) { feed?.undoRain() } })
                     })
-                else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant, plantsDiscards) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
+                else key(careState.member?.id, careState.member?.role == Role.sitter, feedPlant, journalPlantId, addPlant, sites, plantsDiscards) { com.epaflix.fytorium.plants.PlantsScreen(careState, controller?.repository, thumbnails,
                     onBack = { tab = "Today"; feedPlant = null; openTask(null); journalPlantId = null; addPlant = false; plantsSearch = false },
-                    initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialTask = todayTask, returnToToday = todayTaskKey != null,
+                    initialPlant = journalPlantId ?: feedPlant, initialAdd = addPlant, initialSites = sites, initialTask = todayTask, returnToToday = todayTaskKey != null,
                     onTaskAction = { task, action -> controller?.act(task, action) },
                     photosApi = sitesApi, photosConnected = sitesConnected,
                     speciesApi = sitesApi, speciesConnected = sitesConnected, onCareChanged = { controller?.refresh() },
@@ -278,7 +283,6 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 when (key) {
                     "notifications" -> notifications = true
                     "weather" -> openFeedSettings()
-                    "sites" -> sites = true
                     "members" -> household = com.epaflix.fytorium.household.HouseholdArea.Members.name
                     "custom" -> household = com.epaflix.fytorium.household.HouseholdArea.Tasks.name
                     "planta" -> plantaImport = true

@@ -213,7 +213,7 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
             PlantError(siteError, keep = "Choose a site in your household.")
         } else Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
             supporting = { PlantError(siteError, keep = "Choose a site in your household.") }) { choices["site_id"] = it; siteMissing = false }
-        if (sites.isEmpty() && onCreateSite == null) Text("Create a site under More before adding or restoring a plant.")
+        if (sites.isEmpty() && onCreateSite == null) Text("Create a site under Plants, Sites before adding or restoring a plant.")
         if (plant == null) { LastWatered(watered, today, writable) { watered = it }; PlantError(errors["last_watered_on"]) }
         keepPhoto?.invoke()
         val ready = writable && blocked == null

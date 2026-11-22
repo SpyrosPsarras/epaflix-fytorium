@@ -2348,8 +2348,45 @@ class PlantPageTest {
         compose.onNode(isTab("More")).performClick()
         compose.onNodeWithText("Species without care data").performClick()
     }
-    @Test fun aSites426FromMoreStopsTheApp() = updateStop({ it == "/api/sites" }) {
-        compose.onNode(isTab("More")).performClick()
+    // W5b-P2: a grid heading and the plant page's site line open the site's page inside Plants, and Back returns to where it was opened.
+    @Test fun siteHeadingsAndTheSiteLineOpenTheSitePage() = withPlantServer({ path ->
+        """[{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":1}]""".takeIf { path == "/api/sites" }
+    }) { repo, showing ->
+        repo.refresh()
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, photosApi = api, photosConnected = { true }) } }
+        val heading = hasText("Synthetic site") and hasClickAction() and isHeading()
+        compose.waitUntil(5_000) { compose.onAllNodes(heading).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(heading).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Plants (1)").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Plants (1)").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Search plants").assertIsDisplayed()
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        val line = hasText("Synthetic site") and hasClickAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(line).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Plants (1)").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
+    }
+    // W5b-P18: owner and family add a custom task from the plant page, for that plant, and Back returns to the page.
+    @Test fun thePlantPageAddsATaskForItsPlant() = withPlantServer { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
+        reveal(hasText("Add a task")).performClick()
+        compose.onNodeWithText("For Synthetic fern · Synthetic site").assertIsDisplayed()
+        compose.onNodeWithText("Change").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
+    }
+    @Test fun aSites426FromPlantsStopsTheApp() = updateStop({ it == "/api/sites" }) {
+        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        compose.onNodeWithContentDescription("More options").performClick()
         compose.onNodeWithText("Sites").performClick()
     }
     // Restore reads the sites through the plant repository too, so only Create a site's own save gets the 426.
@@ -3626,13 +3663,16 @@ class PlantPageTest {
                 MockResponse().setResponseCode(503) to "Could not save the site. Try again.")) {
                 failure.set(response)
                 compose.onNode(save).performClick()
-                compose.waitUntil(5_000) { compose.onAllNodes(hasText(message)).fetchSemanticsNodes().isNotEmpty() &&
-                    compose.onAllNodes(hasText("Refresh sites") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                val paused = hasText("Sites can't be changed right now") and hasClickAction()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText(message) and hasNoClickAction()).fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodes(paused).fetchSemanticsNodes().isNotEmpty() }
                 assertEquals("Save moved after: $message", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
-                assertTrue("The message sits under Save", compose.onNodeWithText(message).fetchSemanticsNode().boundsInRoot.top >= before.bottom)
-                compose.onNodeWithText("Refresh sites").performClick()
+                assertTrue("The message sits under Save", compose.onNode(hasText(message) and hasNoClickAction(), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top >= before.bottom)
+                // No Refresh button (W5b-P26): the line's Try again reloads.
+                compose.onNode(paused).performClick()
+                compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-                assertEquals("Save moved after Refresh sites", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
+                assertEquals("Save moved after Try again", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
             }
         }
     }
@@ -3650,13 +3690,15 @@ class PlantPageTest {
             compose.setContent { if (showing.value) CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) { FytoriumTheme {
                 val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } } }
             openCreateASite()
+            // A bound is only refused after it was typed, so the temperatures are open.
+            compose.onNodeWithText("Temperatures (optional)").performClick()
             val save = hasText("Save site")
             val before = compose.onNode(save).fetchSemanticsNode().boundsInRoot
             // The server's own messages: readSite in src/lib/server/sites.ts. Each field's message must end above the next control.
             val whole = "Enter a whole number of °C or leave blank."
             val exceeds = "Minimum must not exceed maximum."
             val refusals = listOf(Triple("name", "Enter a site name.", "Location"), Triple("warm_min_c", exceeds, "Warm maximum °C"), Triple("cold_min_c", exceeds, "Cold maximum °C"),
-                Triple("warm_min_c", whole, "Warm maximum °C"), Triple("warm_max_c", whole, "Cold minimum °C"), Triple("cold_min_c", whole, "Cold maximum °C"), Triple("cold_max_c", whole, "Draft"))
+                Triple("warm_min_c", whole, "Warm maximum °C"), Triple("warm_max_c", whole, "Cold minimum °C"), Triple("cold_min_c", whole, "Cold maximum °C"), Triple("cold_max_c", whole, "Save site"))
             refusals.forEachIndexed { index, (field, message, next) ->
                 refusal.set(JSONObject().put("errors", JSONObject().put(field, message)).toString())
                 compose.onNode(save).performClick()
@@ -3684,8 +3726,9 @@ class PlantPageTest {
             val line = hasText("Sites didn't load") and hasClickAction()
             // The plant reads that opening the page started finish first, so none answers after the server is back and reloads the sites before the tap.
             compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
-            val controls = listOf("Name", "Location", "Light level", "Humidity", "Grow light", "Warm minimum °C", "Warm maximum °C",
-                "Cold minimum °C", "Cold maximum °C", "Draft", "Save site", "Cancel")
+            compose.onNodeWithText("Temperatures (optional)").performClick()
+            val controls = listOf("Name", "Location", "Light", "Humidity", "Grow light", "Draft from a door, window or vent", "Warm minimum °C", "Warm maximum °C",
+                "Cold minimum °C", "Cold maximum °C", "Save site", "Cancel")
             fun layout() = controls.associateWith { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
             val failed = layout()
             compose.onNodeWithText("Save site").assertIsNotEnabled()
@@ -3715,15 +3758,17 @@ class PlantPageTest {
             compose.onNode(name).performTextInput("Synthetic porch")
             down.set(true)
             compose.onNodeWithText("Save site").performScrollTo().performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Refresh sites") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Refresh sites").performScrollTo().performClick()
+            val paused = hasText("Sites can't be changed right now") and hasClickAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(paused).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(paused).performClick()
+            compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
             val line = hasText("Sites didn't load") and hasClickAction()
             compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
             down.set(false)
             if (reconnect) {
                 online.set(false)
                 repo.connectivityChanged(false)
-                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Offline") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Offline", substring = true) and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
                 online.set(true)
                 repo.connectivityChanged(true)
             } else repo.refresh()
@@ -3742,23 +3787,26 @@ class PlantPageTest {
             compose.setContent { if (showing.value) CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) { FytoriumTheme {
                 val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { online.value }) } } }
             openCreateASite()
-            val controls = listOf("Name", "Location", "Light level", "Humidity", "Grow light", "Warm minimum °C", "Warm maximum °C",
-                "Cold minimum °C", "Cold maximum °C", "Draft", "Save site", "Cancel")
+            compose.onNodeWithText("Temperatures (optional)").performClick()
+            val controls = listOf("Name", "Location", "Light", "Humidity", "Grow light", "Draft from a door, window or vent", "Warm minimum °C", "Warm maximum °C",
+                "Cold minimum °C", "Cold maximum °C", "Save site", "Cancel")
             fun layout() = controls.associateWith { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
             for (scale in listOf(1f, 1.3f)) {
                 compose.runOnIdle { fontScale.value = scale }
                 compose.waitForIdle()
                 val before = layout()
+                val offline = hasText("Offline", substring = true) and hasClickAction()
                 compose.runOnIdle { online.value = false }
-                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodes(offline).fetchSemanticsNodes().isNotEmpty() }
                 assertEquals("Offline at ${scale}x moved the form", before, layout())
-                compose.onNodeWithText("Offline").performClick()
-                compose.onNodeWithText("This phone can't reach Fytorium. Reconnect to make changes.").assertIsDisplayed()
+                // Offline Save keeps its look and says why (W5b-P27).
+                compose.onNodeWithText("Save site").assert(hasStateDescription("Changing sites needs a connection."))
+                compose.onNode(offline).performClick()
+                compose.onNodeWithText("This phone can't reach Fytorium. You can still see the saved sites. Changing sites needs a connection.").assertIsDisplayed()
                 compose.onNodeWithText("Close").performClick()
                 compose.runOnIdle { online.value = true }
-                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(5_000) { compose.onAllNodes(offline).fetchSemanticsNodes().isEmpty() }
                 assertEquals("Reconnecting at ${scale}x moved the form", before, layout())
-                compose.onNodeWithText("Offline").assertDoesNotExist()
             }
         }
     }

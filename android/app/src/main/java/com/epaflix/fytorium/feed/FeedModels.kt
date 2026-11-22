@@ -41,7 +41,7 @@ private const val householdLocation = "household.location"
 private val factReasons = mapOf(
     "pot.pot_size_cm" to "Pot size sets how often to water. Add it on each plant's page.",
     "pot.pot_type" to "Pot type sets how often to water. Add it on each plant's page.",
-    "site.light" to "Site light sets how often to water and whether a plant gets enough light. Set it for each site under More, Sites.",
+    "site.light" to "Site light sets how often to water and whether a plant gets enough light. Set it for each site under Plants, Sites.",
     "careProfile" to "Species care data sets the starting care intervals. Add it under Species care on each plant's page.",
     "too_dark" to "These plants get less light than their species needs. Move them closer to a window or add a grow light.",
     "too_bright" to "These plants get more light than their species needs. Move them further from the window or to a shadier site.",

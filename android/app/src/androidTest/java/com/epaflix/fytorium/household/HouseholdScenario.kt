@@ -76,7 +76,7 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         repo.refresh()
         val previousMembers = repo.state.value.members.map { it.id }.toSet()
         val previousInvites = repo.state.value.invites.map { it.id }.toSet()
-        val link = repo.createInvite("sitter", setOf(plantIds.first())) ?: error("A09 invite creation failed")
+        val link = repo.createInvite("sitter", setOf(plantIds.first()))?.link ?: error("A09 invite creation failed")
         inviteId = repo.state.value.invites.single { it.id !in previousInvites }.id
         assertFalse("Invite token entered diagnostics", app.session.copyDiagnostics().contains(link.substringAfterLast('/')))
         app.store.clear()

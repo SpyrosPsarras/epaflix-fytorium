@@ -30,8 +30,10 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     speciesApi: ApiClient? = null, speciesConnected: () -> Boolean = { false }, onCareChanged: () -> Unit = {},
     photosApi: ApiClient? = null, photosConnected: () -> Boolean = { false }, initialAdd: Boolean = false,
     initialTask: CareTask? = null, returnToToday: Boolean = initialTask != null, onTaskAction: (CareTask, String) -> Unit = { _, _ -> },
-    receipts: SnackbarHostState? = null, onReceiptGone: () -> Unit = {}, focusSearch: Boolean = false, onFormDirty: (() -> String?) -> Unit = {}) {
-    var page by rememberSaveable { mutableStateOf(if (initialPlant != null) "detail" else if (initialAdd && state.member?.role != Role.sitter) "search" else "list") }
+    receipts: SnackbarHostState? = null, onReceiptGone: () -> Unit = {}, focusSearch: Boolean = false, onFormDirty: (() -> String?) -> Unit = {},
+    initialSites: Boolean = false) {
+    var page by rememberSaveable { mutableStateOf(if (initialPlant != null) "detail" else if (initialAdd && state.member?.role != Role.sitter) "search"
+        else if (initialSites && state.member?.role != Role.sitter) "site-pages" else "list") }
     var id by rememberSaveable { mutableStateOf(initialPlant) }
     // The list a plant page was opened from, so Back returns there.
     var from by rememberSaveable { mutableStateOf("list") }
@@ -59,6 +61,12 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     // Where the new plant's species came from, so Change returns there with its query, results and photos.
     var pickedFrom by rememberSaveable { mutableStateOf("search") }
     var sitesReturn by rememberSaveable { mutableStateOf("restore") }
+    // The Sites pages: the site they opened at (null for the list) and the page and plant they return to.
+    var sitesStart by rememberSaveable { mutableStateOf<String?>(null) }
+    var sitesFrom by rememberSaveable { mutableStateOf("list") }
+    var sitesFromId by rememberSaveable { mutableStateOf<String?>(null) }
+    val listGrid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
+    val graveGrid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
     // The name typed on the add form, so Create a site names the plant as the user does.
     var siteFor by rememberSaveable { mutableStateOf("") }
     // Identify's first photo, copied into app storage so it survives until the plant is saved or discarded.
@@ -278,6 +286,26 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         return
     }
     val sitesApi = photosApi ?: speciesApi
+    val editsSites = sitesApi != null && state.member != null && state.member.role != Role.sitter
+    fun openSites(start: String?) { forms.removeState("site-pages"); sitesStart = start; sitesFrom = page; sitesFromId = id; page = "site-pages" }
+    if (page == "site-pages" && editsSites) {
+        forms.SaveableStateProvider("site-pages") {
+            com.epaflix.fytorium.sites.SitesRoute(sitesApi!!, state, photosConnected, onBack = { forms.removeState("site-pages"); page = sitesFrom; id = sitesFromId },
+                startSite = sitesStart, thumbnails = thumbnails, onOpenPlant = { from = "site-pages"; id = it; page = "detail" }, onReceipt = { repository?.showReceipt(it) },
+                onRefreshPlants = { withContext(Dispatchers.IO) { repository?.refreshPlants() } }, onFormDirty = { subpageDraft = it },
+                onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers,
+                cached = { repository?.cachedJson(it) }, keep = { resource, json -> repository?.saveJson(resource, json) })
+        }
+        return
+    }
+    if (page == "add-task" && editsSites && plant != null) {
+        com.epaflix.fytorium.household.CustomTasksRoute(sitesApi!!, state, photosConnected, onBack = { page = "detail"; id?.let { key -> run { refreshDetail(key) } } },
+            onFormDirty = { subpageDraft = it }, onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers,
+            onReceipt = { repository?.showReceipt(it) }, thumbnails = thumbnails,
+            fixed = com.epaflix.fytorium.household.TaskFor("plant", plant.id, plant.displayName, plant.siteName),
+            cached = { repository?.cachedJson(it) }, keep = { resource, json -> repository?.saveJson(resource, json) })
+        return
+    }
     if (page == "sites" && sitesApi != null && state.member != null && state.member.role != Role.sitter) {
         com.epaflix.fytorium.sites.SitesRoute(sitesApi, state, photosConnected, onBack = { page = sitesReturn; run { loadOptions() } }, creating = true,
             onCreated = { restoreSite = it }, onFormDirty = { subpageDraft = it }, onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers)
@@ -320,7 +348,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         scope.launch { try { reload() } finally { pulling = false } }
                     }, thumbnails = thumbnails, enabled = enabled, search = if (page == "graveyard") graveQuery else query,
                     focusSearch = focusPending && page == "list", onFocused = { focusPending = false }, onBack = ::back, refreshing = pulling,
-                    addBlocked = addBlocked, onBlocked = ::explain, request = request, onRetry = ::retry)
+                    addBlocked = addBlocked, onBlocked = ::explain, request = request, onRetry = ::retry, grid = if (page == "list") listGrid else graveGrid,
+                    onSites = { openSites(null) }.takeIf { editsSites }, onSite = { site: String -> openSites(site) }.takeIf { editsSites })
                 // Offline and failed reads show only in the line, so this body stays the same until the plant loads.
                 "detail" -> if (detail == null) PlantColumn {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -335,7 +364,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                     refreshing = pulling, onRefresh = {
                         pulling = true
                         scope.launch { try { withContext(Dispatchers.IO) { repository?.refresh() }; reload() } finally { pulling = false } }
-                    }, writeBlocked = writeBlocked, request = request, onRetry = ::retry, scroll = detailScroll) }
+                    }, writeBlocked = writeBlocked, request = request, onRetry = ::retry, scroll = detailScroll,
+                    onSite = { site: String -> openSites(site) }.takeIf { editsSites }, onAddTask = { page = "add-task" }.takeIf { editsSites }) }
                 "species-care" -> PlantColumn {
                     Text("Connect to load the care defaults for this species.")
                     OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }
@@ -450,11 +480,13 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
 }
 
-@Composable internal fun DiscardDialog(title: String, body: String, onKeep: () -> Unit, onDiscard: () -> Unit) {
+@Composable internal fun DiscardDialog(title: String, body: String, onKeep: () -> Unit, onDiscard: () -> Unit) =
+    LeaveDialog(title, body, "Keep editing", "Discard", onKeep, onDiscard)
+@Composable internal fun LeaveDialog(title: String, body: String, keepLabel: String, leaveLabel: String, onKeep: () -> Unit, onLeave: () -> Unit) {
     AlertDialog(onDismissRequest = onKeep,
         title = { DialogTitle(title) }, text = { DialogBody { Text(body) } },
-        confirmButton = { TextButton(onClick = onDiscard) { Text("Discard") } },
-        dismissButton = { TextButton(onClick = onKeep) { Text("Keep editing") } })
+        confirmButton = { TextButton(onClick = onLeave) { Text(leaveLabel) } },
+        dismissButton = { TextButton(onClick = onKeep) { Text(keepLabel) } })
 }
 
 internal fun CareState.connectionNotice(online: Boolean): String? = when {

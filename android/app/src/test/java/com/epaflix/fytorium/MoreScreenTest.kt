@@ -23,8 +23,10 @@ class MoreScreenTest {
         compose.setContent { FytoriumTheme { MoreRoot(CareState(member = Member("synthetic", role.value), names = names), true, false, open = { opened += it }, onLogout = {}) } }
         compose.onNodeWithText("Synthetic Ada").assertIsDisplayed()
         compose.onNodeWithText("Owner").assertIsDisplayed()
-        for (title in listOf("Notifications", "Weather and feed", "Sites", "Members", "Custom tasks", "Import from Planta", "Species without care data", "About"))
+        for (title in listOf("Notifications", "Weather and feed", "Members", "Custom tasks", "Import from Planta", "Species without care data", "About"))
             compose.onNodeWithText(title).performScrollTo().assertIsDisplayed()
+        // Sites live in the Plants tab (W5b-P1).
+        compose.onNodeWithText("Sites").assertDoesNotExist()
         compose.onNodeWithText("Weather and feed").performScrollTo().assertHeightIsAtLeast(72.dp).performClick()
         compose.runOnIdle { assertEquals(listOf("weather"), opened) }
         compose.runOnIdle { role.value = Role.family }
