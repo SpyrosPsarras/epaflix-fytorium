@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.epaflix.fytorium.FytoriumApplication
 import com.epaflix.fytorium.MainActivity
+import com.epaflix.fytorium.hideIme
 import com.epaflix.fytorium.selectTab
 import com.epaflix.fytorium.waitForSpeciesNames
 import com.epaflix.fytorium.waitForNode
@@ -39,6 +40,10 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         compose.selectTab("More")
         compose.waitForNode(hasText("Import from Planta") and hasClickAction()).performScrollTo().performClick()
         action("One-time app code").performTextInput("synthetic-browser-import")
+        // A tap injected over the keyboard lands on the keyboard, so close it first as a user would.
+        compose.runOnUiThread { compose.activity.hideIme() }
+        compose.waitForState("A11 keyboard closed", 10_000) {
+            androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == false }
         action("Fetch Planta plants").performClick()
         compose.waitForState("A11 fake Planta staging loaded", 30_000) {
             compose.onAllNodesWithText("Test import amber").fetchSemanticsNodes().isNotEmpty()
