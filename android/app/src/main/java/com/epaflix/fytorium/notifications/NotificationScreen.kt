@@ -153,6 +153,8 @@ internal fun clock(time: String, is24: Boolean): String {
         state.blocked -> "Fytorium isn't responding" to (state.error ?: "Fytorium didn't answer. Try again when it responds.")
         else -> null
     }
+    // Devices as the user last set them, so the card and the test follow a switch at once.
+    fun enabled(device: PushDevice) = pending["device:" + device.id] as Boolean? ?: device.enabled
     val current = state.devices.firstOrNull { it.current }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { status != null && online }) {
@@ -165,14 +167,14 @@ internal fun clock(time: String, is24: Boolean): String {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val (sentence, button) = when {
                             !notificationsEnabled -> "Notifications are off for Fytorium on this phone." to "Turn on"
-                            current != null && !current.enabled -> "Fytorium isn't sending to this phone." to "Turn on"
+                            current != null && !enabled(current) -> "Fytorium isn't sending to this phone." to "Turn on"
                             else -> "Notifications are on for this phone." to "Android settings"
                         }
                         Text(sentence, minLines = 2, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                         OutlinedButton(onClick = {
                             when {
                                 !notificationsEnabled -> if (permissionAsked) onSystemSettings() else onEnable()
-                                current != null && !current.enabled -> toggleDevice(current, true)
+                                current != null && !enabled(current) -> toggleDevice(current, true)
                                 else -> onSystemSettings()
                             }
                         }, modifier = Modifier.heightIn(min = 48.dp)) { Text(button) }
@@ -194,7 +196,7 @@ internal fun clock(time: String, is24: Boolean): String {
                     change("weather", "Weather alerts", it) { s -> s.copy(weather = it) } }
                 SettingSwitch("When someone else completes a task", "Care done by other members", shown.completions, canChange) {
                     change("completions", "When someone else completes a task", it) { s -> s.copy(completions = it) } }
-                val anyOn = state.devices.any { it.enabled }
+                val anyOn = state.devices.any { enabled(it) }
                 TextButton(onClick = {
                     when {
                         !anyOn -> onReceipt("Turn on a device below first.")
@@ -223,7 +225,7 @@ internal fun clock(time: String, is24: Boolean): String {
                         }
                         if (device.transport != "fcm") IconButton(onClick = { if (canChange) removing = device.id else onReceipt("Changing settings needs a connection.") },
                             modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Delete, "Remove $name") }
-                        Switch(pending["device:" + device.id] as Boolean? ?: device.enabled, onCheckedChange = { toggleDevice(device, it) },
+                        Switch(enabled(device), onCheckedChange = { toggleDevice(device, it) },
                             modifier = Modifier.semantics { contentDescription = "Send notifications to $name"; if (!canChange) stateDescription = "Changing settings needs a connection." })
                     }
                 }

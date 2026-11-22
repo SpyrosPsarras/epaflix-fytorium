@@ -26,6 +26,13 @@ class NotificationRepositoryTest {
             assertTrue(online.refresh())
             server.enqueue(MockResponse().setBody("""{"reminder_time":"07:30","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
             assertTrue(online.update { it.copy(time = "07:30", reminders = true) })
+            // A confirmed switch reaches the copy even when the follow-up read fails.
+            server.enqueue(MockResponse().setResponseCode(204)); server.enqueue(MockResponse().setResponseCode(500))
+            online.setDevice(online.state.value.devices.single(), false)
+            assertEquals(false, repository(false).apply { refresh() }.state.value.devices.single().enabled)
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"07:30","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[$browser]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            assertTrue(online.refresh())
             server.enqueue(MockResponse().setResponseCode(204)); server.enqueue(MockResponse().setBody("[]"))
             assertTrue(online.remove(online.state.value.devices.single()))
             val offline = repository(false)

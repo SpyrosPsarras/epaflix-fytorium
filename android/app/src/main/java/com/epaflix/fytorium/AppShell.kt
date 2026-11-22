@@ -171,7 +171,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
                     answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0,
-                    cached = { controller?.repository?.cachedJson(it) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json) }) }
+                    cached = { controller?.repository?.cachedJson(it, careState.member.id) },
+                    keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) }) }
             }
             return@Scaffold
         }
@@ -289,7 +290,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             when {
                 updateRequired -> UpdateStop(minAppVersion, message, busy, phoneOnline, onObtainium, onCheckAgain, onLogout)
                 !loggedIn -> LoginPage(busy, message, phoneOnline, onLogin)
-                tab == "More" && about -> AboutPage(remember(about) { controller?.repository?.cachedJson("meta")?.first?.let { runCatching { org.json.JSONObject(it).optString("serverVersion").takeIf { v -> v.isNotBlank() } }.getOrNull() } }) {
+                tab == "More" && about -> AboutPage(produceState<String?>(null, about) { value = withContext(Dispatchers.IO) {
+                    controller?.repository?.cachedJson("meta")?.first?.let { runCatching { org.json.JSONObject(it).optString("serverVersion").takeIf { v -> v.isNotBlank() } }.getOrNull() } } }.value) {
                     onCopyDiagnostics()
                     // Android 13 and later confirm a copy themselves.
                     if (android.os.Build.VERSION.SDK_INT < 33) scope.launch { receipts.showSnackbar("Diagnostics copied"); receiptsGone++ }

@@ -48,8 +48,12 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     var resumed by remember(feed) { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleResumeEffect(feed) { if (resumed) scope.launch(Dispatchers.IO) { feed.refresh(feed.state.value.member); feed.loadLocation() }; resumed = true; onPauseOrDispose {} }
     LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
-    // A read that failed loads again once Fytorium answers another request.
+    // A read that failed loads again once Fytorium answers another request, and every 15 seconds while the screen shows the outage.
     LaunchedEffect(answers) { feed.state.value.takeIf { it.unavailable || it.readError != null }?.let { withContext(Dispatchers.IO) { feed.refresh(it.member); feed.loadLocation() } } }
+    val outage = state.unavailable || state.readError != null
+    LaunchedEffect(outage, online) {
+        while (outage && online) { kotlinx.coroutines.delay(15_000); withContext(Dispatchers.IO) { feed.refresh(feed.state.value.member); feed.loadLocation() } }
+    }
     WeatherFeedScreen(state, care, online, onBack, onReceipt, onFormDirty,
         onRefresh = { scope.launch(Dispatchers.IO) { feed.refresh(state.member); feed.loadLocation() } },
         onSearch = { withContext(Dispatchers.IO) { feed.searchPlaces(it) } },
@@ -61,7 +65,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun WeatherFeedScreen(state: FeedState, care: CareState?, online: Boolean, onBack: () -> Unit = {},
     onReceipt: (String) -> Unit = {}, onFormDirty: (() -> String?) -> Unit = {}, onRefresh: () -> Unit = {},
-    onSearch: suspend (String) -> List<Place>? = { null }, onSaveLocation: suspend (WeatherLocation?) -> Boolean = { false },
+    onSearch: suspend (String) -> FeedRepository.PlaceAnswer = { FeedRepository.PlaceAnswer(null) }, onSaveLocation: suspend (WeatherLocation?) -> Boolean = { false },
     onSetting: suspend (String, Boolean) -> Boolean = { _, _ -> false }, failure: () -> String? = { null }) {
     if (state.member?.role !in listOf(Role.owner, Role.family)) return
     val scope = rememberCoroutineScope()
@@ -90,6 +94,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     // The last query sent, apart from the one whose results show, so Try again repeats it and an older reply never replaces a newer one.
     var submitted by rememberSaveable { mutableStateOf<String?>(null) }
     var searches by remember { mutableIntStateOf(0) }
+    // Place search's own outage, from the latest search only.
+    var searchDown by rememberSaveable { mutableStateOf(false) }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     fun search(text: String = query) {
@@ -100,8 +106,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
         keyboard?.hide(); focus.clearFocus()
         val mine = ++searches
         scope.launch {
-            val found = onSearch(q)
-            if (mine == searches) { found?.let { results = it; asked = q }; searching = false }
+            val answer = onSearch(q)
+            if (mine == searches) { answer.places?.let { results = it; asked = q }; searchDown = answer.unavailable; searching = false }
         }
     }
     var savingLocation by remember { mutableStateOf(false) }
@@ -114,14 +120,14 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     }
     val status = when {
         !online || state.offline -> (care?.copy(lastUpdated = state.updatedAt)?.connectionLine(false) ?: "Offline") to care?.connectionNotice(false).orEmpty()
-        state.placesUnavailable -> "Place search isn't responding" to "Place search isn't responding. Try again in a minute."
+        searchDown -> "Place search isn't responding" to "Place search isn't responding. Try again in a minute."
         state.unavailable -> "Fytorium isn't responding" to "Fytorium didn't answer. Try again when it responds."
         state.readError != null -> "Settings didn't load" to state.readError
         else -> null
     }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = {
-                if (state.placesUnavailable) submitted?.let { search(it) } ?: Unit else onRefresh()
+                if (searchDown) submitted?.let { search(it) } ?: Unit else onRefresh()
                 Unit
             }.takeIf { status != null && online }) { Heading("Weather and feed") } },
             expandedHeight = barHeight(), navigationIcon = { IconButton(onClick = { if (typed()) discarding = true else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })

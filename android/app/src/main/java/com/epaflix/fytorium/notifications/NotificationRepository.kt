@@ -41,13 +41,13 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
     private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Long? = { _, _ -> null }) {
     private val mutable = MutableStateFlow(NotificationState())
     val state = mutable.asStateFlow()
-    // The server's last answers, kept together in the cache after every read and confirmed write.
-    private var settingsText: String? = null
-    private var devicesText: String? = null
+    // What the server last confirmed, kept in the cache after every read and confirmed write, before any follow-up read.
     private fun persist() {
-        val settings = settingsText ?: return
-        val devices = devicesText ?: return
-        val at = keep("notifications", JSONObject().put("settings", settings).put("subscriptions", devices).put("timezone", state.value.timezone ?: "").toString())
+        if (!allowed() || !state.value.loaded) return
+        val devices = JSONArray(state.value.devices.map { JSONObject().put("id", it.id).put("label", it.label).put("transport", it.transport)
+            .put("enabled", it.enabled).put("current_device", it.current).put("last_success_at", it.lastSuccessAt ?: JSONObject.NULL) })
+        val at = keep("notifications", JSONObject().put("settings", state.value.settings.json().toString()).put("subscriptions", devices.toString())
+            .put("timezone", state.value.timezone ?: "").toString())
         if (allowed()) mutable.value = state.value.copy(updatedAt = at ?: state.value.updatedAt)
     }
     private fun request(path: String, method: String = "GET", body: JSONObject? = null): String =
@@ -60,7 +60,6 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
     @Synchronized fun refresh(): Boolean {
         if (!state.value.loaded && allowed()) cached("notifications")?.let { (json, at) -> runCatching {
             val j = JSONObject(json)
-            settingsText = j.getString("settings"); devicesText = j.getString("subscriptions")
             mutable.value = state.value.copy(settings = settings(j.getString("settings")), devices = devices(j.getString("subscriptions")),
                 timezone = j.optString("timezone").takeIf { it.isNotBlank() }, loaded = true, updatedAt = at)
         } }
@@ -68,7 +67,6 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
             val preferences = request("settings")
             val rows = request("subscriptions")
             val timezone = JSONObject(request("/api/meta")).getString("timezone")
-            settingsText = preferences; devicesText = rows
             if (allowed()) mutable.value = state.value.copy(settings = settings(preferences), devices = devices(rows), timezone = timezone, loaded = true, blocked = false,
                 updatedAt = System.currentTimeMillis())
             persist()
@@ -76,7 +74,6 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
     }
     @Synchronized fun save(value: NotificationSettings) = run(true) {
         val text = request("settings", "PUT", value.json())
-        settingsText = text
         if (allowed()) mutable.value = state.value.copy(settings = settings(text))
         persist()
     }
@@ -87,16 +84,19 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
     @Synchronized fun setDevice(device: PushDevice, enabled: Boolean) = run(true) {
         require(device.id.matches(Regex("[a-fA-F0-9-]{36}")))
         request("subscriptions/${device.id}", "PATCH", JSONObject().put("enabled", enabled))
+        if (allowed()) mutable.value = state.value.copy(devices = state.value.devices.map { if (it.id == device.id) it.copy(enabled = enabled) else it })
+        persist()
         reloadDevices()
     }
     @Synchronized fun remove(device: PushDevice) = run(true) {
         require(device.id.matches(Regex("[a-fA-F0-9-]{36}")))
         request("subscriptions/${device.id}", "DELETE")
+        if (allowed()) mutable.value = state.value.copy(devices = state.value.devices.filter { it.id != device.id })
+        persist()
         reloadDevices()
     }
     private fun reloadDevices() {
         val text = request("subscriptions")
-        devicesText = text
         if (allowed()) mutable.value = state.value.copy(devices = devices(text))
         persist()
     }

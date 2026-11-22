@@ -62,20 +62,38 @@ class WeatherFeedScreenTest {
         answers[2].complete(true)
     }
 
+    // W5a-P30 (S1): taps already made still save after the screen goes, in their order.
+    @Test fun tapsStillSaveAfterTheScreenGoes() {
+        val first = CompletableDeferred<Boolean>()
+        val sent = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Boolean>>())
+        val shown = mutableStateOf(true)
+        compose.setContent { FytoriumTheme { if (shown.value) WeatherFeedScreen(FeedState(member = owner, settings = settings), null, true,
+            onSetting = { key, value -> sent += key to value; if (sent.size == 1) first.await() else true }) } }
+        compose.onNode(hasText("Weather alerts") and isToggleable()).performScrollTo().performClick()
+        compose.onNode(hasText("Plant warnings") and isToggleable()).performScrollTo().performClick()
+        compose.waitUntil(5_000) { sent.size == 1 }
+        compose.runOnIdle { shown.value = false }
+        first.complete(true)
+        compose.waitUntil(5_000) { sent.size == 2 }
+        assertEquals(listOf("weather_alerts" to false, "plant_warnings" to false), sent.toList())
+    }
+
     // W5a-P16: Try again repeats the query that was sent, and an older reply never replaces a newer one.
     @Test fun tryAgainRepeatsTheSentQueryAndOlderRepliesAreIgnored() {
-        val replies = mutableMapOf<String, CompletableDeferred<List<Place>?>>()
+        val replies = mutableMapOf<String, CompletableDeferred<FeedRepository.PlaceAnswer>>()
         compose.setContent { FytoriumTheme { WeatherFeedScreen(FeedState(member = owner, settings = settings, locationLoaded = true), null, true,
-            onSearch = { q -> CompletableDeferred<List<Place>?>().also { replies[q] = it }.await() }) } }
+            onSearch = { q -> CompletableDeferred<FeedRepository.PlaceAnswer>().also { replies[q] = it }.await() }) } }
         val field = compose.onNodeWithText("Find your town")
         field.performTextInput("Oslo"); field.performImeAction()
         field.performTextReplacement("Bergen"); field.performImeAction()
         compose.waitUntil(5_000) { replies.size == 2 }
-        replies.getValue("Bergen").complete(listOf(bergen))
+        replies.getValue("Bergen").complete(FeedRepository.PlaceAnswer(listOf(bergen)))
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Vestland, Norway").fetchSemanticsNodes().isNotEmpty() }
-        replies.getValue("Oslo").complete(listOf(bergen.copy(label = "Oslo, Norway", name = "Oslo", region = null)))
+        // An older search's outage shows no banner over the newer results.
+        replies.getValue("Oslo").complete(FeedRepository.PlaceAnswer(null, unavailable = true))
         compose.waitForIdle()
-        compose.onNodeWithText("Oslo").assertDoesNotExist()
+        compose.onNodeWithText("Place search isn't responding").assertDoesNotExist()
+        compose.onNodeWithText("Vestland, Norway").assertIsDisplayed()
     }
 
     // W5a-P16: searching lists places by name and region; picking one saves it and names it in the receipt.
@@ -84,7 +102,7 @@ class WeatherFeedScreenTest {
         var saved: WeatherLocation? = null
         val state = mutableStateOf(FeedState(member = owner, settings = settings, locationLoaded = true))
         compose.setContent { FytoriumTheme { WeatherFeedScreen(state.value, null, true, onReceipt = { receipts += it },
-            onSearch = { if (it == "Bergen") listOf(bergen) else emptyList() }, onSaveLocation = { saved = it; true }) } }
+            onSearch = { FeedRepository.PlaceAnswer(if (it == "Bergen") listOf(bergen) else emptyList()) }, onSaveLocation = { saved = it; true }) } }
         compose.onNodeWithText("No location set. Weather cards and frost alerts need one.").assertIsDisplayed()
         compose.onNodeWithText("Find your town").performTextInput("B")
         compose.onNodeWithText("Find your town").performImeAction()

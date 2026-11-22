@@ -106,8 +106,11 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         }
         try {
             val result = read("/api/household/location")
-            synchronized(monitor) { if (epoch == generation) applyLocation(result) }
-        } catch (error: Exception) { failed(error, epoch) }
+            synchronized(monitor) { if (epoch == generation) { applyLocation(result); mutable.value = mutable.value.copy(readError = null) } }
+        } catch (error: Exception) {
+            failed(error, epoch)
+            synchronized(monitor) { if (epoch == generation && error is FeedFailure && error.status < 500 && error.status != 426) mutable.value = mutable.value.copy(readError = error.message) }
+        }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
     private fun locationFrom(result: JSONObject) = result.optJSONObject("location")?.let { WeatherLocation(it.getDouble("latitude"), it.getDouble("longitude"), it.nullable("label")) }
@@ -134,19 +137,16 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         if (state.value.member?.role != Role.owner) return false
         return write("/api/household/location", "PUT", JSONObject().put("location", location?.json() ?: JSONObject.NULL), null, ::applyLocation)
     }
-    // W5a-P16: null when the search could not run; Open-Meteo's own failure shows in the status line.
-    fun searchPlaces(query: String): List<Place>? {
+    // W5a-P16: places, or why there are none; the screen applies only the latest search's answer.
+    data class PlaceAnswer(val places: List<Place>?, val unavailable: Boolean = false)
+    fun searchPlaces(query: String): PlaceAnswer {
         val epoch = synchronized(monitor) { generation }
         return try {
-            val results = read("/api/household/location/search", query = mapOf("q" to query)).getJSONArray("results").mapObjects {
+            PlaceAnswer(read("/api/household/location/search", query = mapOf("q" to query)).getJSONArray("results").mapObjects {
                 Place(it.getString("label"), it.getString("name"), it.nullable("region"), it.nullable("country"), it.getDouble("latitude"), it.getDouble("longitude"))
-            }
-            synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(placesUnavailable = false) }
-            results
+            })
         } catch (error: Exception) {
-            if (error is FeedFailure && error.status == 503) synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(placesUnavailable = true) }
-            else failed(error, epoch)
-            null
+            if (error is FeedFailure && error.status == 503) PlaceAnswer(null, unavailable = true) else { failed(error, epoch); PlaceAnswer(null) }
         }
     }
     fun water(): Boolean = synchronized(workLock) {

@@ -75,7 +75,8 @@ class SessionController(private val store: CredentialStore, private val api: Api
     }
 
     // A 426 from any request reads the minimum again, so the stop names the version the server wants now.
-    fun recheck() = work { checkVersionNow() }
+    private var recheckWaiting = false
+    fun recheck() { if (uiState.value.busy) recheckWaiting = true else work { checkVersionNow() } }
 
     fun checkAgain(checkedAt: () -> String) = work(offline = "Checking needs a connection.") {
         checkVersionNow()
@@ -106,6 +107,7 @@ class SessionController(private val store: CredentialStore, private val api: Api
                 uiState.update { it.copy(message = offline) }
             } finally {
                 uiState.update { it.copy(busy = false) }
+                if (recheckWaiting) { recheckWaiting = false; recheck() }
                 while (scope.isActive && !uiState.value.busy && queuedRedirects.isNotEmpty()) {
                     handleRedirect(queuedRedirects.removeFirst())
                 }
