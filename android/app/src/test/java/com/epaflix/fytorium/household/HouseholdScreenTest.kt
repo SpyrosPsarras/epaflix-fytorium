@@ -51,8 +51,8 @@ class HouseholdScreenTest {
         capture("members")
         compose.onNodeWithText("Create invite").performClick()
         capture("invite-create")
-        compose.onNodeWithText("Role: Family").performClick()
-        compose.onNodeWithText("Sitter").performClick()
+        compose.onNodeWithText("Role").performClick()
+        compose.onNode(hasText("Sitter") and hasAnyAncestor(isPopup())).performClick()
         compose.onNodeWithText("Synthetic fern").performClick()
         compose.onNodeWithText("Create invite link").performClick()
         capture("invite-link")
@@ -104,9 +104,9 @@ class HouseholdScreenTest {
             compose.onNodeWithText("Create invite link").assertIsEnabled()
             enqueue("[]"); enqueue("[]"); enqueue("[]")
             compose.runOnIdle { area.value = HouseholdArea.Tasks }
-            waitEnabled("Target: ")
+            waitEnabled("Target")
             compose.runOnIdle { care.value = care.value.copy(updateRequired = true) }
-            compose.onNodeWithText("Target: ").assertIsNotEnabled()
+            compose.onNodeWithText("Target").assertIsNotEnabled()
         }
     }
     @Test fun sittersHaveNoHouseholdScreensAndFamilyHasNoMembers() {

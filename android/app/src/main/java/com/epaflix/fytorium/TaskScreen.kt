@@ -380,17 +380,6 @@ private fun activeViewLabels(settings: TaskSettings) = listOfNotNull(
     }
 }
 
-@Composable internal fun Choice(label: String, value: String, choices: List<Pair<String, String>>, enabled: Boolean, change: (String) -> Unit) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    Column {
-        OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text("$label: " + (choices.firstOrNull { it.first == value }?.second ?: value))
-        }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            choices.forEach { (key, text) -> DropdownMenuItem(text = { Text(text) }, onClick = { change(key); expanded = false }, modifier = Modifier.heightIn(min = 48.dp)) }
-        }
-    }
-}
 @Composable internal fun Provenance(bases: List<Basis>) {
     var expanded by remember { mutableStateOf(false) }
     TextButton(onClick = { expanded = !expanded }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Based on") }

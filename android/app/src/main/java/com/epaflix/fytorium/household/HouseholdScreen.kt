@@ -114,8 +114,8 @@ import kotlinx.coroutines.withContext
                     }
                 }
                 area == HouseholdArea.Tasks -> {
-                    com.epaflix.fytorium.Choice("Target", state.target?.let { "${it.kind}: ${it.name}" }.orEmpty(),
-                        (state.plants + state.sites).map { "${it.kind}:${it.id}" to "${it.kind}: ${it.name}" }, writable) { key ->
+                    com.epaflix.fytorium.plants.Choice("Target", state.target?.let { "${it.kind}:${it.id}" }.orEmpty(),
+                        mapOf("" to "Choose a plant or site") + (state.plants + state.sites).associate { "${it.kind}:${it.id}" to "${it.kind}: ${it.name}" }, writable) { key ->
                         (state.plants + state.sites).firstOrNull { "${it.kind}:${it.id}" == key }?.let(onTarget)
                     }
                     if (state.target != null) {

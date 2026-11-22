@@ -147,7 +147,7 @@ import kotlinx.coroutines.withContext
     OutlinedTextField(fields["name"].orEmpty(), { field("name", it) }, label = { Text("Name") }, enabled = enabled, isError = errors.containsKey("name"),
         supportingText = { PlantError(errors["name"], keep = "Enter a site name.") }, modifier = Modifier.fillMaxWidth())
     for ((key, choice) in siteChoices) {
-        Choice(choice.first, fields[key].orEmpty(), choice.second.map { it to it.replace('_', ' ') }, enabled) { field(key, it) }
+        com.epaflix.fytorium.plants.Choice(choice.first, fields[key].orEmpty(), choice.second.associateWith { com.epaflix.fytorium.plants.choiceLabel(it) }, enabled) { field(key, it) }
         PlantError(errors[key])
     }
     SiteToggle("Grow light", growLight, enabled) { growLight = it }

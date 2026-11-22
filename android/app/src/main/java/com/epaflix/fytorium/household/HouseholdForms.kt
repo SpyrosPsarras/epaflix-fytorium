@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.epaflix.fytorium.Choice
+import com.epaflix.fytorium.plants.Choice
 
 @Composable private fun Toggle(label: String, checked: Boolean, enabled: Boolean, change: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(checked, enabled = enabled, role = Role.Checkbox, onValueChange = change),
@@ -25,7 +25,7 @@ import com.epaflix.fytorium.Choice
 @Composable internal fun InviteForm(plants: List<TaskTarget>, enabled: Boolean, save: (String, Set<String>) -> Unit) {
     var role by remember { mutableStateOf("family") }
     var selected by remember { mutableStateOf(emptySet<String>()) }
-    Choice("Role", role, listOf("family" to "Family", "sitter" to "Sitter"), enabled) { role = it }
+    Choice("Role", role, mapOf("family" to "Family", "sitter" to "Sitter"), enabled) { role = it }
     if (role == "sitter") SharedPlants(plants, selected, enabled) { selected = it }
     Button(onClick = { save(role, if (role == "sitter") selected else emptySet()) }, enabled = enabled) { Text("Create invite link") }
 }
@@ -33,7 +33,7 @@ import com.epaflix.fytorium.Choice
     var role by remember(member) { mutableStateOf(member.role) }
     var selected by remember(member) { mutableStateOf(member.plantIds) }
     HouseholdHeading(member.name)
-    if (member.roleOptions.isNotEmpty()) Choice("Role", role, member.roleOptions.map { it to it.replaceFirstChar(Char::uppercase) }, enabled) { role = it }
+    if (member.roleOptions.isNotEmpty()) Choice("Role", role, member.roleOptions.associateWith { it.replaceFirstChar(Char::uppercase) }, enabled) { role = it }
     if (role == "sitter") SharedPlants(plants, selected, enabled) { selected = it }
     Button(onClick = { save(role, if (role == "sitter") selected else emptySet()) }, enabled = enabled) { Text("Save member") }
 }

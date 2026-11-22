@@ -3655,7 +3655,7 @@ class PlantPageTest {
             // The server's own messages: readSite in src/lib/server/sites.ts. Each field's message must end above the next control.
             val whole = "Enter a whole number of °C or leave blank."
             val exceeds = "Minimum must not exceed maximum."
-            val refusals = listOf(Triple("name", "Enter a site name.", "Location: indoor"), Triple("warm_min_c", exceeds, "Warm maximum °C"), Triple("cold_min_c", exceeds, "Cold maximum °C"),
+            val refusals = listOf(Triple("name", "Enter a site name.", "Location"), Triple("warm_min_c", exceeds, "Warm maximum °C"), Triple("cold_min_c", exceeds, "Cold maximum °C"),
                 Triple("warm_min_c", whole, "Warm maximum °C"), Triple("warm_max_c", whole, "Cold minimum °C"), Triple("cold_min_c", whole, "Cold maximum °C"), Triple("cold_max_c", whole, "Draft"))
             refusals.forEachIndexed { index, (field, message, next) ->
                 refusal.set(JSONObject().put("errors", JSONObject().put(field, message)).toString())
@@ -3684,7 +3684,7 @@ class PlantPageTest {
             val line = hasText("Sites didn't load") and hasClickAction()
             // The plant reads that opening the page started finish first, so none answers after the server is back and reloads the sites before the tap.
             compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
-            val controls = listOf("Name", "Location: indoor", "Light level: part sun", "Humidity: normal", "Grow light", "Warm minimum °C", "Warm maximum °C",
+            val controls = listOf("Name", "Location", "Light level", "Humidity", "Grow light", "Warm minimum °C", "Warm maximum °C",
                 "Cold minimum °C", "Cold maximum °C", "Draft", "Save site", "Cancel")
             fun layout() = controls.associateWith { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
             val failed = layout()
@@ -3742,7 +3742,7 @@ class PlantPageTest {
             compose.setContent { if (showing.value) CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) { FytoriumTheme {
                 val care by repo.state.collectAsState(); PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { online.value }) } } }
             openCreateASite()
-            val controls = listOf("Name", "Location: indoor", "Light level: part sun", "Humidity: normal", "Grow light", "Warm minimum °C", "Warm maximum °C",
+            val controls = listOf("Name", "Location", "Light level", "Humidity", "Grow light", "Warm minimum °C", "Warm maximum °C",
                 "Cold minimum °C", "Cold maximum °C", "Draft", "Save site", "Cancel")
             fun layout() = controls.associateWith { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
             for (scale in listOf(1f, 1.3f)) {

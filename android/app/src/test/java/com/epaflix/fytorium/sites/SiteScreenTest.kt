@@ -30,11 +30,11 @@ class SiteScreenTest {
         val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
         var choice = ""
         restoration.setContent { FytoriumTheme {
-            Choice("Synthetic condition", "indoor", listOf("indoor" to "Indoor", "outdoor" to "Outdoor"), true) { choice = it }
+            com.epaflix.fytorium.plants.Choice("Synthetic condition", "indoor", mapOf("indoor" to "Indoor", "outdoor" to "Outdoor"), true) { choice = it }
         } }
-        compose.onNodeWithText("Synthetic condition: Indoor").performClick()
+        compose.onNodeWithText("Synthetic condition").performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithText("Outdoor").performClick()
+        compose.onNode(hasText("Outdoor") and hasAnyAncestor(isPopup())).performClick()
         assertEquals("outdoor", choice)
     }
 
@@ -188,8 +188,8 @@ class SiteScreenTest {
         compose.onNodeWithText("Discard").performClick()
         compose.onNodeWithText("Create site").performScrollTo().performClick()
         compose.runOnIdle { state.value = state.value.copy(errors = emptyMap()) }
-        compose.onNodeWithText("Location: indoor").assertIsDisplayed()
-        compose.onNodeWithText("Light level: part sun").assertIsDisplayed()
+        compose.onNode(hasText("Location") and hasText("Indoor")).assertIsDisplayed()
+        compose.onNode(hasText("Light level") and hasText("Part sun")).assertIsDisplayed()
         capture("site-create")
         compose.runOnIdle { online.value = false }
         compose.onNodeWithText("Save site").performScrollTo().assertIsNotEnabled()
