@@ -280,6 +280,8 @@ class AppShellRestorationTest {
                     compose.onNode(isTab("More")).performClick()
                     compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic imported fern").fetchSemanticsNodes().isNotEmpty() }
+                    // With a review open, the code step is folded (W5b-P21).
+                    compose.onNodeWithText("Fetch again with a new code").performScrollTo().performClick()
                     compose.onNodeWithText("One-time app code").performTextInput("synthetic-never-save")
                 }
                 "household-settings" -> {
