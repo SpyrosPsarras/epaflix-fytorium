@@ -54,6 +54,23 @@ class PlantaScreenTest {
         compose.runOnIdle { state.value = state.value.copy(rows = listOf(row.copy(status = "skipped"))) }
         compose.onNodeWithText("Nothing to import").assertIsNotEnabled()
     }
+    // Sol W5b-S1: the server sets can_commit on every row or none, so the bar counts confirmed rows; Sol W5b-S3: a tap that is not accepted never sticks on Importing.
+    @Test fun theBarCountsConfirmedRowsAndARefusedTapDoesNotStick() {
+        val ready = row.copy(status = "confirmed", canCommit = true)
+        val state = mutableStateOf(PlantaState(loaded = true, rows = listOf(ready.copy(id = "a"), ready.copy(id = "b"), row.copy(id = "c", canCommit = true))))
+        val receipts = mutableListOf<String>()
+        compose.setContent { FytoriumTheme { PlantaScreen(state.value, onCommit = { 2 }, onReceipt = { receipts += it }) } }
+        compose.onNodeWithTag("import-button").assert(hasText("Import 2 plants"))
+        compose.runOnIdle { state.value = state.value.copy(rows = listOf(ready.copy(id = "a"), ready.copy(id = "b"), row.copy(id = "c", status = "skipped", canCommit = true))) }
+        compose.onNodeWithTag("import-button").assert(hasText("Import 2 plants"))
+        compose.runOnIdle { state.value = state.value.copy(blocked = true) }
+        compose.onNodeWithTag("import-button").performClick()
+        compose.onNodeWithTag("import-button").assert(hasText("Import 2 plants"))
+        compose.runOnIdle { assertTrue(receipts.isEmpty()); state.value = state.value.copy(blocked = false) }
+        compose.onNodeWithTag("import-button").performClick()
+        compose.waitUntil(5_000) { receipts.isNotEmpty() }
+        assertEquals(listOf("Imported 2 plants"), receipts)
+    }
     @Test fun theBarNamesScrollToTheirCards() {
         val rows = List(3) { row.copy(id = "review-$it", name = "Synthetic review $it") }
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = rows)) } }
@@ -402,7 +419,7 @@ class PlantaScreenTest {
         var writes = 0
         suspend fun write() { writes++; release.await() }
         compose.setContent { FytoriumTheme { PlantaScreen(state.value, onFetch = { write(); false },
-            onConfirm = { _, _, _ -> write() }, onSkip = { write() }, onCommit = { write(); false }) } }
+            onConfirm = { _, _, _ -> write() }, onSkip = { write() }, onCommit = { write(); null }) } }
         for ((index, label) in listOf("Fetch plants", "This is Testoria nebulosa", "Skip plant", "Import 1 plant").withIndex()) {
             compose.runOnIdle {
                 release = CompletableDeferred()

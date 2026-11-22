@@ -88,7 +88,7 @@ private val roleCards = listOf(
     val context = LocalContext.current
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    LaunchedEffect(answers) { if (repository.state.value.run { readError != null && !loading }) withContext(Dispatchers.IO) { repository.refresh() } }
+    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !loading }) withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
@@ -140,6 +140,8 @@ private val roleCards = listOf(
     var inviteRole by rememberSaveable { mutableStateOf<String?>(null) }
     var inviteTicks by rememberSaveable { mutableStateOf(listOf<String>()) }
     var draft by rememberSaveable { mutableStateOf<InviteDraft?>(null) }
+    // Revoke and create new: once the old invite is revoked, a retry only creates.
+    var revokedOld by rememberSaveable { mutableStateOf<String?>(null) }
     var sent by rememberSaveable { mutableStateOf(false) }
     var memberRole by rememberSaveable { mutableStateOf<String?>(null) }
     var memberTicks by rememberSaveable { mutableStateOf<List<String>?>(null) }
@@ -220,7 +222,7 @@ private val roleCards = listOf(
                     Heading("This link can't be shown again", MaterialTheme.typography.titleMedium)
                     Text("Fytorium was closed, so the link is gone. If you didn't send it, revoke the invite and create a new one.")
                     Button(onClick = { write { submit {
-                        if (onRevoke(invite.id)) onCreateInvite(invite.role, invite.plantIds.toSet())?.let { created ->
+                        if (revokedOld == invite.id || onRevoke(invite.id).also { if (it) revokedOld = invite.id }) onCreateInvite(invite.role, invite.plantIds.toSet())?.let { created ->
                             InviteLinks.put(created.id, created.link)
                             draft = InviteDraft(created.id, created.role, created.expiresAt, invite.plantIds); sent = false
                         }

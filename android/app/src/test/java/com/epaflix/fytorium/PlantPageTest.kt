@@ -2384,6 +2384,44 @@ class PlantPageTest {
         compose.onNodeWithContentDescription("Back").performClick()
         compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
     }
+    // Sol W5b-S2: a plant opened from a site page goes back to that page from its site line, so Back never cycles.
+    @Test fun theSiteLineOfAPlantFromASitePageReturnsThere() = withPlantServer({ path ->
+        """[{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":1}]""".takeIf { path == "/api/sites" }
+    }) { repo, showing ->
+        repo.refresh()
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, photosApi = api, photosConnected = { true }) } }
+        val heading = hasText("Synthetic site") and hasClickAction() and isHeading()
+        compose.waitUntil(5_000) { compose.onAllNodes(heading).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(heading).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Plants (1)").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        val line = hasText("Synthetic site") and hasClickAction()
+        compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(line).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Plants (1)").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Search plants").assertIsDisplayed()
+    }
+    // Sol W5b-S7: offline, Add a task explains and stays on the plant page.
+    @Test fun offlineAddATaskExplains() = withPlantServer { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { false }) } }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
+        reveal(hasText("Add a task")).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Changing tasks needs a connection.").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Task name").assertDoesNotExist()
+    }
+    // Sol W5b-S9: a site created from Restore gives its receipt too.
+    @Test fun aSiteCreatedFromRestoreGivesAReceipt() = withPlantServer(::restoreServed,
+        posted = { path -> """{"id":"site-two","name":"Synthetic porch"}""".takeIf { path == "/api/sites" } }) { repo, showing ->
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, initialPlant = plant.id, photosApi = api, photosConnected = { true }) } }
+        openCreateASite()
+        compose.onNode(hasText("Name") and hasSetTextAction()).performTextInput("Synthetic porch")
+        compose.onNodeWithText("Save site").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Created Synthetic porch").fetchSemanticsNodes().isNotEmpty() }
+    }
     @Test fun aSites426FromPlantsStopsTheApp() = updateStop({ it == "/api/sites" }) {
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
         compose.onNodeWithContentDescription("More options").performClick()

@@ -126,7 +126,12 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
     // Sites an import made start with default conditions; the page says so only while one is still unset (W5b-P24).
     fun checkSites() {
         if (!allowed() || !connected()) return
-        val incomplete = runCatching { JSONArray(request("/api/sites")).mapObjects { it.optBoolean("imported_conditions_incomplete") }.any { it } }.getOrDefault(false)
+        val incomplete = try { JSONArray(request("/api/sites")).mapObjects { it.optBoolean("imported_conditions_incomplete") }.any { it } }
+            catch (error: Exception) {
+                // A refused version still reaches the update stop.
+                if (error is PlantaFailure && error.status == 426 && allowed()) mutable.update { it.copy(updateRequired = true) }
+                false
+            }
         if (allowed()) mutable.update { it.copy(incompleteSites = incomplete) }
     }
     private fun run(write: Boolean, action: () -> Unit): Boolean {

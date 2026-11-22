@@ -59,7 +59,7 @@ internal const val sitesOffline = "Changing sites needs a connection."
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
     // Once Fytorium answers a plant request again, also the plant reload after a reconnect, a failed sites read loads again without a tap; the form keeps its input.
-    LaunchedEffect(answers) { if (repository.state.value.run { readError != null && !busy }) withContext(Dispatchers.IO) { repository.refresh() } }
+    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !busy }) withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }

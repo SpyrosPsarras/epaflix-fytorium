@@ -118,11 +118,39 @@ class SiteScreenTest {
             compose.waitUntil(5_000) { "site-list" in cache }
             compose.runOnIdle { shown.value = false; online.value = false }
             compose.runOnIdle { shown.value = true }
+            // The offline copy is read off the main thread, so wait for it.
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic room").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Synthetic room").assertIsDisplayed()
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
             compose.onNodeWithContentDescription("Create site").assert(hasStateDescription(sitesOffline)).performClick()
             compose.runOnIdle { assertEquals(listOf(sitesOffline), receipts) }
             compose.onNodeWithText("Save site").assertDoesNotExist()
+        }
+    }
+
+    // Sol W5b-S8: a change Fytorium left unanswered stops pausing writes once Fytorium answers again.
+    @Test fun aBlockedSaveRecoversWhenFytoriumAnswersAgain() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val down = java.util.concurrent.atomic.AtomicBoolean(true)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                    if (request.method == "POST" && down.get()) okhttp3.mockwebserver.MockResponse().setResponseCode(503).setBody("{}")
+                    else okhttp3.mockwebserver.MockResponse().setBody("[]")
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val answers = mutableIntStateOf(0)
+            compose.setContent { FytoriumTheme { SitesRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { true }, {}, answers = answers.intValue) } }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No sites yet").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Create site").performClick()
+            compose.onNodeWithText("Name").performTextReplacement("Synthetic porch")
+            compose.onNodeWithText("Save site").performScrollTo().performClick()
+            val paused = hasText("Sites can't be changed right now") and hasClickAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(paused).fetchSemanticsNodes().isNotEmpty() }
+            compose.runOnIdle { down.set(false); answers.intValue++ }
+            compose.waitUntil(5_000) { compose.onAllNodes(paused).fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithText("Save site").performScrollTo().assertIsEnabled()
+            compose.onNodeWithText("Name").assertTextContains("Synthetic porch")
         }
     }
 

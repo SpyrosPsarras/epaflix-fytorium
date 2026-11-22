@@ -75,7 +75,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     val scope = rememberCoroutineScope()
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    LaunchedEffect(answers) { if (repository.state.value.run { readError != null && !loading }) withContext(Dispatchers.IO) { repository.refresh() } }
+    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !loading }) withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired && care.member?.role == com.epaflix.fytorium.Role.owner
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
@@ -89,13 +89,15 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
         onFetch = { code -> withContext(Dispatchers.IO) { repository.fetch(code) } },
         onConfirm = { id, key, receipt -> withContext(Dispatchers.IO) { repository.confirm(id, key, receipt) } },
         onSkip = { id -> withContext(Dispatchers.IO) { repository.skip(id) } }, onSearch = { id, query -> command { repository.search(id, query) } },
-        onCommit = { withContext(Dispatchers.IO) { repository.commit() } }, onPlants = onPlants, onPlant = onPlant, onSites = onSites, imageApi = api, onReceipt = onReceipt)
+        // The receipt counts the rows this import committed (W5b-P24).
+        onCommit = { withContext(Dispatchers.IO) { val before = repository.state.value.rows.count { it.status == "committed" }
+            if (repository.commit()) repository.state.value.rows.count { it.status == "committed" } - before else null } }, onPlants = onPlants, onPlant = onPlant, onSites = onSites, imageApi = api, onReceipt = onReceipt)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun PlantaScreen(state: PlantaState, online: Boolean = true, onBack: () -> Unit = {}, onRefresh: () -> Unit = {}, onPull: suspend () -> Unit = { onRefresh() },
     onFetch: suspend (String) -> Boolean = { false }, onConfirm: suspend (String, Long, String?) -> Unit = { _, _, _ -> }, onSkip: suspend (String) -> Unit = {},
-    onSearch: (String, String) -> Unit = { _, _ -> }, onCommit: suspend () -> Boolean = { false }, onPlants: () -> Unit = {}, onPlant: (String) -> Unit = {},
+    onSearch: (String, String) -> Unit = { _, _ -> }, onCommit: suspend () -> Int? = { null }, onPlants: () -> Unit = {}, onPlant: (String) -> Unit = {},
     onSites: () -> Unit = {}, imageApi: ApiClient? = null, onReceipt: (String) -> Unit = {}) {
     // A Planta code must not enter saved state, even on rotation or a failed fetch.
     var code by remember { mutableStateOf("") }
@@ -111,7 +113,9 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     val ready = state.loaded && !state.saving && !state.blocked && !state.updateRequired && !submitting
     val writable = online && ready
     val reviewRows = state.rows.filter { it.status == "review" }
-    val importable = state.rows.count { it.canCommit }
+    // can_commit is household-wide (every row or none), so the bar counts the confirmed rows and uses the flag only to allow the import.
+    val importable = state.rows.count { it.status == "confirmed" }
+    val canImport = state.rows.any { it.canCommit }
     val skipped = state.rows.count { it.status == "skipped" }
     val reviewTargets = remember(state.rows.map { it.id }) { state.rows.associate { it.id to BringIntoViewRequester() } }
     fun scrollTo(id: String) { scope.launch { reviewTargets[id]?.bringIntoView() } }
@@ -199,7 +203,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                 val blockedBy = when { reviewRows.isNotEmpty() -> "Choose a species or skip the plants above first."; !online -> importOffline; else -> null }
                 Button(onClick = {
                     if (blockedBy != null) onReceipt(blockedBy)
-                    else if (importable > 0) { val count = importable; importing = true; submit { try { if (onCommit()) onReceipt("Imported ${plants(count)}") } finally { importing = false } } }
+                    else if (importable > 0 && canImport) submit { importing = true; try { onCommit()?.let { onReceipt("Imported ${plants(it)}") } } finally { importing = false } }
                 }, enabled = !importing && (importable > 0 || reviewRows.isNotEmpty()),
                     colors = if (blockedBy != null) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
                         contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)) else ButtonDefaults.buttonColors(),

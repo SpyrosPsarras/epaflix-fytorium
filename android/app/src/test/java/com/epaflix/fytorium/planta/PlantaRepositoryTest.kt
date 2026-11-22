@@ -123,6 +123,17 @@ class PlantaRepositoryTest {
             assertEquals(3, server.requestCount)
         }
     }
+    // Sol W5b-S10: a 426 from the post-import sites check still reaches the update stop.
+    @Test fun aRefusedVersionDuringTheSitesCheckStopsTheApp() {
+        MockWebServer().use { server ->
+            server.start()
+            val repo = repository(server)
+            server.enqueue(MockResponse().setResponseCode(426).setBody("{}"))
+            repo.checkSites()
+            assertTrue(repo.state.value.updateRequired)
+            assertFalse(repo.state.value.incompleteSites)
+        }
+    }
     @Test fun lostResponseAndUpdateRequiredPreserveRowsAndBlockWrites() {
         for (status in listOf(426, 503)) MockWebServer().use { server ->
             server.start()

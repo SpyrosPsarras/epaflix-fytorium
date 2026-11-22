@@ -130,7 +130,7 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
     val scope = rememberCoroutineScope()
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    LaunchedEffect(answers) { if (repository.state.value.run { readError != null && !busy }) withContext(Dispatchers.IO) { repository.refresh() } }
+    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !busy }) withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
@@ -171,9 +171,10 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
     }
     fun back() = when {
         page == "form" && changed -> discarding = true
-        page == "form" && editing == null && fixed == null -> { onClear(); name = ""; interval = ""; checked = false; page = "pick" }
+        page == "form" && editing == null && fixed == null -> { onClear(); name = ""; interval = ""; checked = false; target = null; page = "pick" }
         page == "form" -> close()
-        page == "pick" -> { query = ""; page = "list" }
+        // Back from Change returns to the task being typed; only the first picker returns to the list.
+        page == "pick" -> { query = ""; page = if (target != null) "form" else "list" }
         else -> onBack()
     }
     val currentDirty by rememberUpdatedState(onFormDirty)

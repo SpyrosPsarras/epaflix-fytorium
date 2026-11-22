@@ -86,7 +86,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val homeHandled = key(homeRequest) { rememberSaveable { mutableStateOf(false) } }
     // Discard drops the Plants form even when the tap stays on Plants, so no form keeps changes the shell no longer asks about.
     var plantsDiscards by rememberSaveable { mutableIntStateOf(0) }
-    fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null; journalAdd = null }
+    // A tab or notification leaving Members forgets any invite link shown there (W5b-P11).
+    fun select(title: String) { com.epaflix.fytorium.household.InviteLinks.clear(); tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null; journalAdd = null }
     fun go(target: String) { select(if (target == "home") "Today" else target); if (target == "home") taskView = "today" }
     fun leave(target: String) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else go(target) }
     LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; leave("home") } }

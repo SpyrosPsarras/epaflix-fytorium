@@ -104,6 +104,34 @@ class MembersScreenTest {
         assertNull(InviteLinks.get("invite-2"))
     }
 
+    // Sol W5b-S5: when the old invite was revoked but the new one failed, a retry only creates.
+    @Test fun revokeAndCreateNewRetriesOnlyTheCreate() {
+        val restoration = StateRestorationTester(compose)
+        var revokes = 0
+        var creates = 0
+        restoration.setContent { FytoriumTheme { MembersScreen(loaded, care, onRevoke = { revokes++; true },
+            onCreateInvite = { role, _ -> creates++; if (creates == 2) null else created(role).copy(id = "invite-$creates") }) } }
+        compose.onNodeWithText("Invite someone").performClick()
+        compose.onNode(hasText("Family", substring = true) and isSelectable()).performClick()
+        compose.onNodeWithText("Create invite link").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Share link").fetchSemanticsNodes().isNotEmpty() }
+        InviteLinks.clear()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Revoke and create new").performClick()
+        compose.waitUntil(5_000) { creates == 2 }
+        compose.onNodeWithText("Revoke and create new").performClick()
+        compose.waitUntil(5_000) { creates == 3 }
+        compose.runOnIdle { assertEquals(1, revokes) }
+        compose.onNodeWithText("Share link").assertIsDisplayed()
+    }
+    // Sol W5b-S4: a tab tap away from Members forgets any link shown there.
+    @Test fun aTabTapForgetsTheInviteLink() {
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care) } }
+        InviteLinks.put("invite-shown", "/invite/synthetic-link")
+        compose.onNode(isTab("Today")).performClick()
+        assertNull(InviteLinks.get("invite-shown"))
+    }
+
     // W5b-P12 to P14: saves, removals and revokes name who or what changed in a receipt.
     @Test fun changesNameTheirTargetInAReceipt() {
         val receipts = mutableListOf<String>()
@@ -153,6 +181,8 @@ class MembersScreenTest {
             compose.waitUntil(5_000) { "members" in cache }
             compose.runOnIdle { shown.value = false; online.value = false }
             compose.runOnIdle { shown.value = true }
+            // The offline copy is read off the main thread, so wait for it.
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic owner (you)").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Synthetic owner (you)").assertIsDisplayed()
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
             compose.onNodeWithText("Invite someone").assert(hasStateDescription(membersOffline)).performClick()

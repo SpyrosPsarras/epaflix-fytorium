@@ -287,7 +287,11 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     val sitesApi = photosApi ?: speciesApi
     val editsSites = sitesApi != null && state.member != null && state.member.role != Role.sitter
-    fun openSites(start: String?) { forms.removeState("site-pages"); sitesStart = start; sitesFrom = page; sitesFromId = id; page = "site-pages" }
+    fun openSites(start: String?) {
+        // A plant opened from a site page shows that site, so its site line goes back there instead of starting a second path.
+        if (page == "detail" && from == "site-pages") { page = "site-pages"; id = null; return }
+        forms.removeState("site-pages"); sitesStart = start; sitesFrom = page; sitesFromId = id; page = "site-pages"
+    }
     if (page == "site-pages" && editsSites) {
         forms.SaveableStateProvider("site-pages") {
             com.epaflix.fytorium.sites.SitesRoute(sitesApi!!, state, photosConnected, onBack = { forms.removeState("site-pages"); page = sitesFrom; id = sitesFromId },
@@ -308,7 +312,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     }
     if (page == "sites" && sitesApi != null && state.member != null && state.member.role != Role.sitter) {
         com.epaflix.fytorium.sites.SitesRoute(sitesApi, state, photosConnected, onBack = { page = sitesReturn; run { loadOptions() } }, creating = true,
-            onCreated = { restoreSite = it }, onFormDirty = { subpageDraft = it }, onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers)
+            onCreated = { restoreSite = it }, onFormDirty = { subpageDraft = it }, onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers,
+            onReceipt = { repository?.showReceipt(it) })
         return
     }
     val title = when (page) {
@@ -365,7 +370,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                         pulling = true
                         scope.launch { try { withContext(Dispatchers.IO) { repository?.refresh() }; reload() } finally { pulling = false } }
                     }, writeBlocked = writeBlocked, request = request, onRetry = ::retry, scroll = detailScroll,
-                    onSite = { site: String -> openSites(site) }.takeIf { editsSites }, onAddTask = { page = "add-task" }.takeIf { editsSites }) }
+                    onSite = { site: String -> openSites(site) }.takeIf { editsSites }, onAddTask = { if (photosConnected() && !state.updateRequired) page = "add-task" else explain(com.epaflix.fytorium.household.tasksOffline) }.takeIf { editsSites }) }
                 "species-care" -> PlantColumn {
                     Text("Connect to load the care defaults for this species.")
                     OutlinedButton(onClick = { id?.let { key -> run { refreshDetail(key) } } }, enabled = !reading && !saving) { Text("Load plant") }

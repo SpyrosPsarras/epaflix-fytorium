@@ -86,6 +86,19 @@ class CustomTasksScreenTest {
         compose.onNodeWithText("First due ${firstDue(14)} for the plants there now.").assertIsDisplayed()
     }
 
+    // Sol W5b-S6: Back from Change returns to the task being typed, which keeps its text.
+    @Test fun backFromChangeReturnsToTheForm() {
+        compose.setContent { FytoriumTheme { CustomTasksScreen(loaded, care) } }
+        compose.onNodeWithText("Add task").performClick()
+        compose.onNodeWithText("Synthetic fernando").performClick()
+        compose.onNodeWithText("Task name").performTextInput("Test spray")
+        compose.onNodeWithText("Change").performClick()
+        compose.onNodeWithText("For which plant or site?").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("New task").assertIsDisplayed()
+        compose.onNodeWithText("Task name").assertTextContains("Test spray")
+    }
+
     // W5b-P17, P19: edits keep their target; drafts survive recreation and ask before leaving; delete names the task and its target.
     @Test fun editingKeepsItsTargetAndDraftsAskBeforeLeaving() {
         val restoration = StateRestorationTester(compose)
@@ -144,6 +157,8 @@ class CustomTasksScreenTest {
             compose.waitUntil(5_000) { "custom-tasks" in cache }
             compose.runOnIdle { shown.value = false; online.value = false }
             compose.runOnIdle { shown.value = true }
+            // The offline copy is read off the main thread, so wait for it.
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Mist leaves").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Mist leaves").assertIsDisplayed()
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
             compose.onNodeWithText("Add task").assert(hasStateDescription(tasksOffline)).performClick()
