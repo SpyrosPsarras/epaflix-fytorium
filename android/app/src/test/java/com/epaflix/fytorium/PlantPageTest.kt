@@ -3732,8 +3732,8 @@ class PlantPageTest {
                 failure.set(response)
                 compose.onNode(save).performClick()
                 val paused = hasText("Sites can't be changed right now") and hasClickAction()
-                compose.waitUntil(5_000) { compose.onAllNodes(hasText(message) and hasNoClickAction()).fetchSemanticsNodes().isNotEmpty() &&
-                    compose.onAllNodes(paused).fetchSemanticsNodes().isNotEmpty() }
+                // An answer during the save may already have lifted the pause, so only the save's message is awaited.
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText(message) and hasNoClickAction()).fetchSemanticsNodes().isNotEmpty() }
                 assertEquals("Save moved after: $message", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
                 assertTrue("The message sits under Save", compose.onNode(hasText(message) and hasNoClickAction(), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top >= before.bottom)
                 // No Refresh button (W5b-P26): the line's Try again reloads, unless a plant answer that arrived during the save already did.

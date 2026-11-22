@@ -118,8 +118,10 @@ private val roleCards = listOf(
 @Composable internal fun ReloadOnAnswer(answers: Int, busy: Boolean, failing: () -> Boolean, reload: suspend () -> Unit) {
     var seen by remember { mutableIntStateOf(answers) }
     var pending by remember { mutableStateOf(false) }
+    // The reload runs outside the effect, so clearing pending or the reload's own busy state cannot cancel it.
+    val scope = rememberCoroutineScope()
     LaunchedEffect(answers) { if (answers != seen) { seen = answers; pending = true } }
-    LaunchedEffect(pending, busy) { if (pending && !busy) { pending = false; if (failing()) reload() } }
+    LaunchedEffect(pending, busy) { if (pending && !busy) { pending = false; if (failing()) scope.launch { reload() } } }
 }
 
 @Composable internal fun ResumeReload(reload: () -> Unit) {
