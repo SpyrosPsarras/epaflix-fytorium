@@ -27,10 +27,12 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -156,7 +158,7 @@ internal fun clock(time: String, is24: Boolean): String {
             val changed = onSwitch(device, enabled)
             pending.end("device:" + device.id, ticket)
             // A refused change says so and reloads, so a device already gone elsewhere leaves the list.
-            if (!changed) { onReceipt("${deviceName(device)} wasn't changed. ${failure() ?: "Try again."}"); onRefresh() }
+            if (!changed) { onReceipt("${deviceName(device)} wasn't changed. ${(failure() ?: "Try again.").let { if (it.endsWith('.')) it else "$it." }}"); onRefresh() }
         }
     }
     val status = when {
@@ -277,10 +279,17 @@ internal fun clock(time: String, is24: Boolean): String {
 }
 @Composable private fun TimeMenu(label: String, selected: Int, options: List<String>, modifier: Modifier, choose: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    // The menu opens at the chosen value and marks it.
+    val chosen = selected
+    val scroll = rememberScrollState()
+    val row = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.roundToPx() }
+    LaunchedEffect(open) { if (open) scroll.scrollTo(selected * row) }
     Box(modifier) {
         OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("$label: ${options[selected]}") }
-        DropdownMenu(open, { open = false }, modifier = Modifier.heightIn(max = 240.dp)) {
-            options.forEachIndexed { index, option -> DropdownMenuItem(text = { Text(option) }, onClick = { choose(index); open = false }) }
+        DropdownMenu(open, { open = false }, modifier = Modifier.heightIn(max = 240.dp), scrollState = scroll) {
+            options.forEachIndexed { index, option -> DropdownMenuItem(text = { Text(option) }, onClick = { choose(index); open = false },
+                trailingIcon = if (index == selected) { { Icon(Icons.Default.Check, contentDescription = "Chosen") } } else null,
+                modifier = Modifier.semantics { this.selected = index == chosen }) }
         }
     }
 }

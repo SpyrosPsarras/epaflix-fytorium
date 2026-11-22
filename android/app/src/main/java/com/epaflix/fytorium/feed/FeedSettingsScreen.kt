@@ -64,7 +64,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
         failure = { feed.state.value.takeIf { !it.offline && !it.unavailable }?.message })
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun WeatherFeedScreen(state: FeedState, care: CareState?, online: Boolean, onBack: () -> Unit = {},
     onReceipt: (String) -> Unit = {}, onFormDirty: (() -> String?) -> Unit = {}, onRefresh: () -> Unit = {},
     onSearch: suspend (String) -> FeedRepository.PlaceAnswer = { FeedRepository.PlaceAnswer(null) }, onSaveLocation: suspend (WeatherLocation?) -> Boolean = { false },
@@ -162,7 +162,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                         }
                     }
                     if (!formOpen) PlantError(placeError)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // At large text the second button moves to its own line instead of wrapping its words.
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // The first button keeps its place: it opens the form, then folds it again.
                         TextButton(onClick = { if (!formOpen) { prefill(); formOpen = true } else if (typed()) { discardLeaves = false; discarding = true } else formOpen = false },
                             modifier = Modifier.heightIn(min = 48.dp)) {
@@ -178,11 +179,16 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                         val keys = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next)
                         // Offline or while it saves, the draft stays but can't change.
                         val locked = !online || savingLocation
+                        Box { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(latitude, { latitude = it; fieldErrors = fieldErrors - "latitude" }, label = { Text("Latitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked, enabled = online,
                             supportingText = { Text(fieldErrors["latitude"] ?: "-90 to 90") }, isError = "latitude" in fieldErrors, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(longitude, { longitude = it; fieldErrors = fieldErrors - "longitude" }, label = { Text("Longitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked, enabled = online,
                             supportingText = { Text(fieldErrors["longitude"] ?: "-180 to 180") }, isError = "longitude" in fieldErrors, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(label, { label = it.take(200) }, label = { Text("Place name (optional)") }, singleLine = true, readOnly = locked, enabled = online, modifier = Modifier.fillMaxWidth())
+                        }
+                        // Offline the fields look off, and a tap on them says why.
+                        if (!online) Box(Modifier.matchParentSize().clickable(onClickLabel = "Explain") { onReceipt(changesOffline) }.semantics { stateDescription = changesOffline })
+                        }
                         Button(onClick = {
                             if (!online) { onReceipt(changesOffline); return@Button }
                             val lat = latitude.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in -90.0..90.0 }

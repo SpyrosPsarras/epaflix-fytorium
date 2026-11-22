@@ -156,6 +156,31 @@ class AppShellRestorationTest {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
+    // Opus W5a-opus-2: Notifications is not keyed by the member object, so a reread member keeps the open reminder time.
+    @Test fun anOpenReminderTimeStaysWhenTheSameMemberIsReread() {
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.path) {
+                    "/api/notifications/settings" -> """{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""
+                    "/api/meta" -> """{"today":"2030-06-01","timezone":"Europe/Oslo"}"""
+                    else -> "[]"
+                })
+            }
+            server.start()
+            val client = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val care = mutableStateOf(CareState(member = Member("synthetic-reread", Role.owner)))
+            compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value, sitesApi = client, sitesConnected = { true }) } }
+            compose.onNode(hasText("More") and hasClickAction()).performClick()
+            compose.onNode(hasText("Notifications") and hasClickAction()).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Times use Europe/Oslo time.").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Reminder time").performScrollTo().performClick()
+            compose.onNodeWithText("Set").assertIsDisplayed()
+            care.value = CareState(member = Member("synthetic-reread", Role.family))
+            compose.waitForIdle()
+            compose.onNodeWithText("Set").assertIsDisplayed()
+        }
+    }
+
     private fun navigation(reset: String?, route: String = "sites-unmatched", initialRole: Role = Role.owner,
                            exit: String? = null, restoreBeforeExit: Boolean = false) {
         MockWebServer().use { server ->

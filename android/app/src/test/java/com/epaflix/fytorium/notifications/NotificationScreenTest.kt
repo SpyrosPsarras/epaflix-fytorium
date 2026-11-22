@@ -136,6 +136,16 @@ class NotificationScreenTest {
         assertEquals("09:30", saved)
     }
 
+    // Opus W5a-opus-12: the hour menu opens at the chosen hour and marks it.
+    @Config(sdk = [35], qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun theHourMenuOpensAtTheChosenHour() {
+        compose.setContent { FytoriumTheme { Surface(Modifier.fillMaxSize()) { NotificationScreen(NotificationState(loaded = true,
+            settings = NotificationSettings(time = "21:00"))) } } }
+        compose.onNodeWithText("Reminder time").performScrollTo().performClick()
+        compose.onNodeWithText("Hour", substring = true).performClick()
+        compose.onNode((hasText("21") or hasText("9 PM")) and hasAnyAncestor(isPopup())).assertIsDisplayed().assertIsSelected()
+    }
+
     // W5a-P30 (Opus W5a-opus-3): a refused device change says so and reloads the list.
     @Test fun aRefusedDeviceChangeSaysSoAndReloads() {
         val receipts = mutableListOf<String>()
@@ -145,7 +155,7 @@ class NotificationScreenTest {
             onSwitch = { _, _ -> false }, onReceipt = { receipts += it }, onRefresh = { reloads++ }, failure = { "Device not found" }) } } }
         compose.onNodeWithContentDescription("Send notifications to Firefox on Linux").performScrollTo().performClick()
         compose.waitUntil(5_000) { receipts.isNotEmpty() }
-        assertEquals("Firefox on Linux wasn't changed. Device not found", receipts.single())
+        assertEquals("Firefox on Linux wasn't changed. Device not found.", receipts.single())
         assertEquals(1, reloads)
     }
 

@@ -171,7 +171,7 @@ Regression only, must not get worse: W2 Today feed strip and its cards; W3 C1/C1
   - for owner and family: switch "Weather alerts", "Weather warnings for outdoor plants";
   - switch "When someone else completes a task", "Care done by other members".
   Each switch saves on change (W5a-P30) and sends the whole settings object (`src/lib/server/notifications/settings.ts:10-11`).
-- W5a-P25. Reminder time dialog: title "Reminder time"; Material's TimePicker with `is24Hour` from `DateFormat.is24HourFormat(context)` (today fixed `true`, `NotificationScreen.kt:90`). When the window is under 480 dp tall (landscape), the dialog uses TimeInput (two number fields) instead, so it meets C37, C39 and C41 at 1.3x. Buttons "Cancel" and "Set". "Set" saves at once; the row shows the new time. The open dialog and its current choice survive rotation.
+- W5a-P25. Reminder time dialog: title "Reminder time"; Material's TimePicker with `is24Hour` from `DateFormat.is24HourFormat(context)` (today fixed `true`, `NotificationScreen.kt:90`). When the window is under 480 dp tall (landscape), the dialog uses two menus instead, Hour and Minute (minutes in fives plus the saved minute), so it meets C37, C39 and C41 at 1.3x without a keyboard. Each menu opens at the chosen value and marks it. Buttons "Cancel" and "Set". "Set" saves at once; the row shows the new time. The open dialog and its current choice survive rotation and process death.
 - W5a-P26. Time zone. Under Reminder time, "Times use Europe/Oslo time." shows only when the household zone (`/api/meta` `timezone`) differs from the phone's zone.
 - W5a-P27. "Send a test notification", a text button. With no device switched on it looks disabled and explains on tap: "Turn on a device below first." The result is a receipt: "Test sent to 2 devices" (or "1 device"); "Test sent, but notifications are off for Fytorium on this phone" when the card shows the first state; "No device got the test. Try again later." when the server reports 0 sent.
 - W5a-P28. Devices (D8 O1, Q4). Heading "Devices". This phone first, then the others in server order (`subscriptions.ts:14`). Each row: the name as title; under it "This phone", "Android app" or "Browser", then " · Last notified 14 Nov" from `last_success_at` (year added when not this year) or " · Not notified yet"; a trailing switch with content description "Send notifications to <name>". Browser rows also get a 48 dp remove icon button, "Remove <name>" (W5a-P29). Android rows have no Remove: a removed phone would register itself again on its next start (section 2). Names:
@@ -316,7 +316,7 @@ Each slice builds, passes its tests and can be reviewed alone. Server slices run
 - The audit document that numbers F10, F12 and F13.
 - Open-Meteo geocoding's `language` parameter for nb and el.
 - Whether Compose's decimal keyboard offers a minus sign on the lab keyboard (W5a-P17).
-- Whether the TimePicker fits a 360 dp tall dialog at 1.0x; W5a-P25 avoids it with TimeInput.
+- Whether the TimePicker fits a 360 dp tall dialog at 1.0x; W5a-P25 avoids it with the hour and minute menus.
 - The homepage URLs for the data sources in W5a-P10, and the licences of NorTaxa, Open-Meteo, Open Plantbook, Perenual and Pl@ntNet.
 - The time zone command on the API 35 emulator (L5), and that `fake-push` accepts deliveries so `last_success_at` is set (L2, T18).
 - Whether `docker compose up -d --no-deps app` with an extra override recreates only the app container in this lab (L1).

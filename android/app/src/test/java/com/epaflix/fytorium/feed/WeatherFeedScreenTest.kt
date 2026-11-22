@@ -168,6 +168,34 @@ class WeatherFeedScreenTest {
         assertEquals(WeatherLocation(59.91, 5.32, null), saves.single())
     }
 
+    // Opus W5a-opus-5: offline the coordinate fields keep the draft, and a tap on them says why nothing changes.
+    @Test fun offlineCoordinateFieldsExplainATap() {
+        val receipts = mutableListOf<String>()
+        val online = mutableStateOf(true)
+        compose.setContent { FytoriumTheme { WeatherFeedScreen(FeedState(member = owner, settings = settings, locationLoaded = true,
+            location = WeatherLocation(60.39, 5.32, null)), null, online.value, onReceipt = { receipts += it }) } }
+        compose.onNodeWithText("Enter coordinates instead").performClick()
+        compose.onNodeWithText("Latitude").performTextReplacement("-33.9")
+        online.value = false
+        compose.onNodeWithText("Latitude").performClick()
+        compose.waitUntil(5_000) { receipts.isNotEmpty() }
+        assertEquals(listOf("Changing settings needs a connection."), receipts)
+        compose.onNodeWithText("-33.9").assertExists()
+    }
+
+    // Opus W5a-opus-13: at large text each location button keeps its label on one line.
+    @org.robolectric.annotation.Config(qualifiers = "w360dp-h800dp")
+    @Test fun locationButtonsKeepOneLineAtLargeText() {
+        org.robolectric.RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { FytoriumTheme { WeatherFeedScreen(FeedState(member = owner, settings = settings, locationLoaded = true,
+            location = WeatherLocation(60.39, 5.32, null)), null, true) } }
+        for (label in listOf("Enter coordinates instead", "Remove location")) {
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertEquals("$label wraps", 1, layouts.single().lineCount)
+        }
+    }
+
     // W5a-P19, P30: family reads the place and who can change it; offline a switch explains instead of changing.
     @Test fun familyReadsThePlaceAndOfflineSwitchesExplain() {
         val receipts = mutableListOf<String>()

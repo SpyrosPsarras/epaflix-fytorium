@@ -169,11 +169,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
+                // Not keyed by member: a member change closes this screen in the shell, and a key flip during restore would drop open dialogs and the time being picked.
+                com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
                     answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0, live = { controller?.repository?.state?.value },
                     cached = { controller?.repository?.cachedJson(it, careState.member.id) },
-                    keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) }) }
+                    keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) })
             }
             return@Scaffold
         }
