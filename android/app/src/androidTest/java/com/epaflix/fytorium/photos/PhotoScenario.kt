@@ -143,11 +143,10 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A06 identified sprout" }
         val identified = rows("/api/plants").single { it.optString("nickname") == "Synthetic A06 identified sprout" }
         assertEquals(913001, identified.getInt("gbif_key"))
-        // The kept photo becomes the cover; the plant list behind the Plants grid and Journal's picker has it as soon as the plant page does.
-        compose.waitForState("Identified plant page shows the kept photo as cover", 30_000) {
-            app.repository.state.value.detail?.plant?.let { it.displayName == "Synthetic A06 identified sprout" && it.coverPhotoId != null } == true
+        // The kept photo becomes the cover in the plant list behind the Plants grid and Journal's picker, without a pull or another page.
+        compose.waitForState("Identified plant's cover in the plant list", 30_000) {
+            app.repository.state.value.plants.any { it.displayName == "Synthetic A06 identified sprout" && it.coverPhotoId != null }
         }
-        assertTrue("Plant list has the cover as soon as the plant page", app.repository.state.value.plants.any { it.displayName == "Synthetic A06 identified sprout" && it.coverPhotoId != null })
         println("A06 E2E PASS: picker-injected photo update, 2560px JPEG, cover, journal, fake Pl@ntNet ranked result, explicit confirmation, add from result")
     } catch (error: Throwable) { failure = error; throw error }
     finally {

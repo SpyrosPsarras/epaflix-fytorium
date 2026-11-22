@@ -391,11 +391,13 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                             forms.removeState("form:${previousId ?: "new"}")
                             id = saved.id; selection = null; formChanged = { false }
                             if (photo != null) scope.launch {
+                                // The kept photo becomes the cover, so the plant list behind the Plants grid and Journal's picker reloads in the same
+                                // background step; leaving the page mid-upload cannot skip it.
                                 val uploaded = withContext(Dispatchers.IO) { com.epaflix.fytorium.photos.PhotoRepository(photosApi!!, { true }, photosConnected, saved.id)
-                                    .let { photos -> photos.options() && photos.upload(context, android.net.Uri.fromFile(java.io.File(photo)), "", "", photos.state.value.today.orEmpty()) } }
+                                    .let { photos -> photos.options() && photos.upload(context, android.net.Uri.fromFile(java.io.File(photo)), "", "", photos.state.value.today.orEmpty()) }
+                                    .also { if (it) repository?.refreshPlants() } }
                                 if (!uploaded) repository?.showReceipt("Added ${saved.displayName} to ${saved.siteName ?: "your household"}. Its photo didn't upload.")
-                                // The kept photo becomes the cover, so the plant list behind the Plants grid and Journal's picker reloads too.
-                                dropKeepPhoto(); withContext(Dispatchers.IO) { repository?.refreshPlants() }; refreshDetail(saved.id)
+                                dropKeepPhoto(); refreshDetail(saved.id)
                             } else dropKeepPhoto()
                             scope.launch { if (previousId == saved.id) refreshDetail(saved.id); page = "detail" }
                         }
