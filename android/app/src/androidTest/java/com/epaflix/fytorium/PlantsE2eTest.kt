@@ -123,6 +123,9 @@ internal fun runPlantScenarios(compose: AndroidComposeTestRule<ActivityScenarioR
         click("Yes, this one")
         input("Name", "Synthetic A05 sprout")
         compose.onNode(hasText("Site") and hasText("Synthetic A05 site")).assertIsDisplayed()
+        // A tap injected over the keyboard lands on the keyboard, so close it first as a user would.
+        compose.runOnUiThread { compose.activity.hideIme() }
+        keyboard(false)
         click("Save plant")
         compose.waitForState("Added plant detail", 30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A05 sprout" && !app.repository.state.value.busy }
         val plantId = app.repository.state.value.detail!!.plant.id

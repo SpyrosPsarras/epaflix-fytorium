@@ -452,6 +452,18 @@ class PhotoScreenTest {
         compose.onNode(hasText("Best matches") and isHeading()).assertIsDisplayed()
     }
 
+    // With five photos and no match, Change photos says there is no room instead of opening a picker that adds nothing.
+    @Test fun changePhotosAtFiveAfterNoMatchSaysThereIsNoRoom() {
+        val explained = mutableListOf<String>()
+        var chose = 0
+        val five = (1..5).map { "content://synthetic/$it" }
+        compose.setContent { FytoriumTheme { IdentificationScreen(PhotoState(error = "No plant species could be identified.", failureStatus = 422), true, five,
+            onChoose = { chose++ }, onExplain = { explained += it }) } }
+        compose.onNodeWithText("Pl@ntNet didn't recognise this plant.").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Change photos").onLast().performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(0, chose); assertEquals(listOf("Only 5 photos fit. Remove one to add another."), explained) }
+    }
+
     // W4-P25: no match and a used-up quota answer in the page; Pl@ntNet down goes to the line with Try again.
     @Test fun identifyOutcomesSayWhatToDoNext() {
         val state = mutableStateOf(PhotoState(error = "No plant species could be identified.", failureStatus = 422))

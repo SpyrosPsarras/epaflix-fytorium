@@ -415,7 +415,9 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                             Heading("Pl@ntNet didn't recognise this plant.", MaterialTheme.typography.titleMedium)
                             Text("Try a clear photo of a leaf or flower, or search by name.")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = onChoose, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
+                                // At five photos there is no room to add, so it says so instead of opening a picker that can add nothing.
+                                OutlinedButton(onClick = { if (selected.size < 5) onChoose() else onExplain("Only 5 photos fit. Remove one to add another.") },
+                                    enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Change photos") }
                                 OutlinedButton(onClick = onSearchByName, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search by name") }
                             }
                         }

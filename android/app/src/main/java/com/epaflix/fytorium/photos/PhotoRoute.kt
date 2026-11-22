@@ -64,6 +64,7 @@ import kotlinx.coroutines.withContext
     if (member == null || member.role == Role.sitter) return
     val sources = rememberPhotoSources(identifying, selected, onPhotos = { photos ->
             val room = 5 - selected.size
+            if (identifying && room <= 0) return@rememberPhotoSources
             selected = if (identifying) selected + photos.take(room).map { it.toString() } else listOf(photos.first().toString())
             repository.clearResult(); result = null
             localError = "Only 5 photos fit, so the first $room were added.".takeIf { identifying && photos.size > room }
