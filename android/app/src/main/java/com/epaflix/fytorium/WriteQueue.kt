@@ -22,6 +22,7 @@ internal class Pending<T> {
     var values by mutableStateOf(mapOf<String, Pair<T, Int>>())
         private set
     operator fun get(key: String): T? = values[key]?.first
-    fun start(key: String, value: T): Int = (++next).also { values = values + (key to (value to it)) }
-    fun end(key: String, ticket: Int) { if (values[key]?.second == ticket) values = values - key }
+    // Taps start on Main and writes end on the queue's thread, so each update is one step.
+    @Synchronized fun start(key: String, value: T): Int = (++next).also { values = values + (key to (value to it)) }
+    @Synchronized fun end(key: String, ticket: Int) { if (values[key]?.second == ticket) values = values - key }
 }

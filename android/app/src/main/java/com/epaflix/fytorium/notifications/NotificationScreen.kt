@@ -46,10 +46,11 @@ import kotlinx.coroutines.withContext
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
-    val repository = remember(api, member) { NotificationRepository(api,
+    // One repository per member for the process, so a reopened screen continues from a write still in flight (W5a-P30).
+    val repository = remember(api, member) { NotificationRepositories.of(member?.id) { NotificationRepository(api,
         { currentCare.member == member && member != null && !currentCare.updateRequired }, { currentConnected() },
         // Bound to the member who started the read, so a late answer never lands in another member's cache.
-        { resource -> cached(resource).takeIf { currentCare.member == member } }, { resource, json -> if (currentCare.member == member) keep(resource, json) else null }) }
+        { resource -> cached(resource).takeIf { currentCare.member == member } }, { resource, json -> if (currentCare.member == member) keep(resource, json) else null }) } }
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current

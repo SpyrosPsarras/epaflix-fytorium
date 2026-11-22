@@ -49,8 +49,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     androidx.lifecycle.compose.LifecycleResumeEffect(feed) { if (resumed) scope.launch(Dispatchers.IO) { feed.refresh(feed.state.value.member); feed.loadLocation() }; resumed = true; onPauseOrDispose {} }
     LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
     // A read that failed loads again once Fytorium answers another request, and every 15 seconds while the screen shows the outage.
-    LaunchedEffect(answers) { feed.state.value.takeIf { it.unavailable || it.readError != null }?.let { withContext(Dispatchers.IO) { feed.refresh(it.member); feed.loadLocation() } } }
-    val outage = state.unavailable || state.readError != null
+    LaunchedEffect(answers) { feed.state.value.takeIf { it.unavailable || it.readError != null || it.locationError != null }?.let { withContext(Dispatchers.IO) { feed.refresh(it.member); feed.loadLocation() } } }
+    val outage = state.unavailable || state.readError != null || state.locationError != null
     LaunchedEffect(outage, online) {
         while (outage && online) { kotlinx.coroutines.delay(15_000); withContext(Dispatchers.IO) { feed.refresh(feed.state.value.member); feed.loadLocation() } }
     }
@@ -122,7 +122,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
         !online || state.offline -> (care?.copy(lastUpdated = state.updatedAt)?.connectionLine(false) ?: "Offline") to care?.connectionNotice(false).orEmpty()
         searchDown -> "Place search isn't responding" to "Place search isn't responding. Try again in a minute."
         state.unavailable -> "Fytorium isn't responding" to "Fytorium didn't answer. Try again when it responds."
-        state.readError != null -> "Settings didn't load" to state.readError
+        (state.readError ?: state.locationError) != null -> "Settings didn't load" to (state.readError ?: state.locationError).orEmpty()
         else -> null
     }
     Column(Modifier.fillMaxSize()) {

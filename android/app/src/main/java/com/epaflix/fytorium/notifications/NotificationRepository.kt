@@ -36,6 +36,14 @@ private fun devices(text: String): List<PushDevice> {
     } }
 }
 
+// The member's repository outlives the screen; a new member or a new session gets a new one.
+internal object NotificationRepositories {
+    private var current: Pair<String, NotificationRepository>? = null
+    @Synchronized fun of(memberId: String?, create: () -> NotificationRepository): NotificationRepository =
+        current?.takeIf { memberId != null && it.first == memberId }?.second ?: create().also { repository -> current = memberId?.let { it to repository } }
+    @Synchronized fun clear() { current = null }
+}
+
 // W5a-P32: the last settings, devices and time zone stay in the member's cache for offline reading.
 class NotificationRepository(private val api: ApiClient, private val allowed: () -> Boolean, private val connected: () -> Boolean,
     private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Long? = { _, _ -> null }) {

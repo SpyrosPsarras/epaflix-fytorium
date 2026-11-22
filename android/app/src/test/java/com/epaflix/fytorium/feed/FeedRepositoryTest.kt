@@ -62,6 +62,18 @@ class FeedRepositoryTest {
         load(feed, server)
         assertFalse(feed.state.value.updateRequired)
     }
+    // W5a-P31 (S7): each read keeps its own refusal until that read succeeds.
+    @Test fun aLocationRefusalOutlivesAFeedRefresh() = withFeed { feed, server, _ ->
+        load(feed, server)
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Synthetic location refusal"}"""))
+        feed.loadLocation()
+        assertEquals("Synthetic location refusal", feed.state.value.locationError)
+        load(feed, server)
+        assertEquals("Synthetic location refusal", feed.state.value.locationError)
+        server.enqueue(MockResponse().setBody("""{"location":null}"""))
+        feed.loadLocation()
+        assertNull(feed.state.value.locationError)
+    }
     @Test fun whyTimesUseTheHouseholdTimeZone() = withCache("synthetic-member") { cache, api, server ->
         cache.save("synthetic-member", mapOf("meta" to """{"timezone":"Pacific/Auckland"}"""), 0)
         server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))

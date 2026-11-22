@@ -12,6 +12,17 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class NotificationRepositoryTest {
     // W5a-P32 (S4): a confirmed save and removal reach the cache, so an offline reopen shows them.
+    // W5a-P30 (S1): a reopened screen gets the same member's repository, so it continues from a write in flight.
+    @Test fun aMembersRepositoryOutlivesItsScreen() {
+        val api = ApiClient("http://127.0.0.1:9", MemoryCredentials()) {}
+        NotificationRepositories.clear()
+        val first = NotificationRepositories.of("synthetic-one") { NotificationRepository(api, { true }, { true }) }
+        assertSame(first, NotificationRepositories.of("synthetic-one") { NotificationRepository(api, { true }, { true }) })
+        assertNotSame(first, NotificationRepositories.of("synthetic-two") { NotificationRepository(api, { true }, { true }) })
+        NotificationRepositories.clear()
+        assertNotSame(first, NotificationRepositories.of("synthetic-one") { NotificationRepository(api, { true }, { true }) })
+        NotificationRepositories.clear()
+    }
     @Test fun confirmedChangesReachTheOfflineCopy() {
         MockWebServer().use { server ->
             server.start()

@@ -106,10 +106,10 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         }
         try {
             val result = read("/api/household/location")
-            synchronized(monitor) { if (epoch == generation) { applyLocation(result); mutable.value = mutable.value.copy(readError = null) } }
+            synchronized(monitor) { if (epoch == generation) { applyLocation(result); mutable.value = mutable.value.copy(locationError = null) } }
         } catch (error: Exception) {
             failed(error, epoch)
-            synchronized(monitor) { if (epoch == generation && error is FeedFailure && error.status < 500 && error.status != 426) mutable.value = mutable.value.copy(readError = error.message) }
+            synchronized(monitor) { if (epoch == generation && error is FeedFailure && error.status < 500 && error.status != 426) mutable.value = mutable.value.copy(locationError = error.message) }
         }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
@@ -146,7 +146,8 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
                 Place(it.getString("label"), it.getString("name"), it.nullable("region"), it.nullable("country"), it.getDouble("latitude"), it.getDouble("longitude"))
             })
         } catch (error: Exception) {
-            if (error is FeedFailure && error.status == 503) PlaceAnswer(null, unavailable = true) else { failed(error, epoch); PlaceAnswer(null) }
+            // Only a 426 is app-wide; any other failure belongs to this search, which the screen applies only if it is still the latest.
+            if (error is FeedFailure && error.status == 426) { failed(error, epoch); PlaceAnswer(null) } else PlaceAnswer(null, unavailable = connected())
         }
     }
     fun water(): Boolean = synchronized(workLock) {
