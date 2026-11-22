@@ -99,7 +99,7 @@ internal fun ComposeContentTestRule.scrollTaskClearOfReceipt(tag: String) {
 }
 
 // A bottom-bar tab, apart from a top bar whose status line makes its title tappable too.
-private fun tab(title: String) = hasText(title) and SemanticsMatcher.expectValue(SemanticsProperties.Role, androidx.compose.ui.semantics.Role.Tab)
+private fun tab(title: String) = hasText(title) and SemanticsMatcher.expectValue(SemanticsProperties.Role, androidx.compose.ui.semantics.Role.Tab) and !hasTestTag("view-today")
 
 // A receipt covers the navigation bar, which ignores taps for half a second after it goes, so swipe it away and wait like a user.
 internal fun ComposeContentTestRule.selectTab(title: String) {

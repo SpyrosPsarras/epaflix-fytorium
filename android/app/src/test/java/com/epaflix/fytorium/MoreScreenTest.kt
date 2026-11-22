@@ -79,6 +79,7 @@ class MoreScreenTest {
         // TalkBack can still reach it; a tap explains through the line and opens nothing.
         compose.onNodeWithText("Log in").assertIsEnabled().assert(hasStateDescription("Logging in needs a connection.")).performClick()
         compose.runOnIdle { assertEquals(1, logins) }
+        compose.onNodeWithText("Logging in needs a connection. Turn on Wi-Fi or mobile data, then tap Log in.").assertIsDisplayed()
         assertEquals("Login was cancelled.", loginError("access_denied"))
         assertEquals("Fytorium couldn't finish the login. Try again.", loginError("server_error"))
         assertEquals("Login didn't work. Try again.", loginError("invalid"))

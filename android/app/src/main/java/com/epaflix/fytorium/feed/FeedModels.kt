@@ -118,7 +118,7 @@ data class Place(val label: String, val name: String, val region: String?, val c
 }
 // Svelte renders numbers without a fractional suffix for whole values.
 internal fun plainNumber(value: Double): String = java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
-private fun JSONObject.degrees(key: String) = optDouble(key).let { if (it.isNaN()) opt(key).toString() else plainNumber(it) }
+private fun JSONObject.degrees(key: String) = optDouble(key).let { if (it.isNaN()) "${opt(key)}" else plainNumber(it) }
 private fun unknownFeedKind() { android.util.Log.w("Fytorium", "FEED_UNKNOWN_KIND") }
 internal fun parseFeedCard(j: JSONObject, zone: ZoneId = ZoneId.systemDefault()): FeedCard? {
     val kind = j.getString("kind")

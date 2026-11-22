@@ -244,7 +244,8 @@ internal fun clock(time: String, is24: Boolean): String {
         val time = rememberTimePickerState(initialHour = parts[0].toInt(), initialMinute = parts[1].toInt(), is24Hour = is24)
         val short = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 480
         AlertDialog(onDismissRequest = { pickingTime = false }, title = { DialogTitle("Reminder time") },
-            text = { DialogBody { if (short) TimeInput(time) else TimePicker(time) } },
+            // In landscape the dial sits beside the fields; typed fields would bring a keyboard over Set and Cancel.
+            text = { DialogBody { TimePicker(time, layoutType = if (short) TimePickerLayoutType.Horizontal else TimePickerLayoutType.Vertical) } },
             confirmButton = { TextButton(onClick = {
                 pickingTime = false
                 val chosen = "%02d:%02d".format(java.util.Locale.ROOT, time.hour, time.minute)

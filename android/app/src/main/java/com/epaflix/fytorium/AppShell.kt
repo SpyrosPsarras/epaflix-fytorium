@@ -159,7 +159,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             // A tap meant for a receipt that has just gone must not switch tabs.
             if (showTabs && barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
-        leaving?.let { body -> com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", body, onKeep = { leaving = null; destination = null }) {
+        leaving?.let { body -> com.epaflix.fytorium.plants.DiscardDialog(if (body == "The location you typed is not saved.") "Discard these coordinates?" else "Discard changes?", body, onKeep = { leaving = null; destination = null }) {
             val target = destination
             leaving = null; destination = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); target?.let(::go) } }
     }) { scaffoldPadding ->

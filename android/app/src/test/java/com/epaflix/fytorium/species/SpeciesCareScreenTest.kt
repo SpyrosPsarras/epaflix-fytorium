@@ -373,6 +373,8 @@ class SpeciesCareScreenTest {
         compose.runOnIdle { online.value = true; state.value = SpeciesCareState(unmatched = listOf(UnmatchedSpecies(910002, "Testoria nebulosa", "ambiguous", "Synthetic mistleaf")), loaded = true) }
         compose.onNode(hasText("Synthetic mistleaf") and isHeading()).assertIsDisplayed()
         compose.onNodeWithText("No clear care data match yet").assertIsDisplayed()
+        // W5a T25: no Refresh button on the list.
+        compose.onNodeWithText("Refresh species").assertDoesNotExist()
         capture("species-unmatched")
         compose.onNodeWithText("Look for care data again").performClick()
         compose.runOnIdle { assertEquals(910002L, retried) }

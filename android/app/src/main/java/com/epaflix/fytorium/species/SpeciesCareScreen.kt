@@ -175,9 +175,8 @@ import org.json.JSONObject
                             modifier = Modifier.layoutId("refresh-species").heightIn(min = 48.dp)) { Text("Refresh species") }
                     }
                 } ?: run {
+                    // W5a T25: no Refresh button; the status line, pull, resume and Fytorium's next answer reload the list.
                     if (unmatched) {
-                    OutlinedButton(onClick = onRefresh, enabled = online && !state.loading && !state.saving && !submitting,
-                        modifier = Modifier.layoutId("refresh-species").heightIn(min = 48.dp)) { Text("Refresh species") }
                     Text("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.", modifier = Modifier.layoutId("unmatched-scope"))
                     if (state.loaded && state.unmatched.isEmpty()) Text("Every species of yours has care data.", modifier = Modifier.layoutId("unmatched-empty"))
                     for (species in state.unmatched) Card(Modifier.layoutId("unmatched:${species.key}").fillMaxWidth()) {

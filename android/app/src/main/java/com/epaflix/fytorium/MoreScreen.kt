@@ -77,17 +77,20 @@ internal fun roleName(role: Role) = when (role) { Role.owner -> "Owner"; Role.fa
 
 // W5a-P7 and P8: the line under Log in is reserved, so progress and errors never move the page.
 @Composable internal fun LoginPage(busy: Boolean, message: String?, online: Boolean, onLogin: () -> Unit) {
+    // A tap offline changes the line, so the tap is answered.
+    var tappedOffline by remember(online) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Plant care for your household.")
         // Offline it stays a button TalkBack can reach; the line under it says why it does nothing.
-        Button(onClick = { if (online) onLogin() }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = "Logging in needs a connection." }) {
+        Button(onClick = { if (online) onLogin() else tappedOffline = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = "Logging in needs a connection." }) {
             // Both labels take the space, so the button keeps its size while the login finishes.
             Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
                 Text("Log in", Modifier.alpha(if (busy) 0f else 1f).then(if (busy) Modifier.clearAndSetSemantics {} else Modifier))
                 Text("Logging in…", Modifier.alpha(if (busy) 1f else 0f).then(if (busy) Modifier else Modifier.clearAndSetSemantics {}))
             }
         }
-        Text((if (!online) "You're logged out. Logging in needs a connection." else message.takeIf { !busy }).orEmpty(),
+        Text((if (!online) (if (tappedOffline) "Logging in needs a connection. Turn on Wi-Fi or mobile data, then tap Log in." else "You're logged out. Logging in needs a connection.")
+            else message.takeIf { !busy }).orEmpty(),
             Modifier.heightIn(min = 48.dp), color = MaterialTheme.colorScheme.error, minLines = 2)
         Text("To join a household, open the invite link from its owner first, then log in here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

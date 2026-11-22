@@ -100,6 +100,17 @@ class NotificationScreenTest {
         assertEquals("21:05", clock("21:05", true))
     }
 
+    // W5a-P25: in landscape the dial sits beside the time, so no keyboard covers Set and Cancel.
+    @Config(sdk = [35], qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun theReminderTimeFitsLandscapeWithoutAKeyboard() {
+        org.robolectric.RuntimeEnvironment.setFontScale(1.3f)
+        compose.setContent { FytoriumTheme { Surface(Modifier.fillMaxSize()) { NotificationScreen(NotificationState(loaded = true)) } } }
+        compose.onNodeWithText("Reminder time").performScrollTo().performClick()
+        compose.onNodeWithText("Set").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").assertIsDisplayed()
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+    }
+
     @Test fun notificationControlsDoNotDependOnCareFailuresOrBackgroundReads() {
         MockWebServer().use { server ->
             server.start()

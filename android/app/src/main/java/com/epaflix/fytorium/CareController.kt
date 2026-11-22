@@ -18,6 +18,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
     private val work = WorkManager.getInstance(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
+    private var refreshAgain = false
     private val _online = MutableStateFlow(connected())
     val online: StateFlow<Boolean> = _online
     private val _pulling = MutableStateFlow(false)
@@ -55,7 +56,8 @@ class CareController(context: Context, private val store: CredentialStore, val r
     @Synchronized fun refresh(pulled: Boolean = false) {
         if (store.tokens == null) return
         if (pulled) _pulling.value = true
-        if (refreshJob?.isActive == true) return
+        // A request made during a refresh runs after it, so a refresh that began before the network validated never has the last word (W5a-P9).
+        if (refreshJob?.isActive == true) { refreshAgain = true; return }
         val job = scope.launch { repository.refresh() }
         refreshJob = job
         // Feed reads must not extend the task refresh's single-flight window.
@@ -63,6 +65,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
             scope.launch {
                 if (error == null && store.tokens != null) feed?.refresh(repository.state.value.member)
                 synchronized(this@CareController) { if (refreshJob === job) _pulling.value = false }
+                if (synchronized(this@CareController) { refreshAgain.also { refreshAgain = false } }) refresh()
             }
         }
     }
