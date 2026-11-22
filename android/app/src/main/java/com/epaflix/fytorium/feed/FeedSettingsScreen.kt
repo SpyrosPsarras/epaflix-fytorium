@@ -192,7 +192,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                             // Only the draft that was saved closes; a value typed meanwhile keeps the form open.
                             val draft = Triple(latitude, longitude, label)
                             // New coordinates under the old place's name would name the wrong town, so an untouched name goes with them.
-                            val moved = latitude != state.location?.latitude?.toString().orEmpty() || longitude != state.location?.longitude?.toString().orEmpty()
+                            // Compared as numbers, so "60.392990" for 60.39299 is not a move.
+                            val moved = lat != state.location?.latitude || lon != state.location?.longitude
                             val name = label.trim().ifEmpty { null }?.takeUnless { moved && label == state.location?.label.orEmpty() }
                             if (lat != null && lon != null) save(WeatherLocation(lat, lon, name), "Weather location saved") {
                                 if (Triple(latitude, longitude, label) == draft) formOpen = false

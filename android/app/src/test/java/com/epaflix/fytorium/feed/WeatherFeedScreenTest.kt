@@ -156,6 +156,12 @@ class WeatherFeedScreenTest {
         compose.onNodeWithText("Cancel coordinates").performClick()
         compose.onNodeWithText("Latitude").assertDoesNotExist()
         compose.onNodeWithText("Enter coordinates instead").performClick()
+        // The same number written differently keeps the name (Sol W5a-sol-8).
+        compose.onNodeWithText("Latitude").performTextReplacement("60.390")
+        compose.onNodeWithText("Save location").performScrollTo().performClick()
+        compose.waitUntil(5_000) { saves.isNotEmpty() }
+        assertEquals(WeatherLocation(60.39, 5.32, "Bergen, Vestland, Norway"), saves.removeAt(0))
+        compose.onNodeWithText("Enter coordinates instead").performClick()
         compose.onNodeWithText("Latitude").performTextReplacement("59.91")
         compose.onNodeWithText("Save location").performScrollTo().performClick()
         compose.waitUntil(5_000) { saves.isNotEmpty() }
