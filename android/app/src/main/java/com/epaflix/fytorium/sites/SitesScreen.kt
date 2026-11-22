@@ -98,6 +98,8 @@ internal const val sitesOffline = "Changing sites needs a connection."
     var submitting by remember { mutableStateOf(false) }
     var pulling by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    val listScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
+    val pageScroll = key(shown) { rememberScrollState() }
     val scope = rememberCoroutineScope()
     val ready = state.loaded && !state.busy && !state.blocked && !state.updateRequired && !submitting
     val writable = online && ready
@@ -136,7 +138,9 @@ internal const val sitesOffline = "Changing sites needs a connection."
                     if (site.plantCount == 0) Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More options") }
                         DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text("Delete site") }, onClick = { menu = false; write { onClear(); confirming = site } })
+                            DropdownMenuItem(text = { Text("Delete site") }, onClick = { menu = false; write { onClear(); confirming = site } },
+                                colors = if (online) MenuDefaults.itemColors() else MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
+                                modifier = Modifier.offReason(sitesOffline.takeIf { !online }))
                         }
                     }
                 }
@@ -160,8 +164,9 @@ internal const val sitesOffline = "Changing sites needs a connection."
                 })
             }
         } else PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                if (site != null) SitePage(site, care, thumbnails, onOpenPlant, onEdit = { write { onClear(); editor = site } })
+            // The list keeps its own place, so Back from a site page returns to the same row (Astra W5b-astra-1).
+            Column(Modifier.fillMaxSize().verticalScroll(if (site != null) pageScroll else listScroll)) {
+                if (site != null) SitePage(site, care, thumbnails, onOpenPlant, online, onEdit = { write { onClear(); editor = site } })
                 else if (shown == "list") {
                     if (state.loaded && state.sites.isEmpty()) Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -210,7 +215,7 @@ private fun bounds(min: String?, max: String?): String? = when {
     else -> null
 }
 
-@Composable private fun SitePage(site: Site, care: CareState?, thumbnails: Thumbnails?, onOpenPlant: (String) -> Unit, onEdit: () -> Unit) {
+@Composable private fun SitePage(site: Site, care: CareState?, thumbnails: Thumbnails?, onOpenPlant: (String) -> Unit, online: Boolean, onEdit: () -> Unit) {
     val name = site.fields["name"].orEmpty()
     // The cached plant list, so the page works offline.
     val plants = care?.plants.orEmpty().filter { JSONObject(it.attributesJson).optString("site_id") == site.id }.sortedBy { it.displayName.lowercase() }
@@ -224,7 +229,7 @@ private fun bounds(min: String?, max: String?): String? = when {
         bounds(site.fields["cold_min_c"], site.fields["cold_max_c"])?.let { Text("Cold half of the year: $it") }
         if (site.importedIncomplete) {
             Text("Imported from Planta with default conditions. Edit the site to set them.")
-            TextButton(onClick = onEdit, modifier = Modifier.heightIn(min = 48.dp)) { Text("Edit site") }
+            TextButton(onClick = onEdit, colors = offTextColors(!online), modifier = Modifier.heightIn(min = 48.dp).offReason(sitesOffline.takeIf { !online })) { Text("Edit site") }
         }
         Heading("Plants (${plants.size})", MaterialTheme.typography.titleMedium, Modifier.padding(top = 8.dp))
         for (pair in plants.chunked(2)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

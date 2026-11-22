@@ -185,6 +185,25 @@ class SiteScreenTest {
         }
     }
 
+    // Astra W5b-astra-1: Back from a site page returns to the same place in a long list.
+    @Test fun backFromASitePageKeepsTheListPlace() {
+        val many = List(15) { empty.copy(id = "site-$it", fields = empty.fields + ("name" to "Synthetic room %02d".format(it))) }
+        compose.setContent { FytoriumTheme { SitesScreen(SiteState(many, loaded = true)) } }
+        val row = compose.onNodeWithTag("site:site-14").performScrollTo()
+        val before = row.fetchSemanticsNode().boundsInRoot
+        row.performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        assertEquals(before, compose.onNodeWithTag("site:site-14").fetchSemanticsNode().boundsInRoot)
+    }
+    // Astra W5b-astra-2: offline, the Delete menu item and an imported site's Edit site look off too.
+    @Test fun offlineSitePageControlsLookOff() {
+        compose.setContent { FytoriumTheme { SitesScreen(SiteState(listOf(empty, site.copy(plantCount = 0)), loaded = true), online = false) } }
+        openSite("Synthetic room")
+        compose.onNodeWithText("Edit site").assertIsNotEnabled().assert(hasStateDescription(sitesOffline))
+        compose.onNodeWithContentDescription("More options").performClick()
+        compose.onNodeWithText("Delete site").assertIsNotEnabled()
+    }
+
     @Test fun aNewSiteDraftSurvivesRecreation() = siteDraftSurvivesRecreation(edit = false)
     @Test fun anExistingSiteDraftSurvivesRecreation() = siteDraftSurvivesRecreation(edit = true)
 

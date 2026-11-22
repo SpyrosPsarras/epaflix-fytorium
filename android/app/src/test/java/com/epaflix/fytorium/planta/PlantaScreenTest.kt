@@ -122,6 +122,33 @@ class PlantaScreenTest {
         compose.waitForIdle()
         compose.onNode(hasText("Skip plant") and hasAnyAncestor(hasTestTag("import:mystery"))).assertIsDisplayed()
     }
+    // Astra W5b-astra-5: hiding the species search keeps what was typed.
+    @Test fun hidingTheSearchKeepsTheQuery() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(candidates = emptyList())))) } }
+        compose.onNodeWithText("Search species").performScrollTo().performTextInput("Aloe")
+        compose.onNodeWithText("Hide species search").performScrollTo().performClick()
+        compose.onNodeWithText("Search species").assertDoesNotExist()
+        compose.onNodeWithText("Search for a species").performScrollTo().performClick()
+        compose.onNodeWithText("Search species").assertTextContains("Aloe")
+    }
+    // Astra W5b-astra-6: after an import started low on the page, the completion block is in view.
+    @Test fun aFinishedImportScrollsToTheTop() {
+        val ready = List(20) { row.copy(id = "ready-$it", name = "Synthetic ready $it", status = "confirmed", canCommit = true) }
+        val state = mutableStateOf(PlantaState(loaded = true, rows = ready))
+        compose.setContent { FytoriumTheme { PlantaScreen(state.value, onCommit = {
+            state.value = state.value.copy(complete = true, incompleteSites = true, rows = ready.map { it.copy(status = "committed", canCommit = false, canReview = false) }); 20 }) } }
+        compose.onNodeWithText("Species names from GBIF, CC BY 4.0").performScrollTo()
+        compose.onNodeWithTag("import-button").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Check sites").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        compose.onNodeWithText("Check sites").assertIsDisplayed()
+    }
+    // Astra W5b-astra-7: a small tile shows an icon instead of words it cannot fit.
+    @Test fun aSmallTileWithoutAPhotoShowsAnIcon() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(status = "confirmed")))) } }
+        compose.onNode(hasContentDescription("No Planta photo") and hasAnyAncestor(hasTestTag("import:${row.id}")), useUnmergedTree = true).assertExists()
+        compose.onNode(hasText("No Planta photo") and hasAnyAncestor(hasTestTag("import:${row.id}")), useUnmergedTree = true).assertDoesNotExist()
+    }
     @Test fun theBarNamesScrollToTheirCards() {
         val rows = List(3) { row.copy(id = "review-$it", name = "Synthetic review $it") }
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = rows)) } }
@@ -197,7 +224,7 @@ class PlantaScreenTest {
         compose.runOnIdle { state.value = state.value.copy(rows = listOf(row.copy(candidates = emptyList()))) }
         compose.onNodeWithText("No match found. Search for the species or skip this plant.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Search species").performScrollTo().assertIsEnabled()
-        compose.onNodeWithText("Search for a species").performScrollTo().performClick()
+        compose.onNodeWithText("Hide species search").performScrollTo().performClick()
         compose.onNodeWithText("Search species").assertDoesNotExist()
         compose.runOnIdle { state.value = state.value.copy(rows = listOf(row)) }
         compose.onNodeWithText("Choose the species").performScrollTo().assertIsDisplayed()
@@ -314,7 +341,7 @@ class PlantaScreenTest {
         compose.onNodeWithContentDescription("This is Testoria nebulosa").performScrollTo().assertHeightIsAtLeast(48.dp)
         capture("review")
         compose.runOnIdle { state.value = state.value.copy(rows = listOf(row.copy(candidates = emptyList()))) }
-        compose.onNodeWithText("Search for a species").assertExists()
+        compose.onNodeWithText("Hide species search").assertExists()
         compose.onNodeWithText("Search species").performScrollTo().assertIsEnabled()
         capture("unmatched")
         compose.runOnIdle { state.value = state.value.copy(rows = listOf(row)) }

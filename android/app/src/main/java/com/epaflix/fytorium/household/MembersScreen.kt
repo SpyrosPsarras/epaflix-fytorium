@@ -166,7 +166,10 @@ private val roleCards = listOf(
     fun write(action: () -> Unit) { if (!online) onReceipt(membersOffline) else if (ready) action() }
     fun submit(action: suspend () -> Unit) { scope.launch { submitting = true; try { action() } finally { submitting = false } } }
     val plants = care.plants.filter { it.status == "active" }.sortedWith(compareBy({ it.siteName?.lowercase() }, { it.displayName.lowercase() }))
-    fun plantNames(ids: Collection<String>) = ids.mapNotNull { id -> care.plants.firstOrNull { it.id == id }?.displayName ?: state.plants.firstOrNull { it.id == id }?.name }
+    // Two plants with one name are told apart by their site, so two invites never look the same (Astra W5b-astra-3).
+    fun plantNames(ids: Collection<String>) = ids.mapNotNull { id -> care.plants.firstOrNull { it.id == id }?.let { p ->
+        if (care.plants.count { it.status == "active" && it.displayName == p.displayName } > 1 && p.siteName != null) "${p.displayName} (${p.siteName})" else p.displayName
+    } ?: state.plants.firstOrNull { it.id == id }?.name }
     val shown = state.members.firstOrNull { "member:${it.id}" == page }
     val link = draft?.let { InviteLinks.get(it.id) }
     val inviteChanged = page == "invite" && inviteRole != null
@@ -283,7 +286,9 @@ private val roleCards = listOf(
         }
         if (state.loading || state.saving || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
     } }
-    leaving?.let { target ->
+    // After process death the link is gone, so a pending leave question has nothing left to protect (Astra W5b-astra-4).
+    SideEffect { if (leaving != null && leaveBody == null) leaving = null }
+    leaving?.takeIf { leaveBody != null }?.let { target ->
         val (question, keepLabel, leaveLabel) = leaveQuestion(leaveBody.orEmpty())
         LeaveDialog(question, leaveBody.orEmpty(), keepLabel, leaveLabel, onKeep = { leaving = null }) { leaving = null; go(target) }
     }

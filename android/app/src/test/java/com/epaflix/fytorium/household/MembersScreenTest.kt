@@ -41,7 +41,7 @@ class MembersScreenTest {
         compose.onNodeWithText("Owner").assertIsDisplayed()
         compose.onNodeWithText("Sitter · 1 plant").assertIsDisplayed()
         compose.onNodeWithText("Sitter invite").assertIsDisplayed()
-        compose.onNodeWithText("Synthetic fern · Expires ${expiryDate(expires)}").assertIsDisplayed()
+        compose.onNodeWithText("Synthetic fern (Synthetic bathroom) · Expires ${expiryDate(expires)}").assertIsDisplayed()
         compose.onNodeWithText("Refresh members").assertDoesNotExist()
         // Only rows the server lets you change open a page.
         compose.onNode(hasText("Synthetic owner (you)") and hasClickAction()).assertDoesNotExist()
@@ -133,6 +133,31 @@ class MembersScreenTest {
         assertNull(InviteLinks.get("invite-shown"))
     }
 
+    // Astra W5b-astra-3: invites for two plants with one name say which site each is on, also when revoking.
+    @Test fun twinPlantsInInvitesNameTheirSite() {
+        val state = loaded.copy(invites = listOf(HouseholdInvite("invite-a", "sitter", expires, setOf(fern.id)), HouseholdInvite("invite-b", "sitter", expires, setOf(twin.id))))
+        compose.setContent { FytoriumTheme { MembersScreen(state, care) } }
+        compose.onNodeWithText("Synthetic fern (Synthetic bathroom) · Expires ${expiryDate(expires)}").assertExists()
+        compose.onNodeWithText("Synthetic fern (Synthetic office) · Expires ${expiryDate(expires)}").assertExists()
+        compose.onAllNodesWithText("Revoke")[1].performScrollTo().performClick()
+        compose.onNodeWithText("The sitter invite for Synthetic fern (Synthetic office) stops working. It would have expired on ${expiryDate(expires)}.").assertIsDisplayed()
+    }
+    // Astra W5b-astra-4: a leave question open at process death does not come back without its link.
+    @Test fun aLeaveQuestionDoesNotOutliveItsLink() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { MembersScreen(loaded, care, onCreateInvite = { role, _ -> created(role) }) } }
+        compose.onNodeWithText("Invite someone").performClick()
+        compose.onNode(hasText("Family", substring = true) and isSelectable()).performClick()
+        compose.onNodeWithText("Create invite link").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Share link").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Leave without sending the link?").assertIsDisplayed()
+        InviteLinks.clear()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("This link can't be shown again").assertIsDisplayed()
+        compose.onNode(isDialog()).assertDoesNotExist()
+    }
+
     // W5b-P12 to P14: saves, removals and revokes name who or what changed in a receipt.
     @Test fun changesNameTheirTargetInAReceipt() {
         val receipts = mutableListOf<String>()
@@ -156,7 +181,7 @@ class MembersScreenTest {
         compose.onNodeWithText("Remove").performClick()
         compose.waitUntil(5_000) { receipts.size == 2 }
         compose.onNodeWithText("Revoke").performScrollTo().performClick()
-        compose.onNodeWithText("The sitter invite for Synthetic fern stops working. It would have expired on ${expiryDate(expires)}.").assertIsDisplayed()
+        compose.onNodeWithText("The sitter invite for Synthetic fern (Synthetic bathroom) stops working. It would have expired on ${expiryDate(expires)}.").assertIsDisplayed()
         compose.onNode(hasText("Revoke") and hasAnyAncestor(isDialog())).performClick()
         compose.waitUntil(5_000) { receipts.size == 3 }
         assertEquals(listOf("Saved changes for Synthetic sitter", "Removed Synthetic sitter", "Revoked the sitter invite"), receipts)

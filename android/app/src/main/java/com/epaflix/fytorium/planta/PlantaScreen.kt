@@ -108,6 +108,9 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     var codeOpen by rememberSaveable { mutableStateOf(false) }
     var opened by rememberSaveable { mutableStateOf(listOf<String>()) }
     val searching = remember { mutableStateMapOf<String, Boolean>() }
+    // Each plant's species query outlives its search area being hidden (Astra W5b-astra-5).
+    val searches = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    val page = rememberScrollState()
     var submitting by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var pulling by remember { mutableStateOf(false) }
@@ -149,7 +152,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     }) { padding -> Column(Modifier.fillMaxSize().padding(padding)) {
         Box(Modifier.fillMaxWidth().weight(1f)) {
             PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().onSizeChanged { viewport = it.height }.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.fillMaxSize().onSizeChanged { viewport = it.height }.verticalScroll(page).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (done) {
                         Heading("Import complete", MaterialTheme.typography.titleLarge)
                         Button(onClick = onPlants, modifier = Modifier.heightIn(min = 48.dp)) { Text("View imported plants") }
@@ -184,10 +187,10 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                     }
                     for (row in state.rows.sortedBy { if (it.status == "review") 0 else 1 }) key(row.id) {
                         val target = reviewTargets.getValue(row.id)
-                        if (row.status == "review") ReviewCard(row.copy(site = siteOf(row)), state, imageApi, writable, searching[row.id] ?: row.candidates.isEmpty(), target,
+                        if (row.status == "review") ReviewCard(searches, row.copy(site = siteOf(row)), state, imageApi, writable, searching[row.id] ?: row.candidates.isEmpty(), target,
                             onToggleSearch = { searching[row.id] = !(searching[row.id] ?: row.candidates.isEmpty()) },
                             onConfirm = { key, receipt -> submit { onConfirm(row.id, key, receipt) } }, onSkip = { submit { onSkip(row.id) } }, onSearch = { onSearch(row.id, it) })
-                        else CompactRow(row.copy(site = siteOf(row)), state, imageApi, writable, open = row.id in opened, searchOpen = searching[row.id] ?: false, target = target,
+                        else CompactRow(searches, row.copy(site = siteOf(row)), state, imageApi, writable, open = row.id in opened, searchOpen = searching[row.id] ?: false, target = target,
                             onToggle = { opened = if (row.id in opened) opened - row.id else opened + row.id },
                             onToggleSearch = { searching[row.id] = !(searching[row.id] ?: false) },
                             onConfirm = { key, receipt -> submit { onConfirm(row.id, key, receipt) } }, onSkip = { submit { onSkip(row.id) } },
@@ -211,7 +214,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                 val blockedBy = when { reviewRows.isNotEmpty() -> "Choose a species or skip the plants above first."; !online -> importOffline; else -> null }
                 Button(onClick = {
                     if (blockedBy != null) onReceipt(blockedBy)
-                    else if (importable > 0 && canImport) submit { importing = true; try { onCommit()?.let { onReceipt("Imported ${plants(it)}") } } finally { importing = false } }
+                    else if (importable > 0 && canImport) submit { importing = true; try { onCommit()?.let { onReceipt("Imported ${plants(it)}"); page.animateScrollTo(0) } } finally { importing = false } }
                 }, enabled = !importing && (importable > 0 || reviewRows.isNotEmpty()),
                     colors = if (blockedBy != null) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
                         contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)) else ButtonDefaults.buttonColors(),
@@ -223,7 +226,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     } }
 }
 
-@Composable private fun ReviewCard(row: ImportRow, state: PlantaState, imageApi: ApiClient?, enabled: Boolean, searchOpen: Boolean, target: BringIntoViewRequester,
+@Composable private fun ReviewCard(searches: androidx.compose.runtime.saveable.SaveableStateHolder, row: ImportRow, state: PlantaState, imageApi: ApiClient?, enabled: Boolean, searchOpen: Boolean, target: BringIntoViewRequester,
     onToggleSearch: () -> Unit, onConfirm: (Long, String?) -> Unit, onSkip: () -> Unit, onSearch: (String) -> Unit) {
     Card(Modifier.fillMaxWidth().testTag("import:${row.id}"), border = BorderStroke(2.dp, MaterialTheme.colorScheme.error)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -245,15 +248,16 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                 Text("You can change the species later.")
             }
             if (row.candidates.isEmpty() && suggestion?.candidates.isNullOrEmpty()) Text("No match found. Search for the species or skip this plant.")
-            TextButton(onClick = onToggleSearch, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (row.candidates.isEmpty()) "Search for a species" else "Search for another species") }
-            if (searchOpen) SpeciesSearchArea(row, state, imageApi, enabled, onConfirm, onSearch)
+            TextButton(onClick = onToggleSearch, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(when { searchOpen -> "Hide species search"; row.candidates.isEmpty() -> "Search for a species"; else -> "Search for another species" }) }
+            if (searchOpen) searches.SaveableStateProvider("search:${row.id}") { SpeciesSearchArea(row, state, imageApi, enabled, onConfirm, onSearch) }
             TextButton(onClick = onSkip, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Skip plant") }
             Details(row)
         }
     }
 }
 
-@Composable private fun CompactRow(row: ImportRow, state: PlantaState, imageApi: ApiClient?, enabled: Boolean, open: Boolean, searchOpen: Boolean, target: BringIntoViewRequester,
+@Composable private fun CompactRow(searches: androidx.compose.runtime.saveable.SaveableStateHolder, row: ImportRow, state: PlantaState, imageApi: ApiClient?, enabled: Boolean, open: Boolean, searchOpen: Boolean, target: BringIntoViewRequester,
     onToggle: () -> Unit, onToggleSearch: () -> Unit, onConfirm: (Long, String?) -> Unit, onSkip: () -> Unit, onSearch: (String) -> Unit, onPlant: (String) -> Unit) {
     val (badge, readyLook) = when (row.status) { "confirmed" -> "Ready" to true; "skipped" -> "Skipped" to false; else -> "Imported" to false }
     Column(Modifier.fillMaxWidth().bringIntoViewRequester(target).testTag("import:${row.id}")) {
@@ -279,7 +283,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                 if (searchOpen) {
                     if (row.status == "skipped") for (candidate in row.candidates) ImportCandidate(candidate, enabled, imageApi = imageApi) { onConfirm(candidate.key, null) }
                     if (row.status == "confirmed") TextButton(onClick = onSkip, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Skip plant") }
-                    SpeciesSearchArea(row, state, imageApi, enabled, onConfirm, onSearch)
+                    searches.SaveableStateProvider("search:${row.id}") { SpeciesSearchArea(row, state, imageApi, enabled, onConfirm, onSearch) }
                 }
             } else row.plantId?.let { id -> OutlinedButton(onClick = { onPlant(id) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Open imported plant") } }
         }
@@ -295,7 +299,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
 }
 
 @Composable private fun SpeciesSearchArea(row: ImportRow, state: PlantaState, imageApi: ApiClient?, enabled: Boolean, onConfirm: (Long, String?) -> Unit, onSearch: (String) -> Unit) {
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
     OutlinedTextField(query, { query = it }, label = { Text("Search species") }, enabled = enabled, singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) onSearch(query) }),
         modifier = Modifier.fillMaxWidth())

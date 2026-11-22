@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ImageNotSupported
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,6 +53,10 @@ import org.json.JSONObject
 @Composable fun AuthenticatedThumbnail(api: ApiClient?, path: String?, description: String, placeholder: String, size: Dp = 120.dp) {
     val image = authenticatedBitmap(api, path)?.getOrNull()
     if (image != null) Image(image.asImageBitmap(), description, contentScale = ContentScale.Crop, modifier = Modifier.size(size))
+    // A small tile cannot fit the words, so it shows an icon that TalkBack reads with them (Astra W5b-astra-7).
+    else if (size < 100.dp) Box(Modifier.size(size).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        androidx.compose.material3.Icon(Icons.Outlined.ImageNotSupported, contentDescription = placeholder,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant) }
     else Box(Modifier.size(size).background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp)) { Text(placeholder) }
 }
 
