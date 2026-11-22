@@ -40,10 +40,14 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
 
 // W5a-P14 to P21, P30 to P33: household location first, then the cards on Today; switches save on change.
 @Composable fun WeatherFeedRoute(feed: FeedRepository, care: CareState?, online: Boolean, onBack: () -> Unit,
-                                 onReceipt: (String) -> Unit = {}, onFormDirty: (() -> String?) -> Unit = {}) {
+                                 onReceipt: (String) -> Unit = {}, onFormDirty: (() -> String?) -> Unit = {}, onUpdateRequired: () -> Unit = {}) {
     val state by feed.state.collectAsState()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(state.member) { withContext(Dispatchers.IO) { feed.refresh(state.member); feed.loadLocation() } }
+    // W5a-P31: reload on open, on resume and on reconnect; W5a-P13: a 426 shows the full stop.
+    LaunchedEffect(state.member, online) { if (online) withContext(Dispatchers.IO) { feed.refresh(state.member); feed.loadLocation() } }
+    var resumed by remember(feed) { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(feed) { if (resumed) scope.launch(Dispatchers.IO) { feed.refresh(feed.state.value.member); feed.loadLocation() }; resumed = true; onPauseOrDispose {} }
+    LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
     WeatherFeedScreen(state, care, online, onBack, onReceipt, onFormDirty,
         onRefresh = { scope.launch(Dispatchers.IO) { feed.refresh(state.member); feed.loadLocation() } },
         onSearch = { withContext(Dispatchers.IO) { feed.searchPlaces(it) } },

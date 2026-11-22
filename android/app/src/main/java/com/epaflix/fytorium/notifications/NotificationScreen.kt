@@ -83,7 +83,11 @@ import kotlinx.coroutines.withContext
         onRemove = { withContext(Dispatchers.IO) { repository.remove(it) } },
         onTest = { withContext(Dispatchers.IO) { if (repository.test()) repository.state.value.sent else null } },
         failure = { repository.state.value.takeIf { !it.blocked }?.error })
-    LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
+    // W5a-P31: reload on open, on resume and on reconnect.
+    val online = connected()
+    LaunchedEffect(repository, online) { withContext(Dispatchers.IO) { repository.refresh() } }
+    var resumed by remember(repository) { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(repository) { if (resumed) scope.launch(Dispatchers.IO) { repository.refresh() }; resumed = true; onPauseOrDispose {} }
 }
 
 // W5a-P28: a name a person recognises for each device.

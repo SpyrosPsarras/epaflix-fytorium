@@ -183,6 +183,7 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         if (epoch != generation) return@synchronized
         val failure = classifyNetworkFailure(connected(), (error as? FeedFailure)?.status)
         mutable.value = mutable.value.copy(offline = failure.offline, unavailable = failure.serverUnavailable,
+            updateRequired = mutable.value.updateRequired || (error as? FeedFailure)?.status == 426,
             message = when {
                 // Offline already says it on screen, and a stale failure would flash up when the connection returns.
                 failure.offline -> null

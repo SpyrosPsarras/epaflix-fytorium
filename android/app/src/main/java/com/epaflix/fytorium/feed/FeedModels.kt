@@ -107,7 +107,7 @@ data class FeedState(val member: Member? = null, val cards: List<FeedCard> = emp
                      val loaded: Boolean = false, val offline: Boolean = false, val unavailable: Boolean = false,
                      val refreshing: Boolean = false, val saving: Boolean = false, val message: String? = null,
                      // When the shown feed and settings were read, for the offline line; and whether place search's source failed.
-                     val updatedAt: Long? = null, val placesUnavailable: Boolean = false) {
+                     val updatedAt: Long? = null, val placesUnavailable: Boolean = false, val updateRequired: Boolean = false) {
     val writable get() = member != null && member.role != Role.sitter && !offline && !saving
 }
 data class Place(val label: String, val name: String, val region: String?, val country: String?, val latitude: Double, val longitude: Double) : java.io.Serializable {

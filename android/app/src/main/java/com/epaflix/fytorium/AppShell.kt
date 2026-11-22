@@ -207,7 +207,8 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         if (loggedIn && !updateRequired && feedSettings && feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 key(careState?.member) { com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
-                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it }) }
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it },
+                    onUpdateRequired = { controller?.repository?.requireUpdate() }) }
             }
             return@Scaffold
         }
