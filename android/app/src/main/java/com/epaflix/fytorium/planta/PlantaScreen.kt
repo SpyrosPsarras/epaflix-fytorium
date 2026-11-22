@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalUriHandler
@@ -80,12 +81,13 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
     com.epaflix.fytorium.household.ResumeReload(::reload)
-    LaunchedEffect(repository, state.complete) { if (state.complete) withContext(Dispatchers.IO) { repository.checkSites() } }
+    LaunchedEffect(repository, state.complete, state.rows.map { it.status }) {
+        if (state.complete || (state.rows.any { it.status == "committed" } && state.rows.none { it.status in setOf("review", "confirmed") })) withContext(Dispatchers.IO) { repository.checkSites() } }
     LaunchedEffect(repository, state.rows.map { it.id to it.status }) {
         for (row in state.rows.filter { it.status == "review" }) launch(Dispatchers.IO) { repository.suggest(row.id) }
     }
     fun command(action: () -> Unit) { scope.launch { withContext(Dispatchers.IO) { action() } } }
-    PlantaScreen(state, online, onBack, onRefresh = ::reload, onPull = { withContext(Dispatchers.IO) { repository.refresh() } },
+    PlantaScreen(state, online, onBack, onRefresh = ::reload, siteNames = care.plants.mapNotNull { it.siteName }.distinct(), onPull = { withContext(Dispatchers.IO) { repository.refresh() } },
         onFetch = { code -> withContext(Dispatchers.IO) { repository.fetch(code) } },
         onConfirm = { id, key, receipt -> withContext(Dispatchers.IO) { repository.confirm(id, key, receipt) } },
         onSkip = { id -> withContext(Dispatchers.IO) { repository.skip(id) } }, onSearch = { id, query -> command { repository.search(id, query) } },
@@ -98,7 +100,9 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
 @Composable fun PlantaScreen(state: PlantaState, online: Boolean = true, onBack: () -> Unit = {}, onRefresh: () -> Unit = {}, onPull: suspend () -> Unit = { onRefresh() },
     onFetch: suspend (String) -> Boolean = { false }, onConfirm: suspend (String, Long, String?) -> Unit = { _, _, _ -> }, onSkip: suspend (String) -> Unit = {},
     onSearch: (String, String) -> Unit = { _, _ -> }, onCommit: suspend () -> Int? = { null }, onPlants: () -> Unit = {}, onPlant: (String) -> Unit = {},
-    onSites: () -> Unit = {}, imageApi: ApiClient? = null, onReceipt: (String) -> Unit = {}) {
+    onSites: () -> Unit = {}, imageApi: ApiClient? = null, onReceipt: (String) -> Unit = {}, siteNames: List<String> = emptyList()) {
+    // Planta's site name as the household writes it, when it matches one ("kitchen" is Kitchen; Sol W5b-sol-6).
+    fun siteOf(row: ImportRow) = siteNames.firstOrNull { it.trim().equals(row.site.trim(), ignoreCase = true) } ?: row.site
     // A Planta code must not enter saved state, even on rotation or a failed fetch.
     var code by remember { mutableStateOf("") }
     var codeOpen by rememberSaveable { mutableStateOf(false) }
@@ -118,7 +122,9 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     val canImport = state.rows.any { it.canCommit }
     val skipped = state.rows.count { it.status == "skipped" }
     val reviewTargets = remember(state.rows.map { it.id }) { state.rows.associate { it.id to BringIntoViewRequester() } }
-    fun scrollTo(id: String) { scope.launch { reviewTargets[id]?.bringIntoView() } }
+    var viewport by remember { mutableIntStateOf(0) }
+    // A page-tall area from the heading down, so the heading lands at the top instead of the bottom edge.
+    fun scrollTo(id: String) { scope.launch { reviewTargets[id]?.bringIntoView(androidx.compose.ui.geometry.Rect(0f, 0f, 1f, viewport.toFloat())) } }
     // Offline a change explains on tap instead of failing (W5b-P27).
     fun submit(action: suspend () -> Unit) {
         if (!online) { onReceipt(importOffline); return }
@@ -134,15 +140,17 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
         state.blocked -> "The review can't be changed right now" to listOfNotNull(state.error, "Try again to reload the review.").joinToString(" ")
         else -> null
     }
-    val reviewing = state.rows.isNotEmpty() && !state.complete
+    // An import finished earlier reads as finished when the page reopens (Sol W5b-sol-8).
+    val done = state.complete || (state.rows.any { it.status == "committed" } && state.rows.none { it.status in setOf("review", "confirmed") })
+    val reviewing = state.rows.isNotEmpty() && !done
     Scaffold(topBar = {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { online && (state.readError != null || state.blocked) }) { Text("Import from Planta") } },
             expandedHeight = barHeight(), navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } })
     }) { padding -> Column(Modifier.fillMaxSize().padding(padding)) {
         Box(Modifier.fillMaxWidth().weight(1f)) {
             PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state.complete) {
+                Column(Modifier.fillMaxSize().onSizeChanged { viewport = it.height }.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (done) {
                         Heading("Import complete", MaterialTheme.typography.titleLarge)
                         Button(onClick = onPlants, modifier = Modifier.heightIn(min = 48.dp)) { Text("View imported plants") }
                         if (state.incompleteSites) {
@@ -160,7 +168,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { fetch() }), modifier = Modifier.fillMaxWidth())
                         Button(onClick = { if (!online) onReceipt(importOffline) else fetch() }, enabled = (writable && code.isNotBlank()) || !online,
-                            modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = importOffline }) { Text("Fetch plants") }
+                            colors = offButtonColors(!online), modifier = Modifier.heightIn(min = 48.dp).offReason(importOffline.takeIf { !online })) { Text("Fetch plants") }
                         PlantError(state.error.takeIf { !state.blocked })
                         Text("Fetching again updates plants you imported before: species, cultivar, site, pot and soil change to Planta's. A name you gave a plant in Fytorium stays until its name in Planta changes.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -176,16 +184,16 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                     }
                     for (row in state.rows.sortedBy { if (it.status == "review") 0 else 1 }) key(row.id) {
                         val target = reviewTargets.getValue(row.id)
-                        if (row.status == "review") ReviewCard(row, state, imageApi, writable, searching[row.id] ?: row.candidates.isEmpty(), target,
+                        if (row.status == "review") ReviewCard(row.copy(site = siteOf(row)), state, imageApi, writable, searching[row.id] ?: row.candidates.isEmpty(), target,
                             onToggleSearch = { searching[row.id] = !(searching[row.id] ?: row.candidates.isEmpty()) },
                             onConfirm = { key, receipt -> submit { onConfirm(row.id, key, receipt) } }, onSkip = { submit { onSkip(row.id) } }, onSearch = { onSearch(row.id, it) })
-                        else CompactRow(row, state, imageApi, writable, open = row.id in opened, searchOpen = searching[row.id] ?: false, target = target,
+                        else CompactRow(row.copy(site = siteOf(row)), state, imageApi, writable, open = row.id in opened, searchOpen = searching[row.id] ?: false, target = target,
                             onToggle = { opened = if (row.id in opened) opened - row.id else opened + row.id },
                             onToggleSearch = { searching[row.id] = !(searching[row.id] ?: false) },
                             onConfirm = { key, receipt -> submit { onConfirm(row.id, key, receipt) } }, onSkip = { submit { onSkip(row.id) } },
                             onSearch = { onSearch(row.id, it) }, onPlant = onPlant)
                     }
-                    if (state.loaded && state.rows.isEmpty() && !state.complete) Text("No plants to review yet. Fetch from Planta to start.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (state.loaded && state.rows.isEmpty() && !done) Text("No plants to review yet. Fetch from Planta to start.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TextButton(onClick = { uriHandler.openUri("https://www.gbif.org") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Species names from GBIF, CC BY 4.0") }
                 }
             }
@@ -220,9 +228,9 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     Card(Modifier.fillMaxWidth().testTag("import:${row.id}"), border = BorderStroke(2.dp, MaterialTheme.colorScheme.error)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             AuthenticatedThumbnail(imageApi, if (row.hasCover) "/api/import/planta/${row.id}/cover" else null, "Planta photo of ${row.name}", "No Planta photo", 160.dp)
-            // The bar's names scroll to this heading.
+            // The bar's names scroll this heading to the top, so the choices below it show without another scroll (Sol W5b-sol-7).
             Text(row.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.bringIntoViewRequester(target).testTag("import-heading:${row.id}").semantics { heading() })
-            Text("From Planta: ${row.scientificName} · ${row.site}")
+            Text("From Planta: " + listOf(row.scientificName, row.site).filter(String::isNotBlank).joinToString(" · "))
             Text("Choose the species", style = MaterialTheme.typography.titleMedium)
             val suggestion = state.suggestions[row.id]
             for (candidate in (row.candidates + suggestion?.candidates.orEmpty()).distinctBy { it.key }) ImportCandidate(candidate, enabled, imageApi = imageApi,
@@ -255,7 +263,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
             AuthenticatedThumbnail(imageApi, if (row.hasCover) "/api/import/planta/${row.id}/cover" else null, "Planta photo of ${row.name}", "No Planta photo", 56.dp)
             Column(Modifier.weight(1f)) {
                 Text(row.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("import-heading:${row.id}").semantics { heading() })
-                Text("${row.selectedName ?: row.scientificName} · ${row.site}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(listOfNotNull(row.selectedName ?: row.scientificName, row.site).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (readyLook) {
                 val readyColor = if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) Color(0xFF86EFAC) else Color(0xFF166534)

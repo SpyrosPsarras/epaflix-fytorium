@@ -81,6 +81,14 @@ class AddPlantFormTest {
         compose.runOnIdle { assertEquals(1, creating) }
     }
 
+    // Sol W5b-sol-4: with sites already there, a new one can still be made from the form.
+    @Test fun withSitesTheFormStillOffersToCreateOne() {
+        var creating = 0
+        form(onCreateSite = { creating++ }) {}
+        compose.onNodeWithText("Create a site").performScrollTo().assertHeightIsAtLeast(androidx.compose.ui.unit.Dp(48f)).performClick()
+        compose.runOnIdle { assertEquals(1, creating) }
+    }
+
     @Test fun lastWateredSendsTheChosenDay() {
         var saved: JSONObject? = null
         form { saved = it }

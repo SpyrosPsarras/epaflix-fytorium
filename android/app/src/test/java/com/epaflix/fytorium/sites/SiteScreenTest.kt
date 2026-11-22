@@ -122,7 +122,8 @@ class SiteScreenTest {
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic room").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Synthetic room").assertIsDisplayed()
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
-            compose.onNodeWithContentDescription("Create site").assert(hasStateDescription(sitesOffline)).performClick()
+            // Sol W5b-sol-2: it looks off as well as explaining.
+            compose.onNodeWithContentDescription("Create site").assert(hasStateDescription(sitesOffline)).assertIsNotEnabled().performClick()
             compose.runOnIdle { assertEquals(listOf(sitesOffline), receipts) }
             compose.onNodeWithText("Save site").assertDoesNotExist()
         }

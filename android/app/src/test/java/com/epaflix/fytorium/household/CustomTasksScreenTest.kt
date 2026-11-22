@@ -99,6 +99,18 @@ class CustomTasksScreenTest {
         compose.onNodeWithText("Task name").assertTextContains("Test spray")
     }
 
+    // Sol W5b-sol-1: a draft is still a draft while Change shows the picker, so a tab tap asks first.
+    @Test fun aDraftAsksBeforeLeavingFromThePicker() {
+        var dirty: () -> String? = { null }
+        compose.setContent { FytoriumTheme { CustomTasksScreen(loaded, care, onFormDirty = { dirty = it }) } }
+        compose.onNodeWithText("Add task").performClick()
+        compose.onNodeWithText("Synthetic fernando").performClick()
+        compose.onNodeWithText("Task name").performTextInput("Test spray")
+        compose.onNodeWithText("Change").performClick()
+        compose.onNodeWithText("For which plant or site?").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("Your new task for Synthetic fernando is not saved yet.", dirty()) }
+    }
+
     // W5b-P17, P19: edits keep their target; drafts survive recreation and ask before leaving; delete names the task and its target.
     @Test fun editingKeepsItsTargetAndDraftsAskBeforeLeaving() {
         val restoration = StateRestorationTester(compose)
@@ -161,7 +173,7 @@ class CustomTasksScreenTest {
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Mist leaves").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Mist leaves").assertIsDisplayed()
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
-            compose.onNodeWithText("Add task").assert(hasStateDescription(tasksOffline)).performClick()
+            compose.onNodeWithText("Add task").assert(hasStateDescription(tasksOffline)).assertIsNotEnabled().performClick()
             compose.runOnIdle { assertEquals(listOf(tasksOffline), receipts) }
         }
     }

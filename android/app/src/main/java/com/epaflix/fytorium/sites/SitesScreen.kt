@@ -127,10 +127,10 @@ internal const val sitesOffline = "Changing sites needs a connection."
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { online && (state.readError != null || state.blocked) }) { Text(title) } }, expandedHeight = barHeight(),
             navigationIcon = { IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
             actions = {
-                if (editor == null && shown == "list") IconButton(onClick = { write { onClear(); editor = Site() } }, enabled = ready || !online, modifier = Modifier.semantics { if (!online) stateDescription = sitesOffline }) {
+                if (editor == null && shown == "list") IconButton(onClick = { write { onClear(); editor = Site() } }, enabled = ready || !online, colors = offIconColors(!online), modifier = Modifier.offReason(sitesOffline.takeIf { !online })) {
                     Icon(Icons.Default.Add, contentDescription = "Create site") }
                 if (editor == null && site != null) {
-                    IconButton(onClick = { write { onClear(); editor = site } }, enabled = ready || !online, modifier = Modifier.semantics { if (!online) stateDescription = sitesOffline }) {
+                    IconButton(onClick = { write { onClear(); editor = site } }, enabled = ready || !online, colors = offIconColors(!online), modifier = Modifier.offReason(sitesOffline.takeIf { !online })) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit ${nameOf(site)}") }
                     // Only an empty site can go, so the page never offers a delete the server would refuse (W5b-P7).
                     if (site.plantCount == 0) Box {
@@ -166,7 +166,8 @@ internal const val sitesOffline = "Changing sites needs a connection."
                     if (state.loaded && state.sites.isEmpty()) Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("No sites yet", style = MaterialTheme.typography.headlineSmall)
-                        Button(onClick = { write { onClear(); editor = Site() } }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") }
+                        Button(onClick = { write { onClear(); editor = Site() } }, colors = offButtonColors(!online),
+                            modifier = Modifier.heightIn(min = 48.dp).offReason(sitesOffline.takeIf { !online })) { Text("Create a site") }
                     }
                     for (row in state.sites) ListItem(headlineContent = { Text(nameOf(row)) }, supportingContent = { Text(row.summary()) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp).testTag("site:${row.id}")
@@ -193,7 +194,7 @@ internal const val sitesOffline = "Changing sites needs a connection."
                         submitting = true
                         try { if (onDelete(doomed.id!!)) { confirming = null; shown = "list"; onReceipt("Deleted ${nameOf(doomed)}") } } finally { submitting = false }
                     } }
-                }, enabled = !submitting && !state.busy, modifier = Modifier.semantics { if (!online) stateDescription = sitesOffline }) { Text("Delete") }
+                }, enabled = !submitting && !state.busy, colors = offTextColors(!online), modifier = Modifier.offReason(sitesOffline.takeIf { !online })) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = ::dismiss, enabled = !submitting && !state.busy) { Text("Cancel") } })
     }
@@ -268,7 +269,7 @@ private fun bounds(min: String?, max: String?): String? = when {
         }
     }
     Button(onClick = { if (!online) onOffline() else onSave(input()) }, enabled = enabled || !online,
-        modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = sitesOffline }) { Text("Save site") }
+        colors = offButtonColors(!online), modifier = Modifier.heightIn(min = 48.dp).offReason(sitesOffline.takeIf { !online })) { Text("Save site") }
     TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
     // A failed save's message goes under the buttons, so neither moves when it appears.
     PlantError(errors["_form"])

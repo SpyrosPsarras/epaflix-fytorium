@@ -162,7 +162,9 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
     val ready = (state.loaded || fixed != null) && !state.busy && !state.blocked && !state.updateRequired && !submitting
     fun write(action: () -> Unit) { if (!online) onReceipt(tasksOffline) else if (ready) action() }
     val task = state.tasks.firstOrNull { it.id == editing }
-    val changed = page == "form" && (if (task == null) name.isNotBlank() || interval.isNotBlank() else name != task.name || interval != task.interval.toString())
+    // A draft stays a draft while Change shows the picker (Sol W5b-sol-1).
+    val changed = (page == "form" || (page == "pick" && target != null)) &&
+        (if (task == null) name.isNotBlank() || interval.isNotBlank() else name != task.name || interval != task.interval.toString())
     val about = target?.let { if (it.kind == "site") "every plant in ${it.name}" else it.name }
     val discardBody = when { !changed -> null; task == null -> "Your new task for $about is not saved yet."; else -> "Your changes to ${task.name} are not saved yet." }
     fun close() {
@@ -244,16 +246,16 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
                             }
                         } finally { submitting = false }
                     } }
-                }, enabled = !submitting, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = tasksOffline }) { Text("Save task") }
+                }, enabled = !submitting, colors = offButtonColors(!online), modifier = Modifier.heightIn(min = 48.dp).offReason(tasksOffline.takeIf { !online })) { Text("Save task") }
                 TextButton(onClick = { back() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") }
                 PlantError(state.errors["_form"].takeIf { !deleting })
-                if (task != null) TextButton(onClick = { write { onClear(); deleting = true } }, modifier = Modifier.heightIn(min = 48.dp)
-                    .semantics { if (!online) stateDescription = tasksOffline }) { Text("Delete task") }
+                if (task != null) TextButton(onClick = { write { onClear(); deleting = true } }, colors = offTextColors(!online), modifier = Modifier.heightIn(min = 48.dp)
+                    .offReason(tasksOffline.takeIf { !online })) { Text("Delete task") }
             }
             else -> PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(onClick = { write { onClear(); page = "pick" } }, modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)
-                        .semantics { if (!online) stateDescription = tasksOffline }) { Text("Add task") }
+                    Button(onClick = { write { onClear(); page = "pick" } }, colors = offButtonColors(!online), modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)
+                        .offReason(tasksOffline.takeIf { !online })) { Text("Add task") }
                     if (state.loaded && state.tasks.isEmpty()) Text("No custom tasks yet. Add one for a plant or for every plant on a site.", Modifier.padding(16.dp))
                     // Sites first, then active plants, then graveyard plants, each by name (W5b-P15).
                     val groups = state.tasks.groupBy { (it.siteId ?: it.plantId)!! }.values.sortedWith(compareBy(
@@ -288,7 +290,7 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
             confirmButton = { TextButton(onClick = { write { scope.launch {
                 submitting = true
                 try { if (onDelete(doomed.id)) { deleting = false; onReceipt("Deleted ${doomed.name}"); close() } } finally { submitting = false }
-            } } }, enabled = !submitting, modifier = Modifier.semantics { if (!online) stateDescription = tasksOffline }) { Text("Delete") } },
+            } } }, enabled = !submitting, colors = offTextColors(!online), modifier = Modifier.offReason(tasksOffline.takeIf { !online })) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deleting = false; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
 }

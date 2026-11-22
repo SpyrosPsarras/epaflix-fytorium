@@ -57,7 +57,8 @@ class MembersScreenTest {
         compose.onNodeWithText("Invite someone").performClick()
         compose.onNode(hasText("Family", substring = true) and isSelectable()).assertIsNotSelected()
         compose.onNode(hasText("Sitter", substring = true) and isSelectable()).assertIsNotSelected()
-        compose.onNodeWithText("Create invite link").performClick()
+        // Sol W5b-sol-3: it looks off until a role is chosen.
+        compose.onNodeWithText("Create invite link").assertIsNotEnabled().performClick()
         compose.runOnIdle { assertEquals(listOf("Choose Family or Sitter first."), receipts); assertNull(sent) }
         compose.onNode(hasText("Sitter", substring = true) and isSelectable()).performClick()
         compose.onNodeWithText("No plants chosen. You can share plants later from Members.").assertIsDisplayed()
@@ -185,7 +186,7 @@ class MembersScreenTest {
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic owner (you)").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Synthetic owner (you)").assertIsDisplayed()
             compose.onNode(hasText("Offline", substring = true) and hasClickAction()).assertIsDisplayed()
-            compose.onNodeWithText("Invite someone").assert(hasStateDescription(membersOffline)).performClick()
+            compose.onNodeWithText("Invite someone").assert(hasStateDescription(membersOffline)).assertIsNotEnabled().performClick()
             compose.runOnIdle { assertEquals(listOf(membersOffline), receipts) }
         }
     }

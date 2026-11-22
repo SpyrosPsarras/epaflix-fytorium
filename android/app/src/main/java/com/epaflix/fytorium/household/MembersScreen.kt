@@ -215,9 +215,8 @@ private val roleCards = listOf(
                             inviteRole = null; inviteTicks = emptyList(); page = "link"
                         }
                     } } }
-                }, enabled = !submitting, modifier = Modifier.heightIn(min = 48.dp).semantics {
-                    if (chosen == null) stateDescription = "Choose Family or Sitter first." else if (!online) stateDescription = membersOffline
-                }) { Text("Create invite link") }
+                }, enabled = !submitting, colors = offButtonColors(chosen == null || !online), modifier = Modifier.heightIn(min = 48.dp)
+                    .offReason(if (chosen == null) "Choose Family or Sitter first." else membersOffline.takeIf { !online })) { Text("Create invite link") }
                 PlantError(state.errors["_form"])
             }
             page == "link" && draft != null -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -236,7 +235,7 @@ private val roleCards = listOf(
                             InviteLinks.put(created.id, created.link)
                             draft = InviteDraft(created.id, created.role, created.expiresAt, invite.plantIds); sent = false
                         }
-                    } } }, enabled = !submitting, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = membersOffline }) { Text("Revoke and create new") }
+                    } } }, enabled = !submitting, colors = offButtonColors(!online), modifier = Modifier.heightIn(min = 48.dp).offReason(membersOffline.takeIf { !online })) { Text("Revoke and create new") }
                     TextButton(onClick = { go("list") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Keep the invite") }
                     PlantError(state.errors["_form"])
                 }
@@ -249,14 +248,15 @@ private val roleCards = listOf(
                 if (role == "sitter") PlantPicker(plants, ticks, thumbnails, true, null) { memberTicks = it.toList() }
                 Button(onClick = { write { submit {
                     if (onMember(shown, role, if (role == "sitter") ticks else emptySet())) { onReceipt("Saved changes for ${shown.name}"); go("list") }
-                } } }, enabled = !submitting, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = membersOffline }) { Text("Save") }
+                } } }, enabled = !submitting, colors = offButtonColors(!online), modifier = Modifier.heightIn(min = 48.dp).offReason(membersOffline.takeIf { !online })) { Text("Save") }
                 PlantError(state.errors["_form"].takeIf { removing == null })
-                if (shown.canRemove) TextButton(onClick = { write { onClear(); removing = shown.id } }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove from household") }
+                if (shown.canRemove) TextButton(onClick = { write { onClear(); removing = shown.id } }, colors = offTextColors(!online),
+                    modifier = Modifier.heightIn(min = 48.dp).offReason(membersOffline.takeIf { !online })) { Text("Remove from household") }
             }
             else -> PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { write { onClear(); page = "invite" } }, modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)
-                        .semantics { if (!online) stateDescription = membersOffline }) { Text("Invite someone") }
+                    Button(onClick = { write { onClear(); page = "invite" } }, colors = offButtonColors(!online), modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)
+                        .offReason(membersOffline.takeIf { !online })) { Text("Invite someone") }
                     Heading("People", MaterialTheme.typography.titleMedium, Modifier.padding(start = 16.dp, top = 8.dp))
                     for (person in state.members) {
                         val opens = person.roleOptions.isNotEmpty() || person.canRemove
@@ -274,8 +274,8 @@ private val roleCards = listOf(
                         val names = plantNames(invite.plantIds)
                         ListItem(headlineContent = { Text(if (invite.role == "sitter") "Sitter invite" else "Family invite") },
                             supportingContent = { Text((listOfNotNull(shortList(names).takeIf { invite.role == "sitter" && names.isNotEmpty() }) + "Expires ${expiryDate(invite.expires)}").joinToString(" · ")) },
-                            trailingContent = { TextButton(onClick = { write { onClear(); revoking = invite.id } }, modifier = Modifier.heightIn(min = 48.dp)
-                                .semantics { if (!online) stateDescription = membersOffline }) { Text("Revoke") } },
+                            trailingContent = { TextButton(onClick = { write { onClear(); revoking = invite.id } }, colors = offTextColors(!online), modifier = Modifier.heightIn(min = 48.dp)
+                                .offReason(membersOffline.takeIf { !online })) { Text("Revoke") } },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp))
                     }
                 }
@@ -297,7 +297,7 @@ private val roleCards = listOf(
                 PlantError(state.errors["_form"])
             } },
             confirmButton = { TextButton(onClick = { write { submit { if (onRemove(id)) { removing = null; onReceipt("Removed $name"); go("list") } } } }, enabled = !submitting,
-                modifier = Modifier.semantics { if (!online) stateDescription = membersOffline }) { Text("Remove") } },
+                colors = offTextColors(!online), modifier = Modifier.offReason(membersOffline.takeIf { !online })) { Text("Remove") } },
             dismissButton = { TextButton(onClick = { removing = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
     revoking?.let { id ->
@@ -312,7 +312,7 @@ private val roleCards = listOf(
                 PlantError(state.errors["_form"])
             } },
             confirmButton = { TextButton(onClick = { write { submit { if (onRevoke(id)) { revoking = null; onReceipt("Revoked the $kind invite") } } } }, enabled = !submitting,
-                modifier = Modifier.semantics { if (!online) stateDescription = membersOffline }) { Text("Revoke") } },
+                colors = offTextColors(!online), modifier = Modifier.offReason(membersOffline.takeIf { !online })) { Text("Revoke") } },
             dismissButton = { TextButton(onClick = { revoking = null; onClear() }, enabled = !submitting) { Text("Cancel") } })
     }
 }

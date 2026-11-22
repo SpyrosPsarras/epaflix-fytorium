@@ -93,6 +93,35 @@ class PlantaScreenTest {
             assertEquals(listOf("Imported 1 plant"), receipts)
         }
     }
+    // Sol W5b-sol-5, sol-6: a missing species leaves no stray separator, and Planta's site reads as the household writes it.
+    @Test fun reviewLinesUseTheHouseholdSiteAndSkipBlanks() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(scientificName = "", site = "synthetic nook"))),
+            siteNames = listOf("Synthetic nook")) } }
+        compose.onNodeWithText("From Planta: Synthetic nook").assertExists()
+        compose.onNodeWithText("From Planta:  · synthetic nook").assertDoesNotExist()
+    }
+    // Sol W5b-sol-8: an import finished earlier reads as finished when the page opens again.
+    @Test fun aFinishedImportReadsAsFinishedOnReopen() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(status = "committed", canReview = false, plantId = "plant-one"),
+            row.copy(id = "skipped", status = "skipped")))) } }
+        compose.onNodeWithText("Import complete").assertIsDisplayed()
+        compose.onNodeWithText("View imported plants").assertIsDisplayed()
+        compose.onNodeWithTag("import-bar").assertDoesNotExist()
+        compose.onNodeWithText("Nothing to import").assertDoesNotExist()
+    }
+    // Sol W5b-sol-7: a name in the bar brings its card's choices into view, not just its heading.
+    @Test fun theBarBringsTheChoicesIntoView() {
+        val rows = listOf(row.copy(id = "first", name = "Synthetic first"), row.copy(id = "second", name = "Synthetic second"),
+            row.copy(id = "mystery", name = "Synthetic mystery", candidates = emptyList()))
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(rows[2], rows[0], rows[1]))) } }
+        compose.onNode(hasText("Synthetic first") and hasAnyAncestor(hasTestTag("import-bar"))).performClick()
+        compose.waitForIdle()
+        // A card with candidates shows its first choice; one without shows Search and Skip.
+        compose.onNode(hasContentDescription("This is Testoria nebulosa") and hasAnyAncestor(hasTestTag("import:first"))).assertIsDisplayed()
+        compose.onNode(hasText("Synthetic mystery") and hasAnyAncestor(hasTestTag("import-bar"))).performClick()
+        compose.waitForIdle()
+        compose.onNode(hasText("Skip plant") and hasAnyAncestor(hasTestTag("import:mystery"))).assertIsDisplayed()
+    }
     @Test fun theBarNamesScrollToTheirCards() {
         val rows = List(3) { row.copy(id = "review-$it", name = "Synthetic review $it") }
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = rows)) } }
