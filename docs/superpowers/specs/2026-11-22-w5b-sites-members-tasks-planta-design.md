@@ -187,6 +187,7 @@ Regression only, must not get worse: W3 Plants grid, plant page, C1/C1b, C19, C2
   - photo: "Photo comes with the import", "Photo imported", "Photo not imported: <reason> Fetch again to retry.", "Photo skipped" or "No Planta photo".
 - W5b-P23. Import bar, fixed at the bottom of the page while a review is open and not imported:
   - all decided: "Import 2 plants" (filled, full width; "Import 1 plant"); with skipped rows, a line above it: "1 skipped plant stays out.";
+  - nothing ready yet while some need a choice: "Import plants", disabled-looking, explaining as below;
   - some need a choice: the button is disabled-looking and explains on tap "Choose a species or skip the plants above first."; the line above reads "Still to choose:" followed by up to two names as text buttons that scroll to their cards, then "and 1 more";
   - nothing to import: "Nothing to import", disabled.
   While importing the button keeps its size and reads "Importing…". The old end-of-page button and both review summaries go (`A/planta/PlantaScreen.kt:103`, `:185-187`).
@@ -247,7 +248,7 @@ Synthetic data only. Never touch namespace `fytorium`. Scripts that call the API
 - A7. "View imported plants", "Open imported plant" and "Check sites" switch tabs; Back across tabs is W6.
 - A8. A tab tap still closes More and Plants sub-screens (W6). W5b asks first when a form has changes or a link was not sent.
 - A9. A Planta code typed but not fetched is lost on leaving, with no question: it is never saved by design.
-- A10. Invite expiry shows in the phone's time zone; Planta care dates in the household's.
+- A10. Invite expiry and Planta last-care timestamps show in the phone's time zone (the app does not hold the household's zone; date-only values show as sent). The lab phone and household are both Europe/Oslo.
 - A11. Lab Planta covers are WireMock's 1 × 1 image; the photo suggestion in the lab comes from plantnet-lab's fixed answers.
 
 ## 7. Acceptance checks

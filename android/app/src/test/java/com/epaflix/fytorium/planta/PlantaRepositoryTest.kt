@@ -131,7 +131,8 @@ class PlantaRepositoryTest {
             server.enqueue(MockResponse().setResponseCode(status).setBody("{}")); assertFalse(repo.refresh())
             assertEquals(status == 426, repo.state.value.updateRequired)
             assertTrue(repo.state.value.blocked)
-            if (status == 503) assertTrue(repo.state.value.error!!.startsWith("Fytorium isn't responding."))
+            // A failed read now belongs to the line under the title (W5b-P26).
+            if (status == 503) assertTrue(repo.state.value.readError!!.startsWith("Fytorium isn't responding."))
             assertEquals(1, repo.state.value.rows.size)
             assertFalse(repo.confirm("staging-one", 910002))
             assertEquals(2, server.requestCount)

@@ -182,12 +182,13 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && tab == "More" && plantaImport && careState?.member?.role == Role.owner && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member) {
-                    com.epaflix.fytorium.planta.PlantaRoute(sitesApi, careState, sitesConnected, onBack = { plantaImport = false },
-                        onPlants = { plantaImport = false; journalPlantId = null; tab = "Plants"; controller?.refresh() },
-                        onPlant = { plantaImport = false; journalPlantId = it; tab = "Plants"; controller?.refresh() },
-                        onSites = { plantaImport = false; journalPlantId = null; sites = true; tab = "Plants" })
-                }
+                // Not keyed by the member object: a member change closes this screen in the shell, and its hash changes per process (W5b-P29).
+                com.epaflix.fytorium.planta.PlantaRoute(sitesApi, careState, sitesConnected, onBack = { plantaImport = false },
+                    onPlants = { plantaImport = false; journalPlantId = null; tab = "Plants"; controller?.refresh() },
+                    onPlant = { plantaImport = false; journalPlantId = it; tab = "Plants"; controller?.refresh() },
+                    onSites = { plantaImport = false; journalPlantId = null; sites = true; tab = "Plants" },
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0)
             }
             return@Scaffold
         }

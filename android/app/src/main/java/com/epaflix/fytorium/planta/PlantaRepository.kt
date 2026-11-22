@@ -33,7 +33,8 @@ data class ImportSuggestion(val suggestedKey: Long?, val candidates: List<Specie
 data class PlantaState(val rows: List<ImportRow> = emptyList(), val loaded: Boolean = false,
     val loading: Boolean = false, val saving: Boolean = false, val blocked: Boolean = false,
     val updateRequired: Boolean = false, val error: String? = null, val complete: Boolean = false,
-    val searchRow: String? = null, val search: SpeciesSearch? = null, val suggestions: Map<String, ImportSuggestion> = emptyMap())
+    val searchRow: String? = null, val search: SpeciesSearch? = null, val suggestions: Map<String, ImportSuggestion> = emptyMap(),
+    val readError: String? = null, val incompleteSites: Boolean = false)
 private class PlantaFailure(val status: Int, val display: String, val fetchRejected: Boolean = false) : Exception()
 private fun parseRows(text: String) = JSONArray(text).mapObjects { row ->
     val mapped = row.getJSONObject("mapped")
@@ -61,16 +62,16 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
                 val message = if (sensitive) serverMessage?.takeIf { it in fetchErrors } ?: when (response.code) {
                     422 -> "Planta supplied invalid plant data, or the app code is empty. Fetch again with a new code."
                     502 -> "Planta refused authorization or returned invalid data. Start again with a new app code."
-                    else -> "Planta did not respond. Refresh, then try again with a new app code."
+                    else -> "Planta did not respond. Try again with a new app code."
                 } else serverMessage
                 val fetchRejected = sensitive && (serverMessage in fetchErrors || response.code in listOf(422, 502))
-                throw PlantaFailure(response.code, message ?: "Could not reach the server. Refresh to retry.", fetchRejected)
+                throw PlantaFailure(response.code, message ?: "Could not reach Fytorium. Try again.", fetchRejected)
             }
             text
         }
     private fun load() {
         val rows = parseRows(request(endpoint))
-        if (allowed()) mutable.value = state.value.copy(rows = rows, loaded = true, blocked = false)
+        if (allowed()) mutable.value = state.value.copy(rows = rows, loaded = true, blocked = false, readError = null)
     }
     fun suggest(rowId: String) {
         if (!allowed() || !connected() || state.value.rows.none { it.id == rowId && it.status == "review" }) return
@@ -122,17 +123,25 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
             if (allowed()) mutable.value = state.value.copy(rows = rows, complete = true, searchRow = null, search = null)
         }
     }
+    // Sites an import made start with default conditions; the page says so only while one is still unset (W5b-P24).
+    fun checkSites() {
+        if (!allowed() || !connected()) return
+        val incomplete = runCatching { JSONArray(request("/api/sites")).mapObjects { it.optBoolean("imported_conditions_incomplete") }.any { it } }.getOrDefault(false)
+        if (allowed()) mutable.update { it.copy(incompleteSites = incomplete) }
+    }
     private fun run(write: Boolean, action: () -> Unit): Boolean {
         if (!allowed()) { mutable.value = PlantaState(); return false }
         if (write && (!state.value.loaded || state.value.blocked || state.value.updateRequired || state.value.saving)) return false
-        mutable.value = state.value.copy(loading = !write, saving = write, error = null)
+        mutable.value = state.value.copy(loading = !write, saving = write, error = if (write) null else state.value.error)
         return try {
             if (!connected()) throw IOException()
             action()
             allowed()
         } catch (error: Exception) {
             val unavailable = error !is PlantaFailure || (error.status >= 500 && !error.fetchRejected)
-            if (allowed()) mutable.value = state.value.copy(error = if (error is PlantaFailure && !unavailable) error.display else "Fytorium isn't responding. Your staged plants remain available. Refresh to retry.",
+            val message = if (error is PlantaFailure && !unavailable) error.display else "Fytorium isn't responding. Your staged plants stay. Try again when it answers."
+            // A failed read belongs to the line under the title; a change's failure stays with its control.
+            if (allowed()) mutable.value = state.value.copy(error = if (write) message else state.value.error, readError = if (write) state.value.readError else message,
                 blocked = unavailable || error.status in listOf(401, 403, 426),
                 updateRequired = state.value.updateRequired || (error is PlantaFailure && error.status == 426))
             false
