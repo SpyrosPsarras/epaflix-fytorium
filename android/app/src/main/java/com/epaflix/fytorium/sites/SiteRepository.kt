@@ -44,6 +44,7 @@ class SiteRepository(private val api: ApiClient, private val allowed: () -> Bool
     private val mutable = MutableStateFlow(SiteState())
     val state = mutable.asStateFlow()
     fun clearErrors() { mutable.value = mutable.value.copy(errors = emptyMap()) }
+    fun clearError(key: String) { mutable.value = mutable.value.let { it.copy(errors = it.errors - key) } }
     private fun requireSafeId(id: String): String {
         require(id.matches(Regex("[A-Za-z0-9_-]+")))
         return id

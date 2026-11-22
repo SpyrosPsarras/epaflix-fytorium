@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
@@ -55,7 +56,8 @@ data class InviteDraft(val id: String, val role: String, val expiresAt: String, 
 
 internal fun expiryDate(expiresAt: String): String {
     val day = Instant.parse(expiresAt).atZone(ZoneId.systemDefault()).toLocalDate()
-    return shortDate(day.toString()) + if (day.year != java.time.LocalDate.now().year) " ${day.year}" else ""
+    // Non-breaking spaces keep the date on one line (Opus W5b-opus-7).
+    return (shortDate(day.toString()) + if (day.year != java.time.LocalDate.now().year) " ${day.year}" else "").replace(' ', '\u00A0')
 }
 // "Spider Plant, Thyme" or, past three, "Spider Plant, Thyme and 2 more".
 internal fun shortList(names: List<String>) = if (names.size <= 3) names.joinToString(", ") else names.take(2).joinToString(", ") + " and ${names.size - 2} more"
@@ -161,6 +163,8 @@ private val roleCards = listOf(
     var leaving by rememberSaveable { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
     var pulling by remember { mutableStateOf(false) }
+    // The list keeps its place while a member or invite page is open (Opus W5b-opus-3).
+    val listScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     val scope = rememberCoroutineScope()
     val ready = state.loaded && !state.loading && !state.saving && !state.blocked && !state.updateRequired && !submitting
     fun write(action: () -> Unit) { if (!online) onReceipt(membersOffline) else if (ready) action() }
@@ -257,7 +261,7 @@ private val roleCards = listOf(
                     modifier = Modifier.heightIn(min = 48.dp).offReason(membersOffline.takeIf { !online })) { Text("Remove from household") }
             }
             else -> PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxSize().verticalScroll(listScroll).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { write { onClear(); page = "invite" } }, colors = offButtonColors(!online), modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)
                         .offReason(membersOffline.takeIf { !online })) { Text("Invite someone") }
                     Heading("People", MaterialTheme.typography.titleMedium, Modifier.padding(start = 16.dp, top = 8.dp))
@@ -345,7 +349,9 @@ private val roleCards = listOf(
 // W5b-P10: one toggleable row per active plant with its cover, name and site, so twin names stay apart.
 @Composable private fun PlantPicker(plants: List<Plant>, selected: Set<String>, thumbnails: Thumbnails?, enabled: Boolean, none: String?, change: (Set<String>) -> Unit) {
     Heading("Plants to share", MaterialTheme.typography.titleMedium, Modifier.padding(top = 8.dp))
-    if (selected.isEmpty()) none?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    // The line keeps its space when the first plant is ticked, so no row moves under the finger (Opus W5b-opus-2).
+    none?.let { Box { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.alpha(if (selected.isEmpty()) 1f else 0f)
+        .then(if (selected.isEmpty()) Modifier else Modifier.clearAndSetSemantics {})) } }
     for (plant in plants) {
         val on = plant.id in selected
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(on, enabled = enabled, role = androidx.compose.ui.semantics.Role.Checkbox) {

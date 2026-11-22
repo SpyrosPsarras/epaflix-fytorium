@@ -58,7 +58,8 @@ private fun photoLine(row: ImportRow) = when (row.coverStatus) {
     "pending" -> "Photo comes with the import"
     "failed" -> "Photo not imported: ${row.coverError.orEmpty()} Fetch again to retry."
     "skipped" -> "Photo skipped"
-    else -> "No Planta photo"
+    // The tile already says when Planta has no photo (Opus W5b-opus-8).
+    else -> null
 }
 private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
 
@@ -135,7 +136,9 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
         submitting = true
         scope.launch { try { action() } finally { submitting = false } }
     }
-    fun fetch() { if (code.isBlank()) return; val entered = code; code = ""; searching.clear(); submit { if (onFetch(entered)) codeOpen = false } }
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    // Go hands focus back too, so no focus ring lands on Back when the field goes (Opus W5b-opus-5).
+    fun fetch() { if (code.isBlank()) return; val entered = code; code = ""; searching.clear(); focus.clearFocus(); submit { if (onFetch(entered)) codeOpen = false } }
     BackHandler(onBack = onBack)
     val status = when {
         !online -> "Offline" to "This phone can't reach Fytorium. $importOffline"
@@ -295,7 +298,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     row.cultivar?.let { Text("Cultivar: $it") }
     potLine(row)?.let { Text(it) }
     for (line in careLines(row)) Text(line)
-    Text(photoLine(row), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    photoLine(row)?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 @Composable private fun SpeciesSearchArea(row: ImportRow, state: PlantaState, imageApi: ApiClient?, enabled: Boolean, onConfirm: (Long, String?) -> Unit, onSearch: (String) -> Unit) {

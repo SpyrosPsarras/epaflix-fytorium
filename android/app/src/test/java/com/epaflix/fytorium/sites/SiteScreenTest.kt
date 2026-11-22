@@ -204,6 +204,31 @@ class SiteScreenTest {
         compose.onNodeWithText("Delete site").assertIsNotEnabled()
     }
 
+    // Opus W5b-opus-1: a refused name comes into view, and typing clears its refusal.
+    @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun aRefusedNameComesIntoViewAndClearsOnTyping() {
+        val state = mutableStateOf(SiteState(loaded = true))
+        compose.setContent { FytoriumTheme { SitesScreen(state.value, onClearField = { key -> state.value = state.value.copy(errors = state.value.errors - key) },
+            onSave = { state.value = state.value.copy(errors = mapOf("name" to "You already have a site called Kitchen.")); false }) } }
+        compose.onNodeWithContentDescription("Create site").performClick()
+        compose.onNodeWithText("Name").performTextInput("kitchen")
+        compose.onNodeWithText("Save site").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("You already have a site called Kitchen.").assertIsDisplayed()
+        compose.onNodeWithText("Name").performTextReplacement("Kitchen two")
+        compose.onNodeWithText("You already have a site called Kitchen.").assertDoesNotExist()
+    }
+    // Opus W5b-opus-4: a delete refused because a plant arrived reloads the page.
+    @Test fun aRefusedDeleteReloadsThePage() {
+        var pulls = 0
+        compose.setContent { FytoriumTheme { SitesScreen(SiteState(listOf(empty), loaded = true), onDelete = { false }, onPull = { pulls++ }) } }
+        openSite("Synthetic shelf")
+        compose.onNodeWithContentDescription("More options").performClick()
+        compose.onNodeWithText("Delete site").performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitUntil(5_000) { pulls == 1 }
+    }
+
     @Test fun aNewSiteDraftSurvivesRecreation() = siteDraftSurvivesRecreation(edit = false)
     @Test fun anExistingSiteDraftSurvivesRecreation() = siteDraftSurvivesRecreation(edit = true)
 

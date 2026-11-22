@@ -158,6 +158,28 @@ class MembersScreenTest {
         compose.onNode(isDialog()).assertDoesNotExist()
     }
 
+    // Opus W5b-opus-2: ticking the first plant moves no row; Opus W5b-opus-7: the expiry date stays on one line.
+    @Test fun tickingTheFirstPlantMovesNoRow() {
+        compose.setContent { FytoriumTheme { MembersScreen(loaded, care) } }
+        compose.onNodeWithText("Invite someone").performClick()
+        compose.onNode(hasText("Sitter", substring = true) and isSelectable()).performClick()
+        val twinRow = compose.onNode(hasText("Synthetic fern") and hasText("Synthetic office") and isToggleable())
+        val before = twinRow.performScrollTo().fetchSemanticsNode().boundsInRoot
+        compose.onNode(hasText("Synthetic fern") and hasText("Synthetic bathroom") and isToggleable()).performClick()
+        assertEquals(before, twinRow.fetchSemanticsNode().boundsInRoot)
+        assertFalse(expiryDate(expires).contains(' '))
+    }
+    // Opus W5b-opus-3: Back from a member page returns to the same place in a long list.
+    @Test fun backFromAMemberKeepsTheListPlace() {
+        val people = listOf(owner) + List(12) { sitter.copy(id = "member-$it", name = "Synthetic sitter %02d".format(it)) }
+        compose.setContent { FytoriumTheme { MembersScreen(loaded.copy(members = people), care) } }
+        val row = compose.onNodeWithText("Synthetic sitter 11").performScrollTo()
+        val before = row.fetchSemanticsNode().boundsInRoot
+        row.performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        assertEquals(before, compose.onNodeWithText("Synthetic sitter 11").fetchSemanticsNode().boundsInRoot)
+    }
+
     // W5b-P12 to P14: saves, removals and revokes name who or what changed in a receipt.
     @Test fun changesNameTheirTargetInAReceipt() {
         val receipts = mutableListOf<String>()

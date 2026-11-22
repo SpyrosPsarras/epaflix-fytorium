@@ -111,6 +111,26 @@ class CustomTasksScreenTest {
         compose.runOnIdle { assertEquals("Your new task for Synthetic fernando is not saved yet.", dirty()) }
     }
 
+    // Opus W5b-opus-3: Back from a task returns to the same place in a long list.
+    @Test fun backFromATaskKeepsTheListPlace() {
+        val many = List(14) { tasks[0].copy(id = "task-$it", name = "Synthetic task %02d".format(it)) }
+        compose.setContent { FytoriumTheme { CustomTasksScreen(loaded.copy(tasks = many), care) } }
+        val row = compose.onNodeWithText("Synthetic task 13").performScrollTo()
+        val before = row.fetchSemanticsNode().boundsInRoot
+        row.performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        assertEquals(before, compose.onNodeWithText("Synthetic task 13").fetchSemanticsNode().boundsInRoot)
+    }
+    // Opus W5b-opus-6: Save task stays where it is while the interval is typed.
+    @Test fun typingTheIntervalMovesNothing() {
+        compose.setContent { FytoriumTheme { CustomTasksScreen(loaded, care) } }
+        compose.onNodeWithText("Add task").performClick()
+        compose.onNodeWithText("Synthetic fernando").performClick()
+        val before = compose.onNodeWithText("Save task").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithText("Repeat every").performTextInput("7")
+        assertEquals(before, compose.onNodeWithText("Save task").fetchSemanticsNode().boundsInRoot)
+    }
+
     // W5b-P17, P19: edits keep their target; drafts survive recreation and ask before leaving; delete names the task and its target.
     @Test fun editingKeepsItsTargetAndDraftsAskBeforeLeaving() {
         val restoration = StateRestorationTester(compose)

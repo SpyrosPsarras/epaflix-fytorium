@@ -134,6 +134,21 @@ class PlantaRepositoryTest {
             assertFalse(repo.state.value.incompleteSites)
         }
     }
+    // Opus W5b-opus-9: deciding one card keeps another card's open search results.
+    @Test fun decidingOneCardKeepsAnothersSearch() {
+        MockWebServer().use { server ->
+            server.start()
+            val repo = repository(server)
+            val other = JSONObject(importFixture).put("id", "staging-two")
+            server.enqueue(MockResponse().setBody("[$importFixture,$other]")); repo.refresh()
+            server.enqueue(MockResponse().setBody("""{"search_id":"search-one","candidates":[$importCandidate]}""")); repo.search("staging-two", "Testoria")
+            assertEquals("staging-two", repo.state.value.searchRow)
+            server.enqueue(MockResponse().setBody("{}")); server.enqueue(MockResponse().setBody("[$importFixture,$other]"))
+            assertTrue(repo.skip("staging-one"))
+            assertEquals("staging-two", repo.state.value.searchRow)
+            assertNotNull(repo.state.value.search)
+        }
+    }
     @Test fun lostResponseAndUpdateRequiredPreserveRowsAndBlockWrites() {
         for (status in listOf(426, 503)) MockWebServer().use { server ->
             server.start()

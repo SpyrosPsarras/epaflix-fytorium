@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.KeyboardType
@@ -158,6 +159,8 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
     var discarding by rememberSaveable { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var pulling by remember { mutableStateOf(false) }
+    // The list keeps its place while a task is open (Opus W5b-opus-3).
+    val listScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     val scope = rememberCoroutineScope()
     val ready = (state.loaded || fixed != null) && !state.busy && !state.blocked && !state.updateRequired && !submitting
     fun write(action: () -> Unit) { if (!online) onReceipt(tasksOffline) else if (ready) action() }
@@ -231,8 +234,10 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = intervalError != null,
                     supportingText = { Text(intervalError ?: "1 to 365 days") }, modifier = Modifier.fillMaxWidth())
                 val today = care.today?.today
-                if (task == null && days != null && today != null) Text("First due " + shortDate(java.time.LocalDate.parse(today).plusDays(days.toLong()).toString()) +
-                    if (shownTarget?.kind == "site") " for the plants there now." else "")
+                // The line keeps its space before a valid interval is typed, so Save never moves (Opus W5b-opus-6).
+                if (task == null && today != null) Text("First due " + shortDate(java.time.LocalDate.parse(today).plusDays((days ?: 1).toLong()).toString()) +
+                    (if (shownTarget?.kind == "site") " for the plants there now." else ""),
+                    Modifier.alpha(if (days != null) 1f else 0f).then(if (days != null) Modifier else Modifier.clearAndSetSemantics {}))
                 Button(onClick = {
                     checked = true
                     val ok = shownTarget != null && validName(name) && days != null
@@ -253,7 +258,7 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
                     .offReason(tasksOffline.takeIf { !online })) { Text("Delete task") }
             }
             else -> PullToRefreshBox(isRefreshing = pulling, onRefresh = { pulling = true; scope.launch { try { onPull() } finally { pulling = false } } }, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.fillMaxSize().verticalScroll(listScroll).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Button(onClick = { write { onClear(); page = "pick" } }, colors = offButtonColors(!online), modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)
                         .offReason(tasksOffline.takeIf { !online })) { Text("Add task") }
                     if (state.loaded && state.tasks.isEmpty()) Text("No custom tasks yet. Add one for a plant or for every plant on a site.", Modifier.padding(16.dp))

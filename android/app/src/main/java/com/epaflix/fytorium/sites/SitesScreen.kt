@@ -2,6 +2,8 @@ package com.epaflix.fytorium.sites
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -76,7 +78,7 @@ internal const val sitesOffline = "Changing sites needs a connection."
         thumbnails = thumbnails, onOpenPlant = onOpenPlant, onReceipt = onReceipt, createdId = { repository.state.value.created },
         onRefresh = { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } },
         onPull = { withContext(Dispatchers.IO) { repository.refresh() }; onRefreshPlants() },
-        onClear = repository::clearErrors,
+        onClear = repository::clearErrors, onClearField = repository::clearError,
         onSave = { withContext(Dispatchers.IO) { repository.save(it, onCreated) } },
         onDelete = { withContext(Dispatchers.IO) { repository.delete(it) } })
 }
@@ -86,7 +88,7 @@ internal const val sitesOffline = "Changing sites needs a connection."
     onClear: () -> Unit = {}, onSave: suspend (Site) -> Boolean = { false }, onDelete: suspend (String) -> Boolean = { false }, creating: Boolean = false,
     onFormDirty: (() -> String?) -> Unit = {}, care: CareState? = null, startSite: String? = null, thumbnails: Thumbnails? = null,
     onOpenPlant: (String) -> Unit = {}, onReceipt: (String) -> Unit = {}, onPull: suspend () -> Unit = { onRefresh() },
-    createdId: () -> String? = { state.created }) {
+    createdId: () -> String? = { state.created }, onClearField: (String) -> Unit = {}) {
     var editor by rememberSaveable { mutableStateOf<Site?>(if (creating) Site() else null) }
     // "list" or the id of the site whose page shows.
     var shown by rememberSaveable { mutableStateOf(startSite ?: "list") }
@@ -148,7 +150,7 @@ internal const val sitesOffline = "Changing sites needs a connection."
     }) { padding -> Box(Modifier.fillMaxSize().padding(padding)) {
         if (editor != null) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             forms.SaveableStateProvider("editor") {
-                SiteForm(editor!!, state.errors, writable, online, onCancel = ::leaveEditor, onDirty = { changed = it }, onOffline = { onReceipt(sitesOffline) }, onSave = { input ->
+                SiteForm(editor!!, state.errors, writable, online, onClearField = onClearField, onCancel = ::leaveEditor, onDirty = { changed = it }, onOffline = { onReceipt(sitesOffline) }, onSave = { input ->
                     scope.launch {
                         submitting = true
                         try {
@@ -197,7 +199,8 @@ internal const val sitesOffline = "Changing sites needs a connection."
                 TextButton(onClick = {
                     write { scope.launch {
                         submitting = true
-                        try { if (onDelete(doomed.id!!)) { confirming = null; shown = "list"; onReceipt("Deleted ${nameOf(doomed)}") } } finally { submitting = false }
+                        // A refusal means a plant arrived, so the page reloads its count and plants (Opus W5b-opus-4).
+                        try { if (onDelete(doomed.id!!)) { confirming = null; shown = "list"; onReceipt("Deleted ${nameOf(doomed)}") } else onPull() } finally { submitting = false }
                     } }
                 }, enabled = !submitting && !state.busy, colors = offTextColors(!online), modifier = Modifier.offReason(sitesOffline.takeIf { !online })) { Text("Delete") }
             },
@@ -241,7 +244,7 @@ private fun bounds(min: String?, max: String?): String? = when {
     }
 }
 
-@Composable private fun SiteForm(initial: Site, errors: Map<String, String>, enabled: Boolean, online: Boolean, onCancel: () -> Unit, onDirty: (() -> Boolean) -> Unit,
+@Composable private fun SiteForm(initial: Site, errors: Map<String, String>, enabled: Boolean, online: Boolean, onClearField: (String) -> Unit, onCancel: () -> Unit, onDirty: (() -> Boolean) -> Unit,
     onOffline: () -> Unit, onSave: (Site) -> Unit) {
     val fields = savedFields(initial.id) { initial.fields }
     var growLight by rememberSaveable(initial.id) { mutableStateOf(initial.growLight) }
@@ -253,8 +256,12 @@ private fun bounds(min: String?, max: String?): String? = when {
     SideEffect { onDirty { input() != initial } }
     fun field(key: String, value: String) { fields[key] = value }
     // shortcut: copies readSite's longest name and temperature messages to keep their space; upgrade when /api/sites sends its refusal texts or the server wording changes.
-    OutlinedTextField(fields["name"].orEmpty(), { field("name", it) }, label = { Text("Name") }, enabled = enabled, isError = errors.containsKey("name"),
-        supportingText = { PlantError(errors["name"], keep = "Enter a site name.") }, modifier = Modifier.fillMaxWidth())
+    // A refused name scrolls into view, and typing clears its refusal (Opus W5b-opus-1).
+    val nameView = remember { BringIntoViewRequester() }
+    LaunchedEffect(errors["name"]) { if (errors["name"] != null) nameView.bringIntoView() }
+    OutlinedTextField(fields["name"].orEmpty(), { field("name", it); onClearField("name") }, label = { Text("Name") }, enabled = enabled, isError = errors.containsKey("name"),
+        supportingText = { PlantError(errors["name"], keep = "Enter a site name.") },
+        modifier = Modifier.fillMaxWidth().bringIntoViewRequester(nameView))
     for ((key, choice) in siteChoices) {
         com.epaflix.fytorium.plants.Choice(choice.first, fields[key].orEmpty(), choice.second.associateWith { choiceLabel(it) }, enabled) { field(key, it) }
         PlantError(errors[key])

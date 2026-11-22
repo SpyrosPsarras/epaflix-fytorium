@@ -103,7 +103,8 @@ class PlantaRepository(private val api: ApiClient, private val allowed: () -> Bo
             request("$endpoint/$rowId", "PUT", body)
             // Eligibility is household-wide. Reload it rather than computing it after a row update.
             load()
-            if (allowed()) mutable.value = state.value.copy(searchRow = null, search = null, complete = false)
+            // Another card's open search results stay (Opus W5b-opus-9).
+            if (allowed()) mutable.value = state.value.let { it.copy(searchRow = it.searchRow.takeIf { row -> row != rowId }, search = it.search.takeIf { _ -> it.searchRow != rowId }, complete = false) }
         }
     }
     @Synchronized fun search(rowId: String, query: String): Boolean {

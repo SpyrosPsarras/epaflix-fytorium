@@ -149,6 +149,15 @@ class PlantaScreenTest {
         compose.onNode(hasContentDescription("No Planta photo") and hasAnyAncestor(hasTestTag("import:${row.id}")), useUnmergedTree = true).assertExists()
         compose.onNode(hasText("No Planta photo") and hasAnyAncestor(hasTestTag("import:${row.id}")), useUnmergedTree = true).assertDoesNotExist()
     }
+    // Opus W5b-opus-5: Go hands focus back; Opus W5b-opus-8: an open card without a photo says so once.
+    @Test fun goReleasesFocusAndNoPhotoIsSaidOnce() {
+        compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = listOf(row.copy(hasCover = false, coverStatus = "none"))), onFetch = { false }) } }
+        compose.onAllNodesWithText("No Planta photo").assertCountEquals(1)
+        compose.onNodeWithText("Fetch again with a new code").performScrollTo().performClick()
+        compose.onNodeWithText("One-time app code").performClick().performTextInput("synthetic-go")
+        compose.onNodeWithText("One-time app code").performImeAction()
+        compose.onNodeWithText("One-time app code").assertIsNotFocused()
+    }
     @Test fun theBarNamesScrollToTheirCards() {
         val rows = List(3) { row.copy(id = "review-$it", name = "Synthetic review $it") }
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = rows)) } }
