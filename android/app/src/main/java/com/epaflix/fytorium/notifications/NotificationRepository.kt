@@ -4,6 +4,7 @@ import com.epaflix.fytorium.ApiClient
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -45,11 +46,21 @@ internal object NotificationRepositories {
 }
 
 // W5a-P32: the last settings, devices and time zone stay in the member's cache for offline reading.
-class NotificationRepository(private val api: ApiClient, private var allowed: () -> Boolean, private var connected: () -> Boolean,
-    private var cached: (String) -> Pair<String, Long>? = { null }, private var keep: (String, String) -> Long? = { _, _ -> null }) {
+class NotificationRepository(api: ApiClient, allowed: () -> Boolean, connected: () -> Boolean,
+    cached: (String) -> Pair<String, Long>? = { null }, keep: (String, String) -> Long? = { _, _ -> null }) {
+    private val api = api
+    @Volatile private var allowed = allowed
+    @Volatile private var connected = connected
+    @Volatile private var cached = cached
+    @Volatile private var keep = keep
     // A reopened screen hands over its own view of the member, connection and cache, so the shared repository never reads a closed screen's state.
-    @Synchronized fun takeUpdateRequired(): Boolean = state.value.updateRequired.also { if (it) mutable.value = state.value.copy(updateRequired = false, blocked = false) }
-    @Synchronized fun bind(allowed: () -> Boolean, connected: () -> Boolean, cached: (String) -> Pair<String, Long>?, keep: (String, String) -> Long?) {
+    // Neither takes the repository's lock, which a save holds through its network call, so the UI thread never waits on one.
+    fun takeUpdateRequired(): Boolean {
+        var took = false
+        mutable.update { if (it.updateRequired) { took = true; it.copy(updateRequired = false, blocked = false) } else it }
+        return took
+    }
+    fun bind(allowed: () -> Boolean, connected: () -> Boolean, cached: (String) -> Pair<String, Long>?, keep: (String, String) -> Long?) {
         this.allowed = allowed; this.connected = connected; this.cached = cached; this.keep = keep
     }
     private val mutable = MutableStateFlow(NotificationState())

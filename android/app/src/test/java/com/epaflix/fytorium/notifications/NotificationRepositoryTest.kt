@@ -14,6 +14,26 @@ class NotificationRepositoryTest {
     // W5a-P32 (S4): a confirmed save and removal reach the cache, so an offline reopen shows them.
     // W5a-P30 (S1): a reopened screen gets the same member's repository, so it continues from a write in flight.
     // W5a-P13 (S17): a 426 reaches the app-wide stop once, and a later successful read leaves no stop behind.
+    // W5a (S19): reopening the screen during a slow save never waits for that save.
+    @Test fun bindingAndTheUpdateCheckDoNotWaitForASave() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val repository = NotificationRepository(api, { true }, { true })
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            assertTrue(repository.refresh())
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}""")
+                .setBodyDelay(3, java.util.concurrent.TimeUnit.SECONDS))
+            val save = Thread { repository.update { it.copy(reminders = true) } }.apply { start() }
+            server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)
+            val started = System.nanoTime()
+            repository.bind({ true }, { true }, { null }, { _, _ -> null })
+            repository.takeUpdateRequired()
+            assertTrue("The UI thread waited for the save", System.nanoTime() - started < 1_000_000_000L)
+            save.join()
+        }
+    }
     @Test fun aRefusedVersionIsReportedOnceAndClearsOnRecovery() {
         MockWebServer().use { server ->
             server.start()
@@ -23,6 +43,10 @@ class NotificationRepositoryTest {
             assertFalse(repository.refresh())
             assertTrue(repository.takeUpdateRequired())
             assertFalse("A remount replayed the old stop", repository.takeUpdateRequired())
+            // A second 426 left unreported is cleared by the next successful read.
+            server.enqueue(MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}"""))
+            assertFalse(repository.refresh())
+            assertTrue(repository.state.value.updateRequired)
             server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
             server.enqueue(MockResponse().setBody("[]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
             assertTrue(repository.refresh())
