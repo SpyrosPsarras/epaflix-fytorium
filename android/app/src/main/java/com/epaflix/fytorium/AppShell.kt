@@ -60,6 +60,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val todayTask = careState?.currentTask(openedKey)
     val todayScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     val upcomingScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
+    val moreScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     var tab by rememberSaveable { mutableStateOf("Today") }
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
@@ -282,7 +283,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                     "unmatched" -> unmatched = true
                     "about" -> about = true
                 }
-            }, onLogout = onLogout, modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding))
+            }, onLogout = onLogout, modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), scroll = moreScroll)
             return@Scaffold
         }
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).verticalScroll(rememberScrollState()).padding(24.dp),

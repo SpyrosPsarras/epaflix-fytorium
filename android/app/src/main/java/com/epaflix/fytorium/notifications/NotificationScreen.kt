@@ -243,12 +243,18 @@ internal fun clock(time: String, is24: Boolean): String {
         val parts = shown.time.split(':')
         val time = rememberTimePickerState(initialHour = parts[0].toInt(), initialMinute = parts[1].toInt(), is24Hour = is24)
         val short = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 480
+        // A short window has room for neither the dial nor typed fields with their keyboard, so it offers two menus.
+        var hour by rememberSaveable { mutableIntStateOf(parts[0].toInt()) }
+        var minute by rememberSaveable { mutableIntStateOf(parts[1].toInt()) }
         AlertDialog(onDismissRequest = { pickingTime = false }, title = { DialogTitle("Reminder time") },
-            // In landscape the dial sits beside the fields; typed fields would bring a keyboard over Set and Cancel.
-            text = { DialogBody { TimePicker(time, layoutType = if (short) TimePickerLayoutType.Horizontal else TimePickerLayoutType.Vertical) } },
+            text = { DialogBody { if (short) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TimeMenu("Hour", hour, (0..23).map { clock("%02d:00".format(java.util.Locale.ROOT, it), is24).let { label -> if (is24) label.substringBefore(':') else label.replace(":00", "") } },
+                        Modifier.weight(1f)) { hour = it }
+                    TimeMenu("Minute", minute, (0..59).map { "%02d".format(java.util.Locale.ROOT, it) }, Modifier.weight(1f)) { minute = it }
+                } else TimePicker(time) } },
             confirmButton = { TextButton(onClick = {
                 pickingTime = false
-                val chosen = "%02d:%02d".format(java.util.Locale.ROOT, time.hour, time.minute)
+                val chosen = if (short) "%02d:%02d".format(java.util.Locale.ROOT, hour, minute) else "%02d:%02d".format(java.util.Locale.ROOT, time.hour, time.minute)
                 change("time", "Reminder time", chosen) { s -> s.copy(time = chosen) }
             }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Set") } },
             dismissButton = { TextButton(onClick = { pickingTime = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") } })
@@ -259,6 +265,15 @@ internal fun clock(time: String, is24: Boolean): String {
             text = { DialogBody { Text("It stops getting Fytorium notifications. To get them again, turn notifications on in that browser.") } },
             confirmButton = { TextButton(onClick = { removing = null; enqueue { if (onRemove(device)) onReceipt("Removed $name") } }) { Text("Remove") } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })
+    }
+}
+@Composable private fun TimeMenu(label: String, selected: Int, options: List<String>, modifier: Modifier, choose: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("$label: ${options[selected]}") }
+        DropdownMenu(open, { open = false }, modifier = Modifier.heightIn(max = 240.dp)) {
+            options.forEachIndexed { index, option -> DropdownMenuItem(text = { Text(option) }, onClick = { choose(index); open = false }) }
+        }
     }
 }
 @Composable private fun SettingSwitch(title: String, description: String, checked: Boolean, enabled: Boolean, change: (Boolean) -> Unit) {

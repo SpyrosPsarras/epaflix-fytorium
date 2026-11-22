@@ -33,6 +33,16 @@ class MoreScreenTest {
         compose.onNodeWithText("Import from Planta").assertDoesNotExist()
     }
 
+    // Back from a row's page returns to the same place in More (Astra W5a r2).
+    @Test fun backFromAboutKeepsThePlaceInMore() {
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("synthetic", Role.owner), names = names)) } }
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("About").performScrollTo().performClick()
+        compose.onNodeWithText("Copy diagnostics").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("About").assertIsDisplayed()
+    }
+
     // W5a-P3: a sitter's More says whose plants they look after, and keeps only Notifications, About and Log out.
     @Test fun aSitterSeesWhosePlantsTheyLookAfter() {
         val plants = mutableStateOf(listOf(plant("one"), plant("two")))

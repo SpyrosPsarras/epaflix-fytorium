@@ -23,12 +23,14 @@ private data class MoreRow(val key: String, val title: String, val description: 
 internal fun roleName(role: Role) = when (role) { Role.owner -> "Owner"; Role.family -> "Family"; Role.sitter -> "Sitter" }
 
 // W5a-P1 to P5: one list of rows under a header that says who is logged in; Log out asks first.
-@Composable internal fun MoreRoot(state: CareState, online: Boolean, busy: Boolean, open: (String) -> Unit, onLogout: () -> Unit, modifier: Modifier = Modifier) {
+@Composable internal fun MoreRoot(state: CareState, online: Boolean, busy: Boolean, open: (String) -> Unit, onLogout: () -> Unit, modifier: Modifier = Modifier,
+    // Held by the shell, so Back from a row's page returns to the same place in the list.
+    scroll: androidx.compose.foundation.ScrollState = rememberScrollState()) {
     // Before the first refresh names the member, the list holds only About and Log out.
     val member = state.member
     var confirming by rememberSaveable { mutableStateOf(false) }
     val owner = state.names.owner ?: "the owner"
-    Column(modifier.verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+    Column(modifier.verticalScroll(scroll).padding(vertical = 8.dp)) {
         if (member != null) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).semantics(mergeDescendants = true) {}) {
             state.names.member?.let { Text(it, style = MaterialTheme.typography.titleLarge) }
             Text(roleName(member.role), color = MaterialTheme.colorScheme.onSurfaceVariant)

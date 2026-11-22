@@ -104,11 +104,19 @@ class NotificationScreenTest {
     @Config(sdk = [35], qualifiers = "w800dp-h360dp-land-mdpi")
     @Test fun theReminderTimeFitsLandscapeWithoutAKeyboard() {
         org.robolectric.RuntimeEnvironment.setFontScale(1.3f)
-        compose.setContent { FytoriumTheme { Surface(Modifier.fillMaxSize()) { NotificationScreen(NotificationState(loaded = true)) } } }
+        var saved: String? = null
+        compose.setContent { FytoriumTheme { Surface(Modifier.fillMaxSize()) { NotificationScreen(NotificationState(loaded = true),
+            onUpdate = { change -> saved = change(NotificationSettings()).time; true }) } } }
         compose.onNodeWithText("Reminder time").performScrollTo().performClick()
         compose.onNodeWithText("Set").assertIsDisplayed()
         compose.onNodeWithText("Cancel").assertIsDisplayed()
         compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        // Every hour can be chosen from a menu that fits the short window.
+        compose.onNodeWithText("Hour", substring = true).performClick()
+        compose.onNode((hasText("07") or hasText("7 AM")) and hasAnyAncestor(isPopup())).performScrollTo().performClick()
+        compose.onNodeWithText("Set").performClick()
+        compose.waitUntil(5_000) { saved != null }
+        assertEquals("07:00", saved)
     }
 
     @Test fun notificationControlsDoNotDependOnCareFailuresOrBackgroundReads() {
