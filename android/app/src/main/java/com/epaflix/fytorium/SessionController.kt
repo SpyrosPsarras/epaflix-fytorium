@@ -74,6 +74,9 @@ class SessionController(private val store: CredentialStore, private val api: Api
         work { withContext(Dispatchers.IO) { runCatching { api.logout() } } }
     }
 
+    // A 426 from any request reads the minimum again, so the stop names the version the server wants now.
+    fun recheck() = work { checkVersionNow() }
+
     fun checkAgain(checkedAt: () -> String) = work(offline = "Checking needs a connection.") {
         checkVersionNow()
         if (uiState.value.updateRequired) uiState.update { it.copy(message = "Still needs ${it.minAppVersion ?: "a newer Fytorium"} or newer. Checked ${checkedAt()}.") }

@@ -76,7 +76,9 @@ class MoreScreenTest {
         assertEquals(button, compose.onNodeWithText("Logging in…").fetchSemanticsNode().boundsInRoot)
         compose.runOnIdle { busy.value = false; online.value = false }
         compose.onNodeWithText("You're logged out. Logging in needs a connection.").assertIsDisplayed()
-        compose.onNodeWithText("Log in").assertIsNotEnabled()
+        // TalkBack can still reach it; a tap explains through the line and opens nothing.
+        compose.onNodeWithText("Log in").assertIsEnabled().assert(hasStateDescription("Logging in needs a connection.")).performClick()
+        compose.runOnIdle { assertEquals(1, logins) }
         assertEquals("Login was cancelled.", loginError("access_denied"))
         assertEquals("Fytorium couldn't finish the login. Try again.", loginError("server_error"))
         assertEquals("Login didn't work. Try again.", loginError("invalid"))

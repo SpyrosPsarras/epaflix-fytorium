@@ -79,7 +79,8 @@ internal fun roleName(role: Role) = when (role) { Role.owner -> "Owner"; Role.fa
 @Composable internal fun LoginPage(busy: Boolean, message: String?, online: Boolean, onLogin: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Plant care for your household.")
-        Button(onClick = onLogin, enabled = !busy && online, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = "Logging in needs a connection." }) {
+        // Offline it stays a button TalkBack can reach; the line under it says why it does nothing.
+        Button(onClick = { if (online) onLogin() }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = "Logging in needs a connection." }) {
             // Both labels take the space, so the button keeps its size while the login finishes.
             Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
                 Text("Log in", Modifier.alpha(if (busy) 0f else 1f).then(if (busy) Modifier.clearAndSetSemantics {} else Modifier))

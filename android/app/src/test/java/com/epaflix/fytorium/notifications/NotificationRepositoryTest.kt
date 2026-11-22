@@ -11,6 +11,30 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class NotificationRepositoryTest {
+    // W5a-P32 (S4): a confirmed save and removal reach the cache, so an offline reopen shows them.
+    @Test fun confirmedChangesReachTheOfflineCopy() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val store = mutableMapOf<String, String>()
+            fun repository(online: Boolean) = NotificationRepository(api, { true }, { online }, { key -> store[key]?.let { it to 1L } }, { key, json -> store[key] = json; 1L })
+            val browser = """{"id":"00000000-0000-4000-8000-000000000001","label":"Synthetic browser","transport":"web","enabled":true,"current_device":false,"last_success_at":null}"""
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[$browser]"))
+            server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            val online = repository(true)
+            assertTrue(online.refresh())
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"07:30","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            assertTrue(online.update { it.copy(time = "07:30", reminders = true) })
+            server.enqueue(MockResponse().setResponseCode(204)); server.enqueue(MockResponse().setBody("[]"))
+            assertTrue(online.remove(online.state.value.devices.single()))
+            val offline = repository(false)
+            assertFalse(offline.refresh())
+            assertEquals(NotificationSettings("07:30", true, false, false), offline.state.value.settings)
+            assertEquals(emptyList<PushDevice>(), offline.state.value.devices)
+            assertTrue(offline.state.value.loaded)
+        }
+    }
     @Test fun settingsAreServerOwnedAndOwnRefreshRecoversAfterFailure() {
         MockWebServer().use { server ->
             server.start()

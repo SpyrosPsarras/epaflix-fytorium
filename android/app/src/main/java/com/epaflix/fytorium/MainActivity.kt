@@ -11,6 +11,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ class MainActivity : ComponentActivity() {
             val state by session.state.collectAsState()
             val careState by app.repository.state.collectAsState()
             val online by care.online.collectAsState()
+            LaunchedEffect(careState.updateRequired) { if (careState.updateRequired) session.recheck() }
             FytoriumTheme {
                 Box(Modifier.fillMaxSize().imePadding()) {
                     AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,

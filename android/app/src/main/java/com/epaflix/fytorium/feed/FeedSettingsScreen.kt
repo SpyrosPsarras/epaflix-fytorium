@@ -40,7 +40,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
 
 // W5a-P14 to P21, P30 to P33: household location first, then the cards on Today; switches save on change.
 @Composable fun WeatherFeedRoute(feed: FeedRepository, care: CareState?, online: Boolean, onBack: () -> Unit,
-                                 onReceipt: (String) -> Unit = {}, onFormDirty: (() -> String?) -> Unit = {}, onUpdateRequired: () -> Unit = {}) {
+                                 onReceipt: (String) -> Unit = {}, onFormDirty: (() -> String?) -> Unit = {}, onUpdateRequired: () -> Unit = {}, answers: Int = 0) {
     val state by feed.state.collectAsState()
     val scope = rememberCoroutineScope()
     // W5a-P31: reload on open, on resume and on reconnect; W5a-P13: a 426 shows the full stop.
@@ -48,6 +48,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     var resumed by remember(feed) { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleResumeEffect(feed) { if (resumed) scope.launch(Dispatchers.IO) { feed.refresh(feed.state.value.member); feed.loadLocation() }; resumed = true; onPauseOrDispose {} }
     LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
+    // A read that failed loads again once Fytorium answers another request.
+    LaunchedEffect(answers) { feed.state.value.takeIf { it.unavailable || it.readError != null }?.let { withContext(Dispatchers.IO) { feed.refresh(it.member); feed.loadLocation() } } }
     WeatherFeedScreen(state, care, online, onBack, onReceipt, onFormDirty,
         onRefresh = { scope.launch(Dispatchers.IO) { feed.refresh(state.member); feed.loadLocation() } },
         onSearch = { withContext(Dispatchers.IO) { feed.searchPlaces(it) } },
@@ -77,36 +79,49 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     var fieldErrors by rememberSaveable { mutableStateOf(mapOf<String, String>()) }
     var removing by rememberSaveable { mutableStateOf(false) }
     var discarding by rememberSaveable { mutableStateOf(false) }
-    var pending by remember { mutableStateOf(mapOf<String, Boolean>()) }
+    val pending = remember { Pending<Boolean>() }
+    val enqueue = rememberWriteQueue()
     fun prefill() { latitude = state.location?.latitude?.toString().orEmpty(); longitude = state.location?.longitude?.toString().orEmpty(); label = state.location?.label.orEmpty() }
     fun typed() = formOpen && (latitude != state.location?.latitude?.toString().orEmpty() || longitude != state.location?.longitude?.toString().orEmpty() || label != state.location?.label.orEmpty())
     SideEffect { onFormDirty { "The location you typed is not saved.".takeIf { typed() } } }
     val currentDirty by rememberUpdatedState(onFormDirty)
     DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     androidx.activity.compose.BackHandler { if (typed()) discarding = true else onBack() }
+    // The last query sent, apart from the one whose results show, so Try again repeats it and an older reply never replaces a newer one.
+    var submitted by rememberSaveable { mutableStateOf<String?>(null) }
+    var searches by remember { mutableIntStateOf(0) }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
     fun search(text: String = query) {
         val q = text.trim()
         if (q.length < 2) { queryError = "Type at least 2 letters."; return }
         if (!online) return
-        queryError = null; searching = true
+        queryError = null; searching = true; submitted = q
+        keyboard?.hide(); focus.clearFocus()
+        val mine = ++searches
         scope.launch {
-            try { onSearch(q)?.let { results = it; asked = q } } finally { searching = false }
+            val found = onSearch(q)
+            if (mine == searches) { found?.let { results = it; asked = q }; searching = false }
         }
     }
+    var savingLocation by remember { mutableStateOf(false) }
     fun save(location: WeatherLocation?, receipt: String, after: () -> Unit) = scope.launch {
-        placeError = null
-        if (onSaveLocation(location)) { after(); onReceipt(receipt) }
-        else placeError = failure()
+        placeError = null; savingLocation = true
+        try {
+            if (onSaveLocation(location)) { after(); onReceipt(receipt) }
+            else placeError = failure()
+        } finally { savingLocation = false }
     }
     val status = when {
         !online || state.offline -> (care?.copy(lastUpdated = state.updatedAt)?.connectionLine(false) ?: "Offline") to care?.connectionNotice(false).orEmpty()
         state.placesUnavailable -> "Place search isn't responding" to "Place search isn't responding. Try again in a minute."
         state.unavailable -> "Fytorium isn't responding" to "Fytorium didn't answer. Try again when it responds."
+        state.readError != null -> "Settings didn't load" to state.readError
         else -> null
     }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = {
-                if (state.placesUnavailable) asked?.let { search(it) } ?: Unit else onRefresh()
+                if (state.placesUnavailable) submitted?.let { search(it) } ?: Unit else onRefresh()
                 Unit
             }.takeIf { status != null && online }) { Heading("Weather and feed") } },
             expandedHeight = barHeight(), navigationIcon = { IconButton(onClick = { if (typed()) discarding = true else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
@@ -128,46 +143,54 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                         } else Column {
                             found.forEach { place ->
                                 ListItem(headlineContent = { Text(place.name) }, supportingContent = { Text(place.where) },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = online && !state.saving, role = SemanticsRole.Button) {
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = online && !savingLocation, role = SemanticsRole.Button) {
                                         save(WeatherLocation(place.latitude, place.longitude, place.label), "Weather location set to ${place.label}") { results = null; query = ""; asked = null }
                                     })
                             }
                         }
                     }
-                    PlantError(placeError)
+                    if (!formOpen) PlantError(placeError)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!formOpen) TextButton(onClick = { prefill(); formOpen = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Enter coordinates instead") }
                         if (state.location != null) TextButton(onClick = { if (online) removing = true else onReceipt(changesOffline) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove location") }
                     }
                     if (formOpen) {
                         val keys = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next)
-                        OutlinedTextField(latitude, { latitude = it; fieldErrors = fieldErrors - "latitude" }, label = { Text("Latitude") }, singleLine = true, keyboardOptions = keys,
+                        // Offline or while it saves, the draft stays but can't change.
+                        val locked = !online || savingLocation
+                        OutlinedTextField(latitude, { latitude = it; fieldErrors = fieldErrors - "latitude" }, label = { Text("Latitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked,
                             supportingText = { Text(fieldErrors["latitude"] ?: "-90 to 90") }, isError = "latitude" in fieldErrors, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(longitude, { longitude = it; fieldErrors = fieldErrors - "longitude" }, label = { Text("Longitude") }, singleLine = true, keyboardOptions = keys,
+                        OutlinedTextField(longitude, { longitude = it; fieldErrors = fieldErrors - "longitude" }, label = { Text("Longitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked,
                             supportingText = { Text(fieldErrors["longitude"] ?: "-180 to 180") }, isError = "longitude" in fieldErrors, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(label, { label = it.take(200) }, label = { Text("Place name (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(label, { label = it.take(200) }, label = { Text("Place name (optional)") }, singleLine = true, readOnly = locked, modifier = Modifier.fillMaxWidth())
                         Button(onClick = {
                             if (!online) { onReceipt(changesOffline); return@Button }
                             val lat = latitude.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in -90.0..90.0 }
                             val lon = longitude.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in -180.0..180.0 }
                             fieldErrors = listOfNotNull(("latitude" to "Enter a number from -90 to 90.").takeIf { lat == null },
                                 ("longitude" to "Enter a number from -180 to 180.").takeIf { lon == null }).toMap()
-                            if (lat != null && lon != null) save(WeatherLocation(lat, lon, label.trim().ifEmpty { null }), "Weather location saved") { formOpen = false }
-                        }, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = changesOffline }) { Text("Save location") }
+                            // Only the draft that was saved closes; a value typed meanwhile keeps the form open.
+                            val draft = Triple(latitude, longitude, label)
+                            if (lat != null && lon != null) save(WeatherLocation(lat, lon, label.trim().ifEmpty { null }), "Weather location saved") {
+                                if (Triple(latitude, longitude, label) == draft) formOpen = false
+                            }
+                        }, enabled = !savingLocation, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = changesOffline }) { Text("Save location") }
+                        // A refusal shows under Save, in a line that keeps its space.
+                        PlantError(placeError, keep = "Fytorium refused this location.")
                     }
                     Text("Place searches and the household coordinates go to Open-Meteo for weather.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Heading("Cards on Today", MaterialTheme.typography.titleMedium, Modifier.padding(top = 8.dp))
                 Text("Only you see these choices.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 cardSwitches.forEach { (key, title, description) ->
-                    val on = pending[key] ?: state.settings?.get(key) == true
+                    val on = pending[key] ?: (state.settings?.get(key) == true)
                     val canChange = online && !state.offline && state.settings != null
                     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(on, role = SemanticsRole.Switch) { value ->
                             if (!canChange) { onReceipt(changesOffline); return@toggleable }
-                            pending = pending + (key to value)
-                            scope.launch {
+                            val ticket = pending.start(key, value)
+                            enqueue {
                                 val saved = onSetting(key, value)
-                                pending = pending - key
+                                pending.end(key, ticket)
                                 failure()?.takeIf { !saved }?.let { onReceipt("$title wasn't saved. $it") }
                             }
                         }.semantics { if (!canChange) stateDescription = changesOffline }, verticalAlignment = Alignment.CenterVertically) {

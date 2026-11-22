@@ -89,10 +89,13 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             synchronized(monitor) { if (epoch == generation) {
                 val at = System.currentTimeMillis()
                 mutable.value = mutable.value.copy(cards = next.cards, settings = next.settings, weather = next.weather, loaded = true,
-                    offline = !connected(), unavailable = false, message = null, updatedAt = at)
+                    offline = !connected(), unavailable = false, message = null, updatedAt = at, updateRequired = false, readError = null)
                 cache?.save(member.id, mapOf("feed" to JSONObject().put("feed", feed).put("weather", weather ?: JSONObject.NULL).toString()), at)
             } }
-        } catch (error: Exception) { failed(error, epoch) }
+        } catch (error: Exception) {
+            failed(error, epoch)
+            synchronized(monitor) { if (epoch == generation && error is FeedFailure && error.status < 500 && error.status != 426) mutable.value = mutable.value.copy(readError = error.message) }
+        }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
     fun loadLocation() = synchronized(workLock) load@ {
@@ -113,9 +116,20 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         state.value.member?.let { cache?.save(it.id, mapOf("location" to result.toString()), System.currentTimeMillis()) }
     }
     // W5a-P20, P30: one switch at a time, each sending the settings as they are when it starts.
-    fun saveSettings(settings: Map<String, Boolean>): Boolean = write("/api/feed/settings", "PUT", JSONObject(settings), null) {}
+    fun saveSettings(settings: Map<String, Boolean>): Boolean = write("/api/feed/settings", "PUT", JSONObject(settings), null, ::applySettings)
     fun saveSetting(key: String, value: Boolean): Boolean =
-        write(null, { read("/api/feed/settings", "PUT", JSONObject((state.value.settings ?: return@write null) + (key to value))) }) {}
+        write(null, { read("/api/feed/settings", "PUT", JSONObject((state.value.settings ?: return@write null) + (key to value))) }, ::applySettings)
+    // The saved settings count at once and in the cached feed, so the next switch starts from them even if the card reads fail.
+    private fun applySettings(result: JSONObject) {
+        val settings = feedLabels.keys.associateWith { result.getBoolean(it) }
+        mutable.value = mutable.value.copy(settings = settings)
+        val member = state.value.member ?: return
+        cache?.get(member.id, "feed")?.let { row -> runCatching {
+            val snapshot = JSONObject(row.json)
+            snapshot.getJSONObject("feed").put("settings", result)
+            cache?.save(member.id, mapOf("feed" to snapshot.toString()), row.refreshedAt)
+        } }
+    }
     fun saveLocation(location: WeatherLocation?): Boolean {
         if (state.value.member?.role != Role.owner) return false
         return write("/api/household/location", "PUT", JSONObject().put("location", location?.json() ?: JSONObject.NULL), null, ::applyLocation)

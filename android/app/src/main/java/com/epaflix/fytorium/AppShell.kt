@@ -170,6 +170,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0,
                     cached = { controller?.repository?.cachedJson(it) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json) }) }
             }
             return@Scaffold
@@ -208,7 +209,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 key(careState?.member) { com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it },
-                    onUpdateRequired = { controller?.repository?.requireUpdate() }) }
+                    onUpdateRequired = { controller?.repository?.requireUpdate() }, answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0) }
             }
             return@Scaffold
         }
@@ -291,7 +292,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
                 tab == "More" && about -> AboutPage(remember(about) { controller?.repository?.cachedJson("meta")?.first?.let { runCatching { org.json.JSONObject(it).optString("serverVersion").takeIf { v -> v.isNotBlank() } }.getOrNull() } }) {
                     onCopyDiagnostics()
                     // Android 13 and later confirm a copy themselves.
-                    if (android.os.Build.VERSION.SDK_INT < 33) controller?.repository?.showReceipt("Diagnostics copied")
+                    if (android.os.Build.VERSION.SDK_INT < 33) scope.launch { receipts.showSnackbar("Diagnostics copied"); receiptsGone++ }
                 }
                 else -> {
                     Text(when (tab) { "Today" -> "No tasks yet."; "Plants" -> "No plants yet."; else -> "No journal entries yet." })

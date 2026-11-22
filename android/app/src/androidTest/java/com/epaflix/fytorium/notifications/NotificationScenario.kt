@@ -62,7 +62,8 @@ fun runNotificationScenario(compose: AndroidComposeTestRule<ActivityScenarioRule
         }
         compose.selectTab("More")
         compose.waitForNode(hasText("Notifications") and hasClickAction()).performScrollTo().performClick()
-        compose.waitForNode(hasText("Enable notifications")).performScrollTo().performClick()
+        compose.waitForNode(hasText("Notifications are off for Fytorium on this phone."))
+        compose.waitForNode(hasText("Turn on") and hasClickAction()).performScrollTo().performClick()
         val allow = By.res("com.android.permissioncontroller", "permission_allow_button")
         assertTrue("A12 permission must follow the explained user action", device.wait(Until.hasObject(allow), 10_000))
         // Until the dialog's window takes input, a tap lands on the screen behind it, such as this screen's settings button.
@@ -78,8 +79,8 @@ fun runNotificationScenario(compose: AndroidComposeTestRule<ActivityScenarioRule
         // Clear only this member's current-day lease through the test-only fixture endpoint.
         // Delivery still uses the real worker, task summary and shared lease/retry policy.
         testRequest("/__test/push-worker", JSONObject(), "DELETE")
-        compose.waitForNode(hasText("Send test notification")).performScrollTo().assertIsEnabled().performClick()
-        compose.waitForNode(hasText("Test notification sent.")).performScrollTo().assertIsDisplayed()
+        compose.waitForNode(hasText("Send a test notification")).performScrollTo().performClick()
+        compose.waitForNode(hasText("Test sent to", substring = true))
         testRequest("/__test/push-worker", JSONObject())
         val connection = URL("http://fake-push:8080/fcm/received").openConnection() as HttpURLConnection
         val recorded = try { connection.connectTimeout = 10_000; connection.readTimeout = 10_000

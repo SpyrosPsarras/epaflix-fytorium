@@ -15,14 +15,17 @@ export async function searchPlaces(query: string, language: string): Promise<Pla
     if (!response.ok) throw new Error();
     payload = await response.json();
   } catch { error(503, unavailable); }
-  if (payload?.results === undefined) return [];
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) error(503, unavailable);
+  if (payload.results === undefined) return [];
   if (!Array.isArray(payload.results)) error(503, unavailable);
-  return payload.results.flatMap((row: Record<string, unknown>) => {
+  // A row without a name or with coordinates out of range means the answer is not what Open-Meteo documents.
+  return payload.results.slice(0, 10).map((row: Record<string, unknown>) => {
     const name = text(row?.name);
-    if (!name || typeof row.latitude !== 'number' || typeof row.longitude !== 'number') return [];
+    const { latitude, longitude } = row ?? {};
+    if (!name || typeof latitude !== 'number' || typeof longitude !== 'number' || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) error(503, unavailable);
     const region = text(row.admin1);
     const country = text(row.country);
     const label = [name, region !== name ? region : null, country].filter(Boolean).join(', ').slice(0, 200);
-    return [{ label, name, region, country, latitude: row.latitude, longitude: row.longitude }];
+    return { label, name, region, country, latitude, longitude };
   });
 }

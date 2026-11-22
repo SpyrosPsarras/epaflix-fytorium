@@ -41,13 +41,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable fun NotificationRoute(api: ApiClient, care: CareState, connected: () -> Boolean, onBack: () -> Unit,
-    onReceipt: (String) -> Unit = {}, onUpdateRequired: () -> Unit = {},
+    onReceipt: (String) -> Unit = {}, onUpdateRequired: () -> Unit = {}, answers: Int = 0,
     cached: (String) -> Pair<String, Long>? = { null }, keep: (String, String) -> Long? = { _, _ -> null }) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
     val repository = remember(api, member) { NotificationRepository(api,
-        { currentCare.member == member && member != null && !currentCare.updateRequired }, { currentConnected() }, cached, keep) }
+        { currentCare.member == member && member != null && !currentCare.updateRequired }, { currentConnected() },
+        // Bound to the member who started the read, so a late answer never lands in another member's cache.
+        { resource -> cached(resource).takeIf { currentCare.member == member } }, { resource, json -> if (currentCare.member == member) keep(resource, json) else null }) }
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -79,13 +81,15 @@ import kotlinx.coroutines.withContext
             }
         }, onBack = onBack, onRefresh = { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } },
         onUpdate = { change -> withContext(Dispatchers.IO) { repository.update(change) } },
-        onSwitch = { withContext(Dispatchers.IO) { repository.switch(it) } },
+        onSwitch = { device, enabled -> withContext(Dispatchers.IO) { repository.setDevice(device, enabled) } },
         onRemove = { withContext(Dispatchers.IO) { repository.remove(it) } },
         onTest = { withContext(Dispatchers.IO) { if (repository.test()) repository.state.value.sent else null } },
         failure = { repository.state.value.takeIf { !it.blocked }?.error })
     // W5a-P31: reload on open, on resume and on reconnect.
     val online = connected()
     LaunchedEffect(repository, online) { withContext(Dispatchers.IO) { repository.refresh() } }
+    // W5a-P31: a read that failed loads again once Fytorium answers another request.
+    LaunchedEffect(answers) { if (repository.state.value.blocked) withContext(Dispatchers.IO) { repository.refresh() } }
     var resumed by remember(repository) { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleResumeEffect(repository) { if (resumed) scope.launch(Dispatchers.IO) { repository.refresh() }; resumed = true; onPauseOrDispose {} }
 }
@@ -117,24 +121,32 @@ internal fun clock(time: String, is24: Boolean): String {
 @Composable fun NotificationScreen(state: NotificationState, online: Boolean = true, sitter: Boolean = false, care: CareState? = null,
     permissionAsked: Boolean = false, notificationsEnabled: Boolean = true, onSystemSettings: () -> Unit = {}, onEnable: () -> Unit = {}, onBack: () -> Unit = {},
     onRefresh: () -> Unit = {}, onReceipt: (String) -> Unit = {},
-    onUpdate: suspend ((NotificationSettings) -> NotificationSettings) -> Boolean = { false }, onSwitch: suspend (PushDevice) -> Boolean = { false },
+    onUpdate: suspend ((NotificationSettings) -> NotificationSettings) -> Boolean = { false }, onSwitch: suspend (PushDevice, Boolean) -> Boolean = { _, _ -> false },
     onRemove: suspend (PushDevice) -> Boolean = { false }, onTest: suspend () -> Int? = { null }, failure: () -> String? = { null }) {
     val context = LocalContext.current
     val is24 = remember { android.text.format.DateFormat.is24HourFormat(context) }
     val scope = rememberCoroutineScope()
-    var pending by remember { mutableStateOf<NotificationSettings?>(null) }
+    val pending = remember { Pending<Any>() }
+    val enqueue = rememberWriteQueue()
     var pickingTime by rememberSaveable { mutableStateOf(false) }
     var removing by rememberSaveable { mutableStateOf<String?>(null) }
-    val shown = pending ?: state.settings
+    val shown = state.settings.copy(time = pending["time"] as String? ?: state.settings.time, reminders = pending["reminders"] as Boolean? ?: state.settings.reminders,
+        weather = pending["weather"] as Boolean? ?: state.settings.weather, completions = pending["completions"] as Boolean? ?: state.settings.completions)
     val canChange = online && state.loaded && !state.blocked && !state.updateRequired
-    fun change(title: String, edit: (NotificationSettings) -> NotificationSettings) {
+    // W5a-P30: one queue in tap order; each control shows its own latest tap until that write ends.
+    fun change(field: String, title: String, value: Any, edit: (NotificationSettings) -> NotificationSettings) {
         if (!canChange) { onReceipt("Changing settings needs a connection."); return }
-        pending = edit(shown)
-        scope.launch {
+        val ticket = pending.start(field, value)
+        enqueue {
             val saved = onUpdate(edit)
-            pending = null
+            pending.end(field, ticket)
             failure()?.takeIf { !saved }?.let { onReceipt("$title wasn't saved. $it") }
         }
+    }
+    fun toggleDevice(device: PushDevice, enabled: Boolean) {
+        if (!canChange) { onReceipt("Changing settings needs a connection."); return }
+        val ticket = pending.start("device:" + device.id, enabled)
+        enqueue { onSwitch(device, enabled); pending.end("device:" + device.id, ticket) }
     }
     val status = when {
         !online -> (care?.copy(lastUpdated = state.updatedAt)?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. You can still see the last settings. Changing settings needs a connection."
@@ -160,7 +172,7 @@ internal fun clock(time: String, is24: Boolean): String {
                         OutlinedButton(onClick = {
                             when {
                                 !notificationsEnabled -> if (permissionAsked) onSystemSettings() else onEnable()
-                                current != null && !current.enabled -> if (canChange) scope.launch { onSwitch(current) } else onReceipt("Changing settings needs a connection.")
+                                current != null && !current.enabled -> toggleDevice(current, true)
                                 else -> onSystemSettings()
                             }
                         }, modifier = Modifier.heightIn(min = 48.dp)) { Text(button) }
@@ -168,7 +180,7 @@ internal fun clock(time: String, is24: Boolean): String {
                 }
                 Text("Send me", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp).semantics { heading() })
                 SettingSwitch("Daily reminder", "What needs care today. Nothing on days with no tasks.", shown.reminders, canChange) {
-                    change("Daily reminder") { s -> s.copy(reminders = it) } }
+                    change("reminders", "Daily reminder", it) { s -> s.copy(reminders = it) } }
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = SemanticsRole.Button) {
                         if (canChange) pickingTime = true else onReceipt("Changing settings needs a connection.") }
                     .semantics { if (!canChange) stateDescription = "Changing settings needs a connection." },
@@ -179,15 +191,15 @@ internal fun clock(time: String, is24: Boolean): String {
                 val phoneZone = java.time.ZoneId.systemDefault().id
                 state.timezone?.takeIf { it != phoneZone }?.let { Text("Times use $it time.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (!sitter) SettingSwitch("Weather alerts", "Weather warnings for outdoor plants", shown.weather, canChange) {
-                    change("Weather alerts") { s -> s.copy(weather = it) } }
+                    change("weather", "Weather alerts", it) { s -> s.copy(weather = it) } }
                 SettingSwitch("When someone else completes a task", "Care done by other members", shown.completions, canChange) {
-                    change("When someone else completes a task") { s -> s.copy(completions = it) } }
+                    change("completions", "When someone else completes a task", it) { s -> s.copy(completions = it) } }
                 val anyOn = state.devices.any { it.enabled }
                 TextButton(onClick = {
                     when {
                         !anyOn -> onReceipt("Turn on a device below first.")
                         !canChange -> onReceipt("Changing settings needs a connection.")
-                        else -> scope.launch {
+                        else -> enqueue {
                             onTest()?.let { sent -> onReceipt(when {
                                 sent == 0 -> "No device got the test. Try again later."
                                 !notificationsEnabled -> "Test sent, but notifications are off for Fytorium on this phone"
@@ -211,7 +223,7 @@ internal fun clock(time: String, is24: Boolean): String {
                         }
                         if (device.transport != "fcm") IconButton(onClick = { if (canChange) removing = device.id else onReceipt("Changing settings needs a connection.") },
                             modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Delete, "Remove $name") }
-                        Switch(device.enabled, onCheckedChange = { if (canChange) scope.launch { onSwitch(device) } else onReceipt("Changing settings needs a connection.") },
+                        Switch(pending["device:" + device.id] as Boolean? ?: device.enabled, onCheckedChange = { toggleDevice(device, it) },
                             modifier = Modifier.semantics { contentDescription = "Send notifications to $name"; if (!canChange) stateDescription = "Changing settings needs a connection." })
                     }
                 }
@@ -228,7 +240,7 @@ internal fun clock(time: String, is24: Boolean): String {
             confirmButton = { TextButton(onClick = {
                 pickingTime = false
                 val chosen = "%02d:%02d".format(java.util.Locale.ROOT, time.hour, time.minute)
-                change("Reminder time") { s -> s.copy(time = chosen) }
+                change("time", "Reminder time", chosen) { s -> s.copy(time = chosen) }
             }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Set") } },
             dismissButton = { TextButton(onClick = { pickingTime = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") } })
     }
@@ -236,7 +248,7 @@ internal fun clock(time: String, is24: Boolean): String {
         val name = deviceName(device)
         AlertDialog(onDismissRequest = { removing = null }, title = { DialogTitle("Remove $name?") },
             text = { DialogBody { Text("It stops getting Fytorium notifications. To get them again, turn notifications on in that browser.") } },
-            confirmButton = { TextButton(onClick = { removing = null; scope.launch { if (onRemove(device)) onReceipt("Removed $name") } }) { Text("Remove") } },
+            confirmButton = { TextButton(onClick = { removing = null; enqueue { if (onRemove(device)) onReceipt("Removed $name") } }) { Text("Remove") } },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } })
     }
 }

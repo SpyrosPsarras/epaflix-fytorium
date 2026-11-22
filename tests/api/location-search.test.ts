@@ -42,7 +42,8 @@ test('no match is an empty list; a too short or too long query is refused withou
 });
 
 test('an upstream failure, a malformed answer or a timeout says place search is not responding', async () => {
-  for (const [nextStatus, nextBody, nextDelay] of [[500, {}, 0], [200, { results: 'bad' }, 0], [200, { results: [] }, 9000]] as const) {
+  for (const [nextStatus, nextBody, nextDelay] of [[500, {}, 0], [200, { results: 'bad' }, 0], [200, null, 0], [200, { results: [{}] }, 0],
+    [200, { results: [{ name: 'Synthetic', latitude: 95, longitude: 0 }] }, 0], [200, { results: [] }, 9000]] as const) {
     status = nextStatus; body = nextBody; delay = nextDelay;
     const response = await search('Bergen');
     expect(response.status).toBe(503);
@@ -50,6 +51,11 @@ test('an upstream failure, a malformed answer or a timeout says place search is 
   }
   status = 200; delay = 0;
 }, 30000);
+
+test('at most ten places come back', async () => {
+  body = { results: Array.from({ length: 12 }, (_, i) => ({ name: 'Synthetic ' + i, latitude: i, longitude: i })) };
+  expect((await (await search('Synthetic')).json()).results).toHaveLength(10);
+});
 
 test('family and sitters cannot search', async () => {
   for (const role of ['family', 'sitter'] as const) {

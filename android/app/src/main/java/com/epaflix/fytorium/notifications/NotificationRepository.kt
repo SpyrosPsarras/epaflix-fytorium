@@ -41,6 +41,15 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
     private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Long? = { _, _ -> null }) {
     private val mutable = MutableStateFlow(NotificationState())
     val state = mutable.asStateFlow()
+    // The server's last answers, kept together in the cache after every read and confirmed write.
+    private var settingsText: String? = null
+    private var devicesText: String? = null
+    private fun persist() {
+        val settings = settingsText ?: return
+        val devices = devicesText ?: return
+        val at = keep("notifications", JSONObject().put("settings", settings).put("subscriptions", devices).put("timezone", state.value.timezone ?: "").toString())
+        if (allowed()) mutable.value = state.value.copy(updatedAt = at ?: state.value.updatedAt)
+    }
     private fun request(path: String, method: String = "GET", body: JSONObject? = null): String =
         api.request(if (path.startsWith("/")) path else "/api/notifications/$path", method = method, body = body).use {
             val text = it.body?.string().orEmpty()
@@ -51,6 +60,7 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
     @Synchronized fun refresh(): Boolean {
         if (!state.value.loaded && allowed()) cached("notifications")?.let { (json, at) -> runCatching {
             val j = JSONObject(json)
+            settingsText = j.getString("settings"); devicesText = j.getString("subscriptions")
             mutable.value = state.value.copy(settings = settings(j.getString("settings")), devices = devices(j.getString("subscriptions")),
                 timezone = j.optString("timezone").takeIf { it.isNotBlank() }, loaded = true, updatedAt = at)
         } }
@@ -58,19 +68,25 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
             val preferences = request("settings")
             val rows = request("subscriptions")
             val timezone = JSONObject(request("/api/meta")).getString("timezone")
-            val at = keep("notifications", JSONObject().put("settings", preferences).put("subscriptions", rows).put("timezone", timezone).toString()) ?: System.currentTimeMillis()
-            if (allowed()) mutable.value = state.value.copy(settings = settings(preferences), devices = devices(rows), timezone = timezone, loaded = true, blocked = false, updatedAt = at)
+            settingsText = preferences; devicesText = rows
+            if (allowed()) mutable.value = state.value.copy(settings = settings(preferences), devices = devices(rows), timezone = timezone, loaded = true, blocked = false,
+                updatedAt = System.currentTimeMillis())
+            persist()
         }
     }
     @Synchronized fun save(value: NotificationSettings) = run(true) {
-        val saved = settings(request("settings", "PUT", value.json()))
-        if (allowed()) mutable.value = state.value.copy(settings = saved)
+        val text = request("settings", "PUT", value.json())
+        settingsText = text
+        if (allowed()) mutable.value = state.value.copy(settings = settings(text))
+        persist()
     }
     // W5a-P30: each change applies to the settings as they are when it starts, so the last tap wins.
     @Synchronized fun update(change: (NotificationSettings) -> NotificationSettings) = save(change(state.value.settings))
-    @Synchronized fun switch(device: PushDevice) = run(true) {
+    @Synchronized fun switch(device: PushDevice) = setDevice(device, !device.enabled)
+    // The wanted value, not a flip of a row that may be stale, so two quick taps never send the same change twice.
+    @Synchronized fun setDevice(device: PushDevice, enabled: Boolean) = run(true) {
         require(device.id.matches(Regex("[a-fA-F0-9-]{36}")))
-        request("subscriptions/${device.id}", "PATCH", JSONObject().put("enabled", !device.enabled))
+        request("subscriptions/${device.id}", "PATCH", JSONObject().put("enabled", enabled))
         reloadDevices()
     }
     @Synchronized fun remove(device: PushDevice) = run(true) {
@@ -79,8 +95,10 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
         reloadDevices()
     }
     private fun reloadDevices() {
-        val rows = devices(request("subscriptions"))
-        if (allowed()) mutable.value = state.value.copy(devices = rows)
+        val text = request("subscriptions")
+        devicesText = text
+        if (allowed()) mutable.value = state.value.copy(devices = devices(text))
+        persist()
     }
     @Synchronized fun test() = run(true) {
         val sent = JSONObject(request("test", "POST")).getInt("sent")

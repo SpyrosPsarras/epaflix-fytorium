@@ -37,6 +37,31 @@ class FeedRepositoryTest {
         FeedRepository(api, { true }, cache = cache).apply { restore() }.state.value.let {
             assertEquals(Member("synthetic-other", Role.family), it.member); assertFalse(it.loaded); assertEquals(emptyList<FeedCard>(), it.cards) }
     }
+    // W5a-P30 (S2): a saved switch counts at once, so the next one starts from it even when the card reads after it fail.
+    @Test fun aSavedSwitchCountsBeforeTheCardsReload() = withFeed { feed, server, _ ->
+        load(feed, server)
+        repeat(2) { server.takeRequest() }
+        val first = org.json.JSONObject(settingsFixture).put("weather_alerts", false)
+        server.enqueue(MockResponse().setBody(first.toString()))
+        server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setResponseCode(500))
+        assertTrue(feed.saveSetting("weather_alerts", false))
+        assertEquals(false, feed.state.value.settings!!["weather_alerts"])
+        repeat(3) { server.takeRequest() }
+        server.enqueue(MockResponse().setBody(first.put("plant_warnings", false).toString()))
+        server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+        assertTrue(feed.saveSetting("plant_warnings", false))
+        val sent = org.json.JSONObject(server.takeRequest().body.readUtf8())
+        assertFalse("The second switch undid the first", sent.getBoolean("weather_alerts"))
+        assertFalse(sent.getBoolean("plant_warnings"))
+    }
+    // W5a-P13 (S3): a 426 shows the stop until a read succeeds again.
+    @Test fun aSuccessfulReadEndsTheUpdateGate() = withFeed { feed, server, _ ->
+        server.enqueue(MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}"""))
+        feed.refresh(Member("synthetic-member", Role.owner))
+        assertTrue(feed.state.value.updateRequired)
+        load(feed, server)
+        assertFalse(feed.state.value.updateRequired)
+    }
     @Test fun whyTimesUseTheHouseholdTimeZone() = withCache("synthetic-member") { cache, api, server ->
         cache.save("synthetic-member", mapOf("meta" to """{"timezone":"Pacific/Auckland"}"""), 0)
         server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
