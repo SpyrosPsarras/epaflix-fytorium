@@ -88,7 +88,7 @@ private val roleCards = listOf(
     val context = LocalContext.current
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !loading }) withContext(Dispatchers.IO) { repository.refresh() } }
+    ReloadOnAnswer(answers, state.loading || state.saving, { repository.state.value.run { readError != null || blocked } }) { withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
@@ -112,6 +112,14 @@ private val roleCards = listOf(
         onMember = { m, r, p -> withContext(Dispatchers.IO) { repository.saveMember(m, r, p) } },
         onRemove = { withContext(Dispatchers.IO) { repository.removeMember(it) } },
         onRevoke = { withContext(Dispatchers.IO) { repository.revokeInvite(it) } })
+}
+
+// Once Fytorium answers again, a page with a failed read or paused writes reloads; an answer that arrives mid-operation waits for it to end.
+@Composable internal fun ReloadOnAnswer(answers: Int, busy: Boolean, failing: () -> Boolean, reload: suspend () -> Unit) {
+    var seen by remember { mutableIntStateOf(answers) }
+    var pending by remember { mutableStateOf(false) }
+    LaunchedEffect(answers) { if (answers != seen) { seen = answers; pending = true } }
+    LaunchedEffect(pending, busy) { if (pending && !busy) { pending = false; if (failing()) reload() } }
 }
 
 @Composable internal fun ResumeReload(reload: () -> Unit) {

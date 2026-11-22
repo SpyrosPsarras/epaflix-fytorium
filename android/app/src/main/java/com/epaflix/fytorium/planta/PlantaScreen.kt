@@ -75,7 +75,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     val scope = rememberCoroutineScope()
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !loading }) withContext(Dispatchers.IO) { repository.refresh() } }
+    com.epaflix.fytorium.household.ReloadOnAnswer(answers, state.loading || state.saving, { repository.state.value.run { readError != null || blocked } }) { withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired && care.member?.role == com.epaflix.fytorium.Role.owner
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
@@ -90,8 +90,8 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
         onConfirm = { id, key, receipt -> withContext(Dispatchers.IO) { repository.confirm(id, key, receipt) } },
         onSkip = { id -> withContext(Dispatchers.IO) { repository.skip(id) } }, onSearch = { id, query -> command { repository.search(id, query) } },
         // The receipt counts the rows this import committed (W5b-P24).
-        onCommit = { withContext(Dispatchers.IO) { val before = repository.state.value.rows.count { it.status == "committed" }
-            if (repository.commit()) repository.state.value.rows.count { it.status == "committed" } - before else null } }, onPlants = onPlants, onPlant = onPlant, onSites = onSites, imageApi = api, onReceipt = onReceipt)
+        onCommit = { withContext(Dispatchers.IO) { val before = repository.state.value.rows.filter { it.status == "committed" }.map { it.id }.toSet()
+            if (repository.commit()) repository.state.value.rows.count { it.status == "committed" && it.id !in before } else null } }, onPlants = onPlants, onPlant = onPlant, onSites = onSites, imageApi = api, onReceipt = onReceipt)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)

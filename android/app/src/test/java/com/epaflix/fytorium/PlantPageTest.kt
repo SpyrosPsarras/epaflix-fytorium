@@ -2422,10 +2422,40 @@ class PlantPageTest {
         compose.onNodeWithText("Save site").performScrollTo().performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Created Synthetic porch").fetchSemanticsNodes().isNotEmpty() }
     }
-    @Test fun aSites426FromPlantsStopsTheApp() = updateStop({ it == "/api/sites" }) {
+    // Sol W5b-S2 (round 2): plant A, its site, plant B there, B's site line, then Back twice ends on the grid, never in a loop.
+    @Test fun backFromASitePathEndsOnTheGrid() = withPlantServer({ path -> when (path) {
+        "/api/sites" -> """[{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":2}]"""
+        "/api/plants" -> "[$plantFixture,${JSONObject(plantFixture).put("id", "plant-two").put("display_name", "Synthetic ivy").put("nickname", "Synthetic ivy")}]"
+        "/api/plants/plant-two" -> JSONObject(plantFixture).put("id", "plant-two").put("display_name", "Synthetic ivy").put("nickname", "Synthetic ivy").toString()
+        "/api/plants/plant-two/tasks" -> scheduleFixture
+        "/api/plants/plant-two/care-settings" -> """{"customIntervals":{}}"""
+        else -> null } }) { repo, showing ->
+        repo.refresh()
+        compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+            PlantsScreen(care, repo, photosApi = api, photosConnected = { true }) } }
+        val line = hasText("Synthetic site") and hasClickAction() and !isHeading()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("plant:plant-one").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(line).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Plants (2)").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("plant:plant-two").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(line).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(line).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Plants (2)").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Edit plant")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Search plants").fetchSemanticsNodes().isNotEmpty() }
+    }
+    // The Plants page reads the sites too, so the refusal starts only once the Sites menu item is about to be tapped.
+    private val sitesArmed = AtomicBoolean(false)
+    @Test fun aSites426FromPlantsStopsTheApp() = updateStop({ it == "/api/sites" && sitesArmed.get() }) {
         compose.onNode(hasText("Plants") and hasClickAction()).performClick()
         compose.onNodeWithContentDescription("More options").performClick()
-        compose.onNodeWithText("Sites").performClick()
+        sitesArmed.set(true)
+        // A background sites read by Plants may meet the refusal first; either way the app stops.
+        runCatching { compose.onNodeWithText("Sites").performClick() }
     }
     // Restore reads the sites through the plant repository too, so only Create a site's own save gets the 426.
     @Test fun aSiteSave426FromRestoreStopsTheApp() = updateStop({ it == "/api/sites" }, post = true, served = ::restoreServed) {
@@ -3706,9 +3736,8 @@ class PlantPageTest {
                     compose.onAllNodes(paused).fetchSemanticsNodes().isNotEmpty() }
                 assertEquals("Save moved after: $message", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
                 assertTrue("The message sits under Save", compose.onNode(hasText(message) and hasNoClickAction(), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top >= before.bottom)
-                // No Refresh button (W5b-P26): the line's Try again reloads.
-                compose.onNode(paused).performClick()
-                compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick()
+                // No Refresh button (W5b-P26): the line's Try again reloads, unless a plant answer that arrived during the save already did.
+                runCatching { compose.onNode(paused).performClick(); compose.onNode(hasText("Try again") and hasAnyAncestor(isDialog())).performClick() }
                 compose.waitUntil(5_000) { compose.onAllNodes(save and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 assertEquals("Save moved after Try again", before, compose.onNode(save).fetchSemanticsNode().boundsInRoot)
             }

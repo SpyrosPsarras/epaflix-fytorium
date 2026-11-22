@@ -154,6 +154,36 @@ class SiteScreenTest {
         }
     }
 
+    // Sol W5b-S8 (round 2): an answer that arrives while a save is still running reloads once that save fails.
+    @Test fun anAnswerDuringAFailingSaveStillReloads() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            val release = java.util.concurrent.CountDownLatch(1)
+            val posted = java.util.concurrent.CountDownLatch(1)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = if (request.method == "POST") {
+                    posted.countDown(); release.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                    okhttp3.mockwebserver.MockResponse().setResponseCode(503).setBody("{}")
+                } else okhttp3.mockwebserver.MockResponse().setBody("[]")
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val answers = mutableIntStateOf(0)
+            compose.setContent { FytoriumTheme { SitesRoute(api, CareState(member = Member("synthetic-member", Role.owner)), { true }, {}, answers = answers.intValue) } }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No sites yet").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Create site").performClick()
+            compose.onNodeWithText("Name").performTextReplacement("Synthetic porch")
+            compose.onNodeWithText("Save site").performScrollTo().performClick()
+            assertTrue(posted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            compose.runOnIdle { answers.intValue++ }
+            // The answer is handled while the save still runs.
+            compose.waitForIdle()
+            release.countDown()
+            val paused = hasText("Sites can't be changed right now") and hasClickAction()
+            compose.waitUntil(5_000) { server.requestCount >= 3 && compose.onAllNodes(paused).fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithText("Save site").performScrollTo().assertIsEnabled()
+        }
+    }
+
     @Test fun aNewSiteDraftSurvivesRecreation() = siteDraftSurvivesRecreation(edit = false)
     @Test fun anExistingSiteDraftSurvivesRecreation() = siteDraftSurvivesRecreation(edit = true)
 

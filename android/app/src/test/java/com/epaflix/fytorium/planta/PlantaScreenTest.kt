@@ -71,6 +71,28 @@ class PlantaScreenTest {
         compose.waitUntil(5_000) { receipts.isNotEmpty() }
         assertEquals(listOf("Imported 2 plants"), receipts)
     }
+    // Sol W5b-S14 (round 2): the receipt counts the rows this import committed, also when older committed rows belong to another review.
+    @Test fun theReceiptCountsOnlyNewlyCommittedRows() {
+        MockWebServer().use { server ->
+            fun staged(id: String, status: String) = org.json.JSONObject(importFixture).put("id", id).put("status", status).put("can_commit", status == "confirmed")
+                .put("can_review", status != "committed").put("candidates", org.json.JSONArray()).apply { getJSONObject("mapped").put("has_cover", false) }
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = MockResponse().setBody(when (request.path) {
+                    "/api/import/planta" -> "[${staged("old-a", "committed")},${staged("old-b", "committed")},${staged("new", "confirmed")}]"
+                    "/api/import/planta/commit" -> "[${staged("new", "committed")}]"
+                    else -> "[]"
+                })
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
+            val receipts = mutableListOf<String>()
+            compose.setContent { FytoriumTheme { PlantaRoute(api, CareState(member = Member("owner", Role.owner)), { true }, {}, {}, {}, onReceipt = { receipts += it }) } }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Import 1 plant") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("import-button").performClick()
+            compose.waitUntil(5_000) { receipts.isNotEmpty() }
+            assertEquals(listOf("Imported 1 plant"), receipts)
+        }
+    }
     @Test fun theBarNamesScrollToTheirCards() {
         val rows = List(3) { row.copy(id = "review-$it", name = "Synthetic review $it") }
         compose.setContent { FytoriumTheme { PlantaScreen(PlantaState(loaded = true, rows = rows)) } }

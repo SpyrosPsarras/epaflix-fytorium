@@ -65,6 +65,9 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     var sitesStart by rememberSaveable { mutableStateOf<String?>(null) }
     var sitesFrom by rememberSaveable { mutableStateOf("list") }
     var sitesFromId by rememberSaveable { mutableStateOf<String?>(null) }
+    // That plant page's own Back target, and the site whose page opened the plant shown now.
+    var sitesFromFrom by rememberSaveable { mutableStateOf("list") }
+    var sitesPlantSite by rememberSaveable { mutableStateOf<String?>(null) }
     val listGrid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
     val graveGrid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }
     // The name typed on the add form, so Create a site names the plant as the user does.
@@ -288,14 +291,21 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     val sitesApi = photosApi ?: speciesApi
     val editsSites = sitesApi != null && state.member != null && state.member.role != Role.sitter
     fun openSites(start: String?) {
-        // A plant opened from a site page shows that site, so its site line goes back there instead of starting a second path.
-        if (page == "detail" && from == "site-pages") { page = "site-pages"; id = null; return }
-        forms.removeState("site-pages"); sitesStart = start; sitesFrom = page; sitesFromId = id; page = "site-pages"
+        if (page == "detail" && from == "site-pages") {
+            // A plant opened from a site page goes back to that page from its site line instead of starting a second path.
+            if (start == sitesPlantSite) { page = "site-pages"; id = null; return }
+            // It moved to another site meanwhile: the new site page goes back to the plant, which goes back to the grid.
+            from = "list"
+        }
+        forms.removeState("site-pages"); sitesStart = start; sitesFrom = page; sitesFromId = id; sitesFromFrom = from; page = "site-pages"
     }
     if (page == "site-pages" && editsSites) {
         forms.SaveableStateProvider("site-pages") {
-            com.epaflix.fytorium.sites.SitesRoute(sitesApi!!, state, photosConnected, onBack = { forms.removeState("site-pages"); page = sitesFrom; id = sitesFromId },
-                startSite = sitesStart, thumbnails = thumbnails, onOpenPlant = { from = "site-pages"; id = it; page = "detail" }, onReceipt = { repository?.showReceipt(it) },
+            com.epaflix.fytorium.sites.SitesRoute(sitesApi!!, state, photosConnected, onBack = {
+                    forms.removeState("site-pages"); page = sitesFrom; id = sitesFromId; if (sitesFrom == "detail") from = sitesFromFrom },
+                startSite = sitesStart, thumbnails = thumbnails, onOpenPlant = { plantId ->
+                    sitesPlantSite = state.plants.firstOrNull { it.id == plantId }?.let { JSONObject(it.attributesJson).nullable("site_id") }
+                    from = "site-pages"; id = plantId; page = "detail" }, onReceipt = { repository?.showReceipt(it) },
                 onRefreshPlants = { withContext(Dispatchers.IO) { repository?.refreshPlants() } }, onFormDirty = { subpageDraft = it },
                 onUpdateRequired = { repository?.requireUpdate() }, answers = request.answers,
                 cached = { repository?.cachedJson(it) }, keep = { resource, json -> repository?.saveJson(resource, json) })

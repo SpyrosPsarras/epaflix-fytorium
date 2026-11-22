@@ -130,7 +130,7 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
     val scope = rememberCoroutineScope()
     fun reload() { scope.launch { withContext(Dispatchers.IO) { repository.refresh() } } }
     LaunchedEffect(repository) { withContext(Dispatchers.IO) { repository.refresh() } }
-    LaunchedEffect(answers) { if (repository.state.value.run { (readError != null || blocked) && !busy }) withContext(Dispatchers.IO) { repository.refresh() } }
+    ReloadOnAnswer(answers, state.busy, { repository.state.value.run { readError != null || blocked } }) { withContext(Dispatchers.IO) { repository.refresh() } }
     val online = connected() && !care.updateRequired
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) reload(); wasOnline = online }
