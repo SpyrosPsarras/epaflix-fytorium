@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { db, withTransaction } from '$lib/server/db';
-import { checkOrigin, readSite } from '$lib/server/sites';
+import { checkOrigin, readSite, siteNameTaken } from '$lib/server/sites';
 import type { RequestHandler } from './$types';
 
 function isSiteId(id: string) {
@@ -38,14 +38,19 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
   checkOrigin(request);
   const site = await readSite(request);
   if (site instanceof Response) return site;
-  const result = await db().query(
-    `UPDATE sites SET name = $3, location = $4, light = $5, grow_light = $6,
-     warm_min_c = $7, warm_max_c = $8, cold_min_c = $9, cold_max_c = $10, humidity = $11, draft = $12, imported_conditions_incomplete = false
-     WHERE id = $1 AND household_id = $2 RETURNING *`,
-    [params.id, locals.identity.household.id, site.name, site.location, site.light, site.grow_light, site.warm_min_c, site.warm_max_c, site.cold_min_c, site.cold_max_c, site.humidity, site.draft],
-  );
-  if (!result.rowCount) error(404, 'Site not found');
-  return json(result.rows[0]);
+  const household = locals.identity.household.id;
+  return withTransaction(async (client) => {
+    const taken = await siteNameTaken(client, household, site.name, params.id);
+    if (taken) return taken;
+    const result = await client.query(
+      `UPDATE sites SET name = $3, location = $4, light = $5, grow_light = $6,
+       warm_min_c = $7, warm_max_c = $8, cold_min_c = $9, cold_max_c = $10, humidity = $11, draft = $12, imported_conditions_incomplete = false
+       WHERE id = $1 AND household_id = $2 RETURNING *`,
+      [params.id, household, site.name, site.location, site.light, site.grow_light, site.warm_min_c, site.warm_max_c, site.cold_min_c, site.cold_max_c, site.humidity, site.draft],
+    );
+    if (!result.rowCount) error(404, 'Site not found');
+    return json(result.rows[0]);
+  });
 };
 
 export const GET: RequestHandler = async ({ locals, params }) => {

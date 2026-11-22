@@ -12,7 +12,7 @@ A person with access to the household. An owner manages it, family members can e
 _Avoid_: User, account
 
 **Site**:
-A room, garden or terrace where plants live. A site belongs to the household. Its conditions are shared by its plants.
+A room, garden or terrace where plants live. A site belongs to the household. Its conditions are shared by its plants. Site names are unique in the household, ignoring case and outer spaces; a site that keeps its own name always saves, so names that were duplicated before this rule stay.
 
 - Location: `indoor` or `outdoor`.
 - Light: `full_shade`, `part_shade`, `part_sun` or `full_sun`, matching Perenual's four sunlight tiers.

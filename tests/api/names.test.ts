@@ -334,7 +334,7 @@ test.each([
     await database.query("INSERT INTO species_names (gbif_key, name, language, source) VALUES (910013, 'Synthetic coldleaf', 'en', 'owner'), (910013, 'Syntetisk kuldeblad', 'nb', 'owner'), (910013, 'Συνθετικό ψυχρόφυλλο', 'el', 'owner') ON CONFLICT DO NOTHING");
     await expect.poll(async () => (await database.query("SELECT species_common_name(910013, 'el') AS name")).rows[0].name, { timeout: 15000 }).toBe('Συνθετικό ψυχρόφυλλο');
     const site = await (await request('/api/sites', 'POST', {
-      name: 'Synthetic cold site', location: 'outdoor', light: 'part_sun', grow_light: false, humidity: 'normal', draft: false,
+      name: `Synthetic cold site ${language}`, location: 'outdoor', light: 'part_sun', grow_light: false, humidity: 'normal', draft: false,
     })).json();
     const plant = await database.query('INSERT INTO plants (household_id, site_id, gbif_key) SELECT household_id, id, 910013 FROM sites WHERE id = $1 RETURNING id, household_id', [site.id]);
     const { id, household_id } = plant.rows[0];

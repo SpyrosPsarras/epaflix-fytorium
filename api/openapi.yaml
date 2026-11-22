@@ -1658,6 +1658,7 @@ paths:
     get:
       operationId: get_api_custom_tasks
       summary: GET /api/custom-tasks
+      description: With plant_id or site_id, that target's live tasks. With neither, every live task in the household with its target named, site tasks first, then by target name, task name and id. Both give 422.
       responses:
         "200":
           description: JSON response
@@ -4825,6 +4826,25 @@ components:
             - type: string
               pattern: ^\d{4}-\d{2}-\d{2}T
             - type: "null"
+        target_name:
+          type: string
+          description: Only in the household-wide list. The plant's display name in the member's language, or the site's name.
+        target_site_name:
+          anyOf:
+            - type: string
+            - type: "null"
+          description: Only in the household-wide list. The plant's site name; null for a site task.
+        target_status:
+          anyOf:
+            - type: string
+              enum: [active, graveyard]
+            - type: "null"
+          description: Only in the household-wide list. The plant's status; null for a site task.
+        target_plant_count:
+          anyOf:
+            - type: integer
+            - type: "null"
+          description: Only in the household-wide list. Active plants on the site; null for a plant task.
       required:
         - id
         - household_id

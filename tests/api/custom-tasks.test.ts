@@ -240,3 +240,25 @@ test('deleting plant and site tasks removes them from schedules but keeps their 
     expect((await act(id, 'complete')).status).toBe(404);
   }
 });
+
+test('without a target the list holds every live task with its target named, site tasks first', async () => {
+  const site = await (await request('/api/sites', 'POST', { name: 'Test list site', location: 'indoor', light: 'part_sun', humidity: 'normal', draft: false, grow_light: false })).json();
+  const plant = await addPlant(site.id, 'Test list plant');
+  const old = await addPlant(site.id, 'Test list old');
+  const created = async (target: Record<string, string>, name: string) => (await (await request('/api/custom-tasks', 'POST', { ...target, name, interval_days: 7 })).json()).id as string;
+  await created({ site_id: site.id }, 'Test list wipe');
+  await created({ plant_id: plant }, 'Test list mist');
+  await created({ plant_id: old }, 'Test list check');
+  expect((await request('/api/custom-tasks/' + await created({ plant_id: plant }, 'Test list gone'), 'DELETE')).status).toBe(204);
+  expect((await request(`/api/plants/${old}/graveyard`, 'POST')).status).toBe(200);
+  const response = await request('/api/custom-tasks');
+  expect(response.status).toBe(200);
+  const all: { name: string; site_id: string | null }[] = await response.json();
+  expect(all.slice(all.findIndex(task => !task.site_id)).some(task => task.site_id)).toBe(false);
+  expect(all.filter(task => task.name.startsWith('Test list'))).toEqual([
+    expect.objectContaining({ name: 'Test list wipe', site_id: site.id, target_name: 'Test list site', target_site_name: null, target_status: null, target_plant_count: 1 }),
+    expect.objectContaining({ name: 'Test list check', plant_id: old, target_name: 'Test list old', target_site_name: 'Test list site', target_status: 'graveyard', target_plant_count: null }),
+    expect.objectContaining({ name: 'Test list mist', plant_id: plant, target_name: 'Test list plant', target_site_name: 'Test list site', target_status: 'active', target_plant_count: null }),
+  ]);
+  expect((await request(`/api/custom-tasks?plant_id=${plant}&site_id=${site.id}`)).status).toBe(422);
+});

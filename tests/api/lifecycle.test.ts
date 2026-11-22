@@ -15,8 +15,10 @@ beforeAll(async () => {
   await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-06-01T12:00:00Z' });
   image = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#408040' } }).jpeg().toBuffer();
 });
+// Site names are unique in a household, so each plant gets its own room.
+let rooms = 0;
 async function add(nickname = 'Test lifecycle sprout') {
-  const site = await (await owner.request('/api/sites', 'POST', conditions)).json();
+  const site = await (await owner.request('/api/sites', 'POST', { ...conditions, name: `${conditions.name} ${++rooms}` })).json();
   const search = await (await owner.request('/api/species/search?q=Testoria%20lucida')).json();
   const response = await owner.request('/api/plants', 'POST', { ...fixturePlant, nickname, site_id: site.id, search_id: search.search_id, gbif_key: 910001 });
   expect(response.status).toBe(201);

@@ -17,9 +17,27 @@ export async function checkTarget(household: string, plantId: unknown, siteId: u
   }
 }
 
-export async function customTasks(household: string, plantId: string | null, siteId: string | null): Promise<CustomTask[]> {
+export async function customTasks(household: string, plantId: string | null, siteId: string | null, language = 'en'): Promise<CustomTask[]> {
+  if (plantId == null && siteId == null) return householdCustomTasks(household, language);
   await checkTarget(household, plantId, siteId);
   const result = await db().query('SELECT * FROM custom_tasks WHERE household_id = $1 AND deleted_at IS NULL AND (plant_id = $2 OR site_id = $3) ORDER BY name, id', [household, plantId, siteId]);
+  return result.rows;
+}
+
+// Every live task with its target named, sites first, for the app's one list.
+async function householdCustomTasks(household: string, language: string): Promise<CustomTask[]> {
+  const result = await db().query(
+    `SELECT t.*, coalesce(plant_display_name(p.nickname, p.gbif_key, $2), s.name) AS target_name,
+       ps.name AS target_site_name, p.status AS target_status,
+       CASE WHEN s.id IS NULL THEN NULL ELSE (SELECT count(*)::integer FROM plants a WHERE a.site_id = s.id AND a.household_id = $1 AND a.status = 'active') END AS target_plant_count
+     FROM custom_tasks t
+     LEFT JOIN plants p ON p.id = t.plant_id AND p.household_id = t.household_id
+     LEFT JOIN sites ps ON ps.id = p.site_id AND ps.household_id = t.household_id
+     LEFT JOIN sites s ON s.id = t.site_id AND s.household_id = t.household_id
+     WHERE t.household_id = $1 AND t.deleted_at IS NULL AND (p.id IS NOT NULL OR s.id IS NOT NULL)
+     ORDER BY t.site_id IS NULL, target_name, t.name, t.id`,
+    [household, language],
+  );
   return result.rows;
 }
 
