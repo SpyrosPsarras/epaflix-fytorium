@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize().imePadding()) {
                     AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
                         phoneOnline = online, minAppVersion = state.minAppVersion,
-                        onCheckAgain = { session.checkAgain { java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) }; care.refresh() },
+                        onCheckAgain = { session.checkAgain { java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")) }; care.refresh() },
                         onObtainium = obtainium()?.let { launch -> { startActivity(launch) } },
                         onLogin = { login() }, onLogout = session::logout,
                         careState = careState, controller = care, thumbnails = app.thumbnails, feed = app.feed,

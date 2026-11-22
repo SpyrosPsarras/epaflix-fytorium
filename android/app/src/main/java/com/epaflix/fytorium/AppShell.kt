@@ -97,7 +97,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
         if (!loggedIn || memberChanged) {
             notifications = false
-            todayScroll.scrollTo(0); upcomingScroll.scrollTo(0)
+            todayScroll.scrollTo(0); upcomingScroll.scrollTo(0); moreScroll.scrollTo(0)
         }
         if (!loggedIn || memberChanged || member?.role == Role.sitter) {
             addPlant = false
@@ -209,9 +209,10 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && feedSettings && feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState?.member) { com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
+                // Not keyed by member: a member change closes this screen in the shell, and a key flip during restore would drop the typed draft.
+                com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it },
-                    onUpdateRequired = { controller?.repository?.requireUpdate() }, answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0) }
+                    onUpdateRequired = { controller?.repository?.requireUpdate() }, answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0)
             }
             return@Scaffold
         }

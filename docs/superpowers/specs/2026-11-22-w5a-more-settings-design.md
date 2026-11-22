@@ -105,7 +105,7 @@ Regression only, must not get worse: W2 Today feed strip and its cards; W3 C1/C1
 - W5a-P6. Offline log out. The app still clears the session and wipes what it wipes now (`A/FytoriumApplication.kt:37-48`). A failed `/api/app/logout` is not reported as an error: the login screen shows no "Can't reach Fytorium" line after a log out. While the phone is offline, the login screen's reserved line reads "You're logged out. Logging in needs a connection."; it clears when the connection returns.
 - W5a-P7. Login screen. Top bar "Fytorium". Body: "Plant care for your household.", then "Log in" (filled), then a reserved line for progress and errors directly under the button (C23), then a muted line: "To join a household, open the invite link from its owner first, then log in here." While the app finishes a login, the button keeps its place and size, reads "Logging in…" and is disabled; "Please wait…" goes. Tapping "Log in" offline does not open the browser and shows "Logging in needs a connection." in the reserved line.
 - W5a-P8. Login errors, in the reserved line. The app reads the redirect's `error` after the state check (today `A/Pkce.kt:23` discards it). No server change.
-  - `not_member`: "This account isn't in a Fytorium household. Open the invite link from the owner, then log in again."
+  - `not_member`: "This account isn't in a household yet." (the line under it already says to open the owner's invite link; amended 2026-11-22 after Opus W5a-opus-8)
   - `access_denied`: "Login was cancelled."
   - `server_error`: "Fytorium couldn't finish the login. Try again."
   - token exchange refused or redirect invalid: "Login didn't work. Try again."

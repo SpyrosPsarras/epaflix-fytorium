@@ -15,6 +15,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role as SemanticsRole
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
@@ -83,6 +85,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     var fieldErrors by rememberSaveable { mutableStateOf(mapOf<String, String>()) }
     var removing by rememberSaveable { mutableStateOf(false) }
     var discarding by rememberSaveable { mutableStateOf(false) }
+    // Whether discarding leaves the page (Back) or only folds the form (Cancel coordinates).
+    var discardLeaves by rememberSaveable { mutableStateOf(true) }
     val pending = remember { Pending<Boolean>() }
     val enqueue = rememberWriteQueue()
     fun prefill() { latitude = state.location?.latitude?.toString().orEmpty(); longitude = state.location?.longitude?.toString().orEmpty(); label = state.location?.label.orEmpty() }
@@ -90,7 +94,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     SideEffect { onFormDirty { "The location you typed is not saved.".takeIf { typed() } } }
     val currentDirty by rememberUpdatedState(onFormDirty)
     DisposableEffect(Unit) { onDispose { currentDirty { null } } }
-    androidx.activity.compose.BackHandler { if (typed()) discarding = true else onBack() }
+    androidx.activity.compose.BackHandler { if (typed()) { discardLeaves = true; discarding = true } else onBack() }
     // The last query sent, apart from the one whose results show, so Try again repeats it and an older reply never replaces a newer one.
     var submitted by rememberSaveable { mutableStateOf<String?>(null) }
     var searches by remember { mutableIntStateOf(0) }
@@ -131,7 +135,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                 if (searchDown) submitted?.let { search(it) } ?: Unit else onRefresh()
                 Unit
             }.takeIf { status != null && online }) { Heading("Weather and feed") } },
-            expandedHeight = barHeight(), navigationIcon = { IconButton(onClick = { if (typed()) discarding = true else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
+            expandedHeight = barHeight(), navigationIcon = { IconButton(onClick = { if (typed()) { discardLeaves = true; discarding = true } else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
         Box(Modifier.weight(1f)) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Heading("Household location", MaterialTheme.typography.titleMedium)
@@ -150,7 +154,8 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                         } else Column {
                             found.forEach { place ->
                                 ListItem(headlineContent = { Text(place.name) }, supportingContent = { Text(place.where) },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = online && !savingLocation, role = SemanticsRole.Button) {
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(enabled = !savingLocation, role = SemanticsRole.Button) {
+                                        if (!online) { onReceipt(changesOffline); return@clickable }
                                         save(WeatherLocation(place.latitude, place.longitude, place.label), "Weather location set to ${place.label}") { results = null; query = ""; asked = null }
                                     })
                             }
@@ -158,18 +163,26 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                     }
                     if (!formOpen) PlantError(placeError)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!formOpen) TextButton(onClick = { prefill(); formOpen = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Enter coordinates instead") }
+                        // The first button keeps its place: it opens the form, then folds it again.
+                        TextButton(onClick = { if (!formOpen) { prefill(); formOpen = true } else if (typed()) { discardLeaves = false; discarding = true } else formOpen = false },
+                            modifier = Modifier.heightIn(min = 48.dp)) {
+                            // Both labels take the space, so Remove location never moves when the form opens or folds.
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("Enter coordinates instead", Modifier.alpha(if (formOpen) 0f else 1f).then(if (formOpen) Modifier.clearAndSetSemantics {} else Modifier))
+                                Text("Cancel coordinates", Modifier.alpha(if (formOpen) 1f else 0f).then(if (formOpen) Modifier else Modifier.clearAndSetSemantics {}))
+                            }
+                        }
                         if (state.location != null) TextButton(onClick = { if (online) removing = true else onReceipt(changesOffline) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Remove location") }
                     }
                     if (formOpen) {
                         val keys = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next)
                         // Offline or while it saves, the draft stays but can't change.
                         val locked = !online || savingLocation
-                        OutlinedTextField(latitude, { latitude = it; fieldErrors = fieldErrors - "latitude" }, label = { Text("Latitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked,
+                        OutlinedTextField(latitude, { latitude = it; fieldErrors = fieldErrors - "latitude" }, label = { Text("Latitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked, enabled = online,
                             supportingText = { Text(fieldErrors["latitude"] ?: "-90 to 90") }, isError = "latitude" in fieldErrors, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(longitude, { longitude = it; fieldErrors = fieldErrors - "longitude" }, label = { Text("Longitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked,
+                        OutlinedTextField(longitude, { longitude = it; fieldErrors = fieldErrors - "longitude" }, label = { Text("Longitude") }, singleLine = true, keyboardOptions = keys, readOnly = locked, enabled = online,
                             supportingText = { Text(fieldErrors["longitude"] ?: "-180 to 180") }, isError = "longitude" in fieldErrors, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(label, { label = it.take(200) }, label = { Text("Place name (optional)") }, singleLine = true, readOnly = locked, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(label, { label = it.take(200) }, label = { Text("Place name (optional)") }, singleLine = true, readOnly = locked, enabled = online, modifier = Modifier.fillMaxWidth())
                         Button(onClick = {
                             if (!online) { onReceipt(changesOffline); return@Button }
                             val lat = latitude.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in -90.0..90.0 }
@@ -178,7 +191,10 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                                 ("longitude" to "Enter a number from -180 to 180.").takeIf { lon == null }).toMap()
                             // Only the draft that was saved closes; a value typed meanwhile keeps the form open.
                             val draft = Triple(latitude, longitude, label)
-                            if (lat != null && lon != null) save(WeatherLocation(lat, lon, label.trim().ifEmpty { null }), "Weather location saved") {
+                            // New coordinates under the old place's name would name the wrong town, so an untouched name goes with them.
+                            val moved = latitude != state.location?.latitude?.toString().orEmpty() || longitude != state.location?.longitude?.toString().orEmpty()
+                            val name = label.trim().ifEmpty { null }?.takeUnless { moved && label == state.location?.label.orEmpty() }
+                            if (lat != null && lon != null) save(WeatherLocation(lat, lon, name), "Weather location saved") {
                                 if (Triple(latitude, longitude, label) == draft) formOpen = false
                             }
                         }, enabled = !savingLocation, modifier = Modifier.heightIn(min = 48.dp).semantics { if (!online) stateDescription = changesOffline }) { Text("Save location") }
@@ -214,6 +230,6 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
         confirmButton = { TextButton(onClick = { removing = false; save(null, "Removed the weather location") { formOpen = false } }) { Text("Remove") } },
         dismissButton = { TextButton(onClick = { removing = false }) { Text("Cancel") } })
     if (discarding) DiscardDialog("Discard these coordinates?", "The location you typed is not saved.", onKeep = { discarding = false }) {
-        discarding = false; formOpen = false; prefill(); onBack()
+        discarding = false; formOpen = false; prefill(); if (discardLeaves) onBack()
     }
 }

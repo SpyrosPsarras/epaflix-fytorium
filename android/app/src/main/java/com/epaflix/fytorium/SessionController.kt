@@ -13,7 +13,7 @@ data class SessionState(
 )
 
 internal fun loginError(code: String) = when (code) {
-    "not_member" -> "This account isn't in a Fytorium household. Open the invite link from the owner, then log in again."
+    "not_member" -> "This account isn't in a household yet."
     "access_denied" -> "Login was cancelled."
     "server_error" -> "Fytorium couldn't finish the login. Try again."
     else -> "Login didn't work. Try again."

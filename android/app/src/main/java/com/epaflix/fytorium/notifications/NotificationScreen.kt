@@ -152,7 +152,12 @@ internal fun clock(time: String, is24: Boolean): String {
     fun toggleDevice(device: PushDevice, enabled: Boolean) {
         if (!canChange) { onReceipt("Changing settings needs a connection."); return }
         val ticket = pending.start("device:" + device.id, enabled)
-        enqueue { onSwitch(device, enabled); pending.end("device:" + device.id, ticket) }
+        enqueue {
+            val changed = onSwitch(device, enabled)
+            pending.end("device:" + device.id, ticket)
+            // A refused change says so and reloads, so a device already gone elsewhere leaves the list.
+            if (!changed) { onReceipt("${deviceName(device)} wasn't changed. ${failure() ?: "Try again."}"); onRefresh() }
+        }
     }
     val status = when {
         !online -> (care?.copy(lastUpdated = state.updatedAt)?.connectionLine(false) ?: "Offline") to "This phone can't reach Fytorium. You can still see the last settings. Changing settings needs a connection."
@@ -241,20 +246,23 @@ internal fun clock(time: String, is24: Boolean): String {
     }
     if (pickingTime) {
         val parts = shown.time.split(':')
-        val time = rememberTimePickerState(initialHour = parts[0].toInt(), initialMinute = parts[1].toInt(), is24Hour = is24)
-        val short = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 480
-        // A short window has room for neither the dial nor typed fields with their keyboard, so it offers two menus.
+        // One saved choice for the dial and the menus, so turning the phone keeps the time being picked.
         var hour by rememberSaveable { mutableIntStateOf(parts[0].toInt()) }
         var minute by rememberSaveable { mutableIntStateOf(parts[1].toInt()) }
+        val time = rememberTimePickerState(initialHour = hour, initialMinute = minute, is24Hour = is24)
+        LaunchedEffect(time.hour, time.minute) { hour = time.hour; minute = time.minute }
+        val short = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp < 480
+        // A short window has room for neither the dial nor typed fields with their keyboard, so it offers two menus; minutes go in fives, plus the current one.
+        val minutes = ((0..55 step 5).toList() + minute).distinct().sorted()
         AlertDialog(onDismissRequest = { pickingTime = false }, title = { DialogTitle("Reminder time") },
             text = { DialogBody { if (short) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TimeMenu("Hour", hour, (0..23).map { clock("%02d:00".format(java.util.Locale.ROOT, it), is24).let { label -> if (is24) label.substringBefore(':') else label.replace(":00", "") } },
-                        Modifier.weight(1f)) { hour = it }
-                    TimeMenu("Minute", minute, (0..59).map { "%02d".format(java.util.Locale.ROOT, it) }, Modifier.weight(1f)) { minute = it }
+                        Modifier.weight(1f)) { hour = it; time.hour = it }
+                    TimeMenu("Minute", minutes.indexOf(minute), minutes.map { "%02d".format(java.util.Locale.ROOT, it) }, Modifier.weight(1f)) { minute = minutes[it]; time.minute = minutes[it] }
                 } else TimePicker(time) } },
             confirmButton = { TextButton(onClick = {
                 pickingTime = false
-                val chosen = if (short) "%02d:%02d".format(java.util.Locale.ROOT, hour, minute) else "%02d:%02d".format(java.util.Locale.ROOT, time.hour, time.minute)
+                val chosen = "%02d:%02d".format(java.util.Locale.ROOT, hour, minute)
                 change("time", "Reminder time", chosen) { s -> s.copy(time = chosen) }
             }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Set") } },
             dismissButton = { TextButton(onClick = { pickingTime = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Cancel") } })

@@ -145,6 +145,23 @@ class WeatherFeedScreenTest {
         assertNull(saves.last())
     }
 
+    // Opus W5a-opus-6, 7: new coordinates drop an untouched old name, and Cancel folds the form in place.
+    @Test fun newCoordinatesDropTheOldNameAndCancelFolds() {
+        val saves = mutableListOf<WeatherLocation?>()
+        compose.setContent { FytoriumTheme { WeatherFeedScreen(FeedState(member = owner, settings = settings, locationLoaded = true,
+            location = WeatherLocation(60.39, 5.32, "Bergen, Vestland, Norway")), null, true, onSaveLocation = { saves += it; true }) } }
+        val remove = compose.onNodeWithText("Remove location").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithText("Enter coordinates instead").performClick()
+        assertEquals(remove, compose.onNodeWithText("Remove location").fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithText("Cancel coordinates").performClick()
+        compose.onNodeWithText("Latitude").assertDoesNotExist()
+        compose.onNodeWithText("Enter coordinates instead").performClick()
+        compose.onNodeWithText("Latitude").performTextReplacement("59.91")
+        compose.onNodeWithText("Save location").performScrollTo().performClick()
+        compose.waitUntil(5_000) { saves.isNotEmpty() }
+        assertEquals(WeatherLocation(59.91, 5.32, null), saves.single())
+    }
+
     // W5a-P19, P30: family reads the place and who can change it; offline a switch explains instead of changing.
     @Test fun familyReadsThePlaceAndOfflineSwitchesExplain() {
         val receipts = mutableListOf<String>()

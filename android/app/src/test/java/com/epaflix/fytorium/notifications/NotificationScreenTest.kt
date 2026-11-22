@@ -119,6 +119,36 @@ class NotificationScreenTest {
         assertEquals("07:00", saved)
     }
 
+    // W5a-P25 (Opus W5a-opus-2): the time being picked survives recreation, and minutes come in fives.
+    @Config(sdk = [35], qualifiers = "w800dp-h360dp-land-mdpi")
+    @Test fun theTimeBeingPickedSurvivesRecreation() {
+        val restoration = androidx.compose.ui.test.junit4.StateRestorationTester(compose)
+        var saved: String? = null
+        restoration.setContent { FytoriumTheme { Surface(Modifier.fillMaxSize()) { NotificationScreen(NotificationState(loaded = true),
+            onUpdate = { change -> saved = change(NotificationSettings()).time; true }) } } }
+        compose.onNodeWithText("Reminder time").performScrollTo().performClick()
+        compose.onNodeWithText("Minute", substring = true).performClick()
+        compose.onNode(hasText("30") and hasAnyAncestor(isPopup())).performScrollTo().performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Minute: 30").assertIsDisplayed()
+        compose.onNodeWithText("Set").performClick()
+        compose.waitUntil(5_000) { saved != null }
+        assertEquals("09:30", saved)
+    }
+
+    // W5a-P30 (Opus W5a-opus-3): a refused device change says so and reloads the list.
+    @Test fun aRefusedDeviceChangeSaysSoAndReloads() {
+        val receipts = mutableListOf<String>()
+        var reloads = 0
+        compose.setContent { FytoriumTheme { Surface(Modifier.fillMaxSize()) { NotificationScreen(NotificationState(loaded = true,
+            devices = listOf(PushDevice("browser", "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0", "web", true))),
+            onSwitch = { _, _ -> false }, onReceipt = { receipts += it }, onRefresh = { reloads++ }, failure = { "Device not found" }) } } }
+        compose.onNodeWithContentDescription("Send notifications to Firefox on Linux").performScrollTo().performClick()
+        compose.waitUntil(5_000) { receipts.isNotEmpty() }
+        assertEquals("Firefox on Linux wasn't changed. Device not found", receipts.single())
+        assertEquals(1, reloads)
+    }
+
     @Test fun notificationControlsDoNotDependOnCareFailuresOrBackgroundReads() {
         MockWebServer().use { server ->
             server.start()

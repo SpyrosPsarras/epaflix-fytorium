@@ -118,9 +118,13 @@ private val sources = listOf(
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Heading("Data sources", MaterialTheme.typography.titleMedium)
         Column {
+            // Rows start at the page's own edge, like the text above them.
             sources.forEach { (name, what, url) ->
-                ListItem(headlineContent = { Text(name) }, supportingContent = { Text(what) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "Open $name") { links.openUri(url) })
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = "Open $name") { links.openUri(url) }
+                    .padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
+                    Text(name, style = MaterialTheme.typography.bodyLarge)
+                    Text(what, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
         TextButton(onClick = { links.openUri("https://github.com/SpyrosPsarras/epaflix-fytorium") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Source code") }

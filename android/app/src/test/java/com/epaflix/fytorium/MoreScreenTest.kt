@@ -78,7 +78,7 @@ class MoreScreenTest {
         val busy = mutableStateOf(false)
         var logins = 0
         compose.setContent { FytoriumTheme { LoginPage(busy.value, loginError("not_member"), online.value) { logins++ } } }
-        compose.onNodeWithText("This account isn't in a Fytorium household.", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("This account isn't in a household yet.").assertIsDisplayed()
         val button = compose.onNodeWithText("Log in").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithText("Log in").performClick()
         compose.runOnIdle { assertEquals(1, logins); busy.value = true }
