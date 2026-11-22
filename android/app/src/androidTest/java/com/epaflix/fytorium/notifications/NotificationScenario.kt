@@ -61,7 +61,7 @@ fun runNotificationScenario(compose: AndroidComposeTestRule<ActivityScenarioRule
             (0 until rows.length()).any { rows.getJSONObject(it).getString("transport") == "fcm" }
         }
         compose.selectTab("More")
-        compose.waitForNode(hasText("My notifications")).performScrollTo().performClick()
+        compose.waitForNode(hasText("Notifications") and hasClickAction()).performScrollTo().performClick()
         compose.waitForNode(hasText("Enable notifications")).performScrollTo().performClick()
         val allow = By.res("com.android.permissioncontroller", "permission_allow_button")
         assertTrue("A12 permission must follow the explained user action", device.wait(Until.hasObject(allow), 10_000))
@@ -110,7 +110,7 @@ fun runNotificationScenario(compose: AndroidComposeTestRule<ActivityScenarioRule
         assertTrue("A12 notification visible in system shade", device.wait(Until.hasObject(summary), 10_000))
         device.findObject(summary).click()
         compose.waitForNode(hasTestTag("view-today")).assertIsDisplayed()
-        compose.onNodeWithText("My notifications").assertDoesNotExist()
+        compose.onNodeWithText("Reminders, alerts and devices").assertDoesNotExist()
         assertTrue("A12 notification scheduled cache refresh", androidx.work.WorkManager.getInstance(app).getWorkInfosForUniqueWork(PushRefresh.NAME).get().isNotEmpty())
         println("A12 E2E PASS: server data message recorded by fake FCM, replayed through real handler, daily channel and replacement, notification tap opens Home")
     } finally {

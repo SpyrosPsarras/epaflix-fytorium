@@ -134,3 +134,7 @@ internal fun withCache(memberId: String = "member-one", test: (CareCache, ApiCli
         test(cache, ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}, server)
     } finally { server.shutdown(); db.close() }
 }
+
+// A bottom-bar tab, apart from a top bar whose status line makes its title tappable too.
+internal fun isTab(title: String) = androidx.compose.ui.test.hasText(title) and
+    SemanticsMatcher.expectValue(SemanticsProperties.Role, androidx.compose.ui.semantics.Role.Tab) and !androidx.compose.ui.test.hasTestTag("view-today")

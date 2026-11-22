@@ -251,7 +251,7 @@ class TodayLayoutTest {
     private fun lateTap(swiped: Boolean) {
         val care = mutableStateOf(state(tasks = rows(2)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 1", event)) }
         compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
         if (swiped) compose.onNodeWithText("Watered Fern 1").performTouchInput { swipeRight() } else compose.mainClock.advanceTimeBy(10_000)
@@ -263,13 +263,13 @@ class TodayLayoutTest {
         compose.onNodeWithTag("bar-paused").assertDoesNotExist()
         compose.onRoot().performTouchInput { click(more) }
         compose.onNodeWithTag("task-list").assertDoesNotExist()
-        compose.onNode(hasText("More") and !hasClickAction()).assertIsDisplayed()
+        compose.onNode(hasText("More") and !isTab("More")).assertIsDisplayed()
     }
 
     @Test fun aTapOnTheBarWhileANewExplanationFadesInWaitsHalfASecondAfterTheLastOneLeft() {
         val message = "Changes need a connection."
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(2)).copy(offline = true)) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         val control = compose.onNodeWithContentDescription("Mark Water done for Fern 0, Synthetic site")
         control.performClick()
         compose.onNodeWithText(message).assertIsDisplayed()
@@ -305,7 +305,7 @@ class TodayLayoutTest {
         val first = "Changes need a connection."
         val queued = "Adding a plant needs a connection."
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(2)).copy(offline = true)) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         compose.onNodeWithContentDescription("Mark Water done for Fern 0, Synthetic site").performClick()
         compose.onNodeWithContentDescription("Add plant").performClick()
         compose.onNodeWithText(first).assertIsDisplayed()
@@ -329,7 +329,7 @@ class TodayLayoutTest {
     private fun tapWhileFadingIn(replacing: Boolean) {
         val care = mutableStateOf(state(tasks = rows(2)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         if (replacing) {
             compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 0", event)) }
             compose.onNodeWithText("Watered Fern 0").assertIsDisplayed()
@@ -367,7 +367,7 @@ class TodayLayoutTest {
         var host: android.view.View? = null
         compose.setContent { host = LocalView.current; FytoriumTheme { AppShell(true, false, careState = care.value) } }
         val today = bounds(hasText("Today") and hasClickAction() and !hasTestTag("view-today"))
-        val bar = Rect(today.left, today.top, bounds(hasText("More") and hasClickAction()).right, today.bottom)
+        val bar = Rect(today.left, today.top, bounds(isTab("More")).right, today.bottom)
         fun blank(): Boolean {
             val colors = mutableSetOf<Int>()
             compose.runOnUiThread {

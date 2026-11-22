@@ -536,12 +536,12 @@ class SpeciesCareScreenTest {
     @Test fun onlyOwnerAndFamilySeeUnmatchedSpeciesUnderMore() {
         val care = mutableStateOf(CareState(member = Member("synthetic-member", Role.owner)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        compose.onNodeWithText("More").performClick()
-        compose.onNodeWithText("Unmatched species").assertIsDisplayed()
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("Species without care data").assertIsDisplayed()
         compose.runOnIdle { care.value = care.value.copy(member = Member("synthetic-member", Role.family)) }
-        compose.onNodeWithText("Unmatched species").assertIsDisplayed()
+        compose.onNodeWithText("Species without care data").assertIsDisplayed()
         compose.runOnIdle { care.value = care.value.copy(member = Member("synthetic-member", Role.sitter)) }
-        compose.onNodeWithText("Unmatched species").assertDoesNotExist()
+        compose.onNodeWithText("Species without care data").assertDoesNotExist()
     }
     @Test fun pendingCarePollsOnlyWhileStartedAndStopsWhenDone() {
         okhttp3.mockwebserver.MockWebServer().use { server ->
@@ -669,8 +669,8 @@ class SpeciesCareScreenTest {
             val home = mutableIntStateOf(0)
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("synthetic-member", Role.owner)), sitesApi = api,
                 sitesConnected = { true }, homeRequest = home.intValue) } }
-            compose.onNodeWithText("More").performClick()
-            compose.onNodeWithText("Unmatched species").performClick()
+            compose.onNode(isTab("More")).performClick()
+            compose.onNodeWithText("Species without care data").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Species care for Synthetic mistleaf").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Species care for Synthetic mistleaf").performClick()
             val open = hasText("Override watering interval in days") and isEnabled()

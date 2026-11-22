@@ -98,6 +98,9 @@ internal fun ComposeContentTestRule.scrollTaskClearOfReceipt(tag: String) {
     check(row.fetchSemanticsNode().boundsInRoot.bottom < receiptTop) { "Task $tag is still behind the receipt" }
 }
 
+// A bottom-bar tab, apart from a top bar whose status line makes its title tappable too.
+private fun tab(title: String) = hasText(title) and SemanticsMatcher.expectValue(SemanticsProperties.Role, androidx.compose.ui.semantics.Role.Tab)
+
 // A receipt covers the navigation bar, which ignores taps for half a second after it goes, so swipe it away and wait like a user.
 internal fun ComposeContentTestRule.selectTab(title: String) {
     val receipt = hasTestTag("receipt")
@@ -113,9 +116,9 @@ internal fun ComposeContentTestRule.selectTab(title: String) {
         swiped = covered
         // The bar also hides while the keyboard is open, so wait until it is back.
         !covered && onAllNodes(hasTestTag("bar-paused")).fetchSemanticsNodes().isEmpty() &&
-            onAllNodes(hasText(title) and hasClickAction() and !hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty()
+            onAllNodes(tab(title)).fetchSemanticsNodes().isNotEmpty()
     }
-    onNode(hasText(title) and hasClickAction() and !hasTestTag("view-today")).performClick().assertIsSelected()
+    onNode(tab(title)).performClick().assertIsSelected()
 }
 
 // Candidates show the fetched familiar name only for a species Fytorium already has (W1), so tell the caller which applies.

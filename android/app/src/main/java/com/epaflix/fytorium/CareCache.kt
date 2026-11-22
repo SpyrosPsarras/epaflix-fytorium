@@ -17,6 +17,7 @@ abstract class CareDatabase : RoomDatabase() { abstract fun care(): CareDao }
 // JSON snapshots preserve server groups and provenance; every row belongs to one member.
 class CareCache(private val db: CareDatabase) {
     fun member(): Member? = db.care().identity()?.let { parseMember(it.json) }
+    fun names(): MemberNames = db.care().identity()?.let { runCatching { parseNames(it.json) }.getOrNull() } ?: MemberNames()
     fun get(member: String, resource: String): CachedCare? = db.care().get(member, resource)
     fun bind(identity: String) {
         val member = parseMember(identity)

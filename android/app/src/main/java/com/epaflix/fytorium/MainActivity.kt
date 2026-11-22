@@ -36,6 +36,9 @@ class MainActivity : ComponentActivity() {
             FytoriumTheme {
                 Box(Modifier.fillMaxSize().imePadding()) {
                     AppShell(state.loggedIn, state.updateRequired || careState.updateRequired, state.busy, state.message,
+                        phoneOnline = online, minAppVersion = state.minAppVersion,
+                        onCheckAgain = { session.checkAgain { java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) }; care.refresh() },
+                        onObtainium = obtainium()?.let { launch -> { startActivity(launch) } },
                         onLogin = { login() }, onLogout = session::logout,
                         careState = careState, controller = care, thumbnails = app.thumbnails, feed = app.feed,
                         homeRequest = homeRequest.intValue, deviceOnline = state.loggedIn && online, sitesApi = app.api, sitesConnected = { app.store.tokens != null && care.connected() },
@@ -55,6 +58,9 @@ class MainActivity : ComponentActivity() {
         (application as FytoriumApplication).care.refresh()
         (application as FytoriumApplication).push.refresh()
     }
+
+    // Obtainium tracks Fytorium for people who install it that way; the stop offers it only when it is installed.
+    private fun obtainium() = listOf("dev.imranr.obtainium", "dev.imranr.obtainium.fdroid").firstNotNullOfOrNull { packageManager.getLaunchIntentForPackage(it) }
 
     private fun login() {
         try {

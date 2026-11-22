@@ -271,7 +271,7 @@ class SiteScreenTest {
             server.start()
             val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("synthetic-member", Role.owner)), sitesApi = api, sitesConnected = { true }) } }
-            compose.onNodeWithText("More").performClick()
+            compose.onNode(isTab("More")).performClick()
             compose.onNodeWithText("Sites").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Edit") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Edit").performClick()
@@ -294,7 +294,7 @@ class SiteScreenTest {
     @Test fun onlyOwnerAndFamilySeeSitesUnderMore() {
         val care = mutableStateOf(CareState(member = Member("synthetic-member", Role.owner)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        compose.onNodeWithText("More").performClick()
+        compose.onNode(isTab("More")).performClick()
         compose.onNodeWithText("Sites").assertIsDisplayed()
         compose.runOnIdle { care.value = care.value.copy(member = Member("synthetic-member", Role.family)) }
         compose.onNodeWithText("Sites").assertIsDisplayed()

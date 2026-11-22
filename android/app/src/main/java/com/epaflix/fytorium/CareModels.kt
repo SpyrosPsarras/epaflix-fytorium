@@ -161,6 +161,11 @@ internal fun batchReceipt(action: String?, plantCount: Int?, eventCount: Int?, p
 internal fun JSONObject.nullable(name: String): String? = if (isNull(name)) null else getString(name)
 internal fun <T> JSONArray.mapObjects(parse: (JSONObject) -> T): List<T> = (0 until length()).map { parse(getJSONObject(it)) }
 internal fun parseTimezone(meta: String): ZoneId = ZoneId.of(JSONObject(meta).getString("timezone"))
+// Display names for the More header, kept apart from Member, whose equality decides cache wipes.
+data class MemberNames(val member: String? = null, val owner: String? = null)
+internal fun parseNames(json: String) = JSONObject(json).let {
+    MemberNames(it.optJSONObject("member")?.nullable("display_name"), it.optJSONObject("household")?.nullable("owner_name"))
+}
 internal fun parseMember(json: String): Member = JSONObject(json).getJSONObject("member").let { Member(it.getString("id"), Role.valueOf(it.getString("role"))) }
 internal fun parseEvent(j: JSONObject) = CareEvent(j.getString("id"), j.getString("plant_id"), j.nullable("task_type"),
     j.nullable("custom_task_id"), j.nullable("custom_task_name"), j.getString("kind"), j.getString("occurred_on"),

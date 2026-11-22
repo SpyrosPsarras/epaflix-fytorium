@@ -118,7 +118,7 @@ import org.json.JSONObject
     }).withNote(note)
     Scaffold(topBar = { Column {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { status?.first == failure && (state.blocked || state.pageError != null) }) {
-            Text(if (unmatched) "Unmatched species" else "Care defaults for this species", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (unmatched) "Species without care data" else "Care defaults for this species", maxLines = 1, overflow = TextOverflow.Ellipsis)
         } }, expandedHeight = barHeight(), navigationIcon = {
             IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         })

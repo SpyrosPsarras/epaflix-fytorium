@@ -50,7 +50,7 @@ class AuthTest {
                 api.loginUrl()
                 val state = store.pending!!.state
                 server.enqueue(MockResponse().setBody(pair))
-                assertTrue(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
+                assertNull(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
                 val login = server.takeRequest()
                 assertEquals("/api/app/token", login.path)
                 assertEquals("el-GR", login.getHeader("Accept-Language"))
@@ -79,6 +79,10 @@ class AuthTest {
             valid.replace("com.epaflix.fytorium", "other"), "$REDIRECT_URI?state=synthetic-state",
             "$REDIRECT_URI?code=x&state=%XX").forEach { assertNull(login.codeFrom(it, 101)) }
         assertNull(login.codeFrom(valid, 600_101))
+        // W5a-P8: the server's reason reaches the login screen only from a redirect that belongs to this attempt.
+        assertEquals("not_member", login.errorFrom(valid + "&error=not_member", 101))
+        assertNull(login.errorFrom("$REDIRECT_URI?error=not_member&state=wrong", 101))
+        assertNull(login.errorFrom(valid, 101))
         assertNull(login.codeFrom(valid, 99))
     }
     @Test fun loginMatchesContractAndConsumesPendingState() {
@@ -93,7 +97,7 @@ class AuthTest {
             assertEquals(store.pending!!.challenge, url.queryParameter("code_challenge"))
             val state = store.pending!!.state
             server.enqueue(MockResponse().setBody(pair))
-            assertTrue(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
+            assertNull(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
             val request = server.takeRequest()
             assertEquals("/api/app/token", request.path)
             assertTrue(request.getHeader("Content-Type")!!.startsWith("application/json"))
@@ -103,7 +107,7 @@ class AuthTest {
             assertEquals(url.queryParameter("code_challenge"), Pkce.challenge(json.getString("code_verifier")))
             assertTrue(json.has("device_name"))
             assertNull(store.pending)
-            assertFalse(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
+            assertEquals("invalid", api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
             assertEquals("synthetic-new", store.tokens!!.access)
         }
     }
@@ -118,7 +122,7 @@ class AuthTest {
             api.loginUrl()
             val state = store.pending!!.state
             server.enqueue(MockResponse().setBody(pair))
-            assertTrue(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
+            assertNull(api.completeLogin("$REDIRECT_URI?code=synthetic-code&state=$state"))
             val login = server.takeRequest()
             assertEquals("/api/app/token", login.path)
             assertEquals("Login must not reuse the startup API socket", 0, login.sequenceNumber)
@@ -174,7 +178,7 @@ class AuthTest {
             val store = MemoryCredentials()
             val api = ApiClient(server.url("").toString().trimEnd('/'), store) {}
             api.loginUrl()
-            assertFalse(api.completeLogin("$REDIRECT_URI?code=x&state=wrong"))
+            assertEquals("invalid", api.completeLogin("$REDIRECT_URI?code=x&state=wrong"))
             assertEquals(0, server.requestCount)
             assertNotNull(store.pending)
         }

@@ -108,7 +108,7 @@ fun runHouseholdScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<Ma
         compose.onNodeWithText(names.first()).assertIsDisplayed()
         compose.onNodeWithText(names.last()).assertDoesNotExist()
         compose.selectTab("More")
-        for (name in listOf("Members", "Household settings", "Custom tasks")) compose.onNodeWithText(name).assertDoesNotExist()
+        for (name in listOf("Members", "Weather and feed", "Custom tasks")) compose.onNodeWithText(name).assertDoesNotExist()
         // The separate API actor was idle through two browser flows. Open a fresh connection, never replay a write.
         owner.networkLost()
         val removed = repo.removeMember(memberId!!)

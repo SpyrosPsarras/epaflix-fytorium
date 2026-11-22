@@ -6,6 +6,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import com.epaflix.fytorium.plants.connectionNotice
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.Book
@@ -37,6 +39,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
+                         phoneOnline: Boolean = true, minAppVersion: String? = null, onCheckAgain: () -> Unit = {}, onObtainium: (() -> Unit)? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
                          careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
                          feed: FeedRepository? = null,
@@ -122,7 +125,10 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val showTabs = !WindowInsets.isImeVisible
     Scaffold(topBar = {
         if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
-            TopAppBar(title = { Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) })
+            val line = careState?.takeIf { loggedIn && !updateRequired && !about }?.connectionLine(deviceOnline)
+            TopAppBar(title = { BarTitle(line, careState?.connectionNotice(deviceOnline).orEmpty(), retry = { controller?.refresh(); Unit }.takeIf { line != null && deviceOnline }) {
+                Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) } },
+                navigationIcon = { if (loggedIn && !updateRequired && about) IconButton(onClick = { about = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
         }
     }, bottomBar = {
         val tabBar: @Composable (Modifier) -> Unit = { modifier ->
@@ -263,42 +269,35 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
             return@Scaffold
         }
+        if (loggedIn && !updateRequired && tab == "More" && !about) {
+            MoreRoot(careState ?: CareState(), deviceOnline, busy, open = { key ->
+                when (key) {
+                    "notifications" -> notifications = true
+                    "weather" -> openFeedSettings()
+                    "sites" -> sites = true
+                    "members" -> household = com.epaflix.fytorium.household.HouseholdArea.Members.name
+                    "custom" -> household = com.epaflix.fytorium.household.HouseholdArea.Tasks.name
+                    "planta" -> plantaImport = true
+                    "unmatched" -> unmatched = true
+                    "about" -> about = true
+                }
+            }, onLogout = onLogout, modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding))
+            return@Scaffold
+        }
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when {
-                updateRequired -> {
-                    Text("Update Fytorium", style = MaterialTheme.typography.headlineMedium)
-                    Text("This server needs a newer app. Install the latest Fytorium release.")
-                }
-                !loggedIn -> {
-                    Text("Your plants, together.")
-                    Button(onClick = onLogin, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log in") }
-                }
-                tab == "More" && about -> {
-                    Text("Version " + BuildConfig.VERSION_NAME)
-                    Button(onClick = onCopyDiagnostics, modifier = Modifier.heightIn(min = 48.dp)) { Text("Copy diagnostics") }
-                    Text("Diagnostics stay on this device until you copy them.")
-                }
-                tab == "More" -> {
-                    if (careState?.member != null && sitesApi != null) Button(onClick = { notifications = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("My notifications") }
-                    if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
-                    if (careState?.member != null && careState.member.role != Role.sitter) {
-                        Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
-                        for (area in com.epaflix.fytorium.household.HouseholdArea.entries.filter { it != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner }) {
-                            Button(onClick = { household = area.name }, modifier = Modifier.heightIn(min = 48.dp)) { Text(area.title) }
-                        }
-                        Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }
-                    }
-                    if (careState?.member?.role == Role.owner) Button(onClick = { plantaImport = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Import from Planta") }
-                    Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
-                    Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }
+                updateRequired -> UpdateStop(minAppVersion, message, busy, phoneOnline, onObtainium, onCheckAgain, onLogout)
+                !loggedIn -> LoginPage(busy, message, phoneOnline, onLogin)
+                tab == "More" && about -> AboutPage(remember(about) { controller?.repository?.cachedJson("meta")?.first?.let { runCatching { org.json.JSONObject(it).optString("serverVersion").takeIf { v -> v.isNotBlank() } }.getOrNull() } }) {
+                    onCopyDiagnostics()
+                    // Android 13 and later confirm a copy themselves.
+                    if (android.os.Build.VERSION.SDK_INT < 33) controller?.repository?.showReceipt("Diagnostics copied")
                 }
                 else -> {
                     Text(when (tab) { "Today" -> "No tasks yet."; "Plants" -> "No plants yet."; else -> "No journal entries yet." })
                 }
             }
-            message?.let { Text(it) }
-            if (busy) Text("Please wait…")
         }
     }
 }

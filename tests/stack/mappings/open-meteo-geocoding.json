@@ -1,0 +1,59 @@
+{
+  "mappings": [
+    {
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/v1/search",
+        "queryParameters": {
+          "name": {
+            "equalTo": "Bergen"
+          }
+        },
+        "headers": {
+          "Host": {
+            "matches": "open-meteo-geocoding(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "results": [
+            {
+              "name": "Bergen",
+              "admin1": "Vestland",
+              "country": "Norway",
+              "latitude": 60.39299,
+              "longitude": 5.32415
+            }
+          ]
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "request": {
+        "method": "GET",
+        "urlPath": "/v1/search",
+        "headers": {
+          "Host": {
+            "matches": "open-meteo-geocoding(:[0-9]+)?"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "generationtime_ms": 0.1
+        }
+      }
+    }
+  ]
+}

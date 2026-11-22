@@ -48,8 +48,8 @@ class FeedScreenTest {
             compose.setContent { FytoriumTheme { AppShell(true, false,
                 careState = CareState(member = Member("synthetic-member", Role.sitter)), feed = feed) } }
             compose.onNodeWithTag("feed-cold").assertDoesNotExist()
-            compose.onNodeWithText("More").performClick()
-            compose.onNodeWithText("Feed and weather settings").assertDoesNotExist()
+            compose.onNode(isTab("More")).performClick()
+            compose.onNodeWithText("Weather and feed").assertDoesNotExist()
         } finally { server.shutdown() }
     }
     @Test fun careFailuresDoNotDisableOnlineFeedControls() {
@@ -70,8 +70,8 @@ class FeedScreenTest {
             compose.runOnIdle { care.value = CareState(member = member, serverUnavailable = true) }
             compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsEnabled()
             server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("""{"location":{"latitude":0.5,"longitude":0.5}}"""))
-            compose.onNodeWithText("More").performClick()
-            compose.onNodeWithText("Feed and weather settings").performScrollTo().performClick()
+            compose.onNode(isTab("More")).performClick()
+            compose.onNodeWithText("Weather and feed").performScrollTo().performClick()
             compose.onNodeWithText("Save my feed").assertIsEnabled()
             compose.onNodeWithText("Latitude").assertIsEnabled()
             compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()

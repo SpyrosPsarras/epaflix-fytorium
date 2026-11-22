@@ -40,7 +40,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Identity"
+                $ref: "#/components/schemas/Me"
         "426":
           description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
           content:
@@ -2628,6 +2628,88 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/Location"
+  /api/household/location/search:
+    get:
+      operationId: get_api_household_location_search
+      summary: GET /api/household/location/search
+      description: Owner only. Finds places by name through Open-Meteo geocoding for setting the household location. The query is not stored, cached or logged.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Town or city, 2 to 100 characters after trimming.
+          schema:
+            type: string
+        - name: X-App-Version
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Up to ten places. No match is an empty list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label:
+                          type: string
+                        name:
+                          type: string
+                        region:
+                          anyOf:
+                            - type: string
+                            - type: "null"
+                        country:
+                          anyOf:
+                            - type: string
+                            - type: "null"
+                        latitude:
+                          type: number
+                        longitude:
+                          type: number
+                      required: [label, name, region, country, latitude, longitude]
+                      additionalProperties: false
+                required: [results]
+                additionalProperties: false
+        "422":
+          description: The query is shorter than 2 or longer than 100 characters.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: object
+                    properties:
+                      q:
+                        type: string
+                    required: [q]
+                required: [errors]
+        "426":
+          description: X-App-Version is invalid or below MIN_APP_VERSION. Requests without this header are never refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRequired"
+        "503":
+          description: Open-Meteo geocoding failed, timed out or answered malformed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          description: Login, authorization, input, conflict, rate-limit or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/feed/settings:
     get:
       operationId: get_api_feed_settings
@@ -3519,6 +3601,57 @@ components:
           required:
             - id
             - name
+          additionalProperties: false
+      required:
+        - language
+        - member
+        - household
+      additionalProperties: false
+    Me:
+      type: object
+      properties:
+        language:
+          enum:
+            - en
+            - nb
+            - el
+        member:
+          type: object
+          properties:
+            id:
+              type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            role:
+              enum:
+                - owner
+                - family
+                - sitter
+            display_name:
+              anyOf:
+                - type: string
+                - type: "null"
+          required:
+            - id
+            - role
+            - display_name
+          additionalProperties: false
+        household:
+          type: object
+          properties:
+            id:
+              type: string
+              pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            name:
+              type: string
+            owner_name:
+              description: Display name of a current owner of the household, for the More header and a sitter's "for <owner>".
+              anyOf:
+                - type: string
+                - type: "null"
+          required:
+            - id
+            - name
+            - owner_name
           additionalProperties: false
       required:
         - language

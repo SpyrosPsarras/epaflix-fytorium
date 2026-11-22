@@ -322,7 +322,7 @@ class PlantaScreenTest {
             val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("a", "r") }) {}
             compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("owner", Role.owner)),
                 sitesApi = api, sitesConnected = { true }) } }
-            compose.onNodeWithText("More").performClick()
+            compose.onNode(isTab("More")).performClick()
             compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
             compose.onNodeWithText("Complete them in Sites").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("No sites yet. Create a room, garden or terrace for your plants.").fetchSemanticsNodes().isNotEmpty() }
@@ -368,7 +368,7 @@ class PlantaScreenTest {
     @Test fun onlyOwnerSeesImportEntry() {
         val care = mutableStateOf(CareState(member = Member("member", Role.owner)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        compose.onNodeWithText("More").performClick()
+        compose.onNode(isTab("More")).performClick()
         compose.onNodeWithText("Import from Planta").performScrollTo().assertIsDisplayed()
         for (role in listOf(Role.family, Role.sitter)) {
             compose.runOnIdle { care.value = care.value.copy(member = Member("member", role)) }
