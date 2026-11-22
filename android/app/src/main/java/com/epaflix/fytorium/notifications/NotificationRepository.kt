@@ -45,8 +45,13 @@ internal object NotificationRepositories {
 }
 
 // W5a-P32: the last settings, devices and time zone stay in the member's cache for offline reading.
-class NotificationRepository(private val api: ApiClient, private val allowed: () -> Boolean, private val connected: () -> Boolean,
-    private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Long? = { _, _ -> null }) {
+class NotificationRepository(private val api: ApiClient, private var allowed: () -> Boolean, private var connected: () -> Boolean,
+    private var cached: (String) -> Pair<String, Long>? = { null }, private var keep: (String, String) -> Long? = { _, _ -> null }) {
+    // A reopened screen hands over its own view of the member, connection and cache, so the shared repository never reads a closed screen's state.
+    @Synchronized fun takeUpdateRequired(): Boolean = state.value.updateRequired.also { if (it) mutable.value = state.value.copy(updateRequired = false, blocked = false) }
+    @Synchronized fun bind(allowed: () -> Boolean, connected: () -> Boolean, cached: (String) -> Pair<String, Long>?, keep: (String, String) -> Long?) {
+        this.allowed = allowed; this.connected = connected; this.cached = cached; this.keep = keep
+    }
     private val mutable = MutableStateFlow(NotificationState())
     val state = mutable.asStateFlow()
     // What the server last confirmed, kept in the cache after every read and confirmed write, before any follow-up read.
@@ -75,7 +80,7 @@ class NotificationRepository(private val api: ApiClient, private val allowed: ()
             val preferences = request("settings")
             val rows = request("subscriptions")
             val timezone = JSONObject(request("/api/meta")).getString("timezone")
-            if (allowed()) mutable.value = state.value.copy(settings = settings(preferences), devices = devices(rows), timezone = timezone, loaded = true, blocked = false,
+            if (allowed()) mutable.value = state.value.copy(settings = settings(preferences), devices = devices(rows), timezone = timezone, loaded = true, blocked = false, updateRequired = false,
                 updatedAt = System.currentTimeMillis())
             persist()
         }

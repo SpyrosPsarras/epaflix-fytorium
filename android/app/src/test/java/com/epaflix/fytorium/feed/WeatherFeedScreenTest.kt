@@ -107,6 +107,9 @@ class WeatherFeedScreenTest {
         compose.onNodeWithText("Find your town").performTextInput("B")
         compose.onNodeWithText("Find your town").performImeAction()
         compose.onNodeWithText("Type at least 2 letters.").assertIsDisplayed()
+        compose.onNodeWithText("Find your town").performTextReplacement("B".repeat(101))
+        compose.onNodeWithText("Find your town").performImeAction()
+        compose.onNodeWithText("Type at most 100 letters.").assertIsDisplayed()
         compose.onNodeWithText("Find your town").performTextReplacement("Zzqx")
         compose.onNodeWithText("Find your town").performImeAction()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("No place called \u201cZzqx\u201d").fetchSemanticsNodes().isNotEmpty() }

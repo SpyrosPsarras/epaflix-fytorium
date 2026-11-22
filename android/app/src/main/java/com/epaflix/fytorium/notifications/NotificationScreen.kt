@@ -41,16 +41,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable fun NotificationRoute(api: ApiClient, care: CareState, connected: () -> Boolean, onBack: () -> Unit,
-    onReceipt: (String) -> Unit = {}, onUpdateRequired: () -> Unit = {}, answers: Int = 0,
+    onReceipt: (String) -> Unit = {}, onUpdateRequired: () -> Unit = {}, answers: Int = 0, live: () -> CareState? = { null },
     cached: (String) -> Pair<String, Long>? = { null }, keep: (String, String) -> Long? = { _, _ -> null }) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
     // One repository per member for the process, so a reopened screen continues from a write still in flight (W5a-P30).
-    val repository = remember(api, member) { NotificationRepositories.of(member?.id) { NotificationRepository(api,
-        { currentCare.member == member && member != null && !currentCare.updateRequired }, { currentConnected() },
-        // Bound to the member who started the read, so a late answer never lands in another member's cache.
-        { resource -> cached(resource).takeIf { currentCare.member == member } }, { resource, json -> if (currentCare.member == member) keep(resource, json) else null }) } }
+    // The app's live care state when the shell gives it, so work queued after this screen closes still checks the real member and update gate.
+    val liveCare = { live() ?: currentCare }
+    val allowed = { liveCare().let { it.member == member && member != null && !it.updateRequired } }
+    // Bound to the member who started the read, so a late answer never lands in another member's cache.
+    val readCache = { resource: String -> cached(resource).takeIf { liveCare().member == member } }
+    val writeCache = { resource: String, json: String -> if (liveCare().member == member) keep(resource, json) else null }
+    val repository = remember(api, member) { NotificationRepositories.of(member?.id) { NotificationRepository(api, allowed, { currentConnected() }, readCache, writeCache) }
+        .also { it.bind(allowed, { currentConnected() }, readCache, writeCache) } }
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -70,7 +74,8 @@ import kotlinx.coroutines.withContext
         asked = true; notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
     BackHandler { onBack() }
-    LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
+    // Each 426 reaches the app-wide stop once, so a reopened screen never replays an old one.
+    LaunchedEffect(state.updateRequired) { if (repository.takeUpdateRequired()) onUpdateRequired() }
     NotificationScreen(state, online = connected() && !care.updateRequired, sitter = member?.role == Role.sitter, care = care, onReceipt = onReceipt,
         permissionAsked = asked, notificationsEnabled = notificationsEnabled, onSystemSettings = { systemSettings() }, onEnable = {
             if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !asked) {

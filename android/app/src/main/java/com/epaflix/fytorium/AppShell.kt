@@ -170,7 +170,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
                     onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
-                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0,
+                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0, live = { controller?.repository?.state?.value },
                     cached = { controller?.repository?.cachedJson(it, careState.member.id) },
                     keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) }) }
             }

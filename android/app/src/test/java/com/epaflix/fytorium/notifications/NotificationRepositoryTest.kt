@@ -13,6 +13,22 @@ import org.robolectric.RobolectricTestRunner
 class NotificationRepositoryTest {
     // W5a-P32 (S4): a confirmed save and removal reach the cache, so an offline reopen shows them.
     // W5a-P30 (S1): a reopened screen gets the same member's repository, so it continues from a write in flight.
+    // W5a-P13 (S17): a 426 reaches the app-wide stop once, and a later successful read leaves no stop behind.
+    @Test fun aRefusedVersionIsReportedOnceAndClearsOnRecovery() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val repository = NotificationRepository(api, { true }, { true })
+            server.enqueue(MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}"""))
+            assertFalse(repository.refresh())
+            assertTrue(repository.takeUpdateRequired())
+            assertFalse("A remount replayed the old stop", repository.takeUpdateRequired())
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            assertTrue(repository.refresh())
+            assertFalse(repository.state.value.updateRequired)
+        }
+    }
     @Test fun aMembersRepositoryOutlivesItsScreen() {
         val api = ApiClient("http://127.0.0.1:9", MemoryCredentials()) {}
         NotificationRepositories.clear()

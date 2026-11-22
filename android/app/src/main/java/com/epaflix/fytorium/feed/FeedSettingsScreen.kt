@@ -101,6 +101,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
     fun search(text: String = query) {
         val q = text.trim()
         if (q.length < 2) { queryError = "Type at least 2 letters."; return }
+        if (q.length > 100) { queryError = "Type at most 100 letters."; return }
         if (!online) return
         queryError = null; searching = true; submitted = q
         keyboard?.hide(); focus.clearFocus()
