@@ -64,7 +64,8 @@ class FeedRepositoryTest {
         assertNull("A later refresh left the failure on screen", feed.state.value.message)
         server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
         assertTrue(feed.saveSettings(feed.state.value.settings!!))
-        assertEquals("Feed settings saved.", feed.state.value.message)
+        // W5a-P20: switches save on change with no success message.
+        assertNull(feed.state.value.message)
     }
     @Test fun aFailureShownBeforeADisconnectDoesNotReturnAfterTheReconnect() = withFeed { feed, server, online ->
         load(feed, server)

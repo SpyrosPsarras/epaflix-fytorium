@@ -202,14 +202,10 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
             return@Scaffold
         }
-        if (loggedIn && !updateRequired && feedSettings && feedState != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
-            Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = { feedSettings = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back") }
-                FeedSettingsScreen(feedState,
-                    onSaveFeed = { scope.launch(Dispatchers.IO) { feed?.saveSettings(it) } },
-                    onSaveLocation = { scope.launch(Dispatchers.IO) { feed?.saveLocation(it) } })
-                TextButton(onClick = { scope.launch(Dispatchers.IO) { feed?.refresh(careState?.member); feed?.loadLocation() } },
-                    enabled = !feedState.refreshing && !feedState.saving, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh settings") }
+        if (loggedIn && !updateRequired && feedSettings && feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
+            Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                key(careState?.member) { com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it }) }
             }
             return@Scaffold
         }

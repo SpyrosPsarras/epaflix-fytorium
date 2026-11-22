@@ -46,22 +46,3 @@ import com.epaflix.fytorium.Choice
         supportingText = errors["interval_days"]?.let { { HouseholdError(it) } }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
     Button(onClick = { save(initial.copy(name = name, interval = interval)) }, enabled = enabled) { Text("Save task") }
 }
-@Composable internal fun HouseholdSettingsForm(state: HouseholdState, owner: Boolean, enabled: Boolean,
-    onLocation: (Map<String, String>) -> Unit, onFeed: (Map<String, Boolean>) -> Unit) {
-    var location by remember(state.location) { mutableStateOf(state.location) }
-    var feed by remember(state.feed) { mutableStateOf(state.feed) }
-    HouseholdHeading("My home feed")
-    Text("Choose the cards you want to see. Other household members keep their own choices.")
-    for ((key, label) in feedLabels) Toggle(label, feed[key] == true, enabled) { feed = feed + (key to it) }
-    Button(onClick = { onFeed(feed) }, enabled = enabled) { Text("Save my feed") }
-    HouseholdHeading("Weather location")
-    Text("One location for the household. Coordinates are sent to Open-Meteo to fetch local weather and modelled climate.")
-    for ((key, label) in mapOf("latitude" to "Latitude", "longitude" to "Longitude", "label" to "Place label, optional")) {
-        OutlinedTextField(location[key].orEmpty(), { location = location + (key to it) }, label = { Text(label) }, enabled = enabled && owner,
-            keyboardOptions = KeyboardOptions(keyboardType = if (key == "label") KeyboardType.Text else KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-    }
-    if (owner) {
-        Text("Leave both coordinates blank to remove the location.")
-        Button(onClick = { onLocation(location) }, enabled = enabled) { Text("Save location") }
-    } else Text("Only the owner can change it.")
-}

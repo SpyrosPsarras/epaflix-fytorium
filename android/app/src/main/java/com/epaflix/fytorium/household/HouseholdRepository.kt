@@ -8,8 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal val feedLabels = linkedMapOf("late_tasks" to "Late tasks", "current_weather" to "Current weather", "weather_alerts" to "Weather alerts", "plant_warnings" to "Plant warnings")
-enum class HouseholdArea(val title: String) { Settings("Household settings"), Members("Members"), Tasks("Custom tasks") }
+enum class HouseholdArea(val title: String) { Members("Members"), Tasks("Custom tasks") }
 data class HouseholdMember(val id: String, val name: String, val role: String, val plantIds: Set<String>,
     val roleOptions: List<String>, val canRemove: Boolean)
 data class HouseholdInvite(val id: String, val role: String, val expires: String, val plantIds: Set<String>)
@@ -19,8 +18,7 @@ data class HouseholdState(val loaded: Boolean = false, val loading: Boolean = fa
     val blocked: Boolean = false, val updateRequired: Boolean = false, val errors: Map<String, String> = emptyMap(),
     val plants: List<TaskTarget> = emptyList(), val sites: List<TaskTarget> = emptyList(),
     val members: List<HouseholdMember> = emptyList(), val invites: List<HouseholdInvite> = emptyList(),
-    val target: TaskTarget? = null, val tasks: List<CustomTask> = emptyList(),
-    val location: Map<String, String> = emptyMap(), val feed: Map<String, Boolean> = emptyMap())
+    val target: TaskTarget? = null, val tasks: List<CustomTask> = emptyList())
 private class HouseholdFailure(val status: Int, val errors: Map<String, String>) : Exception()
 private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
 private fun JSONObject.strings(key: String) = getJSONArray(key).let { list -> (0 until list.length()).map { list.getString(it) } }
@@ -51,13 +49,6 @@ class HouseholdRepository(private val api: ApiClient, private val area: Househol
     }
     private fun load() {
         when (area) {
-            HouseholdArea.Settings -> {
-                val location = JSONObject(request("/api/household/location")).optJSONObject("location")
-                val feed = JSONObject(request("/api/feed/settings"))
-                if (allowed()) mutable.value = state.value.copy(loaded = true, blocked = false,
-                    location = listOf("latitude", "longitude", "label").associateWith { if (location == null || location.isNull(it)) "" else location.get(it).toString() },
-                    feed = feedLabels.keys.associateWith { feed.getBoolean(it) })
-            }
             HouseholdArea.Members -> loadMembers()
             HouseholdArea.Tasks -> {
                 val plants = plants(includeGraveyard = true)
@@ -79,18 +70,6 @@ class HouseholdRepository(private val api: ApiClient, private val area: Househol
         if (allowed()) mutable.value = state.value.copy(plants = plants, members = members, invites = invites, loaded = true, blocked = false)
     }
     @Synchronized fun refresh() = run(false) { load() }
-    @Synchronized fun saveLocation(fields: Map<String, String>): Boolean {
-        if (role() != Role.owner) return false
-        val location = if (fields["latitude"].isNullOrBlank() && fields["longitude"].isNullOrBlank()) JSONObject.NULL else JSONObject().apply {
-            for (key in listOf("latitude", "longitude")) {
-                val text = fields[key].orEmpty().trim()
-                put(key, text.toDoubleOrNull()?.takeIf { it.isFinite() } ?: if (text.isBlank()) JSONObject.NULL else text)
-            }
-            put("label", fields["label"].orEmpty())
-        }
-        return command("/api/household/location", "PUT", JSONObject().put("location", location))
-    }
-    @Synchronized fun saveFeed(fields: Map<String, Boolean>) = command("/api/feed/settings", "PUT", JSONObject(fields))
     private fun loadTasks(target: TaskTarget) {
         val tasks = JSONArray(request("/api/custom-tasks", query = mapOf("${target.kind}_id" to id(target.id)))).objects()
             .map { CustomTask(it.getString("id"), it.getString("name"), it.getInt("interval_days").toString()) }

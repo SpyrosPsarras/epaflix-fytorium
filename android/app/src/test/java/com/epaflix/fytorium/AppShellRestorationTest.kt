@@ -259,7 +259,7 @@ class AppShellRestorationTest {
                     compose.onNode(isTab("More")).performClick()
                     compose.onNodeWithText("Members").assertDoesNotExist()
                     compose.onNodeWithText("Weather and feed").performScrollTo().performClick()
-                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Today's weather") and isToggleable() and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 }
                 "household" -> {
                     compose.onNode(isTab("More")).performClick()
@@ -339,10 +339,10 @@ class AppShellRestorationTest {
                         compose.onNodeWithText("A site groups plants that share the same conditions.").assertIsDisplayed()
                     }
                     "household-settings" -> {
-                        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-                        compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
+                        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Today's weather") and isToggleable() and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                        compose.onNode(hasText("Today's weather") and isToggleable()).performScrollTo().assertIsDisplayed().assertIsEnabled()
                         compose.onNodeWithText("Only the owner can change it.").performScrollTo().assertIsDisplayed()
-                        compose.onNodeWithText("Save location").assertDoesNotExist()
+                        compose.onNodeWithText("Find your town").assertDoesNotExist()
                         compose.onNodeWithText("Create invite").assertDoesNotExist()
                     }
                     "household" -> {
@@ -363,7 +363,7 @@ class AppShellRestorationTest {
                     }
                     "journal-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
                     "species", "plant-species" -> compose.onNodeWithText("Care defaults for this species").assertIsDisplayed()
-                    "feed-settings" -> compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
+                    "feed-settings" -> compose.onNode(hasText("Today's weather") and isToggleable()).performScrollTo().assertIsDisplayed().assertIsEnabled()
                     "feed-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
                 }
             } else {
@@ -379,7 +379,7 @@ class AppShellRestorationTest {
                 compose.onNodeWithText("Unsaved photo note").assertDoesNotExist()
                 compose.onNodeWithText("Identify").assertDoesNotExist()
                 compose.onNodeWithText("Create invite").assertDoesNotExist()
-                compose.onNodeWithText("Save my feed").assertDoesNotExist()
+                compose.onNode(hasText("Today's weather") and isToggleable()).assertDoesNotExist()
                 compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()
                 compose.onNodeWithText("Care defaults for this species").assertDoesNotExist()
                 compose.onNode(isTab("More")).performClick()

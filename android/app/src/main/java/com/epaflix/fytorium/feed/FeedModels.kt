@@ -105,8 +105,14 @@ data class FeedState(val member: Member? = null, val cards: List<FeedCard> = emp
                      val weather: FeedWeather? = null, val settings: Map<String, Boolean>? = null,
                      val location: WeatherLocation? = null, val locationLoaded: Boolean = false,
                      val loaded: Boolean = false, val offline: Boolean = false, val unavailable: Boolean = false,
-                     val refreshing: Boolean = false, val saving: Boolean = false, val message: String? = null) {
+                     val refreshing: Boolean = false, val saving: Boolean = false, val message: String? = null,
+                     // When the shown feed and settings were read, for the offline line; and whether place search's source failed.
+                     val updatedAt: Long? = null, val placesUnavailable: Boolean = false) {
     val writable get() = member != null && member.role != Role.sitter && !offline && !saving
+}
+data class Place(val label: String, val name: String, val region: String?, val country: String?, val latitude: Double, val longitude: Double) : java.io.Serializable {
+    // "Vestland, Norway": the region is left out when missing or equal to the name.
+    val where get() = listOfNotNull(region?.takeIf { it != name }, country).joinToString(", ")
 }
 // Svelte renders numbers without a fractional suffix for whole values.
 internal fun plainNumber(value: Double): String = java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()

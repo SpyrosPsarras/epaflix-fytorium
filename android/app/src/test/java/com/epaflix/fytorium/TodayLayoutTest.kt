@@ -1258,8 +1258,13 @@ class TodayLayoutTest {
         // The repository keeps a refused refresh's message for Today; a 409 to Mark watered leaves the feed's.
         val message = if (saved) "Feed settings saved." else if (rain) "Rain watering is not ready. Try again in a moment." else "Synthetic refusal"
         if (saved) {
+            // W5a-P20: a settings save shows no message on Today, so nothing can move.
             server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
             assertTrue(feed.saveSettings(feed.state.value.settings!!))
+            compose.waitForIdle()
+            assertNull(feed.state.value.message)
+            assertEquals("A card or row moved after a settings save at ${fontScale}x text", before, places())
+            return@withCache
         } else if (rain) {
             server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready"}"""))
             assertFalse(feed.water())

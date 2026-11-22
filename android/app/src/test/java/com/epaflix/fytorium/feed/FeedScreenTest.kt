@@ -29,11 +29,12 @@ class FeedScreenTest {
         cards = JSONObject(feedFixture).getJSONArray("cards").mapObjects(::parseFeedCard).filterNotNull(),
         weather = parseWeather(JSONObject(weatherFixture)), settings = feedLabels.keys.associateWith { true },
         location = WeatherLocation(0.5, 0.5, "Synthetic location"), locationLoaded = true)
-    @Composable private fun Screen(dark: Boolean, content: @Composable () -> Unit) {
+    @Composable private fun Screen(dark: Boolean, scroll: Boolean = true, content: @Composable () -> Unit) {
         // Reference images capture settled controls, not Android's wall-clock ripple animation.
         CompositionLocalProvider(LocalRippleConfiguration provides null) {
             FytoriumTheme(dark) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) { content() }
+                // The settings screen scrolls itself.
+                Column(Modifier.fillMaxSize().then(if (scroll) Modifier.verticalScroll(rememberScrollState()).padding(16.dp) else Modifier)) { content() }
             } }
         }
     }
@@ -64,7 +65,7 @@ class FeedScreenTest {
             feed.refresh(member)
             feed.loadLocation()
             val care = mutableStateOf(CareState(member = member, offline = true))
-            compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed) } }
+            compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value, feed = feed, deviceOnline = true) } }
             compose.onNodeWithTag("feed-rain").performScrollTo()
             compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsEnabled()
             compose.runOnIdle { care.value = CareState(member = member, serverUnavailable = true) }
@@ -72,36 +73,31 @@ class FeedScreenTest {
             server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("""{"location":{"latitude":0.5,"longitude":0.5}}"""))
             compose.onNode(isTab("More")).performClick()
             compose.onNodeWithText("Weather and feed").performScrollTo().performClick()
-            compose.onNodeWithText("Save my feed").assertIsEnabled()
-            compose.onNodeWithText("Latitude").assertIsEnabled()
-            compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()
+            compose.onNode(hasText("Today's weather") and isToggleable()).performScrollTo().assertIsEnabled()
+            compose.onNodeWithText("Find your town").performScrollTo().assertIsEnabled()
             compose.runOnIdle { care.value = CareState(member = member, offline = true) }
-            compose.onNodeWithText("Save location").assertIsEnabled()
-            compose.onNodeWithText("Save my feed").assertIsEnabled()
+            compose.onNodeWithText("Find your town").assertIsEnabled()
+            compose.onNode(hasText("Today's weather") and isToggleable()).assertIsEnabled()
         } finally { server.shutdown() }
     }
     @Test fun refreshingLeavesSettingsAndRainActionsEnabled() {
         val current = mutableStateOf(state().copy(refreshing = true,
             weather = state().weather!!.copy(lastBatchId = "batch-one")))
         var settings by mutableStateOf(false)
-        compose.setContent { Screen(false) {
-            if (settings) FeedSettingsScreen(current.value) else HomeFeed(current.value)
+        compose.setContent { Screen(false, scroll = !settings) {
+            if (settings) WeatherFeedScreen(current.value, null, true) else HomeFeed(current.value)
         } }
         compose.onNodeWithTag("feed-rain").performScrollTo()
         compose.onNodeWithText("Mark 1 outdoor plant watered").assertIsEnabled()
         compose.onNodeWithContentDescription("Undo rain watering").assertIsEnabled()
         compose.onNodeWithText("Rain on Sat 1 Jun, 6 mm").assertExists()
         compose.runOnIdle { settings = true }
-        compose.onAllNodes(isToggleable()).assertCountEquals(4)
-        repeat(4) { compose.onAllNodes(isToggleable())[it].assertIsEnabled() }
-        compose.onNodeWithText("Latitude").assertIsEnabled()
-        compose.onNodeWithText("Longitude").assertIsEnabled()
-        compose.onNodeWithText("Place label, optional").assertIsEnabled()
-        compose.onNodeWithText("Save my feed").assertIsEnabled()
-        compose.onNodeWithText("Save location").assertIsEnabled()
+        // W5a-P20, P30: three switches, no Late tasks, enabled while reading and while another switch saves.
+        compose.onAllNodes(isToggleable()).assertCountEquals(3)
+        repeat(3) { compose.onAllNodes(isToggleable())[it].assertIsEnabled() }
+        compose.onNodeWithText("Find your town").assertIsEnabled()
         compose.runOnIdle { current.value = current.value.copy(saving = true) }
-        compose.onNodeWithText("Latitude").assertIsNotEnabled()
-        compose.onNodeWithText("Save my feed").assertIsNotEnabled()
+        repeat(3) { compose.onAllNodes(isToggleable())[it].assertIsEnabled() }
     }
     @Test fun lateTasksAreLeftToTheListBelow() {
         val current = mutableStateOf(state())
@@ -269,10 +265,10 @@ class FeedScreenTest {
         var opened = ""
         var waters = 0
         var saved: Map<String, Boolean>? = null
-        compose.setContent { Screen(dark) {
+        compose.setContent { Screen(dark, scroll = !settings) {
             if (settings) {
                 assertEquals(if (dark) DarkColors.background else LightColors.background, MaterialTheme.colorScheme.background)
-                FeedSettingsScreen(current.value, onSaveFeed = { saved = it })
+                WeatherFeedScreen(current.value, null, true, onSetting = { key, value -> saved = mapOf(key to value); true })
             } else HomeFeed(current.value, today = "2030-06-01", onOpen = { opened = it }, onWater = { waters++ })
         } }
         fun capture(name: String) {
@@ -312,11 +308,12 @@ class FeedScreenTest {
         com.github.takahirom.roborazzi.captureScreenRoboImage("src/test/screenshots/feed-warnings-${if (dark) "dark" else "light"}.png")
         compose.onNodeWithText("Close").performClick()
         compose.runOnIdle { settings = true }
-        compose.onNodeWithText("Feed settings").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Weather and feed").assertIsDisplayed()
         capture("feed-settings")
-        compose.onNodeWithText("Plant warnings").performScrollTo().performClick()
-        compose.onNodeWithText("Save my feed").performScrollTo().performClick()
-        assertEquals(false, saved!!.getValue("plant_warnings"))
+        compose.onNode(hasText("Plant warnings") and isToggleable()).performScrollTo().assertIsOn().performClick()
+        compose.waitUntil(5_000) { saved != null }
+        assertEquals(mapOf("plant_warnings" to false), saved)
+        compose.onNodeWithText("Enter coordinates instead").performScrollTo().performClick()
         compose.onNodeWithText("Latitude").performScrollTo()
         compose.onNodeWithText("Save location").performScrollTo().assertHasClickAction().assertHeightIsAtLeast(48.dp)
         capture("feed-location")
@@ -325,8 +322,8 @@ class FeedScreenTest {
         compose.onNodeWithText("Only the owner can change it.").performScrollTo().assertIsDisplayed()
         capture("feed-family-location")
         compose.runOnIdle { current.value = state(Role.sitter) }
-        compose.onNodeWithText("Weather location").assertDoesNotExist()
-        compose.onNodeWithText("Save my feed").assertDoesNotExist()
+        compose.onNodeWithText("Household location").assertDoesNotExist()
+        compose.onNodeWithText("Today's weather").assertDoesNotExist()
         compose.runOnIdle { settings = false }
         compose.onNodeWithTag("feed-cold").assertDoesNotExist()
         compose.onNodeWithTag("feed-warnings-too_dark").assertDoesNotExist()

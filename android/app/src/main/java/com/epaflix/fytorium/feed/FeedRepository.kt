@@ -29,8 +29,12 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         mutable.value = member?.let(::cached) ?: FeedState()
     }
     private fun cached(member: Member): FeedState {
-        val snapshot = cache?.get(member.id, "feed") ?: return FeedState(member = member)
-        return runCatching { JSONObject(snapshot.json).let { parseFeed(member, it.getJSONObject("feed"), it.optJSONObject("weather")) } }.getOrElse { FeedState(member = member) }
+        // The last location read stays for the offline settings screen.
+        val row = cache?.get(member.id, "location")
+        val withLocation = { state: FeedState -> if (row == null) state else state.copy(location = runCatching { locationFrom(JSONObject(row.json)) }.getOrNull(), locationLoaded = true) }
+        val snapshot = cache?.get(member.id, "feed") ?: return withLocation(FeedState(member = member))
+        return withLocation(runCatching { JSONObject(snapshot.json).let { parseFeed(member, it.getJSONObject("feed"), it.optJSONObject("weather")).copy(updatedAt = snapshot.refreshedAt) } }
+            .getOrElse { FeedState(member = member) })
     }
     private fun parseFeed(member: Member, feed: JSONObject, weather: JSONObject?): FeedState {
         val zone = cache?.get(member.id, "meta")?.let { runCatching { parseTimezone(it.json) }.getOrNull() } ?: ZoneId.systemDefault()
@@ -59,9 +63,9 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             }
         }
     }
-    private fun read(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
+    private fun read(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): JSONObject {
         if (!connected()) throw IOException("Offline")
-        return api.request(path, method = method, body = body).use {
+        return api.request(path, method = method, body = body, query = query).use {
             val text = it.body?.string().orEmpty()
             if (!it.isSuccessful) {
                 val json = runCatching { JSONObject(text) }.getOrNull()
@@ -83,9 +87,10 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             val weather = if (member!!.role == Role.sitter) null else read("/api/weather")
             val next = parseFeed(member, feed, weather)
             synchronized(monitor) { if (epoch == generation) {
+                val at = System.currentTimeMillis()
                 mutable.value = mutable.value.copy(cards = next.cards, settings = next.settings, weather = next.weather, loaded = true,
-                    offline = !connected(), unavailable = false, message = null)
-                cache?.save(member.id, mapOf("feed" to JSONObject().put("feed", feed).put("weather", weather ?: JSONObject.NULL).toString()), System.currentTimeMillis())
+                    offline = !connected(), unavailable = false, message = null, updatedAt = at)
+                cache?.save(member.id, mapOf("feed" to JSONObject().put("feed", feed).put("weather", weather ?: JSONObject.NULL).toString()), at)
             } }
         } catch (error: Exception) { failed(error, epoch) }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
@@ -102,15 +107,33 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         } catch (error: Exception) { failed(error, epoch) }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
+    private fun locationFrom(result: JSONObject) = result.optJSONObject("location")?.let { WeatherLocation(it.getDouble("latitude"), it.getDouble("longitude"), it.nullable("label")) }
     private fun applyLocation(result: JSONObject) {
-        val location = result.optJSONObject("location")?.let { WeatherLocation(it.getDouble("latitude"), it.getDouble("longitude"), it.nullable("label")) }
-        mutable.value = mutable.value.copy(location = location, locationLoaded = true)
+        mutable.value = mutable.value.copy(location = locationFrom(result), locationLoaded = true)
+        state.value.member?.let { cache?.save(it.id, mapOf("location" to result.toString()), System.currentTimeMillis()) }
     }
-    fun saveSettings(settings: Map<String, Boolean>): Boolean = write("/api/feed/settings", "PUT", JSONObject(settings), "Feed settings saved.") {}
+    // W5a-P20, P30: one switch at a time, each sending the settings as they are when it starts.
+    fun saveSettings(settings: Map<String, Boolean>): Boolean = write("/api/feed/settings", "PUT", JSONObject(settings), null) {}
+    fun saveSetting(key: String, value: Boolean): Boolean =
+        write(null, { read("/api/feed/settings", "PUT", JSONObject((state.value.settings ?: return@write null) + (key to value))) }) {}
     fun saveLocation(location: WeatherLocation?): Boolean {
         if (state.value.member?.role != Role.owner) return false
-        return write("/api/household/location", "PUT", JSONObject().put("location", location?.json() ?: JSONObject.NULL),
-            "Location saved. Weather refreshes in the background.", ::applyLocation)
+        return write("/api/household/location", "PUT", JSONObject().put("location", location?.json() ?: JSONObject.NULL), null, ::applyLocation)
+    }
+    // W5a-P16: null when the search could not run; Open-Meteo's own failure shows in the status line.
+    fun searchPlaces(query: String): List<Place>? {
+        val epoch = synchronized(monitor) { generation }
+        return try {
+            val results = read("/api/household/location/search", query = mapOf("q" to query)).getJSONArray("results").mapObjects {
+                Place(it.getString("label"), it.getString("name"), it.nullable("region"), it.nullable("country"), it.getDouble("latitude"), it.getDouble("longitude"))
+            }
+            synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(placesUnavailable = false) }
+            results
+        } catch (error: Exception) {
+            if (error is FeedFailure && error.status == 503) synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(placesUnavailable = true) }
+            else failed(error, epoch)
+            null
+        }
     }
     fun water(): Boolean = synchronized(workLock) {
         val rain = state.value.weather?.rain ?: return false

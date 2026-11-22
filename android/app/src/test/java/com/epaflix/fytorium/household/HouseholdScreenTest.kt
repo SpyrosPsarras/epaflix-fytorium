@@ -30,8 +30,7 @@ class HouseholdScreenTest {
         compose.enableAccessibilityChecks()
         val area = mutableStateOf(HouseholdArea.Members)
         val state = mutableStateOf(HouseholdState(loaded = true, plants = listOf(plant), members = listOf(member),
-            invites = listOf(HouseholdInvite("invite-one", "sitter", "2030-06-08", setOf(plant.id))),
-            feed = feedLabels.keys.associateWith { true }))
+            invites = listOf(HouseholdInvite("invite-one", "sitter", "2030-06-08", setOf(plant.id)))))
         val online = mutableStateOf(true)
         var removes = 0
         var share: String? = null
@@ -71,10 +70,6 @@ class HouseholdScreenTest {
         compose.onNodeWithText("Revoke invite").performScrollTo().performClick()
         capture("revoke")
         compose.onNodeWithText("Cancel").performClick()
-        compose.runOnIdle { area.value = HouseholdArea.Settings }
-        capture("settings")
-        compose.onNodeWithText("Save location").performScrollTo()
-        capture("location")
         compose.runOnIdle { area.value = HouseholdArea.Tasks; state.value = state.value.copy(target = plant, tasks = listOf(CustomTask("task-one", "Inspect", "14"))) }
         capture("tasks")
         compose.onNodeWithText("Edit task").performScrollTo().performClick()
@@ -107,10 +102,6 @@ class HouseholdScreenTest {
             waitEnabled("Create invite")
             compose.onNodeWithText("Create invite").performClick()
             compose.onNodeWithText("Create invite link").assertIsEnabled()
-            enqueue("{\"location\":null}"); enqueue("{\"late_tasks\":true,\"current_weather\":true,\"weather_alerts\":true,\"plant_warnings\":true}")
-            compose.runOnIdle { area.value = HouseholdArea.Settings }
-            waitEnabled("Save my feed")
-            compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()
             enqueue("[]"); enqueue("[]"); enqueue("[]")
             compose.runOnIdle { area.value = HouseholdArea.Tasks }
             waitEnabled("Target: ")
