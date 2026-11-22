@@ -168,7 +168,9 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected) { notifications = false } }
+                key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                    cached = { controller?.repository?.cachedJson(it) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json) }) }
             }
             return@Scaffold
         }

@@ -16,6 +16,8 @@ import java.util.Locale
 fun phoneLanguage(locale: Locale = Locale.getDefault()): String = locale.toLanguageTag()
 
 class ApiClient(private val baseUrl: String, private val store: CredentialStore, private val onSessionLost: () -> Unit) {
+    // The name Devices shows for this phone after a login; the server keeps up to 100 characters.
+    var deviceName: String = "Fytorium Android"
     companion object {
         // Refresh tokens rotate once. All clients in this process must share this lock.
         private val refreshLock = Any()
@@ -48,7 +50,7 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
         val code = attempt.codeFrom(redirect, now) ?: return "invalid"
         store.pending = null // Only a validated redirect may consume the current attempt.
         val result = exchange(JSONObject().put("grant_type", "authorization_code").put("code", code)
-            .put("code_verifier", attempt.verifier).put("device_name", "Fytorium Android")) ?: return "invalid"
+            .put("code_verifier", attempt.verifier).put("device_name", deviceName.take(100))) ?: return "invalid"
         synchronized(refreshLock) { store.tokens = result }
         return null
     }

@@ -82,7 +82,8 @@ class NotificationRepositoryTest {
             assertFalse(repository.state.value.devices.single().current)
             assertTrue(repository.remove(repository.state.value.devices.single()))
             assertTrue(repository.state.value.devices.isEmpty())
-            assertEquals("Device removed.", repository.state.value.message)
+            // W5a-P29: the screen names the removed device in a receipt, so the repository keeps no message.
+            assertNull(repository.state.value.message)
         }
     }
     @Test fun registrationUsesOnlyBearerIdentityAndDoesNotLogToken() {
