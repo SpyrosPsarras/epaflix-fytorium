@@ -2345,11 +2345,11 @@ class PlantPageTest {
         reveal(hasText("Care defaults for this species")).performClick()
     }
     @Test fun aSpeciesCare426FromMoreStopsTheApp() = updateStop({ it.startsWith("/api/species/") }) {
-        compose.onNodeWithText("More").performClick()
-        compose.onNodeWithText("Unmatched species").performClick()
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("Species without care data").performClick()
     }
     @Test fun aSites426FromMoreStopsTheApp() = updateStop({ it == "/api/sites" }) {
-        compose.onNodeWithText("More").performClick()
+        compose.onNode(isTab("More")).performClick()
         compose.onNodeWithText("Sites").performClick()
     }
     // Restore reads the sites through the plant repository too, so only Create a site's own save gets the 426.
@@ -2378,10 +2378,10 @@ class PlantPageTest {
             // The controller's first refresh ends before any of these requests, so its success cannot lift a later stop.
             compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
             open()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("This server needs a newer app. Install the latest Fytorium release.").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Your household's server needs a newer Fytorium.").fetchSemanticsNodes().isNotEmpty() }
             compose.runOnIdle { assertTrue(repo.state.value.updateRequired) }
             compose.onNodeWithText("Care defaults for this species").assertDoesNotExist()
-            compose.onNodeWithText("Unmatched species").assertDoesNotExist()
+            compose.onNodeWithText("Species without care data").assertDoesNotExist()
         } finally { controller.close() }
     }
 
@@ -3056,7 +3056,7 @@ class PlantPageTest {
             val name = hasText("Name") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).performTextReplacement("Fern")
-            compose.onNode(hasText("More") and hasClickAction()).performClick()
+            compose.onNode(isTab("More")).performClick()
             compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Fern")
@@ -3064,9 +3064,9 @@ class PlantPageTest {
             compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isEmpty() }
-            compose.onNode(hasText("More") and hasClickAction()).performClick()
+            compose.onNode(isTab("More")).performClick()
             compose.onNodeWithText("Discard changes?").assertDoesNotExist()
-            compose.onNodeWithText("Log out").assertIsDisplayed()
+            compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
         } finally { controller.close() }
     }
 
@@ -3415,8 +3415,8 @@ class PlantPageTest {
                 compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
                     AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
                 compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
-                compose.onNodeWithText("More").performClick()
-                compose.onNodeWithText("Unmatched species").performClick()
+                compose.onNode(isTab("More")).performClick()
+                compose.onNodeWithText("Species without care data").performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(hasText("Synthetic mistleaf") and isHeading()).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("Testoria nebulosa").assertIsDisplayed()
                 compose.onNodeWithText("No care data found yet").assertIsDisplayed()

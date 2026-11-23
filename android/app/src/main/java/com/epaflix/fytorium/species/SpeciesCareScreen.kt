@@ -118,7 +118,7 @@ import org.json.JSONObject
     }).withNote(note)
     Scaffold(topBar = { Column {
         TopAppBar(title = { BarTitle(status?.first, status?.second.orEmpty(), retry = onRefresh.takeIf { status?.first == failure && (state.blocked || state.pageError != null) }) {
-            Text(if (unmatched) "Unmatched species" else "Care defaults for this species", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (unmatched) "Species without care data" else "Care defaults for this species", maxLines = 1, overflow = TextOverflow.Ellipsis)
         } }, expandedHeight = barHeight(), navigationIcon = {
             IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
         })
@@ -175,9 +175,8 @@ import org.json.JSONObject
                             modifier = Modifier.layoutId("refresh-species").heightIn(min = 48.dp)) { Text("Refresh species") }
                     }
                 } ?: run {
+                    // W5a T25: no Refresh button; the status line, pull, resume and Fytorium's next answer reload the list.
                     if (unmatched) {
-                    OutlinedButton(onClick = onRefresh, enabled = online && !state.loading && !state.saving && !submitting,
-                        modifier = Modifier.layoutId("refresh-species").heightIn(min = 48.dp)) { Text("Refresh species") }
                     Text("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.", modifier = Modifier.layoutId("unmatched-scope"))
                     if (state.loaded && state.unmatched.isEmpty()) Text("Every species of yours has care data.", modifier = Modifier.layoutId("unmatched-empty"))
                     for (species in state.unmatched) Card(Modifier.layoutId("unmatched:${species.key}").fillMaxWidth()) {

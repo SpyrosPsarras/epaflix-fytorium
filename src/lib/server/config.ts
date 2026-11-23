@@ -54,6 +54,7 @@ export function config() {
     householdTimezone,
     openMeteoBaseUrl: new URL(env.OPEN_METEO_BASE_URL ?? 'https://api.open-meteo.com/'),
     openMeteoClimateBaseUrl: new URL(env.OPEN_METEO_CLIMATE_BASE_URL ?? 'https://climate-api.open-meteo.com/'),
+    openMeteoGeocodingBaseUrl: new URL(env.OPEN_METEO_GEOCODING_BASE_URL ?? 'https://geocoding-api.open-meteo.com/'),
     weatherWorkerEnabled: env.WEATHER_WORKER_ENABLED !== 'false',
     perenualBaseUrl: new URL(env.PERENUAL_BASE_URL ?? 'https://perenual.com/'),
     perenualApiKey: env.PERENUAL_API_KEY ?? '',

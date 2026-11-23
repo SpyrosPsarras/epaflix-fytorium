@@ -6,6 +6,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import com.epaflix.fytorium.plants.connectionNotice
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.Book
@@ -37,6 +39,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
+                         phoneOnline: Boolean = true, minAppVersion: String? = null, onCheckAgain: () -> Unit = {}, onObtainium: (() -> Unit)? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
                          careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
                          feed: FeedRepository? = null,
@@ -57,6 +60,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val todayTask = careState?.currentTask(openedKey)
     val todayScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     val upcomingScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
+    val moreScroll = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
     var tab by rememberSaveable { mutableStateOf("Today") }
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
@@ -93,7 +97,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
         if (!loggedIn || memberChanged) {
             notifications = false
-            todayScroll.scrollTo(0); upcomingScroll.scrollTo(0)
+            todayScroll.scrollTo(0); upcomingScroll.scrollTo(0); moreScroll.scrollTo(0)
         }
         if (!loggedIn || memberChanged || member?.role == Role.sitter) {
             addPlant = false
@@ -122,7 +126,10 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val showTabs = !WindowInsets.isImeVisible
     Scaffold(topBar = {
         if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
-            TopAppBar(title = { Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) })
+            val line = careState?.takeIf { loggedIn && !updateRequired && !about }?.connectionLine(deviceOnline)
+            TopAppBar(title = { BarTitle(line, careState?.connectionNotice(deviceOnline).orEmpty(), retry = { controller?.refresh(); Unit }.takeIf { line != null && deviceOnline }) {
+                Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) } },
+                navigationIcon = { if (loggedIn && !updateRequired && about) IconButton(onClick = { about = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
         }
     }, bottomBar = {
         val tabBar: @Composable (Modifier) -> Unit = { modifier ->
@@ -153,7 +160,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             // A tap meant for a receipt that has just gone must not switch tabs.
             if (showTabs && barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
-        leaving?.let { body -> com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", body, onKeep = { leaving = null; destination = null }) {
+        leaving?.let { body -> com.epaflix.fytorium.plants.DiscardDialog(if (body == "The location you typed is not saved.") "Discard these coordinates?" else "Discard changes?", body, onKeep = { leaving = null; destination = null }) {
             val target = destination
             leaving = null; destination = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); target?.let(::go) } }
     }) { scaffoldPadding ->
@@ -162,7 +169,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected) { notifications = false } }
+                // Not keyed by member: a member change closes this screen in the shell, and a key flip during restore would drop open dialogs and the time being picked.
+                com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected, onBack = { notifications = false },
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onUpdateRequired = { controller?.repository?.requireUpdate() },
+                    answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0, live = { controller?.repository?.state?.value },
+                    cached = { controller?.repository?.cachedJson(it, careState.member.id) },
+                    keep = { resource, json -> controller?.repository?.saveJson(resource, json, careState.member.id) })
             }
             return@Scaffold
         }
@@ -196,14 +208,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
             return@Scaffold
         }
-        if (loggedIn && !updateRequired && feedSettings && feedState != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
-            Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = { feedSettings = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back") }
-                FeedSettingsScreen(feedState,
-                    onSaveFeed = { scope.launch(Dispatchers.IO) { feed?.saveSettings(it) } },
-                    onSaveLocation = { scope.launch(Dispatchers.IO) { feed?.saveLocation(it) } })
-                TextButton(onClick = { scope.launch(Dispatchers.IO) { feed?.refresh(careState?.member); feed?.loadLocation() } },
-                    enabled = !feedState.refreshing && !feedState.saving, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh settings") }
+        if (loggedIn && !updateRequired && feedSettings && feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) {
+            Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                // Not keyed by member: a member change closes this screen in the shell, and a key flip during restore would drop the typed draft.
+                com.epaflix.fytorium.feed.WeatherFeedRoute(feed, careState, deviceOnline, onBack = { feedSettings = false },
+                    onReceipt = { text -> scope.launch { receipts.showSnackbar(text); receiptsGone++ } }, onFormDirty = { plantsDiscard = it },
+                    onUpdateRequired = { controller?.repository?.requireUpdate() }, answers = controller?.repository?.plantState?.collectAsState()?.value?.answers ?: 0)
             }
             return@Scaffold
         }
@@ -263,42 +273,36 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
             return@Scaffold
         }
+        if (loggedIn && !updateRequired && tab == "More" && !about) {
+            MoreRoot(careState ?: CareState(), deviceOnline, busy, open = { key ->
+                when (key) {
+                    "notifications" -> notifications = true
+                    "weather" -> openFeedSettings()
+                    "sites" -> sites = true
+                    "members" -> household = com.epaflix.fytorium.household.HouseholdArea.Members.name
+                    "custom" -> household = com.epaflix.fytorium.household.HouseholdArea.Tasks.name
+                    "planta" -> plantaImport = true
+                    "unmatched" -> unmatched = true
+                    "about" -> about = true
+                }
+            }, onLogout = onLogout, modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), scroll = moreScroll)
+            return@Scaffold
+        }
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when {
-                updateRequired -> {
-                    Text("Update Fytorium", style = MaterialTheme.typography.headlineMedium)
-                    Text("This server needs a newer app. Install the latest Fytorium release.")
-                }
-                !loggedIn -> {
-                    Text("Your plants, together.")
-                    Button(onClick = onLogin, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log in") }
-                }
-                tab == "More" && about -> {
-                    Text("Version " + BuildConfig.VERSION_NAME)
-                    Button(onClick = onCopyDiagnostics, modifier = Modifier.heightIn(min = 48.dp)) { Text("Copy diagnostics") }
-                    Text("Diagnostics stay on this device until you copy them.")
-                }
-                tab == "More" -> {
-                    if (careState?.member != null && sitesApi != null) Button(onClick = { notifications = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("My notifications") }
-                    if (feed != null && careState?.member?.role in listOf(Role.owner, Role.family)) Button(onClick = { openFeedSettings() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Feed and weather settings") }
-                    if (careState?.member != null && careState.member.role != Role.sitter) {
-                        Button(onClick = { sites = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Sites") }
-                        for (area in com.epaflix.fytorium.household.HouseholdArea.entries.filter { it != com.epaflix.fytorium.household.HouseholdArea.Members || careState.member.role == Role.owner }) {
-                            Button(onClick = { household = area.name }, modifier = Modifier.heightIn(min = 48.dp)) { Text(area.title) }
-                        }
-                        Button(onClick = { unmatched = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Unmatched species") }
-                    }
-                    if (careState?.member?.role == Role.owner) Button(onClick = { plantaImport = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Import from Planta") }
-                    Button(onClick = { about = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("About") }
-                    Button(onClick = onLogout, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Log out") }
+                updateRequired -> UpdateStop(minAppVersion, message, busy, phoneOnline, onObtainium, onCheckAgain, onLogout)
+                !loggedIn -> LoginPage(busy, message, phoneOnline, onLogin)
+                tab == "More" && about -> AboutPage(produceState<String?>(null, about) { value = withContext(Dispatchers.IO) {
+                    controller?.repository?.cachedJson("meta")?.first?.let { runCatching { org.json.JSONObject(it).optString("serverVersion").takeIf { v -> v.isNotBlank() } }.getOrNull() } } }.value) {
+                    onCopyDiagnostics()
+                    // Android 13 and later confirm a copy themselves.
+                    if (android.os.Build.VERSION.SDK_INT < 33) scope.launch { receipts.showSnackbar("Diagnostics copied"); receiptsGone++ }
                 }
                 else -> {
                     Text(when (tab) { "Today" -> "No tasks yet."; "Plants" -> "No plants yet."; else -> "No journal entries yet." })
                 }
             }
-            message?.let { Text(it) }
-            if (busy) Text("Please wait…")
         }
     }
 }

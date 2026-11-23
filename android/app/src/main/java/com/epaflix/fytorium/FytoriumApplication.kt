@@ -44,6 +44,10 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
             } finally { repository.wipe(); feed.wipe() }
             care.cancelRefresh()
             Diagnostics(this).apply { clear(); record(ErrorEvent.SESSION_ENDED) }
+            com.epaflix.fytorium.notifications.NotificationRepositories.clear()
+        }.apply {
+            deviceName = (android.provider.Settings.Global.getString(contentResolver, android.provider.Settings.Global.DEVICE_NAME) ?: android.os.Build.MODEL)
+                .orEmpty().trim().ifEmpty { deviceName }
         }
     }
     override fun onTerminate() { if (careInstance.isInitialized()) care.close(); super.onTerminate() }

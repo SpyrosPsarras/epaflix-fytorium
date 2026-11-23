@@ -10,7 +10,11 @@ const val REDIRECT_URI = "com.epaflix.fytorium:/oauth2redirect"
 
 class LoginAttempt(val verifier: String, val state: String, val createdAt: Long) {
     val challenge: String get() = Pkce.challenge(verifier)
-    fun codeFrom(redirect: String, now: Long): String? {
+    fun codeFrom(redirect: String, now: Long): String? =
+        params(redirect, now)?.takeIf { "error" !in it }?.get("code")?.takeIf { it.isNotBlank() && it.length <= 1024 }
+    // The server's reason for a refused login, from a redirect that belongs to this attempt.
+    fun errorFrom(redirect: String, now: Long): String? = params(redirect, now)?.get("error")
+    private fun params(redirect: String, now: Long): Map<String, String>? {
         val uri = runCatching { URI(redirect) }.getOrNull() ?: return null
         if (uri.scheme != "com.epaflix.fytorium" || uri.rawAuthority != null ||
             uri.path != "/oauth2redirect" || uri.fragment != null || now - createdAt !in 0..600_000) return null
@@ -22,8 +26,8 @@ class LoginAttempt(val verifier: String, val state: String, val createdAt: Long)
         }.getOrNull() ?: return null
         if (pairs.map { it.first }.distinct().size != pairs.size) return null
         val params = pairs.toMap()
-        if (!MessageDigest.isEqual(state.toByteArray(), params["state"].orEmpty().toByteArray()) || "error" in params) return null
-        return params["code"]?.takeIf { it.isNotBlank() && it.length <= 1024 }
+        if (!MessageDigest.isEqual(state.toByteArray(), params["state"].orEmpty().toByteArray())) return null
+        return params
     }
 }
 

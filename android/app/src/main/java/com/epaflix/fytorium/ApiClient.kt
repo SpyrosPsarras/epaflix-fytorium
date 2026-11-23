@@ -16,6 +16,8 @@ import java.util.Locale
 fun phoneLanguage(locale: Locale = Locale.getDefault()): String = locale.toLanguageTag()
 
 class ApiClient(private val baseUrl: String, private val store: CredentialStore, private val onSessionLost: () -> Unit) {
+    // The name Devices shows for this phone after a login; the server keeps up to 100 characters.
+    var deviceName: String = "Fytorium Android"
     companion object {
         // Refresh tokens rotate once. All clients in this process must share this lock.
         private val refreshLock = Any()
@@ -40,14 +42,17 @@ class ApiClient(private val baseUrl: String, private val store: CredentialStore,
             .addQueryParameter("code_challenge", attempt.challenge).addQueryParameter("code_challenge_method", "S256")
             .addQueryParameter("state", attempt.state).build().toString()
     }
-    @Synchronized fun completeLogin(redirect: String): Boolean {
-        val attempt = store.pending ?: return false
-        val code = attempt.codeFrom(redirect, System.currentTimeMillis()) ?: return false
+    // Null when logged in; otherwise the server's error code, or "invalid" for a redirect or exchange it refused.
+    @Synchronized fun completeLogin(redirect: String): String? {
+        val attempt = store.pending ?: return "invalid"
+        val now = System.currentTimeMillis()
+        attempt.errorFrom(redirect, now)?.let { store.pending = null; return it }
+        val code = attempt.codeFrom(redirect, now) ?: return "invalid"
         store.pending = null // Only a validated redirect may consume the current attempt.
         val result = exchange(JSONObject().put("grant_type", "authorization_code").put("code", code)
-            .put("code_verifier", attempt.verifier).put("device_name", "Fytorium Android")) ?: return false
+            .put("code_verifier", attempt.verifier).put("device_name", deviceName.take(100))) ?: return "invalid"
         synchronized(refreshLock) { store.tokens = result }
-        return true
+        return null
     }
     private fun exchange(body: JSONObject, refreshing: Boolean = false): Tokens? {
         val request = Request.Builder().url(baseUrl + "/api/app/token").header("Accept-Language", phoneLanguage())

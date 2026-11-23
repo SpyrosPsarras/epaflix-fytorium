@@ -37,6 +37,43 @@ class FeedRepositoryTest {
         FeedRepository(api, { true }, cache = cache).apply { restore() }.state.value.let {
             assertEquals(Member("synthetic-other", Role.family), it.member); assertFalse(it.loaded); assertEquals(emptyList<FeedCard>(), it.cards) }
     }
+    // W5a-P30 (S2): a saved switch counts at once, so the next one starts from it even when the card reads after it fail.
+    @Test fun aSavedSwitchCountsBeforeTheCardsReload() = withFeed { feed, server, _ ->
+        load(feed, server)
+        repeat(2) { server.takeRequest() }
+        val first = org.json.JSONObject(settingsFixture).put("weather_alerts", false)
+        server.enqueue(MockResponse().setBody(first.toString()))
+        server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setResponseCode(500))
+        assertTrue(feed.saveSetting("weather_alerts", false))
+        assertEquals(false, feed.state.value.settings!!["weather_alerts"])
+        repeat(3) { server.takeRequest() }
+        server.enqueue(MockResponse().setBody(first.put("plant_warnings", false).toString()))
+        server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
+        assertTrue(feed.saveSetting("plant_warnings", false))
+        val sent = org.json.JSONObject(server.takeRequest().body.readUtf8())
+        assertFalse("The second switch undid the first", sent.getBoolean("weather_alerts"))
+        assertFalse(sent.getBoolean("plant_warnings"))
+    }
+    // W5a-P13 (S3): a 426 shows the stop until a read succeeds again.
+    @Test fun aSuccessfulReadEndsTheUpdateGate() = withFeed { feed, server, _ ->
+        server.enqueue(MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}"""))
+        feed.refresh(Member("synthetic-member", Role.owner))
+        assertTrue(feed.state.value.updateRequired)
+        load(feed, server)
+        assertFalse(feed.state.value.updateRequired)
+    }
+    // W5a-P31 (S7): each read keeps its own refusal until that read succeeds.
+    @Test fun aLocationRefusalOutlivesAFeedRefresh() = withFeed { feed, server, _ ->
+        load(feed, server)
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Synthetic location refusal"}"""))
+        feed.loadLocation()
+        assertEquals("Synthetic location refusal", feed.state.value.locationError)
+        load(feed, server)
+        assertEquals("Synthetic location refusal", feed.state.value.locationError)
+        server.enqueue(MockResponse().setBody("""{"location":null}"""))
+        feed.loadLocation()
+        assertNull(feed.state.value.locationError)
+    }
     @Test fun whyTimesUseTheHouseholdTimeZone() = withCache("synthetic-member") { cache, api, server ->
         cache.save("synthetic-member", mapOf("meta" to """{"timezone":"Pacific/Auckland"}"""), 0)
         server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
@@ -64,7 +101,8 @@ class FeedRepositoryTest {
         assertNull("A later refresh left the failure on screen", feed.state.value.message)
         server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
         assertTrue(feed.saveSettings(feed.state.value.settings!!))
-        assertEquals("Feed settings saved.", feed.state.value.message)
+        // W5a-P20: switches save on change with no success message.
+        assertNull(feed.state.value.message)
     }
     @Test fun aFailureShownBeforeADisconnectDoesNotReturnAfterTheReconnect() = withFeed { feed, server, online ->
         load(feed, server)

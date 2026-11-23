@@ -8,7 +8,16 @@ data class SessionState(
     val busy: Boolean = false,
     val message: String? = null,
     val updateRequired: Boolean = false,
+    // The server's minimum from /api/meta, for the update stop.
+    val minAppVersion: String? = null,
 )
+
+internal fun loginError(code: String) = when (code) {
+    "not_member" -> "This account isn't in a household yet."
+    "access_denied" -> "Login was cancelled."
+    "server_error" -> "Fytorium couldn't finish the login. Try again."
+    else -> "Login didn't work. Try again."
+}
 
 // Application-owned work and redirects never capture an Activity.
 class SessionController(private val store: CredentialStore, private val api: ApiClient, private val diagnostics: Diagnostics) {
@@ -50,29 +59,44 @@ class SessionController(private val store: CredentialStore, private val api: Api
             return
         }
         work {
-            val success = withContext(Dispatchers.IO) { api.completeLogin(redirect) }
-            if (!success) {
+            val error = withContext(Dispatchers.IO) { api.completeLogin(redirect) }
+            if (error != null) {
                 diagnostics.record(ErrorEvent.LOGIN_REJECTED)
-                uiState.update { it.copy(message = "Login failed. Please try again.") }
+                uiState.update { it.copy(message = loginError(error)) }
             }
             checkVersionNow()
         }
     }
 
-    fun logout() { work { withContext(Dispatchers.IO) { api.logout() } } }
+    // The session ends on this phone even when Fytorium can't be told, so a failed request is no error; the stop goes with the session.
+    fun logout() {
+        uiState.update { it.copy(updateRequired = false) }
+        work { withContext(Dispatchers.IO) { runCatching { api.logout() } } }
+    }
+
+    // A 426 from any request reads the minimum again, so the stop names the version the server wants now.
+    private var recheckWaiting = false
+    fun recheck() { if (uiState.value.busy) recheckWaiting = true else work { checkVersionNow() } }
+
+    fun checkAgain(checkedAt: () -> String) = work(offline = "Checking needs a connection.") {
+        checkVersionNow()
+        if (uiState.value.updateRequired) uiState.update { it.copy(message = "Still needs ${it.minAppVersion ?: "a newer Fytorium"} or newer. Checked ${checkedAt()}.") }
+    }
 
     private suspend fun checkVersionNow() {
-        val required = withContext(Dispatchers.IO) {
+        val answer = withContext(Dispatchers.IO) {
             api.request("/api/meta").use {
-                if (it.code == 426) true
-                else if (it.isSuccessful) requiresUpdate(it.code, it.body?.string().orEmpty(), BuildConfig.VERSION_NAME)
+                val body = it.body?.string().orEmpty()
+                val minimum = runCatching { org.json.JSONObject(body).optString("minAppVersion").takeIf { value -> value.isNotBlank() } }.getOrNull()
+                if (it.code == 426) true to minimum
+                else if (it.isSuccessful) requiresUpdate(it.code, body, BuildConfig.VERSION_NAME) to minimum
                 else null
             }
         }
-        if (required != null) uiState.update { it.copy(updateRequired = required) }
+        if (answer != null) uiState.update { it.copy(updateRequired = answer.first, minAppVersion = answer.second ?: it.minAppVersion) }
     }
 
-    private fun work(action: suspend () -> Unit) {
+    private fun work(offline: String = "Can't reach Fytorium. Check the connection and try again.", action: suspend () -> Unit) {
         if (uiState.value.busy) return
         uiState.update { it.copy(busy = true, message = null) }
         scope.launch {
@@ -80,9 +104,10 @@ class SessionController(private val store: CredentialStore, private val api: Api
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 diagnostics.record(ErrorEvent.NETWORK_UNAVAILABLE)
-                uiState.update { it.copy(message = "Can't reach Fytorium. Please try again.") }
+                uiState.update { it.copy(message = offline) }
             } finally {
                 uiState.update { it.copy(busy = false) }
+                if (recheckWaiting) { recheckWaiting = false; recheck() }
                 while (scope.isActive && !uiState.value.busy && queuedRedirects.isNotEmpty()) {
                     handleRedirect(queuedRedirects.removeFirst())
                 }

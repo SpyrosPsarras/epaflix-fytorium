@@ -29,8 +29,12 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         mutable.value = member?.let(::cached) ?: FeedState()
     }
     private fun cached(member: Member): FeedState {
-        val snapshot = cache?.get(member.id, "feed") ?: return FeedState(member = member)
-        return runCatching { JSONObject(snapshot.json).let { parseFeed(member, it.getJSONObject("feed"), it.optJSONObject("weather")) } }.getOrElse { FeedState(member = member) }
+        // The last location read stays for the offline settings screen.
+        val row = cache?.get(member.id, "location")
+        val withLocation = { state: FeedState -> if (row == null) state else state.copy(location = runCatching { locationFrom(JSONObject(row.json)) }.getOrNull(), locationLoaded = true) }
+        val snapshot = cache?.get(member.id, "feed") ?: return withLocation(FeedState(member = member))
+        return withLocation(runCatching { JSONObject(snapshot.json).let { parseFeed(member, it.getJSONObject("feed"), it.optJSONObject("weather")).copy(updatedAt = snapshot.refreshedAt) } }
+            .getOrElse { FeedState(member = member) })
     }
     private fun parseFeed(member: Member, feed: JSONObject, weather: JSONObject?): FeedState {
         val zone = cache?.get(member.id, "meta")?.let { runCatching { parseTimezone(it.json) }.getOrNull() } ?: ZoneId.systemDefault()
@@ -59,9 +63,9 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             }
         }
     }
-    private fun read(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
+    private fun read(path: String, method: String = "GET", body: JSONObject? = null, query: Map<String, String> = emptyMap()): JSONObject {
         if (!connected()) throw IOException("Offline")
-        return api.request(path, method = method, body = body).use {
+        return api.request(path, method = method, body = body, query = query).use {
             val text = it.body?.string().orEmpty()
             if (!it.isSuccessful) {
                 val json = runCatching { JSONObject(text) }.getOrNull()
@@ -83,11 +87,15 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
             val weather = if (member!!.role == Role.sitter) null else read("/api/weather")
             val next = parseFeed(member, feed, weather)
             synchronized(monitor) { if (epoch == generation) {
+                val at = System.currentTimeMillis()
                 mutable.value = mutable.value.copy(cards = next.cards, settings = next.settings, weather = next.weather, loaded = true,
-                    offline = !connected(), unavailable = false, message = null)
-                cache?.save(member.id, mapOf("feed" to JSONObject().put("feed", feed).put("weather", weather ?: JSONObject.NULL).toString()), System.currentTimeMillis())
+                    offline = !connected(), unavailable = false, message = null, updatedAt = at, updateRequired = false, readError = null)
+                cache?.save(member.id, mapOf("feed" to JSONObject().put("feed", feed).put("weather", weather ?: JSONObject.NULL).toString()), at)
             } }
-        } catch (error: Exception) { failed(error, epoch) }
+        } catch (error: Exception) {
+            failed(error, epoch)
+            synchronized(monitor) { if (epoch == generation && error is FeedFailure && error.status < 500 && error.status != 426) mutable.value = mutable.value.copy(readError = error.message) }
+        }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
     fun loadLocation() = synchronized(workLock) load@ {
@@ -98,19 +106,49 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         }
         try {
             val result = read("/api/household/location")
-            synchronized(monitor) { if (epoch == generation) applyLocation(result) }
-        } catch (error: Exception) { failed(error, epoch) }
+            synchronized(monitor) { if (epoch == generation) { applyLocation(result); mutable.value = mutable.value.copy(locationError = null) } }
+        } catch (error: Exception) {
+            failed(error, epoch)
+            synchronized(monitor) { if (epoch == generation && error is FeedFailure && error.status < 500 && error.status != 426) mutable.value = mutable.value.copy(locationError = error.message) }
+        }
         finally { synchronized(monitor) { if (epoch == generation) mutable.value = mutable.value.copy(refreshing = false) } }
     }
+    private fun locationFrom(result: JSONObject) = result.optJSONObject("location")?.let { WeatherLocation(it.getDouble("latitude"), it.getDouble("longitude"), it.nullable("label")) }
     private fun applyLocation(result: JSONObject) {
-        val location = result.optJSONObject("location")?.let { WeatherLocation(it.getDouble("latitude"), it.getDouble("longitude"), it.nullable("label")) }
-        mutable.value = mutable.value.copy(location = location, locationLoaded = true)
+        mutable.value = mutable.value.copy(location = locationFrom(result), locationLoaded = true)
+        state.value.member?.let { cache?.save(it.id, mapOf("location" to result.toString()), System.currentTimeMillis()) }
     }
-    fun saveSettings(settings: Map<String, Boolean>): Boolean = write("/api/feed/settings", "PUT", JSONObject(settings), "Feed settings saved.") {}
+    // W5a-P20, P30: one switch at a time, each sending the settings as they are when it starts.
+    fun saveSettings(settings: Map<String, Boolean>): Boolean = write("/api/feed/settings", "PUT", JSONObject(settings), null, ::applySettings)
+    fun saveSetting(key: String, value: Boolean): Boolean =
+        write(null, { read("/api/feed/settings", "PUT", JSONObject((state.value.settings ?: return@write null) + (key to value))) }, ::applySettings)
+    // The saved settings count at once and in the cached feed, so the next switch starts from them even if the card reads fail.
+    private fun applySettings(result: JSONObject) {
+        val settings = feedLabels.keys.associateWith { result.getBoolean(it) }
+        mutable.value = mutable.value.copy(settings = settings)
+        val member = state.value.member ?: return
+        cache?.get(member.id, "feed")?.let { row -> runCatching {
+            val snapshot = JSONObject(row.json)
+            snapshot.getJSONObject("feed").put("settings", result)
+            cache?.save(member.id, mapOf("feed" to snapshot.toString()), row.refreshedAt)
+        } }
+    }
     fun saveLocation(location: WeatherLocation?): Boolean {
         if (state.value.member?.role != Role.owner) return false
-        return write("/api/household/location", "PUT", JSONObject().put("location", location?.json() ?: JSONObject.NULL),
-            "Location saved. Weather refreshes in the background.", ::applyLocation)
+        return write("/api/household/location", "PUT", JSONObject().put("location", location?.json() ?: JSONObject.NULL), null, ::applyLocation)
+    }
+    // W5a-P16: places, or why there are none; the screen applies only the latest search's answer.
+    data class PlaceAnswer(val places: List<Place>?, val unavailable: Boolean = false)
+    fun searchPlaces(query: String): PlaceAnswer {
+        val epoch = synchronized(monitor) { generation }
+        return try {
+            PlaceAnswer(read("/api/household/location/search", query = mapOf("q" to query)).getJSONArray("results").mapObjects {
+                Place(it.getString("label"), it.getString("name"), it.nullable("region"), it.nullable("country"), it.getDouble("latitude"), it.getDouble("longitude"))
+            })
+        } catch (error: Exception) {
+            // Only a 426 is app-wide; any other failure belongs to this search, which the screen applies only if it is still the latest.
+            if (error is FeedFailure && error.status == 426) { failed(error, epoch); PlaceAnswer(null) } else PlaceAnswer(null, unavailable = connected())
+        }
     }
     fun water(): Boolean = synchronized(workLock) {
         val rain = state.value.weather?.rain ?: return false
@@ -160,6 +198,7 @@ class FeedRepository(private val api: ApiClient, private val connected: () -> Bo
         if (epoch != generation) return@synchronized
         val failure = classifyNetworkFailure(connected(), (error as? FeedFailure)?.status)
         mutable.value = mutable.value.copy(offline = failure.offline, unavailable = failure.serverUnavailable,
+            updateRequired = mutable.value.updateRequired || (error as? FeedFailure)?.status == 426,
             message = when {
                 // Offline already says it on screen, and a stale failure would flash up when the connection returns.
                 failure.offline -> null

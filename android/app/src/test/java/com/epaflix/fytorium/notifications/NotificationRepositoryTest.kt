@@ -11,6 +11,88 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class NotificationRepositoryTest {
+    // W5a-P32 (S4): a confirmed save and removal reach the cache, so an offline reopen shows them.
+    // W5a-P30 (S1): a reopened screen gets the same member's repository, so it continues from a write in flight.
+    // W5a-P13 (S17): a 426 reaches the app-wide stop once, and a later successful read leaves no stop behind.
+    // W5a (S19): reopening the screen during a slow save never waits for that save.
+    @Test fun bindingAndTheUpdateCheckDoNotWaitForASave() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val repository = NotificationRepository(api, { true }, { true })
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            assertTrue(repository.refresh())
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}""")
+                .setBodyDelay(3, java.util.concurrent.TimeUnit.SECONDS))
+            val save = Thread { repository.update { it.copy(reminders = true) } }.apply { start() }
+            server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)
+            val started = System.nanoTime()
+            repository.bind({ true }, { true }, { null }, { _, _ -> null })
+            repository.takeUpdateRequired()
+            assertTrue("The UI thread waited for the save", System.nanoTime() - started < 1_000_000_000L)
+            save.join()
+        }
+    }
+    @Test fun aRefusedVersionIsReportedOnceAndClearsOnRecovery() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val repository = NotificationRepository(api, { true }, { true })
+            server.enqueue(MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}"""))
+            assertFalse(repository.refresh())
+            assertTrue(repository.takeUpdateRequired())
+            assertFalse("A remount replayed the old stop", repository.takeUpdateRequired())
+            // A second 426 left unreported is cleared by the next successful read.
+            server.enqueue(MockResponse().setResponseCode(426).setBody("""{"error":"update_required","minAppVersion":"9.9.9"}"""))
+            assertFalse(repository.refresh())
+            assertTrue(repository.state.value.updateRequired)
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            assertTrue(repository.refresh())
+            assertFalse(repository.state.value.updateRequired)
+        }
+    }
+    @Test fun aMembersRepositoryOutlivesItsScreen() {
+        val api = ApiClient("http://127.0.0.1:9", MemoryCredentials()) {}
+        NotificationRepositories.clear()
+        val first = NotificationRepositories.of("synthetic-one") { NotificationRepository(api, { true }, { true }) }
+        assertSame(first, NotificationRepositories.of("synthetic-one") { NotificationRepository(api, { true }, { true }) })
+        assertNotSame(first, NotificationRepositories.of("synthetic-two") { NotificationRepository(api, { true }, { true }) })
+        NotificationRepositories.clear()
+        assertNotSame(first, NotificationRepositories.of("synthetic-one") { NotificationRepository(api, { true }, { true }) })
+        NotificationRepositories.clear()
+    }
+    @Test fun confirmedChangesReachTheOfflineCopy() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val store = mutableMapOf<String, String>()
+            fun repository(online: Boolean) = NotificationRepository(api, { true }, { online }, { key -> store[key]?.let { it to 1L } }, { key, json -> store[key] = json; 1L })
+            val browser = """{"id":"00000000-0000-4000-8000-000000000001","label":"Synthetic browser","transport":"web","enabled":true,"current_device":false,"last_success_at":null}"""
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[$browser]"))
+            server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            val online = repository(true)
+            assertTrue(online.refresh())
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"07:30","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            assertTrue(online.update { it.copy(time = "07:30", reminders = true) })
+            // A confirmed switch reaches the copy even when the follow-up read fails.
+            server.enqueue(MockResponse().setResponseCode(204)); server.enqueue(MockResponse().setResponseCode(500))
+            online.setDevice(online.state.value.devices.single(), false)
+            assertEquals(false, repository(false).apply { refresh() }.state.value.devices.single().enabled)
+            server.enqueue(MockResponse().setBody("""{"reminder_time":"07:30","reminders_enabled":true,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""))
+            server.enqueue(MockResponse().setBody("[$browser]")); server.enqueue(MockResponse().setBody("""{"timezone":"Europe/Oslo"}"""))
+            assertTrue(online.refresh())
+            server.enqueue(MockResponse().setResponseCode(204)); server.enqueue(MockResponse().setBody("[]"))
+            assertTrue(online.remove(online.state.value.devices.single()))
+            val offline = repository(false)
+            assertFalse(offline.refresh())
+            assertEquals(NotificationSettings("07:30", true, false, false), offline.state.value.settings)
+            assertEquals(emptyList<PushDevice>(), offline.state.value.devices)
+            assertTrue(offline.state.value.loaded)
+        }
+    }
     @Test fun settingsAreServerOwnedAndOwnRefreshRecoversAfterFailure() {
         MockWebServer().use { server ->
             server.start()
@@ -82,7 +164,8 @@ class NotificationRepositoryTest {
             assertFalse(repository.state.value.devices.single().current)
             assertTrue(repository.remove(repository.state.value.devices.single()))
             assertTrue(repository.state.value.devices.isEmpty())
-            assertEquals("Device removed.", repository.state.value.message)
+            // W5a-P29: the screen names the removed device in a receipt, so the repository keeps no message.
+            assertNull(repository.state.value.message)
         }
     }
     @Test fun registrationUsesOnlyBearerIdentityAndDoesNotLogToken() {

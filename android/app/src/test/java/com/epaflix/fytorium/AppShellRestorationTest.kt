@@ -135,7 +135,7 @@ class AppShellRestorationTest {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
         val tab = when (route) { "detail" -> "Plants"; "About" -> "More"; "upcoming" -> "Today"; else -> route }
-        fun navigationTab(title: String) = compose.onNode(hasText(title) and hasClickAction() and !hasTestTag("view-today"))
+        fun navigationTab(title: String) = compose.onNode(isTab(title))
         navigationTab(tab).performClick()
         when (route) {
             "About" -> compose.onNodeWithText("About").performClick()
@@ -148,7 +148,7 @@ class AppShellRestorationTest {
         when (route) {
             "Journal" -> compose.onNodeWithText("Journal").assertDoesNotExist()
             "Plants" -> compose.onNodeWithTag("plant:${plant.id}").assertIsDisplayed()
-            "More" -> compose.onNodeWithText("Log out").assertIsDisplayed()
+            "More" -> compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
             "About" -> compose.onNodeWithText("Copy diagnostics").assertIsDisplayed()
             "detail" -> compose.onNodeWithText("No care tasks yet.").assertIsDisplayed()
             "upcoming" -> compose.onNodeWithTag("view-upcoming").assertIsSelected()
@@ -156,6 +156,31 @@ class AppShellRestorationTest {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
+    // Opus W5a-opus-2: Notifications is not keyed by the member object, so a reread member keeps the open reminder time.
+    @Test fun anOpenReminderTimeStaysWhenTheSameMemberIsReread() {
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.path) {
+                    "/api/notifications/settings" -> """{"reminder_time":"09:00","reminders_enabled":false,"weather_alerts_enabled":false,"completion_notices_enabled":false}"""
+                    "/api/meta" -> """{"today":"2030-06-01","timezone":"Europe/Oslo"}"""
+                    else -> "[]"
+                })
+            }
+            server.start()
+            val client = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val care = mutableStateOf(CareState(member = Member("synthetic-reread", Role.owner)))
+            compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value, sitesApi = client, sitesConnected = { true }) } }
+            compose.onNode(hasText("More") and hasClickAction()).performClick()
+            compose.onNode(hasText("Notifications") and hasClickAction()).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Times use Europe/Oslo time.").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Reminder time").performScrollTo().performClick()
+            compose.onNodeWithText("Set").assertIsDisplayed()
+            care.value = CareState(member = Member("synthetic-reread", Role.family))
+            compose.waitForIdle()
+            compose.onNodeWithText("Set").assertIsDisplayed()
+        }
+    }
+
     private fun navigation(reset: String?, route: String = "sites-unmatched", initialRole: Role = Role.owner,
                            exit: String? = null, restoreBeforeExit: Boolean = false) {
         MockWebServer().use { server ->
@@ -237,44 +262,44 @@ class AppShellRestorationTest {
                     compose.onNodeWithText("Note").performTextInput("Unsaved photo note")
                 }
                 "site-draft" -> {
-                    compose.onNodeWithText("More").performClick()
+                    compose.onNode(isTab("More")).performClick()
                     compose.onNodeWithText("Sites").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Create site").performClick()
                     compose.onNodeWithText("Name").performTextInput("Synthetic draft room")
                 }
                 "sites-unmatched" -> {
-                    compose.onNodeWithText("More").performClick()
+                    compose.onNode(isTab("More")).performClick()
                     // With no API attached, both saved routes can be set through their actual buttons.
                     compose.onNodeWithText("Sites").performClick()
-                    compose.onNodeWithText("Unmatched species").performClick()
+                    compose.onNodeWithText("Species without care data").performClick()
                 }
                 "planta" -> {
-                    compose.onNodeWithText("More").performClick()
+                    compose.onNode(isTab("More")).performClick()
                     compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic imported fern").fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("One-time app code").performTextInput("synthetic-never-save")
                 }
                 "household-settings" -> {
-                    compose.onNodeWithText("More").performClick()
+                    compose.onNode(isTab("More")).performClick()
                     compose.onNodeWithText("Members").assertDoesNotExist()
-                    compose.onNodeWithText("Household settings").performScrollTo().performClick()
-                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                    compose.onNodeWithText("Weather and feed").performScrollTo().performClick()
+                    compose.waitUntil(5_000) { compose.onAllNodes(hasText("Today's weather") and isToggleable() and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 }
                 "household" -> {
-                    compose.onNodeWithText("More").performClick()
+                    compose.onNode(isTab("More")).performClick()
                     compose.onNodeWithText("Members").performScrollTo().performClick()
                     compose.waitUntil(5_000) { compose.onAllNodes(hasText("Create invite") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                 }
                 "species" -> {
-                    compose.onNodeWithText("More").performClick()
-                    compose.onNodeWithText("Unmatched species").performClick()
+                    compose.onNode(isTab("More")).performClick()
+                    compose.onNodeWithText("Species without care data").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("Species care for Testoria nebulosa").fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Species care for Testoria nebulosa").performScrollTo().performClick()
                 }
                 "feed-settings" -> {
-                    compose.onNodeWithText("More").performClick()
-                    compose.onNodeWithText("Feed and weather settings").performClick()
+                    compose.onNode(isTab("More")).performClick()
+                    compose.onNodeWithText("Weather and feed").performClick()
                 }
                 else -> {
                     compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
@@ -339,10 +364,10 @@ class AppShellRestorationTest {
                         compose.onNodeWithText("A site groups plants that share the same conditions.").assertIsDisplayed()
                     }
                     "household-settings" -> {
-                        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save my feed") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
-                        compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
-                        compose.onNodeWithText("Latitude").performScrollTo().assertIsNotEnabled()
-                        compose.onNodeWithText("Save location").assertDoesNotExist()
+                        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Today's weather") and isToggleable() and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                        compose.onNode(hasText("Today's weather") and isToggleable()).performScrollTo().assertIsDisplayed().assertIsEnabled()
+                        compose.onNodeWithText("Only the owner can change it.").performScrollTo().assertIsDisplayed()
+                        compose.onNodeWithText("Find your town").assertDoesNotExist()
                         compose.onNodeWithText("Create invite").assertDoesNotExist()
                     }
                     "household" -> {
@@ -363,7 +388,7 @@ class AppShellRestorationTest {
                     }
                     "journal-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
                     "species", "plant-species" -> compose.onNodeWithText("Care defaults for this species").assertIsDisplayed()
-                    "feed-settings" -> compose.onNodeWithText("Save my feed").assertIsDisplayed().assertIsEnabled()
+                    "feed-settings" -> compose.onNode(hasText("Today's weather") and isToggleable()).performScrollTo().assertIsDisplayed().assertIsEnabled()
                     "feed-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
                 }
             } else {
@@ -379,11 +404,11 @@ class AppShellRestorationTest {
                 compose.onNodeWithText("Unsaved photo note").assertDoesNotExist()
                 compose.onNodeWithText("Identify").assertDoesNotExist()
                 compose.onNodeWithText("Create invite").assertDoesNotExist()
-                compose.onNodeWithText("Save my feed").assertDoesNotExist()
+                compose.onNode(hasText("Today's weather") and isToggleable()).assertDoesNotExist()
                 compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()
                 compose.onNodeWithText("Care defaults for this species").assertDoesNotExist()
-                compose.onNode(hasText("More") and hasClickAction()).performClick()
-                compose.onNodeWithText("Log out").assertIsDisplayed()
+                compose.onNode(isTab("More")).performClick()
+                compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
                 compose.onNodeWithText("These species of yours have no care data from sources yet. Fytorium's own estimates still apply.").assertDoesNotExist()
                 compose.onNodeWithText("A site groups plants that share the same conditions.").assertDoesNotExist()
             }

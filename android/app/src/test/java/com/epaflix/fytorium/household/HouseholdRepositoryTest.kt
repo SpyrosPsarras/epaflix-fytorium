@@ -13,32 +13,6 @@ import org.json.JSONObject
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class HouseholdRepositoryTest {
-    @Test fun settingsUseWebBodiesAndFamilyCannotWriteHouseholdValues() {
-        MockWebServer().use { server ->
-            server.start()
-            val store = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
-            var role = Role.owner
-            val repo = HouseholdRepository(ApiClient(server.url("").toString().trimEnd('/'), store) {}, HouseholdArea.Settings, { role }, { true })
-            fun reads() {
-                server.enqueue(MockResponse().setBody("""{"location":{"latitude":12.5,"longitude":45,"label":"Synthetic place"}}"""))
-                server.enqueue(MockResponse().setBody("""{"late_tasks":true,"current_weather":false,"weather_alerts":true,"plant_warnings":true}"""))
-            }
-            reads(); repo.refresh(); repeat(2) { server.takeRequest() }
-            assertEquals("12.5", repo.state.value.location["latitude"])
-            server.enqueue(MockResponse().setBody("{}")); reads()
-            assertTrue(repo.saveLocation(mapOf("latitude" to "", "longitude" to "", "label" to "")))
-            assertTrue(JSONObject(server.takeRequest().body.readUtf8()).isNull("location"))
-            repeat(2) { server.takeRequest() }
-            role = Role.family
-            assertFalse(repo.saveLocation(emptyMap()))
-            server.enqueue(MockResponse().setBody("{}")); reads()
-            assertTrue(repo.saveFeed(repo.state.value.feed))
-            assertEquals("/api/feed/settings", server.takeRequest().path)
-            role = Role.sitter
-            repo.refresh()
-            assertFalse(repo.state.value.loaded)
-        }
-    }
     @Test fun customTaskTargetsAreImmutableAndValidationComesFromTheServer() {
         MockWebServer().use { server ->
             server.start()

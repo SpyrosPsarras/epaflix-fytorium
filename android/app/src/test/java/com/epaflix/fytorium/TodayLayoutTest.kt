@@ -251,7 +251,7 @@ class TodayLayoutTest {
     private fun lateTap(swiped: Boolean) {
         val care = mutableStateOf(state(tasks = rows(2)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 1", event)) }
         compose.onNodeWithText("Watered Fern 1").assertIsDisplayed()
         if (swiped) compose.onNodeWithText("Watered Fern 1").performTouchInput { swipeRight() } else compose.mainClock.advanceTimeBy(10_000)
@@ -263,13 +263,13 @@ class TodayLayoutTest {
         compose.onNodeWithTag("bar-paused").assertDoesNotExist()
         compose.onRoot().performTouchInput { click(more) }
         compose.onNodeWithTag("task-list").assertDoesNotExist()
-        compose.onNode(hasText("More") and !hasClickAction()).assertIsDisplayed()
+        compose.onNode(hasText("More") and !isTab("More")).assertIsDisplayed()
     }
 
     @Test fun aTapOnTheBarWhileANewExplanationFadesInWaitsHalfASecondAfterTheLastOneLeft() {
         val message = "Changes need a connection."
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(2)).copy(offline = true)) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         val control = compose.onNodeWithContentDescription("Mark Water done for Fern 0, Synthetic site")
         control.performClick()
         compose.onNodeWithText(message).assertIsDisplayed()
@@ -305,7 +305,7 @@ class TodayLayoutTest {
         val first = "Changes need a connection."
         val queued = "Adding a plant needs a connection."
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = state(tasks = rows(2)).copy(offline = true)) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         compose.onNodeWithContentDescription("Mark Water done for Fern 0, Synthetic site").performClick()
         compose.onNodeWithContentDescription("Add plant").performClick()
         compose.onNodeWithText(first).assertIsDisplayed()
@@ -329,7 +329,7 @@ class TodayLayoutTest {
     private fun tapWhileFadingIn(replacing: Boolean) {
         val care = mutableStateOf(state(tasks = rows(2)))
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = care.value) } }
-        val more = bounds(hasText("More") and hasClickAction()).center
+        val more = bounds(isTab("More")).center
         if (replacing) {
             compose.runOnIdle { care.value = care.value.copy(receipt = Receipt("Watered Fern 0", event)) }
             compose.onNodeWithText("Watered Fern 0").assertIsDisplayed()
@@ -367,7 +367,7 @@ class TodayLayoutTest {
         var host: android.view.View? = null
         compose.setContent { host = LocalView.current; FytoriumTheme { AppShell(true, false, careState = care.value) } }
         val today = bounds(hasText("Today") and hasClickAction() and !hasTestTag("view-today"))
-        val bar = Rect(today.left, today.top, bounds(hasText("More") and hasClickAction()).right, today.bottom)
+        val bar = Rect(today.left, today.top, bounds(isTab("More")).right, today.bottom)
         fun blank(): Boolean {
             val colors = mutableSetOf<Int>()
             compose.runOnUiThread {
@@ -1258,8 +1258,13 @@ class TodayLayoutTest {
         // The repository keeps a refused refresh's message for Today; a 409 to Mark watered leaves the feed's.
         val message = if (saved) "Feed settings saved." else if (rain) "Rain watering is not ready. Try again in a moment." else "Synthetic refusal"
         if (saved) {
+            // W5a-P20: a settings save shows no message on Today, so nothing can move.
             server.enqueue(MockResponse().setBody(settingsFixture)); server.enqueue(MockResponse().setBody(feedFixture)); server.enqueue(MockResponse().setBody(weatherFixture))
             assertTrue(feed.saveSettings(feed.state.value.settings!!))
+            compose.waitForIdle()
+            assertNull(feed.state.value.message)
+            assertEquals("A card or row moved after a settings save at ${fontScale}x text", before, places())
+            return@withCache
         } else if (rain) {
             server.enqueue(MockResponse().setResponseCode(409).setBody("""{"reason":"rain_report_not_ready"}"""))
             assertFalse(feed.water())

@@ -18,6 +18,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
     private val work = WorkManager.getInstance(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
+    private var refreshAgain = false
     private val _online = MutableStateFlow(connected())
     val online: StateFlow<Boolean> = _online
     private val _pulling = MutableStateFlow(false)
@@ -26,13 +27,19 @@ class CareController(context: Context, private val store: CredentialStore, val r
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onLost(network: Network) { _online.value = false; api.networkLost(); repository.connectivityChanged(false); feed?.connectivityChanged(false) }
         override fun onAvailable(network: Network) { refresh() }
-        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            val online = connected()
-            _online.value = online
-            repository.connectivityChanged(online)
-            feed?.connectivityChanged(online)
-            if (online) refresh()
-        }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = recheck()
+        // A background app can be cut off from the network; it gets this, not a capability change, when that ends.
+        override fun onBlockedStatusChanged(network: Network, blocked: Boolean) = recheck()
+    }
+    private fun recheck() {
+        val online = connected()
+        observe(online)
+        if (online) refresh()
+    }
+    private fun observe(online: Boolean) {
+        _online.value = online
+        repository.connectivityChanged(online)
+        feed?.connectivityChanged(online)
     }
     init {
         network.registerDefaultNetworkCallback(callback)
@@ -55,7 +62,10 @@ class CareController(context: Context, private val store: CredentialStore, val r
     @Synchronized fun refresh(pulled: Boolean = false) {
         if (store.tokens == null) return
         if (pulled) _pulling.value = true
-        if (refreshJob?.isActive == true) return
+        // A missed callback must not leave a false Offline once the phone is back on the network.
+        if (!_online.value && connected()) observe(true)
+        // A request made during a refresh runs after it, so a refresh that began before the network validated never has the last word (W5a-P9).
+        if (refreshJob?.isActive == true) { refreshAgain = true; return }
         val job = scope.launch { repository.refresh() }
         refreshJob = job
         // Feed reads must not extend the task refresh's single-flight window.
@@ -63,6 +73,7 @@ class CareController(context: Context, private val store: CredentialStore, val r
             scope.launch {
                 if (error == null && store.tokens != null) feed?.refresh(repository.state.value.member)
                 synchronized(this@CareController) { if (refreshJob === job) _pulling.value = false }
+                if (synchronized(this@CareController) { refreshAgain.also { refreshAgain = false } }) refresh()
             }
         }
     }

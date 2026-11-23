@@ -30,8 +30,7 @@ class HouseholdScreenTest {
         compose.enableAccessibilityChecks()
         val area = mutableStateOf(HouseholdArea.Members)
         val state = mutableStateOf(HouseholdState(loaded = true, plants = listOf(plant), members = listOf(member),
-            invites = listOf(HouseholdInvite("invite-one", "sitter", "2030-06-08", setOf(plant.id))),
-            feed = feedLabels.keys.associateWith { true }))
+            invites = listOf(HouseholdInvite("invite-one", "sitter", "2030-06-08", setOf(plant.id)))))
         val online = mutableStateOf(true)
         var removes = 0
         var share: String? = null
@@ -71,10 +70,6 @@ class HouseholdScreenTest {
         compose.onNodeWithText("Revoke invite").performScrollTo().performClick()
         capture("revoke")
         compose.onNodeWithText("Cancel").performClick()
-        compose.runOnIdle { area.value = HouseholdArea.Settings }
-        capture("settings")
-        compose.onNodeWithText("Save location").performScrollTo()
-        capture("location")
         compose.runOnIdle { area.value = HouseholdArea.Tasks; state.value = state.value.copy(target = plant, tasks = listOf(CustomTask("task-one", "Inspect", "14"))) }
         capture("tasks")
         compose.onNodeWithText("Edit task").performScrollTo().performClick()
@@ -107,10 +102,6 @@ class HouseholdScreenTest {
             waitEnabled("Create invite")
             compose.onNodeWithText("Create invite").performClick()
             compose.onNodeWithText("Create invite link").assertIsEnabled()
-            enqueue("{\"location\":null}"); enqueue("{\"late_tasks\":true,\"current_weather\":true,\"weather_alerts\":true,\"plant_warnings\":true}")
-            compose.runOnIdle { area.value = HouseholdArea.Settings }
-            waitEnabled("Save my feed")
-            compose.onNodeWithText("Save location").performScrollTo().assertIsEnabled()
             enqueue("[]"); enqueue("[]"); enqueue("[]")
             compose.runOnIdle { area.value = HouseholdArea.Tasks }
             waitEnabled("Target: ")
@@ -121,14 +112,14 @@ class HouseholdScreenTest {
     @Test fun sittersHaveNoHouseholdScreensAndFamilyHasNoMembers() {
         val role = mutableStateOf(Role.owner)
         compose.setContent { FytoriumTheme { AppShell(true, false, careState = CareState(member = Member("synthetic", role.value))) } }
-        compose.onNodeWithText("More").performClick()
+        compose.onNode(isTab("More")).performClick()
         compose.onNodeWithText("Members").assertIsDisplayed()
         compose.runOnIdle { role.value = Role.family }
         compose.onNodeWithText("Members").assertDoesNotExist()
-        compose.onNodeWithText("Household settings").assertIsDisplayed()
+        compose.onNodeWithText("Weather and feed").assertIsDisplayed()
         compose.onNodeWithText("Custom tasks").assertIsDisplayed()
         compose.runOnIdle { role.value = Role.sitter }
-        compose.onNodeWithText("Household settings").assertDoesNotExist()
+        compose.onNodeWithText("Weather and feed").assertDoesNotExist()
         compose.onNodeWithText("Custom tasks").assertDoesNotExist()
     }
 }

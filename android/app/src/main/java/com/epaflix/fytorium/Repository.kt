@@ -21,7 +21,7 @@ data class CareState(val member: Member? = null, val today: TaskList? = null, va
                      val offline: Boolean = false, val serverUnavailable: Boolean = false, val lastUpdated: Long? = null, val busy: Boolean = false,
                      val message: String? = null, val updateRequired: Boolean = false,
                      val receipt: Receipt? = null, val pending: Set<BusyKey> = emptySet(), val batches: Map<String, BatchReceipt> = emptyMap(),
-                     val openedOccurrence: String? = null, val transitions: List<Pair<String, String>> = emptyList(),
+                     val openedOccurrence: String? = null, val transitions: List<Pair<String, String>> = emptyList(), val names: MemberNames = MemberNames(),
                      // The plant page's held history shows at once only the events this device created or undid.
                      val createdHere: Set<String> = emptySet(), val undoneHere: Set<String> = emptySet(),
                      // Its held header takes at once only the plant fields this device's own writes and Undos set: plant id to those fields' JSON.
@@ -118,7 +118,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         mutable.value = mutable.value.copy(member = member, today = today?.let { parseTaskList(it.json) },
             upcoming = cache.get(member.id, "upcoming")?.let { parseTaskList(it.json) },
             plants = cache.get(member.id, "plants")?.let { JSONArray(it.json).mapObjects(::parsePlant) } ?: emptyList(),
-            lastUpdated = today?.refreshedAt)
+            lastUpdated = today?.refreshedAt, names = cache.names())
         mutable.value = mutable.value.copy(batches = state.value.rows.mapNotNull { it.completedEvent }.distinctBy { it.batchId }
             .mapNotNull { event -> receiptFor(event)?.let { event.batchId!! to it } }.toMap())
     }
@@ -293,9 +293,12 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         (state.value.batches[event.batchId] ?: receiptFor(event))?.let { mutable.value = mutable.value.copy(receipt = Receipt(it.text, event)) }
     }
     // Photo lists keep their last answer per member, so the Journal and plant photos read offline.
-    fun cachedJson(resource: String): Pair<String, Long>? = state.value.member?.let { cache.get(it.id, resource) }?.let { it.json to it.refreshedAt }
+    // With a member id, the cache answers and stores only while that member is the one logged in.
+    fun cachedJson(resource: String, memberId: String? = null): Pair<String, Long>? =
+        state.value.member?.takeIf { memberId == null || it.id == memberId }?.let { cache.get(it.id, resource) }?.let { it.json to it.refreshedAt }
     // Returns the time it stored, so a page that shows the list's age names the same time as the cache.
-    fun saveJson(resource: String, json: String): Long? = state.value.member?.let { member -> clock().also { cache.save(member.id, mapOf(resource to json), it) } }
+    fun saveJson(resource: String, json: String, memberId: String? = null): Long? =
+        state.value.member?.takeIf { memberId == null || it.id == memberId }?.let { member -> clock().also { cache.save(member.id, mapOf(resource to json), it) } }
     fun showReceipt(text: String) = synchronized(monitor) { mutable.value = mutable.value.copy(receipt = Receipt(text, short = true)) }
     fun clearReceipt(receipt: Receipt) = synchronized(monitor) {
         if (state.value.receipt?.id == receipt.id) mutable.value = mutable.value.copy(receipt = null)

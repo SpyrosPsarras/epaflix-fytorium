@@ -21,3 +21,17 @@ test('only owners can change family and sitter roles; protected owners cannot ch
   expect((await owner.request('/api/household/members/' + id, 'PUT', { role: 'family' })).status).toBe(200);
   expect(await (await family.request('/api/me')).json()).toMatchObject({ member: { role: 'family' } });
 });
+
+// W5a SV1: the More header and the sitter's sentence name the member and the household owner.
+test('/api/me names the member and the household owner for every role', async () => {
+  const invite = await (await owner.request('/api/household/invites', 'POST', { role: 'family' })).json();
+  const member = await harness.login('synthetic-named-member', { name: 'Synthetic Ada' }, invite.link.split('/').at(-1));
+  const ownerMe = await (await owner.request('/api/me')).json();
+  expect(ownerMe).toMatchObject({ member: { role: 'owner', display_name: 'Test member' }, household: { owner_name: 'Test member' } });
+  expect(await (await member.request('/api/me')).json()).toMatchObject({ member: { role: 'family', display_name: 'Synthetic Ada' }, household: { owner_name: 'Test member' } });
+  const id = (await (await member.request('/api/me')).json()).member.id;
+  expect((await owner.request('/api/household/members/' + id, 'PUT', { role: 'sitter', plant_ids: [] })).status).toBe(200);
+  const sitterMe = await (await member.request('/api/me')).json();
+  expect(sitterMe).toEqual({ language: expect.any(String), member: { id, role: 'sitter', display_name: 'Synthetic Ada' },
+    household: { id: ownerMe.household.id, name: ownerMe.household.name, owner_name: 'Test member' } });
+});

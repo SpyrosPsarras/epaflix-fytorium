@@ -36,6 +36,7 @@ services:
       NORTAXA_BASE_URL: http://nortaxa:8080
       OPEN_METEO_BASE_URL: http://open-meteo:8080
       OPEN_METEO_CLIMATE_BASE_URL: http://open-meteo-climate:8080
+      OPEN_METEO_GEOCODING_BASE_URL: http://open-meteo-geocoding:8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,7 +112,7 @@ services:
       - ./tests/stack/mappings:/home/wiremock/mappings:ro
     networks:
       default:
-        aliases: [perenual, open-plantbook, plantnet, gbif, wikidata, nortaxa, open-meteo, open-meteo-climate, planta]
+        aliases: [perenual, open-plantbook, plantnet, gbif, wikidata, nortaxa, open-meteo, open-meteo-climate, open-meteo-geocoding, planta]
 
   browser:
     image: mcr.microsoft.com/playwright:v1.58.2-noble
