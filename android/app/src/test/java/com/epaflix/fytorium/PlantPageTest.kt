@@ -3726,7 +3726,9 @@ class PlantPageTest {
             // The page's own reads land first, so only the typing could make the screen draw again after the tap.
             compose.waitUntil(5_000) { Running.count.get() == 0 }
             compose.onNode(isTab("Today")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(isTab("Plants")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).performTextInput("Synthetic porch")
             compose.onNode(isTab("Plants")).performClick()
             compose.assertDiscard(if (createSite) "Your changes to this new site are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
