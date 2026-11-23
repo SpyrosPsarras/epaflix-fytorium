@@ -118,7 +118,6 @@ private fun allowed(route: String, role: Role?) = when {
     }
     val busyPages = remember { mutableStateMapOf<Any, Boolean>() }
     var pendingTab by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(pendingTab, busyPages.isEmpty()) { if (busyPages.isEmpty()) pendingTab?.let { pendingTab = null; show(it) } }
     fun goHome() { popAll("Today"); show("Today"); taskView = "today" }
     fun reselectNow() {
         if (stack(tab).isNotEmpty()) { popAll(tab); return }
@@ -129,7 +128,7 @@ private fun allowed(route: String, role: Role?) = when {
             else -> scope.launch { moreScroll.animateScrollTo(0) }
         }
     }
-    fun showAllPlants(origin: String) { stacks.keys.toList().forEach { t -> stack(t).lastIndexOf("planta").takeIf { it >= 0 }?.let { pop(t, stack(t).size - it) } }
+    fun showAllPlants(origin: String) { stack(origin).lastIndexOf("planta").takeIf { it >= 0 }?.let { pop(origin, stack(origin).size - it) }
         popAll("Plants"); plantsShowAll++; controller?.refresh(); show("Plants") }
     // Asks the open page's question first, as its Back would (W6-P18).
     fun ask(target: String, then: () -> Unit) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else then() }
@@ -141,10 +140,11 @@ private fun allowed(route: String, role: Role?) = when {
         else -> Unit
     }
     fun tabTap(title: String) = when {
-        title == tab -> ask("reselect") { reselectNow() }
         busyPages.isNotEmpty() -> pendingTab = title
+        title == tab -> { pendingTab = null; ask("reselect") { reselectNow() } }
         else -> { pendingTab = null; show(title) }
     }
+    LaunchedEffect(pendingTab, busyPages.isEmpty()) { if (busyPages.isEmpty()) pendingTab?.let { pendingTab = null; tabTap(it) } }
     // A question about an unsent invite link means nothing once the link is gone, as after process death: go where the tap was going (Astra W5b-astra-9).
     LaunchedEffect(leaving) {
         if (leaving?.startsWith("You can't see this link again.") == true && com.epaflix.fytorium.household.InviteLinks.isEmpty()) {
@@ -154,29 +154,28 @@ private fun allowed(route: String, role: Role?) = when {
     val homeHandled = key(homeRequest) { rememberSaveable { mutableStateOf(false) } }
     var homePending by rememberSaveable { mutableStateOf(false) }
     // A notification shows Today; only a page over Today is asked about (W6-P16).
-    LaunchedEffect(homeRequest) {
-        if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; snapshotFlow { busyPages.isEmpty() }.first { it }; show("Today"); homePending = true }
-    }
-    // View imported plants shows the Plants grid; a Plants form with changes asks first, and Keep editing goes back (W6-P15).
-    var plantsPending by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(plantsPending) { plantsPending?.let { origin -> plantsPending = null; ask("plants:$origin") { showAllPlants(origin) } } }
+    LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; homePending = true } }
+    var homeAsk by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(homePending) { if (homePending) { snapshotFlow { busyPages.isEmpty() }.first { it }; show("Today"); homePending = false; homeAsk = true } }
     fun logOut() { drafts.entries.firstOrNull()?.let { (t, question) -> leaving = question.first(); destination = "logout:$t" } ?: onLogout() }
-    LaunchedEffect(homePending) { if (homePending) { homePending = false; if (stack("Today").isNotEmpty()) ask("home") { goHome() } else goHome() } }
+    LaunchedEffect(homeAsk) { if (homeAsk) { homeAsk = false; if (stack("Today").isNotEmpty()) ask("home") { goHome() } else goHome() } }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
     var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }
     LaunchedEffect(loggedIn, careState?.member) {
         val member = careState?.member
         val memberChanged = previousMemberId != null && member != null && previousMemberId != member.id
         val becameSitter = previousRole != null && previousRole != Role.sitter && member?.role == Role.sitter
-        if (!loggedIn || memberChanged || becameSitter) {
+        val leftSitter = previousRole == Role.sitter && member != null && member.role != Role.sitter
+        if (!loggedIn || memberChanged || becameSitter || leftSitter) {
             // Every page of the member or role before goes, so switching back starts fresh.
             val before = "$previousMemberId/${previousRole == Role.sitter}"
             listOf("Today", "Plants", "Journal", "More").forEach { t ->
                 pages.removeState("$before/$t/0/root"); stack(t).forEachIndexed { i, r -> pages.removeState("$before/$t/${i + 1}/$r") }
             }
-            if (becameSitter) stacks.keys.toList().forEach { t -> stacks[t] = stack(t).takeWhile { it in listOf("notifications", "about") } } else stacks.clear()
-            drafts.clear(); com.epaflix.fytorium.household.InviteLinks.clear()
-            openTask(null); leaving = null; destination = null
+            if (!loggedIn || memberChanged) stacks.clear()
+            else if (becameSitter) stacks.keys.toList().forEach { t -> stacks[t] = stack(t).takeWhile { it in listOf("notifications", "about") } }
+            drafts.clear()
+            if (!leftSitter) { com.epaflix.fytorium.household.InviteLinks.clear(); openTask(null); leaving = null; destination = null }
         }
         if (!loggedIn || memberChanged) {
             tab = "Today"; taskView = "today"
@@ -184,7 +183,7 @@ private fun allowed(route: String, role: Role?) = when {
         }
         if (member != null) {
             // A route the member may no longer open goes, with every page above it.
-            stacks.keys.toList().forEach { t -> stack(t).indexOfFirst { !allowed(it, member.role) }.takeIf { it >= 0 }?.let { pop(t, stack(t).size - it) } }
+            stacks.keys.toList().forEach { t -> stack(t).indexOfFirst { !allowed(it, member.role) }.takeIf { it >= 0 }?.let { pop(t, stack(t).size - it); drafts.remove(t) } }
             if (member.role == Role.sitter) { popAll("Journal"); if (tab == "Journal") tab = "Today" }
         }
         if (!loggedIn) { previousMemberId = null; previousRole = null }
@@ -244,7 +243,7 @@ private fun allowed(route: String, role: Role?) = when {
         }
         leaving?.let { body -> val (title, keepLabel, leaveLabel) = com.epaflix.fytorium.household.leaveQuestion(body)
             com.epaflix.fytorium.plants.LeaveDialog(title, body, keepLabel, leaveLabel, onKeep = {
-                destination?.takeIf { it.startsWith("plants:") || it.startsWith("logout:") }?.let { show(it.substringAfter(':')) }
+                destination?.takeIf { it.startsWith("logout:") }?.let { show(it.substringAfter(':')) }
                 leaving = null; destination = null }) {
             val target = destination
             leaving = null; destination = null; controller?.repository?.clearPlantErrors(); target?.let(::go) } }
@@ -354,7 +353,8 @@ private fun allowed(route: String, role: Role?) = when {
                         cached = { controller?.repository?.cachedJson(it, member.id) },
                         keep = { resource, json -> controller?.repository?.saveJson(resource, json, member.id) })
                     route == "planta" -> com.epaflix.fytorium.planta.PlantaRoute(sitesApi, care, sitesConnected, onBack = { pop() },
-                        onPlants = { plantsPending = tab; show("Plants") },
+                        // A form left open in Plants asks first, from the review; Keep editing stays here (W6-P15).
+                        onPlants = { val origin = tab; drafts["Plants"]?.firstOrNull()?.let { leaving = it; destination = "plants:$origin" } ?: showAllPlants(origin) },
                         onPlant = { push("plant/$it"); controller?.refresh() },
                         onSites = { push("sites") },
                         onReceipt = onReceipt, onUpdateRequired = { controller?.repository?.requireUpdate() }, answers = answers)

@@ -76,7 +76,8 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
                 .let { photos -> photos.options() && photos.upload(context, android.net.Uri.fromFile(java.io.File(path)), "", "", photos.state.value.today.orEmpty()) }
             if (uploaded) refreshPlants() else showReceipt("Added ${plant.displayName} to ${plant.siteName ?: "your household"}. Its photo didn't upload.")
         } finally { java.io.File(path).delete() }
-        openPlant(plant.id, full = true)
+        // Only while that plant is still the one open, so another plant's page keeps its detail.
+        if (state.value.detail?.plant?.id == plant.id) openPlant(plant.id, full = true)
     }
     private var generation = 0
     private val requestIds = mutableMapOf<String, String>()

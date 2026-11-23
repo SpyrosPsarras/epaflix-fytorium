@@ -90,11 +90,13 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     val forms = rememberSaveableStateHolder()
     val context = androidx.compose.ui.platform.LocalContext.current
     val currentKeepPath by rememberUpdatedState(keepPhotoPath)
+    var addFlowOpen by rememberSaveable { mutableStateOf(false) }
+    val currentAddFlow by rememberUpdatedState(addFlowOpen)
     val pageLeft = com.epaflix.fytorium.LocalPageLeft.current
     // Closing this page ends the add flow too; rotation and a hidden tab keep it (W6-P19).
     DisposableEffect(Unit) { onDispose {
         if ((context as? android.app.Activity)?.isChangingConfigurations != true && pageLeft()) {
-            java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
+            if (currentAddFlow) java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
             currentKeepPath?.let { java.io.File(it).delete() }
         }
     } }
@@ -137,8 +139,10 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     suspend fun loadSpecies(key: Long) { withContext(Dispatchers.IO) { repository?.species(key) }?.takeIf { it.key == namesKey }?.let { species = it } }
     // A species chosen for a new plant or a species change is unsaved too, however it was chosen.
     // A new plant's form with nothing entered goes back to its results without asking (W4-P18).
-    fun unsaved() = formChanged() || (selection != null && page == "change-species") || (page == "form" && id == null && keepPhotoPath != null && !keepPhoto)
+    var formLeftChanged by rememberSaveable { mutableStateOf(false) }
+    fun unsaved() = formChanged() || (formLeftChanged && page in formSubpages) || (selection != null && page == "change-species") || (page == "form" && id == null && keepPhotoPath != null && !keepPhoto)
     fun follow(link: String) {
+        formLeftChanged = unsaved()
         if (link == "species-care") speciesCareFrom = "care"
         if (link == "identify") identifyReturn = page
         page = link
@@ -162,7 +166,6 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         }
     }
     BackHandler { back() }
-    var addFlowOpen by rememberSaveable { mutableStateOf(false) }
     // Reselecting Plants shows the grid as it was left, then scrolls it to the top; View imported plants also clears its search (W6-P6, P15).
     var seenReselect by rememberSaveable { mutableIntStateOf(reselect) }
     var seenShowAll by rememberSaveable { mutableIntStateOf(showAll) }
@@ -174,7 +177,9 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         if (!atGrid) {
             repository?.clearPlantErrors(); clearSearch(); formChanged = { false }; selection = null; discarding = false; leavingFor = null
             if (page == "form" && id == null) dropKeepPhoto()
-            forms.removeState("form:${id ?: "new"}"); id?.let { forms.removeState("detail:$it") }; forms.removeState("site-pages")
+            formLeftChanged = false
+            (listOf("form:${id ?: "new"}", "site-pages", "identify", "search:search", "search:change-species") +
+                listOfNotNull(id).flatMap { listOf("detail:$it", "care:$it", "photos:$it", "photo-form:$it") }).forEach(forms::removeState)
             id = null; page = "list"
         }
         if (all) { query.value = ""; listGrid.scrollToItem(0) } else if (atGrid) listGrid.animateScrollToItem(0)
@@ -275,7 +280,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                 val success = withContext(Dispatchers.IO) { repository!!.plantCommand(key, if (action == "restore-save") "restore" else action, body) }
                 if (success) {
                     if (action == "delete") { id = null; leaveTo(from) }
-                    else scope.launch { refreshDetail(key); page = "detail" }
+                    else { refreshDetail(key); page = "detail" }
                 }
             }
         }
@@ -287,7 +292,10 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     if (page in listOf("photos", "photo-form", "identify") && photosApi != null && state.member != null && state.member.role != Role.sitter) {
         val photos = page != "identify"
         // Identify keeps its photos and results while the add form is open, so Change and Back return to them.
-        forms.SaveableStateProvider(if (photos) "$page:$id" else "identify") { com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
+        val shown = page
+        // A photo page has closed once this screen moves on from it, as well as when the screen's own page closes (W6-P19).
+        forms.SaveableStateProvider(if (photos) "$page:$id" else "identify") { CompositionLocalProvider(com.epaflix.fytorium.LocalPageLeft provides { pageLeft() || page != shown }) {
+            com.epaflix.fytorium.photos.PhotosRoute(photosApi, state, photosConnected, thumbnails,
             plantId = if (photos) id else null, plantName = if (photos) plant?.displayName else null, formOnly = page == "photo-form",
             identifying = page == "identify", onBack = { page = if (photos) "detail" else identifyReturn }, onUpdateRequired = { repository?.requireUpdate() },
             onFormDirty = { subpageDraft = it }, onReceipt = { repository?.showReceipt(it) },
@@ -301,7 +309,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                 selection = JSONObject().put("gbif_key", candidate.key).put("search_id", searchId).put("confirmed", true).toString()
                 choose(candidate); pickedFrom = "identify"
                 page = if (identifyReturn == "change-species") "change-species" else "form"
-            }) }
+            }) } }
         return
     }
     if (page == "species-care" && plant != null && speciesApi != null && state.member != null && state.member.role != Role.sitter) {
@@ -461,7 +469,8 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                                 keepPhotoPath = null; keepPhoto = true
                                 repository?.uploadKeptPhoto(context.applicationContext, photosApi!!, photosConnected, saved, photo)
                             } else dropKeepPhoto()
-                            scope.launch { if (previousId == saved.id) refreshDetail(saved.id); page = "detail" }
+                            if (previousId == saved.id) refreshDetail(saved.id)
+                            page = "detail"
                         }
                     }
                 }) } }

@@ -3625,6 +3625,35 @@ class PlantPageTest {
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    // Sol W6-S9: a Restore with another site chosen, left for an unchanged Create a site, still asks when reselecting Plants after a tab trip.
+    @Test fun aFormLeftForCreateASiteStillAsksAfterATabTrip() {
+        val site = """{"id":"site-one","name":"Synthetic site","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":1}"""
+        val porch = """{"id":"site-porch","name":"Synthetic porch","location":"indoor","light":"part_sun","humidity":"normal","grow_light":false,"draft":false,"plant_count":0}"""
+        withPlantServer({ path -> when (path) { "/api/sites" -> "[$site,$porch]"; else -> restoreServed(path) } }) { repo, showing ->
+            val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+            try {
+                compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                    AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+                compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+                compose.onNode(isTab("Plants")).performClick()
+                compose.onNodeWithTag("plant:plant-one").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasContentDescription("Plant settings") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Plant settings").performClick()
+                compose.onNodeWithText("Restore plant").performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Restore Synthetic fern to Synthetic site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(hasText("Site") and hasText("Synthetic site")).performScrollTo().performClick()
+                compose.onNode(hasText("Synthetic porch") and hasAnyAncestor(isPopup())).performScrollTo().performClick()
+                compose.onNode(hasText("Create a site") and !hasAnyAncestor(isDialog())).performScrollTo().performClick()
+                compose.onNode(hasText("Create a site") and hasAnyAncestor(isDialog())).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodes(hasText("Save site") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(isTab("Today")).performClick()
+                compose.onNode(isTab("Plants")).performClick()
+                compose.onNode(isTab("Plants")).performClick()
+                compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
+            } finally { controller.close() }
+        }
+    }
+
     // C19: Create a site from Restore asks before system Back, the top bar's Back or Cancel drops a typed name, and Discard returns to Restore.
     @Test fun createASiteFromRestoreAsksBeforeDroppingATypedName() = withPlantServer(::restoreServed) { repo, showing ->
         compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()

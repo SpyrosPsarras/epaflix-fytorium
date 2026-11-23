@@ -181,6 +181,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     formOnly: Boolean = false, onUploaded: () -> Unit = {}, selectedUri: String? = null, onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onRemovePhoto: () -> Unit = {},
     // Held above the viewer and form, so the list returns to the card the user left.
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState()) {
+    com.epaflix.fytorium.ReportBusy(state.saving)
     var form by rememberSaveable { mutableStateOf(formOnly) }
     var note by rememberSaveable { mutableStateOf("") }
     var health by rememberSaveable { mutableStateOf("") }
@@ -295,7 +296,6 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     modifier = Modifier.heightIn(min = 48.dp).semantics { if (!ready) disabled() }) { Text("Add photo update") }
                 PlantError(state.error)
             }
-            com.epaflix.fytorium.ReportBusy(state.saving)
             if (state.saving) state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) }
                 ?: LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
@@ -325,6 +325,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onSearchByName: () -> Unit = onBack, onExplain: (String) -> Unit = {},
     onDiscard: () -> Unit = {}, care: CareState? = null, api: com.epaflix.fytorium.ApiClient? = null, onFormDirty: (() -> String?) -> Unit = {}) {
     var chosen by rememberSaveable { mutableStateOf<SpeciesCandidate?>(null) }
+    com.epaflix.fytorium.ReportBusy(state.saving)
     var searchId by rememberSaveable { mutableStateOf<String?>(null) }
     var showing by rememberSaveable { mutableStateOf(state.result != null) }
     // The result last brought into view, so recreation keeps Change photos open instead of showing the results again.
@@ -426,7 +427,6 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     }
                 }
             }
-            com.epaflix.fytorium.ReportBusy(state.saving)
             if (state.saving) state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) }
                 ?: LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }

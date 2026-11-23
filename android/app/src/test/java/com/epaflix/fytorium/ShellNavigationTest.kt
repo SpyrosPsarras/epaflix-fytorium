@@ -40,6 +40,7 @@ class ShellNavigationTest {
                 fun answer(request: RecordedRequest) = MockResponse().setBody(responses["${request.method} ${request.path}"] ?: responses[request.path] ?: when (request.path) {
                     "/api/journal" -> "[" + JSONObject(com.epaflix.fytorium.photos.photoFixture).put("plant_name", "Synthetic fern") + "]"
                     "/api/import/planta" -> "[]"
+                    "/api/choices" -> """{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":["good"]},"nameLanguages":{}}"""
                     "/api/sites" -> "[]"
                     "/api/meta" -> """{"today":"2030-06-01","timezone":"Europe/Oslo"}"""
                     "/api/feed" -> """{"settings":{"late_tasks":true,"current_weather":true,"weather_alerts":true,"plant_warnings":true},"cards":[{"id":"plant-one","kind":"plant_warnings","href":"/plants/plant-one","plantName":"Synthetic fern","warnings":[{"kind":"no_drainage","reason":"Synthetic reason.","inputs":[]}]}]}"""
@@ -239,10 +240,18 @@ class ShellNavigationTest {
         compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
         tab("Plants").performClick()
         searchField().performTextInput("fern")
+        tab("Journal").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Add a photo update").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Add a photo update").performClick()
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Note") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Note").performTextInput("Synthetic journal note")
         tab("More").performClick()
         compose.onNodeWithText("About").performScrollTo().performClick()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("Copy diagnostics").assertIsDisplayed()
+        tab("Journal").performClick()
+        compose.onNodeWithText("Synthetic journal note").assertExists()
         tab("Plants").performClick()
         searchField().assertTextContains("fern")
         tab("Today").performClick()
@@ -303,6 +312,7 @@ class ShellNavigationTest {
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic room").fetchSemanticsNodes().isNotEmpty() }
         tab("More").assertIsSelected()
         compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("View imported plants").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("View imported plants").performScrollTo().performClick()
         tab("Plants").assertIsSelected()
         searchField().assertTextEquals("Search plants", "")
@@ -325,6 +335,51 @@ class ShellNavigationTest {
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithText("Discard changes?").assertDoesNotExist()
         assertEquals(1, requests.count { it == "POST /api/sites" })
+    }
+
+    // Sol W6-S5: View imported plants asks about a form left in Plants from the review; Keep editing stays on the review.
+    @Test fun viewImportedPlantsAsksAboutAPlantsDraftFromTheReview() = shell(responses = mapOf(
+        "/api/import/planta" to "[" + JSONObject(com.epaflix.fytorium.planta.importFixture).put("status", "committed").put("can_review", false)
+            .put("plant_id", "plant-one").put("candidates", org.json.JSONArray()) + "]")) {
+        openSiteDraft()
+        tab("More").performClick()
+        compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("View imported plants").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("View imported plants").performScrollTo().performClick()
+        compose.onNodeWithText("Discard changes?").assertIsDisplayed()
+        compose.onNodeWithText("Keep editing").performClick()
+        tab("More").assertIsSelected()
+        compose.onNodeWithText("View imported plants").assertExists()
+        compose.onNodeWithText("View imported plants").performScrollTo().performClick()
+        compose.onNodeWithText("Discard").performClick()
+        tab("Plants").assertIsSelected()
+        searchField().assertIsDisplayed()
+        compose.onNodeWithText("Synthetic draft room").assertDoesNotExist()
+        tab("More").performClick()
+        compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
+    }
+
+    // Sol W6-S2: reselecting the tab during a save waits too, and never asks about the form being saved.
+    @Test fun aReselectDuringASaveWaitsAndDoesNotAsk() = shell(responses = mapOf("POST /api/sites" to com.epaflix.fytorium.sites.siteFixture.replace("Synthetic room", "Synthetic draft room")),
+        hold = { it.method == "POST" && it.path == "/api/sites" }) {
+        openSiteDraft()
+        compose.onNodeWithText("Save site").performScrollTo().performClick()
+        compose.waitUntil(5_000) { requests.contains("POST /api/sites") }
+        tab("Journal").performClick()
+        tab("Plants").performClick()
+        compose.onNodeWithText("Discard changes?").assertDoesNotExist()
+        release()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Search plants") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+        tab("Plants").assertIsSelected()
+        assertEquals(1, requests.count { it == "POST /api/sites" })
+    }
+
+    // Sol W6-S11: a gallery write such as Use as cover reports itself, so a tab tap waits for it too.
+    @Test fun aGalleryWriteReportsItsSave() {
+        val pages = mutableStateMapOf<Any, Boolean>()
+        compose.setContent { CompositionLocalProvider(LocalPageBusy provides pages) { FytoriumTheme {
+            com.epaflix.fytorium.photos.PhotoScreen(com.epaflix.fytorium.photos.PhotoState(loaded = true, saving = true), true, "Synthetic fern", 0) } } }
+        compose.runOnIdle { assertTrue(pages.isNotEmpty()) }
     }
 
     // W6-T18: the app opts in to predictive back.

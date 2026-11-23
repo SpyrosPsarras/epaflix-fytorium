@@ -38,6 +38,8 @@ class KeptPhotoUploadTest {
         runBlocking { repository.uploadKeptPhoto(app, api, { true }, parsePlant(JSONObject(plantFixture)), kept.path).join() }
         assertEquals(listOf("/api/plants/plant-one/photos"), posts)
         assertFalse(kept.exists())
+        // Sol W6-S6: no plant page is open, so none is put in the repository's one detail slot.
+        assertNull(repository.state.value.detail)
         assertEquals(if (accept) null else "Added Synthetic fern to Synthetic site. Its photo didn't upload.", repository.state.value.receipt?.text)
     }
 
