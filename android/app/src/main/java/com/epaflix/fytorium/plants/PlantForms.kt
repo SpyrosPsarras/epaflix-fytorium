@@ -41,7 +41,6 @@ import com.epaflix.fytorium.DialogTitle
 import com.epaflix.fytorium.ApiClient
 import com.epaflix.fytorium.barHeight
 import com.epaflix.fytorium.CareTask
-import com.epaflix.fytorium.ReferencePhoto
 import com.epaflix.fytorium.Plant
 import com.epaflix.fytorium.countLabel
 import com.epaflix.fytorium.dayMonthYear
@@ -139,38 +138,98 @@ internal fun choiceLabel(value: String) = value.replace('_', ' ').replaceFirstCh
             label = { Text("Name") }, supportingText = { if (errorText == null) Text(hint) else PlantError(errorText, keep = hint) }, colors = colors)
     }
 }
+// The last watering as a few quick choices; nothing is sent for "Don't know".
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable private fun LastWatered(value: String, today: LocalDate, enabled: Boolean, onChange: (String) -> Unit) {
+    var picking by rememberSaveable { mutableStateOf(false) }
+    val quick = listOf("Today" to today, "Yesterday" to today.minusDays(1), "A few days ago" to today.minusDays(3), "About a week ago" to today.minusDays(7))
+    val picked = value.takeIf { it.isNotEmpty() && quick.none { (_, day) -> day.toString() == it } }
+    Text("Last watered", style = MaterialTheme.typography.titleSmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(value.isEmpty(), { onChange("") }, { Text("Don't know") }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp))
+        quick.forEach { (label, day) -> FilterChip(value == day.toString(), { onChange(day.toString()) }, { Text(label) }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) }
+        FilterChip(picked != null, { picking = true }, { Text(picked?.let { LocalDate.parse(it).format(java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.getDefault())) } ?: "Pick a date") },
+            enabled = enabled, modifier = Modifier.heightIn(min = 48.dp))
+    }
+    if (picking) {
+        val earliest = today.minusDays(365)
+        val state = rememberDatePickerState(initialSelectedDateMillis = picked?.let { LocalDate.parse(it).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli() },
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long) = java.time.Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().let { it in earliest..today }
+            })
+        DatePickerDialog(onDismissRequest = { picking = false }, confirmButton = {
+            TextButton(onClick = { state.selectedDateMillis?.let { onChange(java.time.Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()) }; picking = false },
+                enabled = state.selectedDateMillis != null) { Text("Set date") }
+        }, dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } }) { DialogBody { DatePicker(state) } }
+    }
+}
+// After Identify: keep its first photo as the new plant's first photo.
+@Composable internal fun KeepPhoto(path: String, keep: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().toggleable(keep, enabled = enabled, role = Role.Checkbox, onValueChange = onChange).heightIn(min = 56.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        com.epaflix.fytorium.photos.FilePhoto(path, Modifier.size(56.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Keep this photo")
+            Text("It becomes the plant's first photo.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Checkbox(keep, onCheckedChange = null, enabled = enabled)
+    }
+}
 private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
 // Name, site and Save lead; everything else waits under More details, below Save, which opens by itself when one of its fields has an error.
 @Composable fun PlantForm(plant: Plant?, options: PlantOptions, sites: List<PlantSite>, writable: Boolean, errors: Map<String, String> = emptyMap(),
-    onSave: (JSONObject) -> Unit, today: LocalDate = LocalDate.now(ZoneOffset.UTC), onDirty: (() -> Boolean) -> Unit = {}) {
+    onSave: (JSONObject) -> Unit, today: LocalDate = LocalDate.now(ZoneOffset.UTC), onDirty: (() -> Boolean) -> Unit = {},
+    species: (@Composable () -> Unit)? = null, nameStandIn: String? = null, onCreateSite: ((String) -> Unit)? = null, createdSite: String? = null,
+    keepPhoto: (@Composable () -> Unit)? = null, blocked: String? = null, onBlocked: (String) -> Unit = {}) {
     val original = remember(plant?.id) { JSONObject(plant?.attributesJson ?: "{}") }
     val startTexts = remember(plant?.id) { (listOf("nickname", "cultivar", "birthday") + options.numbers).associateWith { key -> if (original.isNull(key)) "" else original.optString(key) } }
-    val startChoices = remember(plant?.id) { options.choices.mapValues { (key, values) -> original.nullable(key) ?: values.first() } +
-        mapOf("health" to (if (original.isNull("health")) "" else original.optString("health")), "site_id" to (if (original.isNull("site_id")) "" else original.optString("site_id"))) }
-    val startFlags = remember(plant?.id) { options.booleans.associateWith { original.optBoolean(it).toString() } }
+    // Unset attributes stay unset, so an edit of another field never invents a value for them.
+    val startChoices = remember(plant?.id) { options.choices.mapValues { (key, _) -> original.nullable(key) ?: "" } +
+        mapOf("health" to (if (original.isNull("health")) "" else original.optString("health")),
+            "drainage" to (if (original.isNull("drainage")) "" else original.optBoolean("drainage").toString()),
+            "site_id" to (if (original.isNull("site_id")) sites.singleOrNull()?.id.takeIf { plant == null }.orEmpty() else original.optString("site_id"))) }
+    val startFlags = remember(plant?.id) { (options.booleans - "drainage").associateWith { original.optBoolean(it).toString() } }
     val texts = savedFields(plant?.id) { startTexts }
     val choices = savedFields(plant?.id) { startChoices }
     val flags = savedFields(plant?.id) { startFlags }
-    SideEffect { onDirty { texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags } }
     var more by rememberSaveable(plant?.id) { mutableStateOf(false) }
+    var watered by rememberSaveable(plant?.id) { mutableStateOf("") }
+    SideEffect { onDirty { texts.toMap() != startTexts || choices.toMap() != startChoices || flags.toMap() != startFlags || watered.isNotEmpty() } }
+    var siteMissing by rememberSaveable(plant?.id) { mutableStateOf(false) }
+    LaunchedEffect(createdSite) { createdSite?.let { choices["site_id"] = it; siteMissing = false } }
     LaunchedEffect(errors) { if (errors.keys.any { it !in leadingFields }) more = true }
     val validNumbers = options.numbers.all { texts[it].isNullOrBlank() || (texts[it]?.toIntOrNull()?.let { n -> n > 0 } == true) }
     PlantColumn {
-        val shownName = plant?.displayName?.takeIf { original.isNull("nickname") }
+        species?.invoke()
+        val shownName = plant?.displayName?.takeIf { original.isNull("nickname") } ?: nameStandIn.takeIf { plant == null }
         NameField(texts["nickname"].orEmpty(), { texts["nickname"] = it }, shownName, writable, errors["nickname"],
             if (shownName != null) "Leave empty to keep using the species name" else "Leave empty to use the species name")
         // A site removed elsewhere before Save is named in the line kept under Site, so Save stays where it was.
         // shortcut: copies readPlant's "Choose a site in your household." wording to keep its space; upgrade when /api/plants sends its refusal texts or the server wording changes.
-        Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
-            supporting = { PlantError(errors["site_id"], keep = "Choose a site in your household.") }) { choices["site_id"] = it }
-        if (sites.isEmpty()) Text("Create a site under More before adding or restoring a plant.")
+        val siteError = errors["site_id"] ?: "Choose a site in your household.".takeIf { siteMissing }
+        if (sites.isEmpty() && onCreateSite != null) {
+            Text("Plants live in a site, such as Kitchen or Balcony.")
+            OutlinedButton(onClick = { onCreateSite(texts["nickname"].orEmpty().trim()) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") }
+            PlantError(siteError, keep = "Choose a site in your household.")
+        } else Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
+            supporting = { PlantError(siteError, keep = "Choose a site in your household.") }) { choices["site_id"] = it; siteMissing = false }
+        if (sites.isEmpty() && onCreateSite == null) Text("Create a site under More before adding or restoring a plant.")
+        if (plant == null) { LastWatered(watered, today, writable) { watered = it }; PlantError(errors["last_watered_on"]) }
+        keepPhoto?.invoke()
+        val ready = writable && blocked == null
         Button(onClick = {
+            if (!ready) { blocked?.let(onBlocked); return@Button }
+            if (plant?.status != "graveyard" && choices["site_id"].isNullOrBlank()) { siteMissing = true; return@Button }
+            if (!validNumbers) return@Button
             val body = JSONObject()
-            choices.forEach { (key, value) -> body.put(key, value.ifBlank { null } ?: JSONObject.NULL) }
+            choices.forEach { (key, value) -> body.put(key, if (key == "drainage") value.toBooleanStrictOrNull() ?: JSONObject.NULL else value.ifBlank { null } ?: JSONObject.NULL) }
             texts.forEach { (key, value) -> body.put(key, if (key in options.numbers) value.toIntOrNull() ?: JSONObject.NULL else value.ifBlank { null } ?: JSONObject.NULL) }
             flags.forEach { (key, value) -> body.put(key, value.toBoolean()) }
+            if (watered.isNotEmpty()) body.put("last_watered_on", watered)
             onSave(body)
-        }, enabled = writable && validNumbers && (plant?.status == "graveyard" || !choices["site_id"].isNullOrBlank()), modifier = Modifier.heightIn(min = 48.dp)) { Text("Save plant") }
+        }, colors = if (ready) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
+            modifier = Modifier.heightIn(min = 48.dp).semantics { if (!ready) disabled() }) { Text("Save plant") }
         // A failed save's message and every field error below this point go under the button, so the button stays where the finger is for another try.
         PlantError(errors["_form"])
         PlantError(errors["gbif_key"])
@@ -182,57 +241,23 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
             Choice("Health", choices["health"].orEmpty(), mapOf("" to "Not set") + options.health.associateWith(::choiceLabel), writable) { choices["health"] = it }
             PlantError(errors["health"])
             options.choices.forEach { (key, values) ->
-                Choice(options.labels.getValue(key), choices[key].orEmpty(), values.associateWith(::choiceLabel), writable) { choices[key] = it }
+                Choice(options.labels.getValue(key), choices[key].orEmpty(), mapOf("" to "Not set") + values.associateWith(::choiceLabel), writable) { choices[key] = it }
                 PlantError(errors[key])
+            }
+            if ("drainage" in options.booleans) {
+                Choice(options.labels.getValue("drainage"), choices["drainage"].orEmpty(), mapOf("" to "Not set", "true" to "Yes", "false" to "No"), writable) { choices["drainage"] = it }
+                PlantError(errors["drainage"])
             }
             options.numbers.forEach { key ->
                 OutlinedTextField(texts[key].orEmpty(), { texts[key] = it }, label = { Text(options.labels.getValue(key)) }, enabled = writable, keyboardOptions = numberKeys,
                     isError = errors.containsKey(key) || (!texts[key].isNullOrBlank() && texts[key]?.toIntOrNull()?.let { it > 0 } != true),
                     supportingText = { if (errors[key] != null) PlantError(errors[key]) else Text("Positive whole number, or blank for unknown") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
-            options.booleans.forEach { key ->
+            (options.booleans - "drainage").forEach { key ->
                 Toggle(options.labels.getValue(key), flags[key].toBoolean(), writable) { flags[key] = it.toString() }
                 PlantError(errors[key])
             }
         }
-    }
-}
-@Composable fun SpeciesPicker(writable: Boolean, result: SpeciesSearch?, onSearch: (String) -> Unit, onSelect: (SpeciesCandidate, String, Boolean) -> Unit, imageApi: ApiClient? = null,
-    onDirty: (() -> Boolean) -> Unit = {}) {
-    var query by rememberSaveable { mutableStateOf("") }
-    SideEffect { onDirty { query.isNotBlank() } }
-    var selectedKey by rememberSaveable { mutableStateOf<Long?>(null) }
-    val selected = result?.candidates?.firstOrNull { it.key == selectedKey }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Heading("Species search", style = MaterialTheme.typography.headlineSmall) }
-        item { OutlinedTextField(query, { query = it }, label = { Text("Species name") }, supportingText = { Text("Common or scientific name, English, Norwegian or Greek") }, singleLine = true, enabled = writable, modifier = Modifier.fillMaxWidth()) }
-        item { Button(onClick = { selectedKey = null; onSearch(query.trim()) }, enabled = writable && query.trim().length in 1..200, modifier = Modifier.heightIn(min = 48.dp)) { Text("Search species") } }
-        if (result != null) {
-            if (selected == null) {
-                if (result.candidates.isEmpty()) item { Text("No species found.") }
-                items(result.candidates, key = { it.key }) { candidate ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
-                        Column(Modifier.weight(1f)) {
-                            Heading(candidate.headline, style = MaterialTheme.typography.titleMedium)
-                            if (candidate.commonName != null) Text(candidate.canonicalName)
-                            candidate.matchNote?.let { Text(it) }
-                            if (candidate.matchType == "FUZZY" && candidate.confidence != null) Text("Close match, ${candidate.confidence}%")
-                            OutlinedButton(onClick = {
-                                if (candidate.requiresConfirmation) selectedKey = candidate.key else onSelect(candidate, result.id, false)
-                            }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Choose " + candidate.headline) }
-                        }
-                    }
-                }
-            } else selected?.let { candidate -> item {
-                Heading("Confirm species")
-                ReferencePhoto(imageApi, candidate.key, candidate.canonicalName)
-                Text("This match needs your confirmation. Is " + candidate.scientificName + " the species you meant?")
-                Button(onClick = { onSelect(candidate, result.id, true) }, enabled = writable, modifier = Modifier.heightIn(min = 48.dp)) { Text("Confirm " + candidate.canonicalName) }
-                TextButton(onClick = { selectedKey = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Back to candidates") }
-            } }
-        }
-        item { Text("Names from GBIF, CC BY 4.0") }
     }
 }
 // The plant's own intervals. Each task says how often it is due now and where that comes from, so a blank field means something.

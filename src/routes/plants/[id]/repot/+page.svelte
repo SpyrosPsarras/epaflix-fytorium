@@ -13,7 +13,7 @@
     busy = true; errors = {};
     try {
       const response = await fetch('/api/plants/' + data.plant.id + '/repot', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-        request_id: requestId, pot_type: form.get('pot_type'), soil_type: form.get('soil_type'), pot_size_cm: form.get('pot_size_cm') ? Number(form.get('pot_size_cm')) : null,
+        request_id: requestId, pot_type: form.get('pot_type') || null, soil_type: form.get('soil_type') || null, pot_size_cm: form.get('pot_size_cm') ? Number(form.get('pot_size_cm')) : null,
       }) });
       const result = await response.json();
       if (!response.ok) { errors = result.errors ?? { _form: result.message ?? 'Could not save the repot.' }; return; }
@@ -29,7 +29,10 @@
 <form onsubmit={save}>
   {#each ['pot_type', 'soil_type'] as field}
     {@const key = field as 'pot_type' | 'soil_type'}
-    <label for={key}>{plantLabels[key]}</label><select id={key} name={key} value={data.plant[key]} required>{#each plantChoices[key] as choice}<option value={choice}>{choice.replaceAll('_', ' ')}</option>{/each}</select>
+    <label for={key}>{plantLabels[key]}</label><select id={key} name={key} value={data.plant[key] ?? ''}>
+      {#if data.plant[key] === null}<option value="">Not set</option>{/if}
+      {#each plantChoices[key] as choice}<option value={choice}>{choice.replaceAll('_', ' ')}</option>{/each}
+    </select>
     {#if errors[key]}<p role="alert">{errors[key]}</p>{/if}
   {/each}
   <label>Pot size in cm<input name="pot_size_cm" type="number" min="1" max="2147483647" step="1" value={data.plant.pot_size_cm ?? ''} /></label>

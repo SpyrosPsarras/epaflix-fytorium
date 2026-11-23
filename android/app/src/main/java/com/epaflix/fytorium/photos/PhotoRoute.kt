@@ -12,16 +12,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable fun PhotosRoute(api: ApiClient, care: CareState, connected: () -> Boolean, thumbnails: Thumbnails?,
-    plantId: String? = null, plantName: String? = null, identifying: Boolean = false,
+    plantId: String? = null, plantName: String? = null, identifying: Boolean = false, formOnly: Boolean = false,
     onBack: () -> Unit, onPlant: (String) -> Unit = {}, onChanged: () -> Unit = {},
     onSelect: (SpeciesCandidate, String, Boolean) -> Unit = { _, _, _ -> }, onUpdateRequired: () -> Unit = {},
-    onFormDirty: (() -> String?) -> Unit = {}) {
+    onFormDirty: (() -> String?) -> Unit = {}, onReceipt: (String) -> Unit = {}, onAdd: (() -> Unit)? = null, onUploaded: () -> Unit = onBack,
+    cached: (String) -> Pair<String, Long>? = { null }, keep: (String, String) -> Long? = { _, _ -> null }, onFirstPhoto: ((String?) -> Unit)? = null,
+    grid: androidx.compose.foundation.lazy.grid.LazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()) {
     val currentCare by rememberUpdatedState(care)
     val currentConnected by rememberUpdatedState(connected)
     val member = care.member
     val repository = remember(api, member, plantId, identifying) { PhotoRepository(api,
         { member != null && member.role != Role.sitter && currentCare.member == member },
-        { currentConnected() && !currentCare.updateRequired }, plantId) }
+        { currentConnected() && !currentCare.updateRequired }, plantId, cached, keep) }
     val state by repository.state.collectAsState()
     LaunchedEffect(state.updateRequired) { if (state.updateRequired) onUpdateRequired() }
     var selected by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<List<String>>(emptyList()) } }
@@ -29,6 +31,7 @@ import kotlinx.coroutines.withContext
     var originalId by key(member?.id, plantId, identifying) { rememberSaveable { mutableStateOf<String?>(null) } }
     var localError by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
+    var pulling by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allowed = member != null && member.role != Role.sitter && !care.updateRequired
@@ -43,12 +46,16 @@ import kotlinx.coroutines.withContext
         }
     }
     fun launch(write: Boolean = false, action: suspend () -> Unit) {
-        if (submitting || !allowed || (write && (!online || state.blocked || state.updateRequired))) return
+        // The repository's own state, so a retry that just cleared a failure is not stopped by the last frame's copy.
+        if (submitting || !allowed || (write && (!online || repository.state.value.blocked || repository.state.value.updateRequired))) return
         localError = null
         if (write) submitting = true
         scope.launch { try { action() } finally { if (write) submitting = false } }
     }
     LaunchedEffect(repository) { refresh() }
+    // Changes from another device show when the app comes back, as on Today.
+    var resumed by remember(repository) { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(repository) { if (resumed) scope.launch { refresh() }; resumed = true; onPauseOrDispose {} }
     var wasOnline by remember { mutableStateOf(online) }
     LaunchedEffect(online) { if (online && !wasOnline) refresh(); wasOnline = online }
     LaunchedEffect(repository, originalId, online) {
@@ -56,28 +63,42 @@ import kotlinx.coroutines.withContext
     }
     if (member == null || member.role == Role.sitter) return
     val sources = rememberPhotoSources(identifying, selected, onPhotos = { photos ->
-            if (identifying && selected.size + photos.size > 5) localError = "Choose at most five photos. Remove a photo before adding more."
-            else {
-                selected = if (identifying) selected + photos.map { it.toString() } else listOf(photos.first().toString())
-                repository.clearResult(); result = null; localError = null
-            }
-        }, onError = { localError = it })
-    val controls: @Composable () -> Unit = {
-        PhotoSourceButtons(online && !shown.saving && !state.blocked && !state.updateRequired, sources.take, sources.choose)
-    }
-    if (identifying) IdentificationScreen(shown, online, selected.size, controls, onBack,
-        onRefresh = { launch { refresh() } }, onIdentify = { launch(true) {
+            val room = 5 - selected.size
+            if (identifying && room <= 0) return@rememberPhotoSources
+            selected = if (identifying) selected + photos.take(room).map { it.toString() } else listOf(photos.first().toString())
+            repository.clearResult(); result = null
+            localError = "Only 5 photos fit, so the first $room were added.".takeIf { identifying && photos.size > room }
+        }, onError = { localError = it }, keepOnLeave = identifying && onFirstPhoto != null, limit = if (identifying) 5 - selected.size else 1,
+        folder = if (identifying && onFirstPhoto != null) "captures/identify" else "captures")
+    if (identifying) IdentificationScreen(shown, online, selected, onBack, onRefresh = { launch { refresh() } }, onIdentify = { repository.clearFailure(); launch(true) {
             result = null
             if (withContext(Dispatchers.IO) { repository.identify(context, selected.map(Uri::parse)) }) result = repository.state.value.result
-        } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null }, onSelect = onSelect)
-    else PhotoScreen(shown, online, plantName, selected.size, controls, thumbnails, onBack,
-        onRefresh = { launch { refresh() } }, onUpload = { note, health, date -> launch(true) {
+        } }, onRemove = { index -> selected = selected.filterIndexed { position, _ -> position != index }; repository.clearResult(); result = null },
+        onSelect = { candidate, search, confirmed ->
+            // The first photo is copied before the add form opens, so it never depends on this route's sources.
+            val keepFirst = onFirstPhoto
+            if (keepFirst == null) onSelect(candidate, search, confirmed) else scope.launch {
+                keepFirst(selected.firstOrNull()?.let { uri -> withContext(Dispatchers.IO) { runCatching { keepDraftPhoto(context, Uri.parse(uri)).path }.getOrNull() } })
+                onSelect(candidate, search, confirmed)
+            }
+        }, onTake = sources.take, onChoose = sources.choose, onExplain = onReceipt,
+        // Discarding Identify's photos drops the add form's copy of photo 1 too.
+        onDiscard = { selected = emptyList(); result = null; repository.clearResult(); onFirstPhoto?.invoke(null) }, care = care, api = api, onFormDirty = onFormDirty)
+    else PhotoScreen(shown, online, plantName, selected.size, thumbnails, onBack,
+        onRefresh = { launch { pulling = true; try { refresh() } finally { pulling = false } } }, onUpload = { note, health, date -> launch(true) {
             val uri = selected.firstOrNull()?.let(Uri::parse) ?: return@launch
-            if (withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }) { selected = emptyList(); onChanged() }
+            withContext(Dispatchers.IO) { repository.upload(context, uri, note, health, date) }
         } }, onChange = { id, action -> launch(true) {
-            if (withContext(Dispatchers.IO) { repository.change(id, action) }) onChanged()
+            val photo = state.photos.firstOrNull { it.id == id }
+            if (withContext(Dispatchers.IO) { repository.change(id, action) }) {
+                onChanged()
+                photo?.let { onReceipt(if (action == "cover") "${it.plantName}'s cover photo changed" else "Deleted the ${dayMonthYear(it.takenOn)} photo of ${it.plantName}") }
+            }
         } }, onOriginal = { originalId = it },
         onCloseOriginal = { originalId = null; repository.clearOriginal() }, onPlant = onPlant,
         onFormDirty = onFormDirty, onDiscard = { selected = emptyList(); localError = null; repository.clearError() },
-        originalOpen = originalId != null)
+        originalOpen = originalId != null, care = care, refreshing = pulling, onExplain = onReceipt, openPhotoId = originalId,
+        // Runs as soon as the server took the photo, before the list reload, so leaving cannot cut it short.
+        formOnly = formOnly, onAdd = onAdd, onUploaded = { selected = emptyList(); onChanged(); onReceipt("Added a photo of ${plantName ?: "this plant"}"); if (formOnly) onUploaded() }, grid = grid, selectedUri = selected.firstOrNull(), onTake = sources.take, onChoose = sources.choose,
+        onRemovePhoto = { selected = emptyList(); localError = null; repository.clearError() })
 }

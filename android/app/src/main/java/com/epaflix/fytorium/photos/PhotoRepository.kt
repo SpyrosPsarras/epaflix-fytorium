@@ -15,12 +15,20 @@ data class PhotoState(val photos: List<PhotoUpdate> = emptyList(), val loading: 
     val saving: Boolean = false, val uploading: Boolean = false, val loaded: Boolean = false, val blocked: Boolean = false,
     val updateRequired: Boolean = false, val error: String? = null, val progress: Float? = null,
     val result: com.epaflix.fytorium.plants.SpeciesSearch? = null, val remaining: Int? = null,
-    val today: String? = null, val healthChoices: List<String> = emptyList(), val original: ByteArray? = null, val uploadRevision: Int = 0)
+    val today: String? = null, val healthChoices: List<String> = emptyList(), val original: ByteArray? = null, val uploadRevision: Int = 0,
+    // When the shown list was last read from Fytorium, so the offline line names the list's own age.
+    val updatedAt: Long? = null,
+    val originalId: String? = null,
+    val failureStatus: Int? = null)
 private class PhotoFailure(val status: Int, val messageText: String) : Exception()
 
 // One member and one gallery. Neither metadata nor original images are persisted here.
+// Photos uploaded from this phone in this process; the Journal and a plant's list each start their own repository.
+internal val addedHere: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
 class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boolean,
-    private val connected: () -> Boolean, private val plantId: String? = null) {
+    private val connected: () -> Boolean, private val plantId: String? = null,
+    private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Long? = { _, _ -> null }) {
     private val mutable = MutableStateFlow(PhotoState())
     val state = mutable.asStateFlow()
     private fun safe(id: String): String { require(id.matches(Regex("[A-Za-z0-9_-]+"))); return id }
@@ -32,14 +40,21 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
             ?.takeIf { message -> message.isNotBlank() } ?: fallback)
         text
     }
-    private fun load() {
-        val photos = JSONArray(response(api.request(listPath))).mapObjects {
-            PhotoUpdate(it.getString("id"), it.getString("plant_id"), it.getString("plant_name"), it.getString("note"),
-                it.nullable("health"), it.getString("taken_on"), it.getBoolean("is_cover"))
-        }
-        if (allowed()) mutable.value = mutable.value.copy(photos = photos, loaded = true, blocked = false)
+    private val cacheKey get() = plantId?.let { "photos/$it" } ?: "journal"
+    private fun parse(json: String) = JSONArray(json).mapObjects {
+        PhotoUpdate(it.getString("id"), it.getString("plant_id"), it.getString("plant_name"), it.getString("note"),
+            it.nullable("health"), it.getString("taken_on"), it.getBoolean("is_cover"))
     }
-    @Synchronized fun refresh(): Boolean = run(false) { load() }
+    private fun load() {
+        val json = response(api.request(listPath))
+        val photos = parse(json)
+        if (allowed()) { val at = keep(cacheKey, json) ?: System.currentTimeMillis(); mutable.value = mutable.value.copy(photos = photos, loaded = true, blocked = false, updatedAt = at) }
+    }
+    @Synchronized fun refresh(): Boolean {
+        // The last saved list shows at once and stays when the read fails.
+        if (!state.value.loaded) cached(cacheKey)?.let { (json, at) -> runCatching { parse(json) }.getOrNull()?.let { if (allowed()) mutable.value = mutable.value.copy(photos = it, loaded = true, updatedAt = at) } }
+        return run(false) { load() }
+    }
     @Synchronized fun options(): Boolean = run(false) {
         val meta = JSONObject(response(api.request("/api/meta")))
         val choices = com.epaflix.fytorium.plants.parsePlantOptions(response(api.request("/api/choices")))
@@ -49,13 +64,15 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
         val json = JSONObject(response(api.request("/api/identification")))
         if (allowed()) mutable.value = mutable.value.copy(remaining = if (json.isNull("remaining")) null else json.getInt("remaining"), blocked = false)
     }
-    fun clearOriginal() { mutable.value = mutable.value.copy(original = null) }
+    fun clearOriginal() { mutable.value = mutable.value.copy(original = null, originalId = null) }
+    // An explicit retry may resend after a failure that turned writes off.
+    fun clearFailure() { mutable.value = mutable.value.copy(blocked = false, error = null, failureStatus = null) }
     @Synchronized fun openOriginal(id: String): Boolean = run(false) {
         api.request("/api/photos/${safe(id)}/original").use { reply ->
             if (!reply.isSuccessful) response(reply)
             val bytes = reply.body?.byteStream()?.use { readPhotoBytes(it, 15 * 1024 * 1024) }
             require(bytes != null && bytes.size <= 15 * 1024 * 1024)
-            if (allowed()) mutable.value = mutable.value.copy(original = bytes)
+            if (allowed()) mutable.value = mutable.value.copy(original = bytes, originalId = id)
         }
     }
     fun clearResult() { mutable.value = mutable.value.copy(result = null) }
@@ -80,9 +97,10 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
             val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("photo", "photo.jpg", image.toRequestBody("image/jpeg".toMediaType()))
                 .addFormDataPart("note", note).addFormDataPart("health", health).addFormDataPart("taken_on", takenOn).build()
-            response(api.request("/api/plants/${safe(key)}/photos", method = "POST", requestBody = UploadBody(multipart) {
+            val added = response(api.request("/api/plants/${safe(key)}/photos", method = "POST", requestBody = UploadBody(multipart) {
                 if (allowed()) mutable.value = mutable.value.copy(progress = it)
             }), "Could not upload the photo. Try again.")
+            runCatching { JSONObject(added).getString("id") }.getOrNull()?.let(addedHere::add)
             if (allowed()) mutable.value = mutable.value.copy(uploadRevision = state.value.uploadRevision + 1)
         }
         if (success) refresh()
@@ -98,12 +116,13 @@ class PhotoRepository(private val api: ApiClient, private val allowed: () -> Boo
     private fun run(write: Boolean, work: () -> Unit): Boolean {
         if (!allowed()) { mutable.value = PhotoState(); return false }
         if (write && (state.value.blocked || state.value.updateRequired || state.value.saving)) return false
-        mutable.value = mutable.value.copy(loading = !write, saving = write, error = null, progress = if (write) null else state.value.progress)
+        mutable.value = mutable.value.copy(loading = !write, saving = write, error = null, failureStatus = null, progress = if (write) null else state.value.progress)
         return try {
             if (!connected()) throw java.io.IOException()
             work(); allowed()
         } catch (error: Exception) {
             if (allowed()) mutable.value = mutable.value.copy(remaining = if (error is PhotoFailure && error.status == 429) 0 else state.value.remaining,
+                failureStatus = (error as? PhotoFailure)?.status,
                 error = if (error is PhotoFailure) error.messageText else if (error is PhotoInputException) error.message else if (error is IllegalArgumentException) "Choose a decodable still image." else "Could not reach Fytorium. Try again.",
                 blocked = (error !is PhotoFailure && error !is IllegalArgumentException) || (error is PhotoFailure && (error.status >= 500 || error.status in listOf(401, 403, 426))),
                 updateRequired = state.value.updateRequired || (error is PhotoFailure && error.status == 426))

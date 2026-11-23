@@ -11,7 +11,7 @@ export function groundHardiness(profile: ScheduleInput['careProfile']): CareFiel
   }
   return { value: hardinessRules.defaultC, source: 'rule', ruleId: hardinessRules.defaultId };
 }
-export function applicableHardiness(profile: ScheduleInput['careProfile'], potType: string) {
+export function applicableHardiness(profile: ScheduleInput['careProfile'], potType: string | null) {
   const hardiness = groundHardiness(profile);
   return { hardiness, thresholdC: hardiness.value + (potType === 'in_ground' ? 0 : hardinessRules.potOffsetC),
     ...(potType === 'in_ground' ? {} : { potRuleId: hardinessRules.potId }) };

@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
 internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolean) =
     tab == "Today" && taskView == "today" && !feedSettings
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable fun AppShell(loggedIn: Boolean, updateRequired: Boolean, busy: Boolean = false, message: String? = null,
                          onLogin: () -> Unit = {}, onLogout: () -> Unit = {}, onCopyDiagnostics: () -> Unit = {},
                          careState: CareState? = null, controller: CareController? = null, thumbnails: Thumbnails? = null,
@@ -61,6 +61,11 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var household by rememberSaveable { mutableStateOf<String?>(null) }
     var sites by rememberSaveable { mutableStateOf(false) }
     var journalPlantId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Journal +: "" is the plant picker, a plant id its photo form.
+    var journalAdd by rememberSaveable { mutableStateOf<String?>(null) }
+    val pickerQuery = rememberSaveable { mutableStateOf("") }
+    val journalGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val pickerGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     var unmatched by rememberSaveable { mutableStateOf(false) }
     var plantaImport by rememberSaveable { mutableStateOf(false) }
     var careSpecies by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -76,7 +81,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     val homeHandled = key(homeRequest) { rememberSaveable { mutableStateOf(false) } }
     // Discard drops the Plants form even when the tap stays on Plants, so no form keeps changes the shell no longer asks about.
     var plantsDiscards by rememberSaveable { mutableIntStateOf(0) }
-    fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null }
+    fun select(title: String) { tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null; journalAdd = null }
     fun go(target: String) { select(if (target == "home") "Today" else target); if (target == "home") taskView = "today" }
     fun leave(target: String) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else go(target) }
     LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; leave("home") } }
@@ -95,7 +100,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             if (!loggedIn || memberChanged || tab == "Journal") {
                 tab = "Today"; taskView = "today"; about = false
             }
-            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null
+            sites = false; unmatched = false; careSpecies = null; feedSettings = false; household = null; journalPlantId = null; journalAdd = null
             if (!loggedIn || memberChanged || becameSitter) { feedPlant = null; openTask(null); leaving = null; destination = null }
         }
         if (!loggedIn || memberChanged || (member != null && member.role != Role.owner)) plantaImport = false
@@ -114,6 +119,7 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     var barPaused by remember { mutableStateOf(false) }
     var receiptsGone by remember { mutableIntStateOf(0) }
     LaunchedEffect(receiptsGone) { if (receiptsGone > 0) { barPaused = true; delay(500); barPaused = false } }
+    val showTabs = !WindowInsets.isImeVisible
     Scaffold(topBar = {
         if (!loggedIn || updateRequired || (careState == null) || (tab == "More" && !sites && !notifications && !plantaImport && !unmatched && household == null && !feedSettings)) {
             TopAppBar(title = { Text(if (!loggedIn || updateRequired) "Fytorium" else if (about) "About" else tab, style = MaterialTheme.typography.titleMedium) })
@@ -129,28 +135,31 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
             }
         }
         if (loggedIn && !updateRequired) Box {
-            tabBar(Modifier)
+            if (showTabs) tabBar(Modifier)
             // Today's receipts take the navigation bar's place, so the list above never changes size or hides a row.
             // The cover fades with the receipt, so the bar never shows a blank frame between its items and the receipt.
-            SnackbarHost(receipts, Modifier.matchParentSize()) { data ->
+            SnackbarHost(receipts, if (showTabs) Modifier.matchParentSize() else Modifier.fillMaxWidth()) { data ->
                 DisposableEffect(data) { receiptsOnBar += data; onDispose { receiptsOnBar -= data } }
                 // shortcut: mirrors Material 1.3.2's private snackbar fade timings (150 ms in, after 75 ms out), re-check when Material is upgraded or exposes a fade-finished signal.
                 LaunchedEffect(data) { delay(if (receiptsOnBar.size > 1) 225 else 150); receiptFadedIn = data }
-                Surface(Modifier.fillMaxSize(), color = NavigationBarDefaults.containerColor) {
+                Surface(if (showTabs) Modifier.fillMaxSize() else Modifier.fillMaxWidth(), color = NavigationBarDefaults.containerColor) {
                     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { if (it != SwipeToDismissBoxValue.Settled) data.dismiss(); true })
                     SwipeToDismissBox(swipe, modifier = Modifier.windowInsetsPadding(NavigationBarDefaults.windowInsets)
                         .wrapContentHeight(Alignment.CenterVertically, unbounded = true), backgroundContent = {}) { BarSnackbar(data) }
                 }
             }
             // Until the receipt has faded in, taps go to an invisible copy of the bar, so a tab the user still sees switches.
-            if (receipt != null && receiptFadedIn != receipt) tabBar(Modifier.alpha(0f).clearAndSetSemantics {})
+            if (showTabs && receipt != null && receiptFadedIn != receipt) tabBar(Modifier.alpha(0f).clearAndSetSemantics {})
             // A tap meant for a receipt that has just gone must not switch tabs.
-            if (barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
+            if (showTabs && barPaused) Box(Modifier.matchParentSize().testTag("bar-paused").pointerInput(Unit) {})
         }
         leaving?.let { body -> com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", body, onKeep = { leaving = null; destination = null }) {
             val target = destination
             leaving = null; destination = null; plantsDiscards++; controller?.repository?.clearPlantErrors(); target?.let(::go) } }
-    }) { padding ->
+    }) { scaffoldPadding ->
+        val padding = if (showTabs) scaffoldPadding else object : PaddingValues by scaffoldPadding {
+            override fun calculateBottomPadding() = 0.dp
+        }
         if (loggedIn && !updateRequired && tab == "More" && notifications && careState?.member != null && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 key(careState.member) { com.epaflix.fytorium.notifications.NotificationRoute(sitesApi, careState, sitesConnected) { notifications = false } }
@@ -207,9 +216,22 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
         }
         if (loggedIn && !updateRequired && careState?.member != null && careState.member.role != Role.sitter && tab == "Journal" && sitesApi != null) {
             Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                key(careState.member, plantsDiscards) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
-                    onBack = { tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
-                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }, onFormDirty = { plantsDiscard = it }) }
+                // Journal receipts and explanations show over the navigation bar, as on Today and Plants.
+                ReceiptSnackbar(careState.receipt, receipts, onUndo = {}, onDone = { controller?.repository?.clearReceipt(it) }, onGone = { receiptsGone++ })
+                val adding = journalAdd
+                val picked = adding?.takeIf { it.isNotEmpty() }?.let { id -> careState.plants.firstOrNull { it.id == id } }
+                if (adding == "" || (adding != null && picked == null)) {
+                    BackHandler { journalAdd = null }
+                    com.epaflix.fytorium.plants.PlantsList(careState, careState.plants, false, onPlant = { journalAdd = it }, onAdd = {}, onGraveyard = {},
+                        onRefresh = { controller?.refresh(pulled = true) }, thumbnails = thumbnails, search = pickerQuery, onBack = { journalAdd = null },
+                        refreshing = controller?.pulling?.collectAsState()?.value == true, chooseTitle = "Choose a plant", grid = pickerGrid)
+                } else key(careState.member, plantsDiscards, picked?.id) { com.epaflix.fytorium.photos.PhotosRoute(sitesApi, careState, sitesConnected, thumbnails,
+                    plantId = picked?.id, plantName = picked?.displayName, formOnly = picked != null,
+                    onBack = { if (picked != null) journalAdd = "" else tab = "Today" }, onPlant = { journalPlantId = it; tab = "Plants" },
+                    onChanged = { controller?.refresh() }, onUpdateRequired = { controller?.repository?.requireUpdate() }, onFormDirty = { plantsDiscard = it },
+                    onReceipt = { controller?.repository?.showReceipt(it) }, onAdd = { journalAdd = "" }, onUploaded = { journalAdd = null },
+                    cached = { controller?.repository?.cachedJson(it) }, keep = { resource, json -> controller?.repository?.saveJson(resource, json) },
+                    grid = if (picked == null) journalGrid else androidx.compose.foundation.lazy.grid.rememberLazyGridState()) }
             }
             return@Scaffold
         }

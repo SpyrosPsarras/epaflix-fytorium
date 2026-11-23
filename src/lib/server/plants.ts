@@ -2,7 +2,7 @@ import { error, isHttpError, json } from '@sveltejs/kit';
 import { readJsonObject } from './json';
 import { db } from './db';
 import { plantChoices, plantBooleans, plantNumbers, type PlantInput } from '$lib/plants';
-import { now } from './clock';
+import { calendarDate, isCalendarDate, now } from './clock';
 import { healthValues } from '$lib/photos';
 
 export const plantFields = ['site_id', 'nickname', 'cultivar', 'birthday', 'pot_type', 'pot_size_cm', 'drainage', 'soil_type', 'plant_size', 'growth_stage', 'window_distance_cm', 'grow_light', 'near_ac', 'near_heater', 'fertilizer_type', 'health'] as const;
@@ -30,26 +30,30 @@ export function potErrors(input: Record<string, unknown>): Record<string, string
   const errors: Record<string, string> = {};
   for (const field of ['pot_type', 'soil_type'] as const) {
     const values = plantChoices[field];
-    if (!values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
+    if (input[field] !== null && !values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
   }
   const size = input.pot_size_cm ?? null;
   if (size !== null && (typeof size !== 'number' || !Number.isInteger(size) || size <= 0 || size > 2147483647)) errors.pot_size_cm = 'Enter a positive whole number or leave blank.';
   return errors;
 }
-export async function readPlant(request: Request, household: string, allowNoSite = false): Promise<(Omit<PlantInput, 'site_id'> & { site_id: string | null } & { search_id?: unknown; gbif_key?: unknown; confirmed?: unknown }) | Response> {
+type PlantWrite = Omit<PlantInput, 'site_id'> & { site_id: string | null; last_watered_on?: string; search_id?: unknown; gbif_key?: unknown; confirmed?: unknown };
+export async function readPlant(request: Request, household: string, allowNoSite = false): Promise<PlantWrite | Response> {
   let input: Record<string, unknown>;
   try { input = await readJsonObject(request); }
   catch (cause) {
     if (!isHttpError(cause) || cause.status !== 400) throw cause;
     return json({ errors: { _form: 'Send a valid JSON object.' } }, { status: 400 });
   }
+  for (const field of [...Object.keys(plantChoices), 'drainage']) input[field] ??= null;
   const errors = potErrors(input);
   if ('score' in input) errors.score = 'Identification scores are server-owned. Choose a candidate from the results.';
   for (const [field, values] of Object.entries(plantChoices)) {
     if (field === 'pot_type' || field === 'soil_type') continue;
-    if (!values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
+    if (input[field] !== null && !values.some(value => value === input[field])) errors[field] = 'Choose one of: ' + values.join(', ') + '.';
   }
-  for (const field of plantBooleans) if (typeof input[field] !== 'boolean') errors[field] = 'Choose yes or no.';
+  for (const field of plantBooleans) {
+    if (!(field === 'drainage' && input[field] === null) && typeof input[field] !== 'boolean') errors[field] = 'Choose yes or no.';
+  }
   for (const field of plantNumbers) {
     input[field] ??= null;
     if (field === 'pot_size_cm') continue;
@@ -63,11 +67,18 @@ export async function readPlant(request: Request, household: string, allowNoSite
   }
   input.health ??= null;
   if (input.health !== null && !healthValues.some(value => value === input.health)) errors.health = 'Choose a valid health value or leave blank.';
+  const time = now();
   input.birthday ??= null;
-  if (input.birthday !== null) {
-    const value = input.birthday;
-    if (typeof value !== 'string' || value < '0001-01-01' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value || value > now().toISOString().slice(0, 10)) {
-      errors.birthday = 'Enter a valid date that is not in the future.';
+  if (input.birthday !== null && (!isCalendarDate(input.birthday) || input.birthday > time.toISOString().slice(0, 10))) {
+    errors.birthday = 'Enter a valid date that is not in the future.';
+  }
+  const watered = input.last_watered_on;
+  if (request.method === 'POST' && watered !== undefined) {
+    const today = calendarDate(time);
+    if (!isCalendarDate(watered) || watered > today || Date.parse(today) - Date.parse(watered) > 365 * 86400000) {
+      errors.last_watered_on = 'Choose a date in the last year, not in the future.';
+    } else if (!errors.birthday && typeof input.birthday === 'string' && watered < input.birthday) {
+      errors.last_watered_on = 'Choose a date on or after the birthday.';
     }
   }
   if (!(allowNoSite && input.site_id === null)) {
@@ -78,7 +89,7 @@ export async function readPlant(request: Request, household: string, allowNoSite
     }
   }
   if (Object.keys(errors).length) return json({ errors }, { status: 422 });
-  return input as Omit<PlantInput, 'site_id'> & { site_id: string | null };
+  return input as PlantWrite;
 }
 
 export function writeError(cause: unknown): Response | undefined {

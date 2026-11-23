@@ -9,6 +9,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import org.json.JSONObject
@@ -41,6 +44,11 @@ class FailureCapture : TestWatcher() {
         }.onFailure { println("E2E failure capture failed: $it") }
     }
 }
+
+internal fun MainActivity.imeVisible(): Boolean? =
+    ViewCompat.getRootWindowInsets(window.decorView)?.isVisible(WindowInsetsCompat.Type.ime())
+
+internal fun MainActivity.hideIme() = WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
 
 internal fun ComposeContentTestRule.waitForState(
     description: String,
@@ -103,7 +111,9 @@ internal fun ComposeContentTestRule.selectTab(title: String) {
             onAllNodes(receipt).onFirst().performTouchInput { swipeRight() }
         }
         swiped = covered
-        !covered && onAllNodes(hasTestTag("bar-paused")).fetchSemanticsNodes().isEmpty()
+        // The bar also hides while the keyboard is open, so wait until it is back.
+        !covered && onAllNodes(hasTestTag("bar-paused")).fetchSemanticsNodes().isEmpty() &&
+            onAllNodes(hasText(title) and hasClickAction() and !hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty()
     }
     onNode(hasText(title) and hasClickAction() and !hasTestTag("view-today")).performClick().assertIsSelected()
 }

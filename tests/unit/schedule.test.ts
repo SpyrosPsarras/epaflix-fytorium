@@ -103,6 +103,17 @@ test('missing and unknown conditions are neutral and each is explained as not se
   }
 });
 
+test('null plant attributes do not adjust the intervals, including the liquid-or-unknown fertilizer default', () => {
+  const result = schedule({ ...input, pot: { pot_type: null, soil_type: null, drainage: null },
+    plant: { plant_size: null, growth_stage: null, fertilizer_type: null } });
+  expect(result.water).toMatchObject({ intervalDays: 7, basedOn: expect.arrayContaining(
+    ['pot.pot_type', 'pot.drainage', 'plant.plant_size', 'plant.growth_stage'].map(input => ({
+      input, value: 'not set', source: 'rule', ruleId: expect.any(String), factor: 1, adjustment: 'not set; no adjustment',
+    })),
+  ) });
+  expect(result.fertilize).toMatchObject({ intervalDays: 14 });
+});
+
 test('every factor is explained, including neutral factors, without changing the input', () => {
   const full = { ...input, site: { light: 'full_sun', humidity: 'dry', location: 'outdoor', grow_light: true, draft: true },
     pot: { pot_type: 'terracotta', pot_size_cm: 10, drainage: true },

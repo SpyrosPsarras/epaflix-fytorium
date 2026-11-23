@@ -62,6 +62,12 @@ internal fun SemanticsNodeInteractionsProvider.assertDiscard(body: String) {
     assertDialogBody(body)
 }
 
+// W4-P18: a new plant's form asks with its species named.
+internal fun SemanticsNodeInteractionsProvider.assertNewPlantDiscard() {
+    onNodeWithText("Discard this plant?").assertIsDisplayed()
+    onNode(hasText("is not added yet.", substring = true) and hasAnyAncestor(isDialog())).performScrollTo().assertIsDisplayed()
+}
+
 internal fun SemanticsNodeInteractionsProvider.assertDialogBody(body: String) {
     onNode(hasText(body) and hasAnyAncestor(isDialog())).performScrollTo().assertIsDisplayed()
 }

@@ -90,7 +90,7 @@
       {/if}
       <Thumbnail src={row.mapped.has_cover ? `${endpoint}/${row.id}/cover` : null} alt={'Planta photo of ' + row.display_name} placeholder="No Planta photo" size={row.status === 'review' ? '24rem' : '10rem'} />
       <p>{row.status === 'confirmed' ? '' : row.mapped.scientific_name + ' · '}{row.mapped.site_name}</p>
-      <p>Pot: {row.mapped.pot_type.replaceAll('_', ' ')} · {row.mapped.pot_size_cm ?? 'unknown'} cm · Soil: {row.mapped.soil_type.replaceAll('_', ' ')}</p>
+      <p>Pot: {row.mapped.pot_type?.replaceAll('_', ' ') ?? 'unknown'} · {row.mapped.pot_size_cm ?? 'unknown'} cm · Soil: {row.mapped.soil_type?.replaceAll('_', ' ') ?? 'unknown'}</p>
       {#if row.cover_error}<p role="status">Cover not imported: {row.cover_error} Fetch again to retry the cover.</p>{/if}
       {#if row.status === 'committed'}
         <p>Imported</p>

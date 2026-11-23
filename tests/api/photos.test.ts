@@ -4,6 +4,7 @@ import exif from 'exif-reader';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { createApiHarness } from './harness';
+import { spec } from './openapi';
 import { fixturePlant } from '../plant-fixture';
 
 const harness = createApiHarness({ photos: true, testClock: true });
@@ -58,7 +59,8 @@ test('stores an oriented original and thumbnail without EXIF GPS, privately serv
   const response = await upload(gpsImage, { note: 'Test new leaf', health: 'good' });
   expect(response.status).toBe(201);
   const photo = await response.json();
-  expect(photo).toMatchObject({ plant_id: plantId, note: 'Test new leaf', health: 'good', taken_on: '2026-10-25', is_cover: false });
+  expect(photo).toMatchObject({ plant_id: plantId, note: 'Test new leaf', health: 'good', taken_on: '2026-10-25', is_cover: true });
+  expect((await (await owner.request('/api/plants/' + plantId)).json()).cover_photo_id).toBe(photo.id);
   expect(photo.original_key).toMatch(new RegExp('^photos/[^/]+/' + plantId + '/[0-9a-f-]+-original\\.jpg$'));
   const original = await download(photo.original_key);
   const thumbnail = await download(photo.thumb_key);
@@ -84,8 +86,43 @@ test('keeps photo-update originals wider than the identification resize limit at
   expect(response.status).toBe(201);
   const photo = await response.json();
   expect(await sharp(await download(photo.original_key)).metadata()).toMatchObject({ width: 2400, height: 1800 });
+  expect(photo.is_cover).toBe(false);
   // Keep the shared history fixture unchanged for the dated-health scenarios below.
   expect((await owner.request('/api/photos/' + photo.id, 'DELETE')).status).toBe(204);
+});
+
+test('serves a 1080 px display JPEG from the stored original without storing another object', async () => {
+  const image = await sharp({ create: { width: 1800, height: 2400, channels: 3, background: '#608060' } }).jpeg().toBuffer();
+  const uploadResponse = await upload(image);
+  expect(uploadResponse.status).toBe(201);
+  const photo = await uploadResponse.json();
+  const keys = await objectKeys();
+  try {
+    const url = '/api/photos/' + photo.id + '/display';
+    const response = await owner.request(url);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/jpeg');
+    expect(response.headers.get('cache-control')).toBe('private, max-age=604800');
+    expect(response.headers.get('vary')?.toLowerCase().split(/,\s*/)).toEqual(expect.arrayContaining(['cookie', 'authorization']));
+    const bytes = Buffer.from(await response.arrayBuffer());
+    expect(await sharp(bytes).metadata()).toMatchObject({ format: 'jpeg', width: 810, height: 1080 });
+    const original = await download(photo.original_key);
+    expect(bytes).toEqual(await sharp(original).resize({ height: 1080 }).jpeg({ quality: 80 }).toBuffer());
+    expect(await objectKeys()).toEqual(keys);
+    const small = (await updates()).find((update: { id: string }) => update.id !== photo.id);
+    const smallResponse = await owner.request('/api/photos/' + small.id + '/display');
+    expect(smallResponse.status).toBe(200);
+    expect(await sharp(Buffer.from(await smallResponse.arrayBuffer())).metadata()).toMatchObject({ width: 600, height: 800 });
+  } finally {
+    expect((await owner.request('/api/photos/' + photo.id, 'DELETE')).status).toBe(204);
+  }
+});
+
+test('documents display alongside the existing photo variants in OpenAPI', () => {
+  expect(spec.paths['/api/photos/{id}/{variant}'].get).toMatchObject({
+    parameters: expect.arrayContaining([{ in: 'path', name: 'variant', required: true, schema: { type: 'string', enum: ['original', 'thumb', 'display'] } }]),
+    responses: { 200: { headers: { 'Cache-Control': { schema: { type: 'string' } } } } },
+  });
 });
 
 test('refuses oversized, corrupt, non-image and invalid dated updates without rows or objects', async () => {
@@ -111,6 +148,7 @@ test('switches a single cover even for concurrent choices and exposes it on plan
   const secondResponse = await upload(gpsImage, { taken_on: '2026-10-20' });
   expect(secondResponse.status).toBe(201);
   const second = await secondResponse.json();
+  expect(second.is_cover).toBe(false);
   const cover = (id: string) => owner.request('/api/photos/' + id + '/cover', 'PUT');
   expect((await cover(first.id)).status).toBe(200);
   expect((await (await owner.request('/api/plants/' + plantId)).json()).cover_photo_id).toBe(first.id);
@@ -158,8 +196,8 @@ test('browses all plants by taken date then creation time, while plant updates s
   expect((await updates()).map((photo: { id: string }) => photo.id)).not.toContain(second.id);
 });
 
-test('deletes both stored objects and the update, clearing a deleted cover', async () => {
-  const photo = (await updates())[0];
+test('deletes both stored objects and promotes the newest remaining update when deleting the cover', async () => {
+  const [photo, newest] = await updates();
   expect((await owner.request('/api/photos/' + photo.id + '/cover', 'PUT')).status).toBe(200);
   const before = await objectKeys();
   expect(before).toContain(photo.original_key);
@@ -168,9 +206,26 @@ test('deletes both stored objects and the update, clearing a deleted cover', asy
   expect(deleted.status).toBe(204);
   expect((await updates()).map((update: { id: string }) => update.id)).not.toContain(photo.id);
   expect(await objectKeys()).toEqual(before.filter(key => key !== photo.original_key && key !== photo.thumb_key));
-  expect((await (await owner.request('/api/plants/' + plantId)).json()).cover_photo_id).toBeNull();
+  expect((await (await owner.request('/api/plants/' + plantId)).json()).cover_photo_id).toBe(newest.id);
+  expect((await updates())[0]).toMatchObject({ id: newest.id, is_cover: true });
   expect((await owner.request('/api/photos/' + photo.id + '/original')).status).toBe(404);
   expect((await owner.request('/api/photos/' + photo.id, 'DELETE')).status).toBe(404);
+});
+
+test('clears the cover when the last photo is deleted', async () => {
+  const site = (await (await owner.request('/api/sites')).json())[0];
+  const search = await (await owner.request('/api/species/search?q=Testoria%20lucida')).json();
+  const added = await owner.request('/api/plants', 'POST', { ...fixturePlant, site_id: site.id, search_id: search.search_id, gbif_key: 910001, nickname: 'Test one photo plant' });
+  expect(added.status).toBe(201);
+  const plant = await added.json();
+  const response = await upload(gpsImage, {}, owner.cookie, plant.id);
+  expect(response.status).toBe(201);
+  const photo = await response.json();
+  expect(photo.is_cover).toBe(true);
+  expect((await (await owner.request('/api/plants/' + plant.id)).json()).cover_photo_id).toBe(photo.id);
+  expect((await owner.request('/api/photos/' + photo.id, 'DELETE')).status).toBe(204);
+  expect((await (await owner.request('/api/plants/' + plant.id)).json()).cover_photo_id).toBeNull();
+  expect(await (await owner.request('/api/plants/' + plant.id + '/photos')).json()).toEqual([]);
 });
 
 test('removes the original after a real S3 thumbnail write failure and leaves no update', async () => {
@@ -193,7 +248,7 @@ test('requires login and refuses cross-origin changes and anonymous direct S3 re
     for (const [path, method] of [
       ['/api/plants/' + plantId + '/photos', 'GET'], ['/api/journal', 'GET'],
       ['/api/photos/' + photo.id + '/original', 'GET'], ['/api/photos/' + photo.id + '/thumb', 'GET'],
-      ['/api/photos/' + photo.id + '/cover', 'PUT'], ['/api/photos/' + photo.id, 'DELETE'],
+      ['/api/photos/' + photo.id + '/display', 'GET'], ['/api/photos/' + photo.id + '/cover', 'PUT'], ['/api/photos/' + photo.id, 'DELETE'],
     ]) expect((await owner.request(path, method, undefined, cookie)).status).toBe(401);
   }
   for (const [path, method] of [['/api/photos/' + photo.id + '/cover', 'PUT'], ['/api/photos/' + photo.id, 'DELETE']]) expect((await fetch(harness.base + path, { method, headers: { cookie: owner.cookie, origin: 'https://untrusted.example' } })).status).toBe(403);
@@ -222,7 +277,7 @@ test('cannot cross households for journal entries, plant updates or stored objec
   const keys = await objectKeys();
   for (const [path, method] of [
     ['/api/plants/' + plantId + '/photos', 'GET'], ['/api/photos/' + photo.id + '/original', 'GET'],
-    ['/api/photos/' + photo.id + '/thumb', 'GET'], ['/api/photos/' + photo.id + '/cover', 'PUT'],
+    ['/api/photos/' + photo.id + '/thumb', 'GET'], ['/api/photos/' + photo.id + '/display', 'GET'], ['/api/photos/' + photo.id + '/cover', 'PUT'],
     ['/api/photos/' + photo.id, 'DELETE'],
   ]) expect((await other.request(path, method)).status).toBe(404);
   expect((await upload(gpsImage, {}, other.cookie)).status).toBe(404);

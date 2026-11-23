@@ -2,12 +2,13 @@ import { error } from '@sveltejs/kit';
 import type pg from 'pg';
 import type { Identity } from './auth';
 import type { CareEvent } from '$lib/tasks';
+import type { PlantInput } from '$lib/plants';
 import { db } from './db';
 import { isUuid } from './plants';
 
 type Database = pg.Pool | pg.PoolClient;
 type Denial = { status: 403 | 404 | 409; message: string };
-type Pot = { pot_type: string; pot_size_cm: number | null; soil_type: string };
+type Pot = Pick<PlantInput, 'pot_type' | 'pot_size_cm' | 'soil_type'>;
 type UndoEvent = {
   id: string; plant_id: string; request_id: string; batch_id: string | null;
   by_member: string; undone_at: Date | null; previous_pot: Pot | null; event_order: string;

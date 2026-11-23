@@ -99,6 +99,34 @@ class AppShellRestorationTest {
     @Test fun unknownRoleLoadingAsSitterClosesJournal() = sitterNavigation("Journal", roleChange = true, initialRole = null)
     @Test fun unknownRoleLoadingAsSitterKeepsPlants() = sitterNavigation("Plants", roleChange = true, initialRole = null)
 
+    // W4-P32: Journal + picks a plant first; Back walks form, picker, Journal.
+    @Test fun journalAddPicksAPlantThenBackWalksOut() {
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest) = MockResponse().setBody(when (request.requestUrl?.encodedPath) {
+                    "/api/journal", "/api/plants/plant-one/photos" -> "[]"
+                    "/api/meta" -> """{"today":"2030-06-01"}"""
+                    else -> """{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":[]},"nameLanguages":{}}"""
+                })
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val care = CareState(member = Member("member", Role.owner), plants = listOf(parsePlant(JSONObject(plantFixture))))
+            compose.setContent { FytoriumTheme { AppShell(true, false, careState = care, sitesApi = api, sitesConnected = { true }) } }
+            compose.onNode(hasText("Journal") and hasClickAction() and !isHeading()).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No photos yet").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Add a photo update").performClick()
+            compose.onNode(hasText("Choose a plant") and isHeading()).assertIsDisplayed()
+            compose.onNodeWithContentDescription("Add plant").assertDoesNotExist()
+            compose.onNodeWithText("Synthetic fern").performClick()
+            compose.onNode(hasText("Add a photo of Synthetic fern") and isHeading()).assertIsDisplayed()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNode(hasText("Choose a plant") and isHeading()).assertIsDisplayed()
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNode(hasText("Journal") and isHeading()).assertIsDisplayed()
+        }
+    }
+
     private fun sitterNavigation(route: String, roleChange: Boolean = false,
                                  initialRole: Role? = if (roleChange) Role.family else Role.sitter) {
         val plant = parsePlant(JSONObject(plantFixture))
@@ -191,7 +219,7 @@ class AppShellRestorationTest {
                     compose.onNodeWithContentDescription("Add plant").performClick()
                     compose.waitUntil(5_000) { compose.onAllNodesWithText("Identify from photos").fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Identify from photos").performClick()
-                    compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications remaining today.").fetchSemanticsNodes().isNotEmpty() }
+                    compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications left today.").fetchSemanticsNodes().isNotEmpty() }
                 }
                 "journal", "journal-plant" -> {
                     compose.onNodeWithText("Journal").performClick()
@@ -204,7 +232,7 @@ class AppShellRestorationTest {
                     compose.onNodeWithTag("feed-plant-one-no_drainage").performScrollTo().performClick()
                     compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText("See all"))
                     compose.onNodeWithText("See all").performClick()
-                    compose.onNodeWithText("Add a photo update").performClick()
+                    compose.onNode(hasContentDescription("Add a photo", substring = true)).performClick()
                     compose.waitUntil(5_000) { compose.onAllNodes(hasText("Note") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
                     compose.onNodeWithText("Note").performTextInput("Unsaved photo note")
                 }
@@ -326,12 +354,12 @@ class AppShellRestorationTest {
                         compose.onNodeWithText("Take photo").assertIsEnabled()
                         compose.onNodeWithText("Choose photos").assertIsEnabled()
                     }
-                    "journal" -> compose.onNodeWithText("Plant journal").assertIsDisplayed()
+                    "journal" -> compose.onNode(hasText("Journal") and isHeading()).assertIsDisplayed()
                     "photo-form" -> {
-                        compose.onNodeWithText("Add a photo update").assertIsDisplayed()
+                        compose.onNodeWithText("Add a photo of", substring = true).assertIsDisplayed()
                         compose.onNodeWithText("Unsaved photo note").assertExists()
                         compose.onNodeWithText("Take photo").assertIsEnabled()
-                        compose.onNodeWithText("Choose photos").assertIsEnabled()
+                        compose.onNodeWithText("Choose photo").assertIsEnabled()
                     }
                     "journal-plant" -> compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed().assertIsEnabled()
                     "species", "plant-species" -> compose.onNodeWithText("Care defaults for this species").assertIsDisplayed()
@@ -346,10 +374,10 @@ class AppShellRestorationTest {
                 else compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()
                 compose.onNodeWithText("One-time app code").assertDoesNotExist()
                 compose.onNodeWithText("Synthetic imported fern").assertDoesNotExist()
-                compose.onNodeWithText("Plant journal").assertDoesNotExist()
-                compose.onNodeWithText("Add a photo update").assertDoesNotExist()
+                compose.onNode(hasText("Journal") and isHeading()).assertDoesNotExist()
+                compose.onNodeWithText("Add a photo of", substring = true).assertDoesNotExist()
                 compose.onNodeWithText("Unsaved photo note").assertDoesNotExist()
-                compose.onNodeWithText("Identify plant").assertDoesNotExist()
+                compose.onNodeWithText("Identify").assertDoesNotExist()
                 compose.onNodeWithText("Create invite").assertDoesNotExist()
                 compose.onNodeWithText("Save my feed").assertDoesNotExist()
                 compose.onNodeWithContentDescription("Edit plant").assertDoesNotExist()

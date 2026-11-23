@@ -47,7 +47,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
     bitmap.eraseColor(Color.rgb(90, 160, 100))
     file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
     val uri = FileProvider.getUriForFile(app, app.packageName + ".photos", file)
-    fun chooseInjectedPhoto() {
+    fun chooseInjectedPhoto(label: String = "Choose photos") {
         val filter = IntentFilter().apply {
             addAction("android.provider.action.PICK_IMAGES")
             addAction("androidx.activity.result.contract.action.PICK_IMAGES")
@@ -57,7 +57,7 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         val result = Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         val monitor = instrumentation.addMonitor(filter, result, true)
         try {
-            click("Choose photos")
+            click(label)
             compose.waitUntil(30_000) { monitor.hits == 1 }
             compose.waitForIdle()
             assertEquals("Picker intent was intercepted exactly once", 1, monitor.hits)
@@ -79,7 +79,8 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         try {
             click("Take photo")
             compose.waitUntil(30_000) { monitor.hits == 1 }
-            click("Remove photo 2")
+            compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Remove photo 2 of 2")).assertIsDisplayed(); true }.getOrDefault(false) }
+            compose.onNodeWithContentDescription("Remove photo 2 of 2").performClick()
             // Restore the camera photo to exercise a two-photo identification upload.
             click("Take photo")
             compose.waitUntil(30_000) { monitor.hits == 2 }
@@ -99,16 +100,15 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         compose.selectTab("Plants")
         click("Synthetic A06 sprout")
         click("See all")
-        click("Add a photo update")
-        chooseInjectedPhoto()
-        compose.waitUntil(30_000) { runCatching { compose.onNodeWithText("Selected photos: 1").assertExists(); true }.getOrDefault(false) }
+        compose.onNodeWithContentDescription("Add a photo of Synthetic A06 sprout").performClick()
+        chooseInjectedPhoto("Choose photo")
+        compose.waitUntil(30_000) { runCatching { compose.onNodeWithContentDescription("Chosen photo for Synthetic A06 sprout").assertExists(); true }.getOrDefault(false) }
         scroll(hasText("Note")).performTextReplacement("Synthetic A06 photo note")
         click("Photo health")
         compose.onNodeWithText("good").performClick()
         click("Add photo update")
-        compose.waitUntil(30_000) { runCatching { scroll(hasText("Use as cover")).assertIsEnabled(); true }.getOrDefault(false) }
-        click("Use as cover")
-        compose.waitUntil(30_000) { runCatching { scroll(hasText("1 Jun 2030 · Cover photo")).assertIsDisplayed(); true }.getOrDefault(false) }
+        // The first photo becomes the cover without a tap.
+        compose.waitUntil(30_000) { runCatching { scroll(hasText("Cover photo")).assertIsDisplayed(); true }.getOrDefault(false) }
         val photo = rows("/api/plants/$plantId/photos").single()
         assertTrue(photo.getBoolean("is_cover")); assertEquals("good", photo.getString("health")); assertEquals("Synthetic A06 photo note", photo.getString("note"))
         val photoId = photo.getString("id")
@@ -121,9 +121,9 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         }
         assertEquals(photoId, JSONObject(json("/api/plants/$plantId")).getString("cover_photo_id"))
         compose.waitUntil(30_000) {
-            runCatching { compose.onNodeWithContentDescription("Photo update of Synthetic A06 sprout").assertExists(); true }.getOrDefault(false)
+            runCatching { compose.onNodeWithContentDescription("Photo of Synthetic A06 sprout", substring = true).assertExists(); true }.getOrDefault(false)
         }
-        scroll(hasContentDescription("Photo update of Synthetic A06 sprout")).assertIsDisplayed()
+        scroll(hasContentDescription("Photo of Synthetic A06 sprout", substring = true)).assertIsDisplayed()
         compose.selectTab("Journal")
         compose.waitUntil(30_000) { runCatching { scroll(hasText("Synthetic A06 photo note")).assertIsDisplayed(); true }.getOrDefault(false) }
         compose.selectTab("Plants")
@@ -131,17 +131,22 @@ fun runPhotoScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
         click("Identify from photos")
         chooseInjectedPhoto()
         takeInjectedPhoto()
-        click("Identify plant")
-        click("Choose Testoria picta")
+        click("Identify")
+        compose.waitUntil(30_000) { runCatching { scroll(hasContentDescription("Testoria picta", substring = true)).performClick(); true }.getOrDefault(false) }
         compose.onNodeWithText("Save plant").assertDoesNotExist()
-        click("Confirm Testoria picta")
+        click("Yes, this one")
+        // The form opens once Identify's first photo is copied for Keep this photo.
+        compose.waitUntil(30_000) { compose.onAllNodes(hasText("Name") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
         scroll(hasText("Name") and hasSetTextAction()).performTextReplacement("Synthetic A06 identified sprout")
-        click("Site")
-        compose.onNodeWithText("Synthetic A06 site").performClick()
+        compose.onNode(hasText("Site") and hasText("Synthetic A06 site")).assertIsDisplayed()
         click("Save plant")
         compose.waitUntil(30_000) { app.repository.state.value.detail?.plant?.displayName == "Synthetic A06 identified sprout" }
         val identified = rows("/api/plants").single { it.optString("nickname") == "Synthetic A06 identified sprout" }
         assertEquals(913001, identified.getInt("gbif_key"))
+        // The kept photo becomes the cover in the plant list behind the Plants grid and Journal's picker, without a pull or another page.
+        compose.waitForState("Identified plant's cover in the plant list", 30_000) {
+            app.repository.state.value.plants.any { it.displayName == "Synthetic A06 identified sprout" && it.coverPhotoId != null }
+        }
         println("A06 E2E PASS: picker-injected photo update, 2560px JPEG, cover, journal, fake Pl@ntNet ranked result, explicit confirmation, add from result")
     } catch (error: Throwable) { failure = error; throw error }
     finally {

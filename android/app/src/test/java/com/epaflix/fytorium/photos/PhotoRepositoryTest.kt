@@ -13,6 +13,41 @@ internal const val photoFixture = """{"id":"photo-one","plant_id":"plant-one","p
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], shadows = [JvmImageSources::class])
 class PhotoRepositoryTest {
+    // W4-P25: Try again after Pl@ntNet was down sends the same photos again.
+    @Test fun anIdentifyRetryAfterAnOutageSendsAgain() {
+        MockWebServer().use { server ->
+            server.start()
+            val context = org.robolectric.RuntimeEnvironment.getApplication()
+            val file = java.io.File(context.cacheDir, "synthetic-identify.png")
+            val bitmap = android.graphics.Bitmap.createBitmap(200, 150, android.graphics.Bitmap.Config.ARGB_8888)
+            file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+            val repository = PhotoRepository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}, { true }, { true })
+            server.enqueue(MockResponse().setResponseCode(503).setBody("""{"message":"Pl@ntNet did not answer."}"""))
+            server.enqueue(MockResponse().setBody("""{"search_id":"synthetic-search","candidates":[]}"""))
+            val photos = listOf(android.net.Uri.fromFile(file))
+            assertFalse(repository.identify(context, photos))
+            assertEquals(503, repository.state.value.failureStatus)
+            assertFalse("writes stay off until an explicit retry", repository.identify(context, photos))
+            assertEquals(1, server.requestCount)
+            repository.clearFailure()
+            assertTrue(repository.identify(context, photos))
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    // A slow original that lands after the viewer moved on stays with its own photo.
+    @Test fun anOriginalIsKeptWithItsPhoto() {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setBody("synthetic original bytes"))
+            val repository = PhotoRepository(ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}, { true }, { true })
+            assertTrue(repository.openOriginal("photo-one"))
+            assertEquals("photo-one", repository.state.value.originalId)
+            repository.clearOriginal()
+            assertNull(repository.state.value.originalId)
+        }
+    }
+
     @Test fun uploadsResizeAndReencodeBeforeAuthenticatedMultipartWithProgress() {
         MockWebServer().use { server ->
             server.start()
@@ -25,6 +60,7 @@ class PhotoRepositoryTest {
             val repository = PhotoRepository(ApiClient(server.url("").toString().trimEnd('/'), store) {}, { true }, { true }, "plant-one")
             server.enqueue(MockResponse().setBody(photoFixture)); server.enqueue(MockResponse().setBody("[$photoFixture]"))
             assertTrue(repository.upload(context, android.net.Uri.fromFile(file), "Synthetic note", "good", "2026-10-13"))
+            assertTrue(org.json.JSONObject(photoFixture).getString("id") in addedHere)
             val request = server.takeRequest()
             assertEquals("/api/plants/plant-one/photos", request.path)
             assertEquals("Bearer synthetic-access", request.getHeader("Authorization"))

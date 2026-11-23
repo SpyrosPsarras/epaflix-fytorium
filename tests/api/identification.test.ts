@@ -16,10 +16,10 @@ beforeAll(async () => {
   siteId = (await (await owner.request('/api/sites', 'POST', { name: 'Test identification site', location: 'indoor', light: 'part_sun', humidity: 'normal', grow_light: false, draft: false })).json()).id;
   gpsImage = await sharp({ create: { width: 800, height: 600, channels: 3, background: '#408040' } }).jpeg().withMetadata({ orientation: 6 }).withExifMerge({ IFD3: { GPSLatitudeRef: 'N', GPSLatitude: '1/1 2/1 3/1', GPSLongitudeRef: 'E', GPSLongitude: '4/1 5/1 6/1' } }).toBuffer();
 });
-function identify(images = [gpsImage, gpsImage], cookie = owner.cookie, origin = harness.base) {
+function identify(images = [gpsImage, gpsImage], cookie = owner.cookie, origin = harness.base, language = 'en') {
   const form = new FormData();
   for (const image of images) form.append('images', new Blob([new Uint8Array(image)], { type: 'image/jpeg' }), 'synthetic.jpg');
-  return fetch(harness.base + '/api/identification', { method: 'POST', headers: { cookie, origin }, body: form });
+  return fetch(harness.base + '/api/identification', { method: 'POST', headers: { cookie, origin, 'accept-language': language }, body: form });
 }
 
 test('returns ranked candidates and sends only oriented, metadata-free images with organs to Pl@ntNet', async () => {
@@ -70,7 +70,74 @@ test('accepts a full-resolution image over 3 MB and sends a metadata-free JPEG w
   expect(metadata.xmp).toBeUndefined();
 });
 
+test('falls back to the first Pl@ntNet common name', async () => {
+  const response = await identify([gpsImage]);
+  expect(response.status).toBe(200);
+  expect((await response.json()).candidates[0]).toMatchObject({
+    common_name: 'Test paintedleaf', identification_canonical_name: 'Testoria picta',
+  });
+});
+
+test('sends the member language to Pl@ntNet', async () => {
+  expect((await identify([gpsImage], owner.cookie, harness.base, 'nb-NO, en;q=0.8')).status).toBe(200);
+  expect(harness.identificationRequests.at(-1)?.language).toBe('nb');
+});
+
+test('resolves candidates together, so stalled GBIF lookups cost one timeout', async () => {
+  harness.setPlantnet({ results: [913041, 913042, 913043, 913044].map((id, index) => ({
+    score: 0.9 - index / 10, species: { scientificNameWithoutAuthor: 'Testoria lenta' + index, scientificNameAuthorship: 'Inventor', commonNames: [] }, gbif: { id },
+  })) });
+  harness.stallGbifSpecies(true);
+  try {
+    const started = Date.now();
+    const response = await identify([gpsImage]);
+    expect(response.status).toBe(200);
+    expect((await response.json()).candidates.map((candidate: { gbif_key: number }) => candidate.gbif_key)).toEqual([913041, 913042, 913043, 913044]);
+    expect(Date.now() - started).toBeLessThan(9000);
+  } finally { harness.stallGbifSpecies(false); harness.setPlantnet(); }
+});
+
+test('never offers a known synonym under its own key when GBIF does not return its accepted species', async () => {
+  harness.setGbifSpecies(913050, { key: 913050, kingdom: 'Plantae', rank: 'SPECIES', taxonomicStatus: 'SYNONYM', acceptedKey: 913051 });
+  harness.setGbifSpecies(913052, { key: 913052, kingdom: 'Plantae', rank: 'SPECIES', taxonomicStatus: 'ACCEPTED' });
+  const result = (id: number, score: number) => ({ score, species: { scientificNameWithoutAuthor: 'Testoria orba' + id, scientificNameAuthorship: 'Inventor', commonNames: [] }, gbif: { id } });
+  try {
+    harness.setPlantnet({ results: [result(913050, 0.9), result(913052, 0.5)] });
+    const response = await identify([gpsImage]);
+    expect(response.status).toBe(200);
+    expect((await response.json()).candidates.map((candidate: { gbif_key: number }) => candidate.gbif_key)).toEqual([913052]);
+    harness.setGbifSpecies(913053, { key: 913053, kingdom: 'Plantae', rank: 'SPECIES', taxonomicStatus: 'HETEROTYPIC_SYNONYM' });
+    harness.setGbifSpecies(913054, { key: 913054, kingdom: 'Plantae', rank: 'SPECIES', taxonomicStatus: 'SYNONYM', acceptedKey: 913054 });
+    harness.setGbifSpecies(913055, { key: 913055, kingdom: 'Plantae', rank: 'GENUS', taxonomicStatus: 'SYNONYM', acceptedKey: 913056 });
+    for (const id of [913050, 913053, 913054, 913055]) {
+      harness.setPlantnet({ results: [result(id, 0.9)] });
+      const unavailable = await identify([gpsImage]);
+      expect(unavailable.status).toBe(503);
+      expect((await unavailable.json()).message).toContain('GBIF did not return the accepted species');
+    }
+  } finally { harness.setPlantnet(); }
+});
+
 const add = (search_id: string, extra = {}) => owner.request('/api/plants', 'POST', { ...fixturePlant, site_id: siteId, search_id, gbif_key: 913001, ...extra });
+
+test('resolves a Pl@ntNet synonym to the accepted key and names without losing the identified name', async () => {
+  harness.setGbifSpecies(913030, { key: 913030, kingdom: 'Plantae', rank: 'SPECIES', taxonomicStatus: 'SYNONYM', acceptedKey: 913031 });
+  harness.setGbifSpecies(913031, { key: 913031, kingdom: 'Plantae', rank: 'SPECIES', taxonomicStatus: 'ACCEPTED', scientificName: 'Testoria nova Inventor', canonicalName: 'Testoria nova' });
+  expect((await add('expired', { gbif_key: 913031, confirmed: true })).status).toBe(201);
+  expect((await owner.request('/api/species/913031/names', 'POST', { name: 'Test nytt blad', language: 'nb' })).status).toBe(201);
+  harness.setPlantnet({ results: [{ score: 0.97, species: { scientificNameWithoutAuthor: 'Testoria prior', scientificNameAuthorship: 'Inventor', commonNames: ['Test former leaf'] }, gbif: { id: 913030 } }] });
+  try {
+    const response = await identify([gpsImage], owner.cookie, harness.base, 'nb');
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.candidates).toMatchObject([{
+      gbif_key: 913031, scientific_name: 'Testoria nova Inventor', canonical_name: 'Testoria nova', common_name: 'Test nytt blad',
+      identification_name: 'Testoria prior Inventor', identification_canonical_name: 'Testoria prior', requires_confirmation: true,
+    }]);
+    expect((await add(result.search_id, { gbif_key: 913030, confirmed: true })).status).toBe(422);
+    expect((await add(result.search_id, { gbif_key: 913031, confirmed: true })).status).toBe(201);
+  } finally { harness.setPlantnet(); }
+});
 test('requires an explicit confirmed pick from the household record and refuses forged keys and scores', async () => {
   const result = await (await identify()).json();
   const before = await (await owner.request('/api/plants')).json();
@@ -156,7 +223,7 @@ test('drops an unmappable candidate and keeps confirmation for a low-confidence 
   expect(dropped.candidates.map((item: { gbif_key: number }) => item.gbif_key)).toEqual([913001]);
   harness.setGbif({ usageKey: 913002, scientificName: 'Testoria lucens Inventor', canonicalName: 'Testoria lucens', rank: 'SPECIES', kingdom: 'Plantae', matchType: 'FUZZY', confidence: 72 });
   const mapped = await (await identify([gpsImage])).json();
-  expect(mapped.candidates[1]).toMatchObject({ gbif_key: 913002, scientific_name: 'Testoria lucens Inventor', identification_name: 'Testoria lucida Inventor', score: 0.21, requires_confirmation: true, match_type: 'FUZZY', confidence: 72 });
+  expect(mapped.candidates[1]).toMatchObject({ gbif_key: 913002, scientific_name: 'Testoria lucens Inventor', identification_name: 'Testoria lucida Inventor', identification_canonical_name: 'Testoria lucida', score: 0.21, requires_confirmation: true, match_type: 'FUZZY', confidence: 72 });
   expect((await add(mapped.search_id, { gbif_key: 913002, confirmed: false })).status).toBe(422);
   expect((await add(mapped.search_id, { gbif_key: 913002, confirmed: true })).status).toBe(201);
 });
@@ -180,6 +247,15 @@ test('stores the last quota across app restart, returns it when low and hides it
   harness.setPlantnet({ ...identificationResponse, remainingIdentificationRequests: 50 });
   expect(await (await identify([gpsImage])).json()).toHaveProperty('remaining', 50);
   expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 50 });
+});
+
+test('forgets a stored quota the next day, since Pl@ntNet counts per day', async () => {
+  harness.setPlantnet({}, 429);
+  expect((await identify([gpsImage])).status).toBe(429);
+  expect(await (await owner.request('/api/identification')).json()).toEqual({ remaining: 0 });
+  await owner.request('/__test/clock', 'POST', { action: 'advance', milliseconds: 86400000 });
+  try { expect(await (await owner.request('/api/identification')).json()).toEqual({}); }
+  finally { await owner.request('/__test/clock', 'POST', { action: 'reset' }); harness.setPlantnet(); }
 });
 
 test('reports exhausted quota, upstream rejection, service errors, invalid responses and bounded timeout clearly', async () => {
@@ -215,7 +291,7 @@ test('reports an empty API key as unconfigured without calling upstream', async 
   await harness.restartApp();
 });
 
-test('requires login and same origin, expires choices and refuses picks across households', async () => {
+test('requires login and same origin, requires confirmation after expiry and refuses picks across households', async () => {
   const calls = harness.identificationRequests.length;
   for (const cookie of ['', 'fytorium_session=invalid']) {
     expect((await identify([gpsImage], cookie)).status).toBe(401);
@@ -225,7 +301,8 @@ test('requires login and same origin, expires choices and refuses picks across h
   expect(harness.identificationRequests).toHaveLength(calls);
   const result = await (await identify([gpsImage])).json();
   await owner.request('/__test/clock', 'POST', { action: 'advance', milliseconds: 300001 });
-  expect((await add(result.search_id, { confirmed: true })).status).toBe(422);
+  expect((await add(result.search_id, { confirmed: false })).status).toBe(422);
+  expect((await add(result.search_id, { confirmed: true })).status).toBe(201);
   await owner.request('/__test/clock', 'POST', { action: 'reset' });
   const fixtureDb = new pg.Pool({ connectionString: harness.postgres.getConnectionUri() });
   try {

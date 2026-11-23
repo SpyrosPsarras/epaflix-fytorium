@@ -10,5 +10,5 @@ export const GET: RequestHandler = async ({ locals }) => {
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.identity) error(401, 'Login required');
   checkOrigin(request);
-  return json(await identifyPlant(request, locals.identity.household.id));
+  return json(await identifyPlant(request, locals.identity));
 };

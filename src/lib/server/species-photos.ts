@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { db } from './db';
 import { now } from './clock';
-import { referencePhoto } from './gbif';
+import { referencePhotos } from './gbif';
 import { downloadImage } from './net/download-image';
 import { sanitiseImage } from './images';
 
@@ -24,12 +24,15 @@ export async function speciesPhoto(value: string): Promise<SpeciesPhoto> {
 
 async function fetchPhoto(key: number): Promise<SpeciesPhoto> {
   let lifetime = 30 * 86400000;
-  const reference = await referencePhoto(key).catch(() => { lifetime = RETRY_CACHE_MS; return null; });
+  const references = await referencePhotos(key).catch(() => { lifetime = RETRY_CACHE_MS; return []; });
   const photo: SpeciesPhoto = { thumbnail: null, creator: null, license: null, source_url: null };
-  if (reference) {
+  // shortcut: at most three downloads per lookup keep a slow GBIF host from holding the request; raise it if many first images fail.
+  for (const reference of references.slice(0, 3)) {
     try {
       photo.thumbnail = await sanitiseImage(await downloadImage(reference.identifier, 'Reference'), 400);
       photo.creator = reference.creator; photo.license = reference.license; photo.source_url = reference.source_url;
+      lifetime = 30 * 86400000;
+      break;
     } catch { lifetime = RETRY_CACHE_MS; }
   }
   await db().query(`INSERT INTO species_photos (gbif_key, thumbnail, creator, license, source_url, expires_at)

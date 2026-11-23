@@ -107,7 +107,7 @@ test('imports Planta plants with fuzzy confirmation, cover photos and continued 
     await screenshot('planta-collection.png');
     await page.getByRole('link', { name: 'Test import amber', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Test import amber', exact: true, level: 1 })).toBeVisible();
-    await expect(page.getByRole('region', { name: 'Water', exact: true })).toContainText('2026-06-08');
+    await expect(page.getByRole('region', { name: 'Water', exact: true })).toContainText('Next watering: 2026-06-06');
     await page.getByRole('region', { name: 'Based on', exact: true }).getByText('Water', { exact: true }).click();
     await expect(page.getByRole('region', { name: 'Based on', exact: true })).toContainText('counted from last completion on 2026-06-01');
     await screenshot('planta-next-due.png');

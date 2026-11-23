@@ -38,6 +38,19 @@ test('serves a sanitised reference thumbnail and attribution from one persistent
   expect(harness.occurrenceRequests[0].searchParams.get('mediaType')).toBe('StillImage');
 });
 
+// K3: an unusable first occurrence or a first image that fails does not hide a usable photo behind it.
+test('uses the first usable reference photo among several occurrences', async () => {
+  harness.setGbifOccurrences(910790, { results: [
+    { references: 'not a link', media: [{ identifier: images.url, license: 'http://creativecommons.org/licenses/by/4.0/', creator: 'Synthetic one' }] },
+    { references: 'https://example.org/synthetic-two', media: [
+      { identifier: 'not a url', license: 'http://creativecommons.org/licenses/by/4.0/', creator: 'Synthetic two' },
+      { identifier: images.url, license: 'http://creativecommons.org/licenses/by/4.0/', creator: 'Synthetic three' },
+    ] },
+  ] });
+  expect(await (await owner.request(path(910790) + '/credit')).json()).toMatchObject({ photo: { creator: 'Synthetic three', source_url: 'https://example.org/synthetic-two' } });
+  expect((await owner.request(path(910790))).status).toBe(200);
+});
+
 test('persists the no-photo outcome and refreshes after thirty days', async () => {
   await owner.request('/__test/clock', 'POST', { action: 'set', at: '2026-06-10T12:00:00Z' });
   const before = harness.occurrenceRequests.length;

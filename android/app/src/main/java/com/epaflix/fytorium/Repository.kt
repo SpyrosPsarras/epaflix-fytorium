@@ -292,6 +292,11 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     fun showBatchReceipt(event: CareEvent) = synchronized(monitor) {
         (state.value.batches[event.batchId] ?: receiptFor(event))?.let { mutable.value = mutable.value.copy(receipt = Receipt(it.text, event)) }
     }
+    // Photo lists keep their last answer per member, so the Journal and plant photos read offline.
+    fun cachedJson(resource: String): Pair<String, Long>? = state.value.member?.let { cache.get(it.id, resource) }?.let { it.json to it.refreshedAt }
+    // Returns the time it stored, so a page that shows the list's age names the same time as the cache.
+    fun saveJson(resource: String, json: String): Long? = state.value.member?.let { member -> clock().also { cache.save(member.id, mapOf(resource to json), it) } }
+    fun showReceipt(text: String) = synchronized(monitor) { mutable.value = mutable.value.copy(receipt = Receipt(text, short = true)) }
     fun clearReceipt(receipt: Receipt) = synchronized(monitor) {
         if (state.value.receipt?.id == receipt.id) mutable.value = mutable.value.copy(receipt = null)
     }
@@ -485,12 +490,15 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
         true
     }
-    private fun <T> plantRead(path: String, resource: String, query: Map<String, String> = emptyMap(), parse: (String) -> T): T? = synchronized(workLock) {
+    private fun <T> plantRead(path: String, resource: String, query: Map<String, String> = emptyMap(),
+        unprocessable: T? = null, parse: (String) -> T): T? = synchronized(workLock) {
         val epoch = synchronized(monitor) { generation }
         if (state.value.member == null || state.value.member?.role == Role.sitter) return null
         try {
             if (!connected()) throw OfflineFailure()
-            val result = parse(read(path, query = query))
+            val result = try { parse(read(path, query = query)) } catch (failure: ApiFailure) {
+                if (failure.status == 422 && unprocessable != null) unprocessable else throw failure
+            }
             synchronized(monitor) {
                 if (epoch != generation) null else { plantLoaded(resource); result }
             }
@@ -505,7 +513,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
             val plants = JSONArray(json).mapObjects(::parsePlant)
             synchronized(monitor) { if (epoch == generation) {
                 cache.save(member.id, mapOf("plants" to json), clock())
-                mutable.value = mutable.value.copy(plants = plants)
+                mutable.value = mutable.value.copy(plants = plants, serverUnavailable = false)
                 plantLoaded("plants")
             } }
         } catch (error: Exception) { plantFailed(error, epoch, "plants") }
@@ -522,7 +530,11 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         }
     }
     fun plantSites(): List<PlantSite>? = plantRead("/api/sites", "sites") { JSONArray(it).mapObjects { site -> PlantSite(site.getString("id"), site.getString("name")) } }
-    fun searchSpecies(query: String): SpeciesSearch? = plantRead("/api/species/search", "search", mapOf("q" to query), ::parseSpeciesSearch)
+    fun searchSpecies(query: String): SpeciesSearch? {
+        if (query.length !in 1..200 || query.isBlank()) return null
+        return plantRead("/api/species/search", "search", mapOf("q" to query),
+            unprocessable = SpeciesSearch("", emptyList()), parse = ::parseSpeciesSearch)
+    }
     fun species(key: Long): Species? { require(key > 0); return plantRead("/api/species/$key", "species/$key", parse = ::parseSpecies) }
     fun graveyard(): List<Plant> = synchronized(workLock) {
         val member = state.value.member ?: return emptyList()
@@ -540,7 +552,7 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
         var saved: Plant? = null
         write(if (id == null) "/api/plants" else "/api/plants/${requireSafeId(id)}", if (id == null) "POST" else "PUT", body, refreshAfter = true, plantsScreen = true) {
             saved = parsePlant(JSONObject(it)).also { plant ->
-                mutable.value = mutable.value.copy(receipt = Receipt((if (id == null) "Added " else "Saved ") + plant.displayName, short = true))
+                mutable.value = mutable.value.copy(receipt = Receipt(if (id == null) "Added ${plant.displayName}" + plant.siteName?.let { " to $it" }.orEmpty() else "Saved ${plant.displayName}", short = true))
             }
         }
         return saved

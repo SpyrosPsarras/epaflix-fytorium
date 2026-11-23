@@ -84,3 +84,12 @@ test.each([
   const page = await (await request('/species/910001')).text();
   expect(page.includes('USDA zone conversion is uncertain')).toBe(row.source === 'perenual');
 });
+
+test('a plant with unknown pot type uses the same hardiness as a potted plant', async () => {
+  const plant = await (await request('/api/plants/' + pot)).json();
+  expect((await request('/api/plants/' + pot, 'PUT', { ...fixturePlant, site_id: plant.site_id, pot_type: null })).status).toBe(200);
+  expect((await request('/__test/weather-worker', 'POST')).status).toBe(200);
+  const { alerts } = await (await request('/api/weather')).json();
+  expect(alerts.find((alert: { plant_id: string }) => alert.plant_id === pot)).toMatchObject({ payload: { thresholdC: 10 } });
+  expect(alerts.find((alert: { plant_id: string }) => alert.plant_id === ground)).toMatchObject({ payload: { thresholdC: 5 } });
+});

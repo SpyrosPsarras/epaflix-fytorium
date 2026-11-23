@@ -7,6 +7,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -40,6 +42,15 @@ class PlantsScreenTest {
                 compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(hasText(text))
         }
         return compose.onNodeWithText(text)
+    }
+    private fun resultCard(headline: String, scientificName: String = headline): SemanticsNodeInteraction {
+        val matcher = hasContentDescription("$headline, $scientificName. Choose this species.")
+        val node = compose.onNode(matcher)
+        if (runCatching { node.assertIsDisplayed() }.isFailure) {
+            if (runCatching { node.performScrollTo() }.isFailure)
+                compose.onAllNodes(hasScrollAction()).onFirst().performScrollToNode(matcher)
+        }
+        return node
     }
     @Test fun feedPlantLinkOpensNativeDetailDespiteUnrelatedCareFailure() {
         val care = owner.copy(busy = true, offline = true, serverUnavailable = true,
@@ -217,9 +228,10 @@ class PlantsScreenTest {
         var accepted = false
         compose.enableAccessibilityChecks()
         compose.setContent { FytoriumTheme { SpeciesPicker(true, result, {}, { _, _, confirmed -> accepted = confirmed }) } }
-        scroll("Choose Testoria lucida").performClick()
+        resultCard("Testoria lucida").performClick()
         assertFalse(accepted)
-        scroll("Confirm Testoria lucida").performClick()
+        compose.onNodeWithText("Is this your plant?").assertIsDisplayed()
+        compose.onNodeWithText("Yes, this one").performClick()
         assertTrue(accepted)
     }
     @Test fun searchCardsHeadlineTheCommonNameAndOnlyFuzzyMatchesShowCloseness() {
@@ -230,7 +242,8 @@ class PlantsScreenTest {
         compose.setContent { FytoriumTheme { SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(fuzzy, stored, exact)), {}, { _, _, _ -> }) } }
         compose.onNode(hasText("Synthetic lantern") and isHeading()).assertIsDisplayed()
         scroll("Testoria lucida").assertExists()
-        scroll("Close match, 92%").assertExists()
+        scroll("Close match").assertExists()
+        compose.onAllNodesWithText("92%", substring = true).assertCountEquals(0)
         compose.onNode(hasText("Testoria nebulosa") and isHeading()).performScrollTo().assertExists()
         compose.onNode(hasText("Synthetic gold") and isHeading()).performScrollTo().assertExists()
         compose.onAllNodes(hasText("Close match", substring = true)).assertCountEquals(1)
@@ -246,9 +259,9 @@ class PlantsScreenTest {
         compose.setContent { FytoriumTheme { SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(alias, spelled, latin)), {}, { candidate, _, _ -> chosen = candidate }) } }
         scroll("Matches \u201cSynthetic rubberleaf\u201d").assertExists()
         compose.onAllNodes(hasText("Matches", substring = true)).assertCountEquals(1)
-        scroll("Choose Synthetic jade").assertHasClickAction()
-        scroll("Choose Testoria aurea").assertHasClickAction()
-        scroll("Choose Synthetic snake leaf").performClick()
+        resultCard("Synthetic jade", "Testoria ovata").assertHasClickAction()
+        resultCard("Testoria aurea").assertHasClickAction()
+        resultCard("Synthetic snake leaf", "Testoria fasciata").performClick()
         compose.runOnIdle { assertEquals(spelled, chosen) }
         compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
     }
@@ -330,6 +343,45 @@ class PlantsScreenTest {
         undo("event-two").assertIsEnabled()
         assertTrue(skipEnabled())
     }
+    @Test fun missingImageAfterCreditShowsTheLeafWithoutAttributionOnCardAndDialog() {
+        val imageRequested = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
+                    "/api/species/910002/photo/credit" -> MockResponse().setBody("""{"photo":{"creator":"Synthetic photographer","license":"CC BY 4.0","source_url":"https://www.gbif.org/occurrence/1"}}""")
+                    "/api/species/910002/photo" -> {
+                        imageRequested.countDown()
+                        release.await(10, TimeUnit.SECONDS)
+                        MockResponse().setResponseCode(404)
+                    }
+                    else -> MockResponse().setResponseCode(400)
+                }
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val candidate = SpeciesCandidate(910002, "Testoria nebulosa Inventor", "Testoria nebulosa", "SPECIES", "FUZZY", 92, true, null, null)
+            compose.setContent { FytoriumTheme { SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(candidate)), {}, { _, _, _ -> }, imageApi = api) } }
+            val attribution = hasText("Photo: Synthetic photographer, CC BY 4.0")
+            val leaf = hasTestTag("reference-photo-unavailable")
+            val creditHiddenWhileLoading = try {
+                compose.waitUntil(5_000) { imageRequested.count == 0L }
+                compose.onAllNodes(leaf, useUnmergedTree = true).assertCountEquals(0)
+                compose.onAllNodes(attribution).fetchSemanticsNodes().isEmpty()
+            } finally { release.countDown() }
+            compose.waitUntil(5_000) { compose.onAllNodes(leaf, useUnmergedTree = true).fetchSemanticsNodes().size == 1 }
+            compose.onNode(leaf, useUnmergedTree = true).assertIsDisplayed()
+            assertTrue("Attribution stays hidden while the image is loading", creditHiddenWhileLoading)
+            compose.onNode(attribution).assertDoesNotExist()
+            resultCard("Testoria nebulosa").performClick()
+            val dialog = hasAnyAncestor(isDialog())
+            compose.waitUntil(5_000) { compose.onAllNodes(leaf and dialog, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(leaf and dialog, useUnmergedTree = true).assertIsDisplayed()
+            compose.onNode(attribution and dialog).assertDoesNotExist()
+            compose.onNodeWithText("Yes, this one").assertIsEnabled()
+        }
+    }
+
     @Test fun confirmationBoundsStayFixedThroughDelayedPhotoCreditAndEqualSearchResults() {
         val creditReady = java.util.concurrent.CountDownLatch(1)
         MockWebServer().use { server ->
@@ -338,6 +390,7 @@ class PlantsScreenTest {
                     if (!request.path.orEmpty().endsWith("/credit")) {
                         val image = java.io.ByteArrayOutputStream().apply {
                             android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+                                .apply { eraseColor(android.graphics.Color.rgb(53, 142, 108)) }
                                 .compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, this)
                         }
                         return MockResponse().setHeader("Content-Type", "image/jpeg").setBody(okio.Buffer().write(image.toByteArray()))
@@ -351,27 +404,39 @@ class PlantsScreenTest {
             val candidate = SpeciesCandidate(910002, "Testoria nebulosa Inventor", "Testoria nebulosa", "SPECIES", "FUZZY", 92, true, null, null)
             val result = mutableStateOf(SpeciesSearch("synthetic-search", listOf(candidate)), neverEqualPolicy())
             var accepted = false
-            compose.setContent { FytoriumTheme {
+            var opened: String? = null
+            val links = object : UriHandler { override fun openUri(uri: String) { opened = uri } }
+            compose.setContent { FytoriumTheme { CompositionLocalProvider(LocalUriHandler provides links) {
                 SpeciesPicker(true, result.value, {}, { selected, searchId, confirmed ->
                     assertEquals(candidate, selected)
                     assertEquals("synthetic-search", searchId)
                     accepted = confirmed
                 }, imageApi = api)
-            } }
+            } } }
             try {
-                scroll("Choose Testoria nebulosa").performClick()
-                val confirm = scroll("Confirm Testoria nebulosa")
+                resultCard("Testoria nebulosa").performClick()
+                val confirm = compose.onNodeWithText("Yes, this one")
+                val dialog = hasAnyAncestor(isDialog())
                 val before = confirm.fetchSemanticsNode().boundsInRoot
                 compose.runOnIdle { result.value = result.value.copy(candidates = result.value.candidates.toList()) }
                 confirm.assertExists()
                 creditReady.countDown()
-                compose.waitUntil(5_000) { compose.onAllNodesWithText("CC BY 4.0 · Photo: Synthetic photographer").fetchSemanticsNodes().isNotEmpty() }
-                compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Reference photo of Testoria nebulosa").fetchSemanticsNodes().isNotEmpty() }
-                val after = compose.onNodeWithText("Confirm Testoria nebulosa").fetchSemanticsNode().boundsInRoot
-                println("A05 photo credit confirmation bounds: before=$before after=$after")
-                assertEquals(before, after)
+                val attribution = hasText("Photo: Synthetic photographer, CC BY 4.0")
+                compose.waitUntil(5_000) {
+                    compose.onAllNodes(attribution and dialog).fetchSemanticsNodes().isNotEmpty() &&
+                        compose.onAllNodes(attribution and !dialog).fetchSemanticsNodes().isNotEmpty()
+                }
+                val photo = compose.onNode(hasContentDescription("Reference photo of Testoria nebulosa") and dialog)
+                compose.waitUntil(5_000) { runCatching { photo.assertExists() }.isSuccess }
+                val size = photo.fetchSemanticsNode().boundsInRoot
+                assertEquals(4f / 3f, size.width / size.height, 0.01f)
+                assertEquals(before, confirm.fetchSemanticsNode().boundsInRoot)
                 assertFalse(accepted)
-                scroll("Confirm Testoria nebulosa").performClick()
+                val creditLink = compose.onNode(attribution and dialog).performScrollTo().assertIsDisplayed()
+                compose.captureDialog("src/test/screenshots/native-plants-confirm-photo.png")
+                creditLink.performClick()
+                compose.runOnIdle { assertEquals("https://www.gbif.org/occurrence/1", opened) }
+                confirm.performClick()
                 compose.runOnIdle { assertTrue(accepted) }
             } finally { creditReady.countDown() }
         }
@@ -498,11 +563,11 @@ class PlantsScreenTest {
             compose.waitUntil(5_000) { runCatching { compose.onNodeWithText("Species name").assertExists(); true }.getOrDefault(false) }
             compose.onNodeWithText("Synthetic fern is currently Testoria lucida. Care history, photos and custom intervals will stay. The schedule will use the new species.").assertExists()
             compose.onNodeWithText("Species name").performTextInput("Testoria prior")
-            scroll("Search species").performClick()
-            compose.waitUntil(5_000) { runCatching { scroll("Choose Testoria prior").assertExists(); true }.getOrDefault(false) }
-            scroll("Choose Testoria prior").performClick()
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { runCatching { resultCard("Testoria prior").assertExists(); true }.getOrDefault(false) }
+            resultCard("Testoria prior").performClick()
             assertEquals(0, writes.get())
-            scroll("Confirm Testoria prior").performClick()
+            compose.onNodeWithText("Yes, this one").performClick()
             assertEquals(0, writes.get())
             for (night in listOf(false, true)) {
                 compose.runOnIdle { dark.value = night }
@@ -553,7 +618,7 @@ class PlantsScreenTest {
                 "detail", "delete", "history", "menu", "details", "bury" -> PlantDetailScreen(pageState, page, {}, { _, _ -> }, {}, {}, options = syntheticOptions(), onSpeciesCare = {})
                 "graveyard-page" -> PlantDetailScreen(owner, page.copy(plant = plant.copy(status = "graveyard", attributesJson = JSONObject(plant.attributesJson).put("graveyard_on", "2030-06-02").toString()),
                     tasks = emptyMap()), {}, { _, _ -> }, {}, {}, options = syntheticOptions(), onSpeciesCare = {})
-                "search" -> SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(SpeciesCandidate(910001, "Testoria lucida Inventor", "Testoria lucida", "SPECIES", "FUZZY", 92, true, null, null, commonName = "Synthetic lantern"))), {}, { _, _, _ -> })
+                "search" -> SpeciesPicker(true, SpeciesSearch("synthetic-search", listOf(SpeciesCandidate(910001, "Testoria lucida Inventor", "Testoria lucida", "SPECIES", "FUZZY", 92, true, null, null, commonName = "Synthetic lantern"))), {}, { _, _, _ -> }, onIdentify = {})
                 "restore" -> RestoreForm(plant, listOf(PlantSite("site-one", "Synthetic site")), true, {})
                 "repot" -> PlantRepotForm(plant, syntheticOptions(), true, onSave = {})
                 "add" -> PlantForm(null, syntheticOptions(), listOf(PlantSite("site-one", "Synthetic site")), true, onSave = {})
@@ -591,9 +656,9 @@ class PlantsScreenTest {
             if (name == "birthday" || name == "bury") compose.onNodeWithText("Cancel").performClick()
             if (name == "menu") compose.onNodeWithText("This plant's schedule").performClick()
             if (name == "search") {
-                scroll("Choose Synthetic lantern").performClick()
+                resultCard("Synthetic lantern", "Testoria lucida").performClick()
                 compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()
-                compose.onRoot().captureRoboImage("src/test/screenshots/native-plants-confirm-${if (dark) "dark" else "light"}.png")
+                compose.captureDialog("src/test/screenshots/native-plants-confirm-${if (dark) "dark" else "light"}.png")
             }
         }
     }

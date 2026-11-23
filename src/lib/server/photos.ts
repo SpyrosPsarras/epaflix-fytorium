@@ -9,8 +9,12 @@ import { now, calendarDate } from './clock';
 import { storePhoto, removePhotos } from './photo-storage';
 import { imageForm, maxPhotoBytes, sanitiseImage } from './images';
 
+export function resizePhoto(original: Buffer, longEdge: number) {
+  return sharp(original).resize(longEdge, longEdge, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+}
+
 export async function photoThumbnail(original: Buffer): Promise<Buffer> {
-  try { return await sharp(original).resize(400, 400, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(); }
+  try { return await resizePhoto(original, 400); }
   catch { error(422, 'Choose a decodable still image.'); }
 }
 
@@ -63,7 +67,10 @@ export async function addPhoto(identity: Identity, plant: string, request: Reque
       const locked = await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [plant, household]);
       if (!locked.rowCount) error(404, 'Plant not found');
       await storePhotoPair(keys, original, thumb);
-      await client.query('INSERT INTO photo_updates (id, household_id, plant_id, original_key, thumb_key, note, health, taken_on, validated_on, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, household, plant, ...keys, note, health, takenOn, today, identity.member.id, now()]);
+      await client.query(
+        `INSERT INTO photo_updates (id, household_id, plant_id, original_key, thumb_key, note, health, taken_on, validated_on, created_by, created_at, is_cover)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOT EXISTS (SELECT 1 FROM photo_updates WHERE plant_id = $3 AND household_id = $2 AND is_cover))`,
+        [id, household, plant, ...keys, note, health, takenOn, today, identity.member.id, now()]);
       const newer = await client.query('SELECT id FROM photo_updates WHERE plant_id = $1 AND household_id = $2 AND taken_on > $3 LIMIT 1', [plant, household, takenOn]);
       if (health !== null && !newer.rowCount) await client.query('UPDATE plants SET health = $1 WHERE id = $2 AND household_id = $3', [health, plant, household]);
     });
@@ -82,7 +89,10 @@ export async function deletePhoto(id: string, household: string, language: Ident
     await client.query('SELECT id FROM plants WHERE id = $1 AND household_id = $2 FOR UPDATE', [photo.plant_id, household]);
     // Keep the row on storage failure so the member can retry deletion.
     await removePhotos([photo.original_key, photo.thumb_key]);
-    await client.query('DELETE FROM photo_updates WHERE id = $1 AND household_id = $2', [id, household]);
+    const deleted = await client.query<{ is_cover: boolean }>('DELETE FROM photo_updates WHERE id = $1 AND household_id = $2 RETURNING is_cover', [id, household]);
+    if (deleted.rows[0]?.is_cover) await client.query(`UPDATE photo_updates SET is_cover = true WHERE id = (
+      SELECT id FROM photo_updates WHERE plant_id = $1 AND household_id = $2 ORDER BY taken_on DESC, created_at DESC, id DESC LIMIT 1
+    )`, [photo.plant_id, household]);
   });
 }
 

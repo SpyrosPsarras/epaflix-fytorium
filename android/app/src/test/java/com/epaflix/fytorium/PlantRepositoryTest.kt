@@ -51,6 +51,17 @@ class PlantRepositoryTest {
         assertEquals(mapOf("nickname" to "Too long", "pot_size_cm" to "Invalid size"), repo.plantState.value.errors)
         assertFalse(repo.plantState.value.blocked)
     }
+    @Test fun aValidSearchWithNoMatchClearsThePreviousSearchFailure() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertNull(repo.searchSpecies("fern"))
+        assertNotNull(repo.plantState.value.reads["search"])
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"message":"No matching species"}"""))
+        assertEquals(emptyList<com.epaflix.fytorium.plants.SpeciesCandidate>(), repo.searchSpecies("zzqxw")?.candidates)
+        assertNull(repo.plantState.value.reads["search"])
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Search not allowed"}"""))
+        assertNull(repo.searchSpecies("fern"))
+        assertEquals("Search not allowed", repo.plantState.value.reads.getValue("search").message)
+    }
     @Test fun careFailureDoesNotBlockPlantWritesOnValidatedNetwork() = repository { repo, server ->
         server.enqueue(MockResponse().setResponseCode(503))
         repo.refresh()
@@ -172,6 +183,15 @@ class PlantRepositoryTest {
         assertFalse(repo.plantState.value.online)
         assertNull(repo.plantState.value.errors["_form"])
         assertEquals(true, repo.plantState.value.reads["plant/plant-one"]?.offline)
+    }
+    // A plant list Fytorium answers shows it responds again, so the shared not-responding line goes.
+    @Test fun anAnsweredPlantListEndsTheNotRespondingLine() = repository { repo, server ->
+        server.enqueue(MockResponse().setResponseCode(503))
+        repo.refresh()
+        assertTrue(repo.state.value.serverUnavailable)
+        server.enqueue(MockResponse().setBody("[$plantFixture]"))
+        repo.refreshPlants()
+        assertFalse(repo.state.value.serverUnavailable)
     }
     // Not every plant write reloads the plant, so the write's own answer ends a plant not-responding state.
     @Test fun aPlantWriteFytoriumAnswersEndsItsNotRespondingState() = repository { repo, server ->
