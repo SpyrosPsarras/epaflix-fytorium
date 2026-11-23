@@ -90,6 +90,12 @@ internal fun homeFeedVisible(tab: String, taskView: String, feedSettings: Boolea
     fun select(title: String) { com.epaflix.fytorium.household.InviteLinks.clear(); tab = title; addPlant = false; plantsSearch = false; notifications = false; about = false; sites = false; plantaImport = false; household = null; unmatched = false; careSpecies = null; feedSettings = false; feedPlant = null; openTask(null); journalPlantId = null; journalAdd = null }
     fun go(target: String) { select(if (target == "home") "Today" else target); if (target == "home") taskView = "today" }
     fun leave(target: String) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else go(target) }
+    // A question about an unsent invite link means nothing once the link is gone, as after process death: go where the tap was going (Astra W5b-astra-9).
+    LaunchedEffect(leaving) {
+        if (leaving?.startsWith("You can't see this link again.") == true && com.epaflix.fytorium.household.InviteLinks.isEmpty()) {
+            val target = destination; leaving = null; destination = null; target?.let(::go)
+        }
+    }
     LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; leave("home") } }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
     var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }

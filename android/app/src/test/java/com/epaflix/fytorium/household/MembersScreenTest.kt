@@ -76,7 +76,7 @@ class MembersScreenTest {
         var shared: String? = null
         val revoked = mutableListOf<String>()
         var creates = 0
-        restoration.setContent { FytoriumTheme { MembersScreen(loaded, care, onShare = { shared = it },
+        restoration.setContent { FytoriumTheme { MembersScreen(loaded, care, onShare = { shared = it }, onCopy = {},
             onCreateInvite = { role, _ -> creates++; created(role).copy(id = "invite-$creates", link = "/invite/synthetic-link-$creates") },
             onRevoke = { revoked += it; true }) } }
         compose.onNodeWithText("Invite someone").performClick()
@@ -98,7 +98,11 @@ class MembersScreenTest {
         compose.runOnIdle { assertEquals(listOf("invite-1"), revoked) }
         compose.onNodeWithText("Share link").performClick()
         compose.runOnIdle { assertEquals("/invite/synthetic-link-2", shared) }
-        // Once sent, leaving asks nothing and forgets the link.
+        // Android does not say whether a share went through, so leaving still asks (Astra W5b-astra-10); once copied, it does not.
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Leave without sending the link?").assertIsDisplayed()
+        compose.onNodeWithText("Stay").performClick()
+        compose.onNodeWithText("Copy link").performClick()
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Leave without sending the link?").assertDoesNotExist()
         compose.onNodeWithText("Invite someone").assertIsDisplayed()
@@ -178,6 +182,50 @@ class MembersScreenTest {
         row.performClick()
         compose.onNodeWithContentDescription("Back").performClick()
         assertEquals(before, compose.onNodeWithText("Synthetic sitter 11").fetchSemanticsNode().boundsInRoot)
+    }
+
+    // Astra W5b-astra-8: a member's discard question survives process death even when the members load after the page.
+    @Test fun aMembersDiscardQuestionWaitsForTheMembersToLoad() {
+        val state = mutableStateOf(loaded)
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { FytoriumTheme { MembersScreen(state.value, care) } }
+        compose.onNodeWithText("Synthetic sitter").performClick()
+        compose.onNode(hasText("Synthetic fern") and hasText("Synthetic office") and isToggleable()).performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Discard changes?").assertIsDisplayed()
+        compose.runOnIdle { state.value = HouseholdState() }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle { state.value = loaded }
+        compose.onNodeWithText("Discard changes?").assertIsDisplayed()
+        compose.onNodeWithText("Your changes to Synthetic sitter are not saved yet.").assertIsDisplayed()
+    }
+    // Astra W5b-astra-9: the shell's question about an unsent link does not outlive the link; the tab tap goes through.
+    @Test fun theShellsLinkQuestionDoesNotOutliveTheLink() {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(
+                    if (request.method == "POST" && request.path == "/api/household/invites") """{"id":"invite-new","role":"family","expires_at":"$expires","link":"/invite/synthetic-link"}"""
+                    else "[]")
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care, sitesApi = api, sitesConnected = { true }) } }
+            compose.onNode(isTab("More")).performClick()
+            compose.onNodeWithText("Members").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No pending invites.").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Invite someone").performClick()
+            compose.onNode(hasText("Family", substring = true) and isSelectable()).performClick()
+            compose.onNodeWithText("Create invite link").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Share link").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(isTab("Today")).performClick()
+            compose.onNodeWithText("Leave without sending the link?").assertIsDisplayed()
+            InviteLinks.clear()
+            restoration.emulateSavedInstanceStateRestore()
+            compose.waitForIdle()
+            compose.onNodeWithText("Leave without sending the link?").assertDoesNotExist()
+            compose.onNode(isTab("Today")).assertIsSelected()
+        }
     }
 
     // W5b-P12 to P14: saves, removals and revokes name who or what changed in a receipt.
@@ -262,6 +310,7 @@ class MembersScreenTest {
         capture("invite-link")
         compose.onNodeWithText("Share link").performClick()
         compose.runOnIdle { assertEquals("/invite/synthetic-link", share) }
+        compose.onNodeWithText("Copy link").performClick()
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Synthetic sitter").performClick()
         capture("shares")

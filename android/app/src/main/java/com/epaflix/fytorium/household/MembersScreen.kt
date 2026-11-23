@@ -49,6 +49,7 @@ internal object InviteLinks {
     @Synchronized fun get(id: String): String? = links[id]
     @Synchronized fun drop(id: String) { links.remove(id) }
     @Synchronized fun clear() = links.clear()
+    @Synchronized fun isEmpty() = links.isEmpty()
 }
 
 // What the link page keeps across process death: never the link itself.
@@ -230,7 +231,8 @@ private val roleCards = listOf(
                 val invite = draft!!
                 if (link != null) {
                     Text("Send this link to the person you invite. It works once and expires on ${expiryDate(invite.expiresAt)}. You can't see it again after you leave this page.")
-                    Button(onClick = { sent = true; onShare(link) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Share link") }
+                    // Android does not say whether a share went through, so only Copy counts as sent (Astra W5b-astra-10).
+                    Button(onClick = { onShare(link) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Share link") }
                     OutlinedButton(onClick = { sent = true; onCopy(link) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Copy link") }
                     TextButton(onClick = { leave("list") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Done") }
                 } else {
@@ -291,7 +293,8 @@ private val roleCards = listOf(
         if (state.loading || state.saving || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
     } }
     // After process death the link is gone, so a pending leave question has nothing left to protect (Astra W5b-astra-4).
-    SideEffect { if (leaving != null && leaveBody == null) leaving = null }
+    // Only the link question goes when its link is gone; other drafts wait for their data to load (Astra W5b-astra-8).
+    SideEffect { if (leaving != null && page == "link" && link == null) leaving = null }
     leaving?.takeIf { leaveBody != null }?.let { target ->
         val (question, keepLabel, leaveLabel) = leaveQuestion(leaveBody.orEmpty())
         LeaveDialog(question, leaveBody.orEmpty(), keepLabel, leaveLabel, onKeep = { leaving = null }) { leaving = null; go(target) }
