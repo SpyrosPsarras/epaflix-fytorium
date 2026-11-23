@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+usage() {
+  cat >&2 <<'EOF'
+Usage: ./scripts/gate android [--tests PATTERN]...   Android unit tests with screenshot verify
+       ./scripts/gate server [API test file]...      typecheck, unit tests and the named API tests
+       ./scripts/gate full                           every check except emulator e2e
+EOF
+  exit 2
+}
+step() {
+  start=$(date +%s)
+  echo "GATE START $*"
+  if "$@"; then
+    echo "GATE PASS $* ($(( $(date +%s) - start ))s)"
+  else
+    code=$?
+    echo "GATE FAIL $* ($(( $(date +%s) - start ))s) EXIT=$code"
+    exit "$code"
+  fi
+}
+mode=${1:-}
+[ "$#" -eq 0 ] || shift
+case "$mode" in
+  android)
+    step ./scripts/android test "$@"
+    ;;
+  server)
+    step ./scripts/container install --frozen-lockfile
+    step ./scripts/container typecheck
+    step ./scripts/container test:unit
+    [ "$#" -eq 0 ] || step ./scripts/container test:api "$@"
+    ;;
+  full)
+    [ "$#" -eq 0 ] || usage
+    step ./scripts/container install --frozen-lockfile
+    step ./scripts/container typecheck
+    step ./scripts/container test:unit
+    step ./scripts/container test:api
+    step ./scripts/android test
+    step ./scripts/android lint
+    step ./scripts/android release-check
+    ;;
+  *) usage;;
+esac
+echo "GATE OK $mode"

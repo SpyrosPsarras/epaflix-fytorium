@@ -10,11 +10,16 @@ jobs:
         with:
           persist-credentials: false
       - uses: gradle/actions/wrapper-validation@41ad77ca97e46ee2e825d5e6b9a95d8169fcc44c # v4.4.2
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: android/.gradle-cache
+          key: gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
       - name: Build
         run: ./scripts/android build
       - name: Release shrinking and APK size
         run: ./scripts/android release-check
-      - name: Unit and screen tests
+      - name: Unit tests and screenshot verify
         run: ./scripts/android test
       - name: Lint
         run: ./scripts/android lint

@@ -120,6 +120,7 @@ dependencies {
 tasks.withType<Test>().configureEach {
     // CI logs show why a test failed, not only its line.
     testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
+    maxParallelForks = 2
     systemProperty("robolectric.graphicsMode", "NATIVE")
     systemProperty("roborazzi.output.dir", layout.buildDirectory.dir("outputs/roborazzi").get().asFile.path)
 }

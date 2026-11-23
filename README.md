@@ -17,6 +17,8 @@ docker build -t fytorium:walking-skeleton .
 ./scripts/smoke-image fytorium:walking-skeleton
 ```
 
+`./scripts/gate android|server|full` runs these checks and the Android ones in order and stops at the first failure. [docs/agent-workflow.md](docs/agent-workflow.md) says which gate to run when.
+
 API tests run real migrations and a synthetic OIDC provider, including PKCE and signed ID tokens. Table-driven unit tests exercise the pure schedule engine with explicit calendar dates, without a database or clock.
 
 ## Run the stack and browser tests
