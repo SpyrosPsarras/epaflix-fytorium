@@ -68,6 +68,16 @@ class Repository(private val api: ApiClient, private val cache: CareCache, priva
     private val monitor = Any()
     private val workLock = Any()
     private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // A kept Identify photo becomes the new plant's cover. It runs here, not in the page, so closing or hiding the page cannot cancel it or delete the file first (W6-P20).
+    // The plant list behind the Plants grid and Journal's picker reloads in the same step.
+    fun uploadKeptPhoto(context: android.content.Context, photosApi: ApiClient, connected: () -> Boolean, plant: Plant, path: String) = background.launch {
+        try {
+            val uploaded = com.epaflix.fytorium.photos.PhotoRepository(photosApi, { true }, connected, plant.id)
+                .let { photos -> photos.options() && photos.upload(context, android.net.Uri.fromFile(java.io.File(path)), "", "", photos.state.value.today.orEmpty()) }
+            if (uploaded) refreshPlants() else showReceipt("Added ${plant.displayName} to ${plant.siteName ?: "your household"}. Its photo didn't upload.")
+        } finally { java.io.File(path).delete() }
+        openPlant(plant.id, full = true)
+    }
     private var generation = 0
     private val requestIds = mutableMapOf<String, String>()
     private var ownUndoBefore: Pair<String, Map<String, Boolean>>? = null

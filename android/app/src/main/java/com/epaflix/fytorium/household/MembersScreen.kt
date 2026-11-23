@@ -290,6 +290,7 @@ private val roleCards = listOf(
                 }
             }
         }
+        com.epaflix.fytorium.ReportBusy(state.saving || submitting)
         if (state.loading || state.saving || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
     } }
     // After process death the link is gone, so a pending leave question has nothing left to protect (Astra W5b-astra-4).

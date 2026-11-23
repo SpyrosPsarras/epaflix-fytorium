@@ -295,6 +295,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     modifier = Modifier.heightIn(min = 48.dp).semantics { if (!ready) disabled() }) { Text("Add photo update") }
                 PlantError(state.error)
             }
+            com.epaflix.fytorium.ReportBusy(state.saving)
             if (state.saving) state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) }
                 ?: LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
@@ -425,6 +426,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                     }
                 }
             }
+            com.epaflix.fytorium.ReportBusy(state.saving)
             if (state.saving) state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) }
                 ?: LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }

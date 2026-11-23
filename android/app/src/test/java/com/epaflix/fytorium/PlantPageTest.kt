@@ -3063,8 +3063,8 @@ class PlantPageTest {
         compose.onNode(chosen).assertIsDisplayed()
     }
 
-    // C19: leaving a plant form through the navigation bar asks first, as its Back does.
-    @Test fun leavingAFormThroughTheNavigationBarAsksFirst() = withPlantServer { repo, showing ->
+    // C19, W6-P5, P6: a tab trip keeps a plant form; reselecting Plants closes it and asks first, as its Back does.
+    @Test fun aTabTripKeepsAFormAndReselectingPlantsAsksFirst() = withPlantServer { repo, showing ->
         val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
         try {
             compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
@@ -3078,19 +3078,23 @@ class PlantPageTest {
             val water = hasText("Water interval in days") and hasSetTextAction()
             compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(water).performTextReplacement("9")
-            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNode(isTab("Today")).performClick()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
+            compose.onNode(isTab("Plants")).performClick()
+            compose.onNode(water).assertTextContains("9")
+            compose.onNode(isTab("Plants")).performClick()
             compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(water).assertTextContains("9")
-            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNode(isTab("Plants")).performClick()
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(water).fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithText("Discard changes?").assertDoesNotExist()
         } finally { controller.close() }
     }
 
-    // C19: a notification tap that opens Home asks first too, with the same question as Back.
-    @Test fun aNotificationTapFromAFormWithChangesAsksFirst() = withPlantServer { repo, showing ->
+    // W6-P16: a notification shows Today and leaves a form in the Plants tab as it was.
+    @Test fun aNotificationTapLeavesAPlantsFormAsItWas() = withPlantServer { repo, showing ->
         val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
         val home = mutableIntStateOf(0)
         try {
@@ -3105,18 +3109,15 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).performTextReplacement("Fern")
             compose.runOnIdle { home.intValue++ }
-            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
-            compose.onNodeWithText("Keep editing").performClick()
-            compose.onNode(name).assertTextContains("Fern")
-            compose.runOnIdle { home.intValue++ }
-            compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNode(name).assertDoesNotExist()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
+            compose.onNode(isTab("Plants")).performClick()
+            compose.onNode(name).assertTextContains("Fern")
         } finally { controller.close() }
     }
 
-    // C19: a notification tap from the override dialog in Care defaults for this species, opened from the plant page, asks first with the dialog's question.
-    @Test fun aNotificationTapFromTheOverrideDialogOnThePlantPageAsksFirst() = withPlantServer({ path -> when (path) {
+    // C19, W6-P6: reselecting Plants from the override dialog in Care defaults for this species, opened from the plant page, asks first with the dialog's question.
+    @Test fun reselectingPlantsFromTheOverrideDialogOnThePlantPageAsksFirst() = withPlantServer({ path -> when (path) {
         "/api/species/910001/care" -> careFixture.replace("pending", "done")
         "/api/species/910001/outdoor-months" -> outdoorFixture
         else -> null
@@ -3136,23 +3137,24 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(open).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(open).performScrollTo().performClick()
             compose.onNodeWithText("Days").performTextReplacement("9")
-            compose.runOnIdle { home.intValue++ }
+            compose.onNode(isTab("Plants")).performClick()
             compose.assertDiscard("Your watering interval override for Testoria nebulosa Inventor is not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNodeWithText("Days").assertTextContains("9")
-            compose.runOnIdle { home.intValue++ }
+            compose.onNode(isTab("Plants")).performClick()
             compose.onNodeWithText("Discard").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Search plants") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Days").assertDoesNotExist()
         } finally { controller.close() }
     }
 
-    // C19: Discard from the navigation bar drops the form even when the tap stays on Plants, so Log out under More never follows unsaved changes.
+    // C19, W6: Log out under More never follows unsaved changes left in the Plants tab without asking their question; Keep editing shows the form.
     @Test fun logOutNeverFollowsAnEditWithChangesWithoutAsking() = withPlantServer { repo, showing ->
         val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        var loggedOut = 0
         try {
             compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
-                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }, onLogout = { loggedOut++ }) } }
             compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
             compose.onNode(hasText("Plants") and hasClickAction()).performClick()
             compose.onNodeWithTag("plant:plant-one").performClick()
@@ -3162,16 +3164,20 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).performTextReplacement("Fern")
             compose.onNode(isTab("More")).performClick()
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
+            compose.onNodeWithText("Log out").performScrollTo().performClick()
+            compose.onNode(hasText("Log out") and hasAnyAncestor(isDialog())).performClick()
             compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
+            compose.onNode(isTab("Plants")).assertIsSelected()
             compose.onNode(name).assertTextContains("Fern")
-            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
-            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
-            compose.onNodeWithText("Discard").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isEmpty() }
             compose.onNode(isTab("More")).performClick()
-            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
-            compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Log out").performScrollTo().performClick()
+            compose.onNode(hasText("Log out") and hasAnyAncestor(isDialog())).performClick()
+            compose.assertDiscard("Your changes to Synthetic fern are not saved yet.")
+            compose.runOnIdle { assertEquals(0, loggedOut) }
+            compose.onNodeWithText("Discard").performClick()
+            compose.runOnIdle { assertEquals(1, loggedOut) }
         } finally { controller.close() }
     }
 
@@ -3643,8 +3649,8 @@ class PlantPageTest {
         }
     }
 
-    // C19: leaving Create a site through the navigation bar asks first, with the site form's question.
-    @Test fun leavingCreateASiteThroughTheNavigationBarAsksFirst() = withPlantServer(::restoreServed) { repo, showing ->
+    // C19, W6-P5, P6: a tab trip keeps Create a site; reselecting Plants asks first, with the site form's question.
+    @Test fun reselectingPlantsFromCreateASiteAsksFirst() = withPlantServer(::restoreServed) { repo, showing ->
         val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
         try {
             compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
@@ -3655,21 +3661,24 @@ class PlantPageTest {
             openCreateASite()
             val name = hasText("Name") and hasSetTextAction()
             compose.onNode(name).performTextInput("Synthetic porch")
-            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNode(isTab("Today")).performClick()
+            compose.onNode(isTab("Plants")).performClick()
+            compose.onNode(name).assertTextContains("Synthetic porch")
+            compose.onNode(isTab("Plants")).performClick()
             compose.assertDiscard("Your changes to this new site are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Synthetic porch")
-            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNode(isTab("Plants")).performClick()
             compose.onNodeWithText("Discard").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Search plants") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).assertDoesNotExist()
         } finally { controller.close() }
     }
 
-    // C19: tapping Plants again on an unchanged form keeps the navigation bar's question once something is typed, on Edit and on Create a site from Restore.
-    @Test fun typingAfterTappingPlantsAgainInEditStillAsks() = typingAfterTappingPlantsAgain(createSite = false)
-    @Test fun typingAfterTappingPlantsAgainInCreateASiteStillAsks() = typingAfterTappingPlantsAgain(createSite = true)
-    private fun typingAfterTappingPlantsAgain(createSite: Boolean) = withPlantServer({ if (createSite) restoreServed(it) else null }) { repo, showing ->
+    // C19: after a tab trip from an unchanged form, typing still makes reselecting Plants ask, on Edit and on Create a site from Restore.
+    @Test fun typingAfterATabTripInEditStillAsks() = typingAfterATabTrip(createSite = false)
+    @Test fun typingAfterATabTripInCreateASiteStillAsks() = typingAfterATabTrip(createSite = true)
+    private fun typingAfterATabTrip(createSite: Boolean) = withPlantServer({ if (createSite) restoreServed(it) else null }) { repo, showing ->
         val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
         try {
             compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
@@ -3685,9 +3694,10 @@ class PlantPageTest {
             compose.waitUntil(5_000) { compose.onAllNodes(name and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             // The page's own reads land first, so only the typing could make the screen draw again after the tap.
             compose.waitUntil(5_000) { Running.count.get() == 0 }
-            compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+            compose.onNode(isTab("Today")).performClick()
+            compose.onNode(isTab("Plants")).performClick()
             compose.onNode(name).performTextInput("Synthetic porch")
-            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNode(isTab("Plants")).performClick()
             compose.assertDiscard(if (createSite) "Your changes to this new site are not saved yet." else "Your changes to Synthetic fern are not saved yet.")
             compose.onNodeWithText("Keep editing").performClick()
             compose.onNode(name).assertTextContains("Synthetic porch", substring = true)
@@ -3937,8 +3947,8 @@ class PlantPageTest {
         }
     }
 
-    // C19: Discard from the navigation bar also drops the form's refused save, so a later Add plant shows nothing of it.
-    @Test fun discardFromTheNavigationBarDropsTheFormsRefusedSave() {
+    // C19: Discard after reselecting Plants also drops the form's refused save, so a later Add plant shows nothing of it.
+    @Test fun discardFromAReselectDropsTheFormsRefusedSave() {
         val refusing = AtomicBoolean(false)
         val refused = "Plant data does not meet required constraints."
         withPlantServer({ path -> if (path == "/api/species/search") speciesSearch else null },
@@ -3960,8 +3970,9 @@ class PlantPageTest {
                 compose.onNodeWithText("Save plant").performClick()
                 compose.waitUntil(5_000) { compose.onAllNodesWithText(refused).fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
                 refusing.set(false)
-                compose.onNode(hasText("Today") and hasClickAction()).performClick()
+                compose.onNode(isTab("Plants")).performClick()
                 compose.onNodeWithText("Discard").performClick()
+                compose.onNode(isTab("Today")).performClick()
                 compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithContentDescription("Add plant").performClick()
                 val query = hasText("Species name") and hasSetTextAction()

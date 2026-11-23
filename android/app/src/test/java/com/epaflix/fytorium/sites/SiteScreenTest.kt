@@ -499,14 +499,14 @@ class SiteScreenTest {
             compose.onNodeWithText("Name").performTextReplacement("Synthetic den")
             val question = "Your changes to Synthetic room are not saved yet."
             for (leave in listOf<() -> Unit>({ compose.onNodeWithContentDescription("Back").performClick() }, { compose.onNodeWithText("Cancel").performScrollTo().performClick() },
-                { compose.onNode(hasText("Today") and hasClickAction()).performClick() })) {
+                { compose.onNode(isTab("Plants")).performClick() })) {
                 leave()
                 compose.onNodeWithText("Discard changes?").assertIsDisplayed()
                 compose.onNodeWithText(question).assertIsDisplayed()
                 compose.onNodeWithText("Keep editing").performClick()
                 compose.onNodeWithText("Name").assertTextContains("Synthetic den")
             }
-            compose.onNode(hasText("Today") and hasClickAction()).performClick()
+            compose.onNode(isTab("Plants")).performClick()
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Save site").fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithText("Discard changes?").assertDoesNotExist()

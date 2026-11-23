@@ -76,11 +76,12 @@ internal data class PhotoSourceActions(val take: () -> Unit, val choose: () -> U
             keep
         }
     }
+    val pageLeft = com.epaflix.fytorium.LocalPageLeft.current
     DisposableEffect(Unit) {
         onDispose {
-            // Rotation while the camera is open must not remove its output file; Identify keeps its photos while the add form is open.
+            // Rotation while the camera is open must not remove its output file; Identify keeps its photos while the add form is open; a hidden tab keeps its page's photos (W6-P19).
             // The add flow deletes captures/identify when it ends; shortcut: gallery grants it took stay until Android drops them, release them too if the grant limit matters.
-            if ((context as? android.app.Activity)?.isChangingConfigurations != true && !keepOnLeave) {
+            if ((context as? android.app.Activity)?.isChangingConfigurations != true && !keepOnLeave && pageLeft()) {
                 captures.forEach { deleteCameraCapture(File(it)) }; pending?.let { deleteCameraCapture(File(it)) }
                 picked.forEach { releasePicked(Uri.parse(it)) }
             }

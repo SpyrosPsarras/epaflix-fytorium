@@ -68,12 +68,13 @@ class AppShellRestorationTest {
     @Test fun sitterClearsRestoredJournal() = navigation("sitter", "journal")
     @Test fun differentMemberClearsRestoredJournal() = navigation("member", "journal")
     @Test fun familyKeepsJournalAcrossRestore() = navigation(null, "journal", Role.family)
-    @Test fun photoDraftAsksBeforeTabExitAndRestoresItsDestination() = navigation(null, "photo-form", exit = "More")
+    // W6-P5: a tab tap keeps a draft over Today and never asks; W6-P16: a notification asks only about a page over Today.
+    @Test fun photoDraftStaysThroughATabTrip() = navigation(null, "photo-form", exit = "More")
     @Test fun photoDraftAsksBeforeNotificationExitAndRestoresItsDestination() = navigation(null, "photo-form", exit = "home")
-    @Test fun restoredPhotoDraftAsksBeforeTabExit() = navigation(null, "photo-form", exit = "More", restoreBeforeExit = true)
+    @Test fun restoredPhotoDraftStaysThroughATabTrip() = navigation(null, "photo-form", exit = "More", restoreBeforeExit = true)
     @Test fun restoredPhotoDraftAsksBeforeNotificationExit() = navigation(null, "photo-form", exit = "home", restoreBeforeExit = true)
-    @Test fun pendingSiteDiscardRestoresItsTabDestination() = navigation(null, "site-draft", exit = "Journal")
-    @Test fun pendingSiteDiscardRestoresItsNotificationDestination() = navigation(null, "site-draft", exit = "home")
+    @Test fun siteDraftInPlantsStaysThroughATabTrip() = navigation(null, "site-draft", exit = "Journal")
+    @Test fun siteDraftInPlantsStaysThroughANotification() = navigation(null, "site-draft", exit = "home")
     @Test fun restoredPhotoFormKeepsDraft() = navigation(null, "photo-form")
     @Test fun logoutClearsRestoredPhotoForm() = navigation("logout", "photo-form")
     @Test fun sitterClearsRestoredPhotoForm() = navigation("sitter", "photo-form")
@@ -321,6 +322,14 @@ class AppShellRestorationTest {
                 if (restoreBeforeExit) restoration.emulateSavedInstanceStateRestore()
                 if (exit == "home") compose.runOnIdle { homeRequest.intValue++ }
                 else compose.onNode(hasText(exit) and isSelectable()).performClick()
+                if (exit != "home" || route != "photo-form") {
+                    compose.onNodeWithText("Discard changes?").assertDoesNotExist()
+                    compose.onNode(hasText(if (exit == "home") "Today" else exit) and isSelectable() and !hasTestTag("view-today")).assertIsSelected()
+                    restoration.emulateSavedInstanceStateRestore()
+                    compose.onNode(hasText(if (route == "site-draft") "Plants" else "Today") and isSelectable() and !hasTestTag("view-today")).performClick()
+                    compose.onNodeWithText(draft).assertExists()
+                    return
+                }
                 compose.onNodeWithText("Discard changes?").assertExists()
                 compose.onNodeWithText(question).assertExists()
                 restoration.emulateSavedInstanceStateRestore()
@@ -397,7 +406,8 @@ class AppShellRestorationTest {
                 }
             } else {
                 if (reset == "sitter") {
-                    val tab = when (route) { "journal" -> "Today"; "feed-plant", "plant-species", "photo-form", "journal-plant", "identify" -> "Plants"; else -> "More" }
+                    // Pages opened over Today or the Journal close; Today shows (W6-P17).
+                    val tab = when (route) { "journal", "feed-plant", "plant-species", "photo-form", "journal-plant" -> "Today"; "identify" -> "Plants"; else -> "More" }
                     compose.onNode(hasText(tab) and isSelectable() and !hasTestTag("view-today")).assertIsSelected()
                 } else if (reset == "family" && route == "planta") compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
                 else compose.onNodeWithContentDescription("Search plants").assertIsDisplayed()

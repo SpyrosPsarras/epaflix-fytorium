@@ -203,6 +203,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                     TextButton(onClick = { uriHandler.openUri("https://www.gbif.org") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Species names from GBIF, CC BY 4.0") }
                 }
             }
+            com.epaflix.fytorium.ReportBusy(state.saving || submitting)
             if (state.loading || state.saving || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
         // W5b-P23: the import bar stays at the bottom while a review is open, and names the plants still to decide.

@@ -38,6 +38,8 @@ class FytoriumApplication : Application(), androidx.work.Configuration.Provider 
         ApiClient(BuildConfig.SERVER_URL, store) {
             try {
                 clearCameraCaptures(cacheDir, delete = captureDeleter)
+                // Identify photos kept for a plant not saved yet (W6-P19).
+                java.io.File(noBackupFilesDir, "photo-drafts").deleteRecursively()
                 contentResolver.persistedUriPermissions.toList().forEach { permission ->
                     runCatching { contentResolver.releasePersistableUriPermission(permission.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                 }
