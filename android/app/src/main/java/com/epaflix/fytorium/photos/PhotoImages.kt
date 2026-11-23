@@ -12,6 +12,11 @@ import okio.BufferedSink
 import okio.ForwardingSink
 import okio.buffer
 
+internal fun deleteCameraCapture(file: File) {
+    file.delete()
+    File(file.path + ".draft").delete()
+}
+
 internal fun clearCameraCaptures(
     cacheDir: File,
     startup: Boolean = false,
@@ -23,9 +28,11 @@ internal fun clearCameraCaptures(
         File(cacheDir, "captures").listFiles()?.forEach { capture ->
             capture.walkBottomUp().forEach { file ->
                 runCatching {
-                    // Keep recent files and their parent directories after process recreation.
+                    // shortcut: a marked capture outlives a draft Android dropped (reboot, force stop) until logout or cache eviction; add a max age if storage use grows.
                     if (startup && (if (file.isDirectory) file.listFiles()?.isNotEmpty() != false
-                        else file.lastModified() > now - 10 * 60 * 1000L)) return@runCatching
+                        else File(file.path + ".draft").isFile ||
+                            (file.name.endsWith(".draft") && File(file.path.removeSuffix(".draft")).isFile) ||
+                            file.lastModified() > now - 10 * 60 * 1000L)) return@runCatching
                     if (!delete(file)) reportFailure()
                 }.onFailure { reportFailure() }
             }

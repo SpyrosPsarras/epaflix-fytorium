@@ -1,6 +1,6 @@
 package com.epaflix.fytorium
 
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.*
 import org.json.JSONObject
 import org.json.JSONArray
@@ -17,7 +17,9 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class LaunchTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val compose = createAndroidComposeRule<MainActivity>()
+    // Inside the compose rule, so the capture sees the activity before it closes.
+    @get:Rule(order = 1) val failures = FailureCapture()
     @Test fun launchesAndShowsLogin() {
         compose.onNodeWithText("Fytorium").assertIsDisplayed()
         compose.onNodeWithText("Log in").assertIsDisplayed()
@@ -121,12 +123,17 @@ class LaunchTest {
         compose.waitForState("OIDC subject entered", 10_000) { device.hasObject(By.text("synthetic-a03-owner")) }
         val keyboard = By.pkg("com.google.android.inputmethod.latin")
         if (compose.waitForState("Login keyboard appeared", 2_000, required = false) { device.hasObject(keyboard) }) {
-            device.pressBack()
+            blurFocusedChromeField()
             compose.waitForState("Keyboard closed", 5_000) { !device.hasObject(keyboard) }
         }
         // Swipe the page gutter, not the claims textarea, without pulling to refresh.
         for (attempt in 1..8) {
             if (device.hasObject(By.text("Sign-in"))) break
+            // A keyboard that opens late would turn the swipe into glide typing in the subject field.
+            if (device.hasObject(keyboard)) {
+                blurFocusedChromeField()
+                compose.waitForState("Keyboard closed before swipe $attempt", 5_000) { !device.hasObject(keyboard) }
+            }
             device.swipe(device.displayWidth * 95 / 100, device.displayHeight * 3 / 4,
                 device.displayWidth * 95 / 100, device.displayHeight / 2, 80)
             compose.waitForState("OIDC Sign-in after swipe $attempt", 2_000, required = false) {
@@ -222,25 +229,28 @@ class LaunchTest {
             val future = app.repository.state.value.upcoming!!.sections.flatMap { it.tasks }.first { it.plantId == plantId && it.dueOn!! > "2030-06-02" }
             val futureTag = "task:$plantId:${future.key}"
             compose.waitForNode(hasTestTag(futureTag)).performScrollTo()
-            button(futureTag, hasContentDescription("Snooze 2 days")).assertDoesNotExist()
+            button(futureTag, hasContentDescription("by 2 days", substring = true)).assertDoesNotExist()
             compose.onNodeWithTag("view-today").waitForAction("view-today").performClick()
             device.executeShellCommand("cmd connectivity airplane-mode enable")
             app.care.refresh()
-            compose.waitForState("Offline cached Today banner visible", 30_000) {
+            compose.waitForState("Offline line under the Today title visible", 30_000) {
                 runCatching {
-                    compose.onNode(hasText("Offline. Showing tasks from", substring = true)).performScrollTo().assertIsDisplayed()
+                    compose.onNode(hasText("Offline \u00b7 updated", substring = true)).assertIsDisplayed()
                     true
                 }.getOrDefault(false)
             }
+            compose.onNode(hasText("Offline \u00b7 updated", substring = true)).performClick()
+            compose.onNode(hasText("You can still see the tasks from the last update", substring = true)).assertIsDisplayed()
+            compose.onNodeWithText("Close").performClick()
             button(waterTag, completeWater).assertIsNotEnabled()
-            button(waterTag, hasContentDescription("Snooze 2 days")).assertIsNotEnabled()
+            button(waterTag, hasContentDescription("by 2 days", substring = true)).assertIsNotEnabled()
             // This negative-control click must stay disabled to prove it cannot queue a write.
             button(waterTag, completeWater).performScrollTo().performClick()
             assertEquals("Cached Today was lost in airplane mode", "Synthetic A04 fern", app.repository.state.value.today!!.sections.flatMap { it.tasks }.first { it.plantId == plantId }.plantName)
             device.executeShellCommand("cmd connectivity airplane-mode disable")
             waitForGuestNetwork(app)
             app.care.refresh()
-            compose.waitForState("Online refresh after airplane mode", 30_000) { !app.repository.state.value.busy && !app.repository.state.value.offline }
+            compose.waitForState("Online refresh after airplane mode", 30_000) { app.repository.state.value.let { !it.busy && !it.offline && !it.serverUnavailable } }
             compose.onNodeWithContentDescription("Add plant").assertIsEnabled()
             assertEquals("Offline click queued a write", history.length(), JSONArray(json("/api/plants/$plantId/history")).length())
             println("A04 E2E PASS: late complete/undo, future snooze absent, cached Today in airplane mode, writes disabled and not queued")

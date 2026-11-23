@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -31,13 +32,17 @@ internal val ThumbnailLoading = SemanticsPropertyKey<Boolean>("ThumbnailLoading"
 private var SemanticsPropertyReceiver.thumbnailLoading by ThumbnailLoading
 
 fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days / 30}mo late"
+internal const val ChangedElsewhere = "This task changed elsewhere. Pull to refresh."
 
-@Composable internal fun TaskRow(task: CareTask, state: CareState, today: String, photo: Bitmap?,
-    onAction: (String) -> Unit, title: String = task.plantName, details: List<String> = listOf(task.siteName), photoLoading: Boolean = false, onOpen: () -> Unit = {},
-    showPostponed: Boolean = false, listed: Boolean = true, blocked: String? = null, onBlocked: (String) -> Unit = {}, subtitleLine: Int = subtitleLineHeight()) {
+@Composable internal fun TaskRow(task: CareTask, state: CareState, today: String?, photo: Bitmap?,
+    onAction: (String) -> Unit, title: String = task.plantName, details: List<String> = listOf(task.siteName), photoLoading: Boolean = false, onOpen: (() -> Unit)? = {},
+    showPostponed: Boolean = false, listed: Boolean = true, blocked: String? = null, onBlocked: (String) -> Unit = {}, subtitleLine: Int = subtitleLineHeight(),
+    icon: ImageVector? = null, openLabel: String = "Open ${task.plantName}") {
     val event = task.completedEvent
-    val postponed = event?.takeIf { it.kind != "completed" }
-    val actions = state.member?.let { task.actions(today, it, event) }.orEmpty()
+    // A held row whose event this device's own Undo reversed, and which took back nothing still listed, says so instead of keeping its old label and controls.
+    val undone = !listed && event != null && state.transitions.any { it.first == event.id }
+    val postponed = event?.takeIf { it.kind != "completed" && !undone }
+    val actions = if (undone) emptyList() else today?.let { day -> state.member?.let { task.actions(day, it, event) } }.orEmpty()
     val busy = BusyKey.Row(task.occurrence) in state.pending
     val enabled = state.writable && !busy && listed
     // A control that is off for a connection, an app update or a held change still takes a tap, to say why.
@@ -48,14 +53,14 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
     val filled = IconButtonDefaults.filledIconButtonColors()
     val parts = details.filter { it.isNotBlank() }
     val until = task.postponedUntil
-    val status = postponed?.let { until?.let { "until " + shortDate(it) } ?: it.label } ?: task.postponedLabel?.takeIf { showPostponed && event == null }
+    val status = if (undone) "Undone" else postponed?.let { until?.let { "until " + shortDate(it) } ?: it.label } ?: task.postponedLabel?.takeIf { showPostponed && event == null }
     // An empty subtitle keeps its line's height, split around the centred name, so a label appearing later never changes the row's height.
     val emptyLine = subtitleLine.takeIf { parts.isEmpty() && status == null }
     Column(Modifier.fillMaxWidth().testTag("task:${task.plantId}:${task.key}")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).heightIn(min = 56.dp).clickable(onClickLabel = "Open ${task.plantName}", onClick = onOpen)
-                .semantics { contentDescription = "Open ${task.plantName}" }, verticalAlignment = Alignment.CenterVertically) {
-                TaskPhoto(task, photo, event == null, photoLoading)
+            Row(Modifier.weight(1f).heightIn(min = 56.dp).then(onOpen?.let { open -> Modifier.clickable(onClickLabel = openLabel, onClick = open)
+                .semantics { contentDescription = openLabel } } ?: Modifier), verticalAlignment = Alignment.CenterVertically) {
+                if (icon != null) TaskIcon(icon, if (event == null && today != null) task.lateDays else 0) else TaskPhoto(task, photo, event == null, photoLoading)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                     val padding = with(LocalDensity.current) { emptyLine?.let { Modifier.padding(top = (it / 2).toDp(), bottom = (it - it / 2).toDp()) } ?: Modifier }
@@ -64,7 +69,7 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
                 }
             }
             if ("snooze" in actions) IconButton(onClick = { tap("snooze") }, enabled = tappable, modifier = Modifier.size(48.dp).then(look)) {
-                Icon(Icons.Outlined.NotificationsPaused, contentDescription = "Snooze 2 days", tint = if (enabled) MaterialTheme.colorScheme.primary else off)
+                Icon(Icons.Outlined.NotificationsPaused, contentDescription = "Snooze ${task.label} for ${task.plantAndSite} by 2 days", tint = if (enabled) MaterialTheme.colorScheme.primary else off)
             } else Spacer(Modifier.size(48.dp))
             if (postponed != null) {
                 if ("undo" in actions) IconButton(onClick = { tap("undo") }, enabled = tappable, modifier = Modifier.size(48.dp).then(look).semantics {
@@ -77,7 +82,7 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
                 Box(Modifier.size(48.dp).semantics { contentDescription = "Saving ${task.label} for ${task.plantAndSite}" }, contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
-            } else if (event != null) {
+            } else if (event != null && !undone) {
                 val undoable = "undo" in actions
                 val check = @Composable { Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Check, contentDescription = null, tint = if (undoable && !enabled) filled.disabledContentColor else filled.contentColor) } }
@@ -85,7 +90,7 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
                 val done = "${task.label}${if (watered) " and water" else ""} done for ${task.plantAndSite}"
                 if (undoable) {
                     val description = done + if (!enabled) "" else if (watered) ". Double tap to undo both" else if (event.batchId == null) ". Double tap to undo"
-                        else ". Part of a batch" + state.batches[event.batchId]?.let { " of ${it.scope}" }.orEmpty() + ". Double tap to see the batch"
+                        else ". Part of a batch" + (state.batches[event.batchId] ?: batchReceipt(event, task.plantName))?.let { " of ${it.scope}" }.orEmpty() + ". Double tap to see the batch"
                     Surface(onClick = { tap("undo") }, enabled = tappable, shape = CircleShape,
                         color = if (enabled) filled.containerColor else filled.disabledContainerColor,
                         modifier = Modifier.size(48.dp).then(look).semantics { contentDescription = description }, content = check)
@@ -135,6 +140,25 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
     if (visible) CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp)
 }
 
+// The plant page names the task in each row, so its circle shows the task, not the plant's photo, at the photo's size.
+@Composable private fun TaskIcon(icon: ImageVector, late: Int) {
+    Box(Modifier.width(56.dp).height(62.dp), contentAlignment = Alignment.TopCenter) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(56.dp)) {
+            Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(28.dp)) }
+        }
+        LatePill(late)
+    }
+}
+
+@Composable private fun BoxScope.LatePill(days: Int) {
+    if (days > 0) Surface(shape = CircleShape, color = MaterialTheme.colorScheme.error,
+        modifier = Modifier.align(Alignment.BottomCenter).requiredWidth(IntrinsicSize.Max)) {
+        Text(lateLabel(days), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onError,
+            maxLines = 1, softWrap = false, textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+    }
+}
+
 @Composable private fun TaskPhoto(task: CareTask, bitmap: Bitmap?, pending: Boolean, loading: Boolean) {
     Box(Modifier.width(56.dp).height(62.dp).testTag("thumbnail:${task.coverPhotoId ?: task.plantId}")
         .semantics { thumbnailLoading = loading }, contentAlignment = Alignment.TopCenter) {
@@ -143,11 +167,6 @@ fun lateLabel(days: Int): String = if (days < 60) "${days}d late" else "${days /
             else Box(contentAlignment = Alignment.Center) { Text(task.plantName.take(1).uppercase(), style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.semantics { contentDescription = "No cover photo for ${task.plantName}" }) }
         }
-        if (pending && task.lateDays > 0) Surface(shape = CircleShape, color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.align(Alignment.BottomCenter).requiredWidth(IntrinsicSize.Max)) {
-            Text(lateLabel(task.lateDays), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onError,
-                maxLines = 1, softWrap = false, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-        }
+        LatePill(if (pending) task.lateDays else 0)
     }
 }

@@ -60,12 +60,19 @@ fun runNotificationScenario(compose: AndroidComposeTestRule<ActivityScenarioRule
             val rows = JSONArray(json("/api/notifications/subscriptions"))
             (0 until rows.length()).any { rows.getJSONObject(it).getString("transport") == "fcm" }
         }
-        compose.onNodeWithText("More").performClick()
+        compose.selectTab("More")
         compose.waitForNode(hasText("My notifications")).performScrollTo().performClick()
         compose.waitForNode(hasText("Enable notifications")).performScrollTo().performClick()
         val allow = By.res("com.android.permissioncontroller", "permission_allow_button")
         assertTrue("A12 permission must follow the explained user action", device.wait(Until.hasObject(allow), 10_000))
+        // Until the dialog's window takes input, a tap lands on the screen behind it, such as this screen's settings button.
+        compose.waitForState("A12 permission dialog takes input", 10_000) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.windows.any { it.isFocused && it.root?.packageName?.endsWith("permissioncontroller") == true }
+        }
         device.findObject(allow).click()
+        assertTrue("A12 permission dialog stayed open after Allow", device.wait(Until.gone(allow), 10_000))
+        assertEquals("A12 Allow granted notifications", android.content.pm.PackageManager.PERMISSION_GRANTED,
+            app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS))
         json("/api/notifications/settings", "PUT", JSONObject().put("reminder_time", "00:00").put("reminders_enabled", true)
             .put("weather_alerts_enabled", false).put("completion_notices_enabled", false))
         // Clear only this member's current-day lease through the test-only fixture endpoint.

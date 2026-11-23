@@ -110,11 +110,21 @@ class SpeciesCareRepositoryTest {
         assertFalse(repo.refresh()); assertFalse(repo.state.value.pendingFetch)
     }
     @Test fun failedReadsRetainTheCardUntilSuccessfulRefreshAnd426StaysGated() = withCare { repo, server, _ ->
+        // C1b: a failed read shows in the line with Try again and leaves changes on.
         server.enqueue(MockResponse().setResponseCode(503).setBody("{}")); assertFalse(repo.refresh())
-        assertNotNull(repo.state.value.card); assertFalse(repo.state.value.writable)
+        assertNotNull(repo.state.value.card); assertTrue(repo.state.value.writable)
+        assertEquals("Could not reach the server. Try again.", repo.state.value.pageError)
         server.enqueue(MockResponse().setBody(careFixture)); server.enqueue(MockResponse().setBody(outdoorFixture))
-        assertTrue(repo.refresh()); assertTrue(repo.state.value.writable)
+        assertTrue(repo.refresh()); assertTrue(repo.state.value.writable); assertNull(repo.state.value.pageError)
         server.enqueue(MockResponse().setResponseCode(426).setBody("""{"message":"Update Fytorium"}""")); assertFalse(repo.refresh())
         assertTrue(repo.state.value.updateRequired); assertFalse(repo.state.value.writable)
+    }
+    @Test fun aFailedReadKeepsChangesOffAfterAFailedChange() = withCare { repo, server, _ ->
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Forbidden"}"""))
+        assertFalse(repo.override("light", "full_sun")); assertFalse(repo.state.value.writable)
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"message":"Synthetic species not found"}""")); assertFalse(repo.refresh())
+        assertFalse(repo.state.value.writable)
+        server.enqueue(MockResponse().setBody(careFixture)); server.enqueue(MockResponse().setBody(outdoorFixture))
+        assertTrue(repo.refresh()); assertTrue(repo.state.value.writable)
     }
 }

@@ -109,23 +109,27 @@ const shownToday = (identity: Identity, settings: TaskViewSettings, today: strin
 // A completion shown today stands for its occurrence, so the next one is listed only once a later snooze or skip postponed it.
 const pendingDue = (task: ScheduledTask | undefined, completedToday: boolean) => task?.status === 'due' && (!completedToday || task.postponed) ? task.dueOn : null;
 
-// Read inside an Undo's snapshot: the due date of each plant task's pending occurrence in the member's listing, whatever the view's dates.
+// Read inside an Undo's snapshot: the due date and postponement of each plant task's pending occurrence in the member's listing, whatever the view's dates.
 async function pendingOccurrences(client: pg.PoolClient, identity: Identity, plantIds: string[]) {
   const today = calendarDate(now());
   const plants = await client.query(plantSelectFor(identity.language) + ' WHERE p.id = ANY($1::uuid[]) AND p.household_id = $2', [plantIds, identity.household.id]);
   const { schedules, events } = await schedulePlantTasks(plants.rows, identity.household.id, today, identity.language, client, true);
   const shown = shownToday(identity, await memberSettings(identity, client), today);
   const completed = new Set(events.filter(event => event.kind === 'completed' && shown(event)).map(event => event.plant_id + ':' + taskKey(event)));
-  return (event: Pick<CareEvent, 'plant_id' | 'task_type' | 'custom_task_id'>) =>
-    pendingDue(taskIn(schedules.get(event.plant_id) ?? {}, taskKey(event)), completed.has(event.plant_id + ':' + taskKey(event)));
+  return (event: Pick<CareEvent, 'plant_id' | 'task_type' | 'custom_task_id'>) => {
+    const task = taskIn(schedules.get(event.plant_id) ?? {}, taskKey(event));
+    const due = pendingDue(task, completed.has(event.plant_id + ':' + taskKey(event)));
+    return due ? { due, postponed: task?.postponed ?? null } : null;
+  };
 }
-// An Undo brought back the occurrence its event's task has pending after it, unless that one was already pending before it.
-function restoredBy(before: (event: Pick<CareEvent, 'plant_id' | 'task_type' | 'custom_task_id'>) => string | null, after: typeof before,
+// An Undo brought back the occurrence pending after it unless one with the same date and postponement was pending before, as a skip to the task's own date changes only its postponement.
+function restoredBy(before: (event: Pick<CareEvent, 'plant_id' | 'task_type' | 'custom_task_id'>) => { due: string; postponed: string | null } | null, after: typeof before,
   events: Pick<CareEvent, 'id' | 'plant_id' | 'task_type' | 'custom_task_id'>[]) {
   return events.map(event => {
-    const due = after(event);
-    return { event_id: event.id, occurrence: due && due !== before(event)
-      ? { plant_id: event.plant_id, task_type: event.task_type, custom_task_id: event.custom_task_id ?? null, due_on: due } : null };
+    const pending = after(event);
+    const was = before(event);
+    return { event_id: event.id, occurrence: pending && (pending.due !== was?.due || pending.postponed !== was?.postponed)
+      ? { plant_id: event.plant_id, task_type: event.task_type, custom_task_id: event.custom_task_id ?? null, due_on: pending.due } : null };
   });
 }
 
