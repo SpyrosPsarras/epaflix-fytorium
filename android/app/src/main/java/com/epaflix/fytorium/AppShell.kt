@@ -318,15 +318,18 @@ private fun allowed(route: String, role: Role?) = when {
                     route == "find" -> {
                         val query = rememberSaveable { mutableStateOf("") }
                         var focus by rememberSaveable { mutableStateOf(true) }
+                        // Shown again, it reads the plants, so one added elsewhere is there without a pull (W6-P22; Astra W6-astra-2).
+                        LaunchedEffect(Unit) { withContext(Dispatchers.IO) { controller?.repository?.refreshPlants() } }
                         com.epaflix.fytorium.plants.PlantsList(care, care.plants, false, onPlant = { push("plant/$it") }, onAdd = {}, onGraveyard = {},
                             onRefresh = { controller?.refresh(pulled = true) }, thumbnails = thumbnails, search = query, onBack = { pop() },
                             focusSearch = focus, onFocused = { focus = false }, refreshing = pulling, chooseTitle = "Find a plant",
                             grid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() })
                     }
-                    route == "pick" -> com.epaflix.fytorium.plants.PlantsList(care, care.plants, false, onPlant = { push("photo/$it") }, onAdd = {}, onGraveyard = {},
+                    route == "pick" -> { LaunchedEffect(Unit) { withContext(Dispatchers.IO) { controller?.repository?.refreshPlants() } }
+                        com.epaflix.fytorium.plants.PlantsList(care, care.plants, false, onPlant = { push("photo/$it") }, onAdd = {}, onGraveyard = {},
                         onRefresh = { controller?.refresh(pulled = true) }, thumbnails = thumbnails, search = rememberSaveable { mutableStateOf("") }, onBack = { pop() },
                         refreshing = pulling, chooseTitle = "Choose a plant",
-                        grid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() })
+                        grid = rememberSaveable(saver = androidx.compose.foundation.lazy.grid.LazyGridState.Saver) { androidx.compose.foundation.lazy.grid.LazyGridState() }) }
                     route.startsWith("photo/") && sitesApi != null -> {
                         val picked = care.plants.firstOrNull { it.id == route.removePrefix("photo/") }
                         ReceiptSnackbar(care.receipt, receipts, onUndo = {}, onDone = { controller?.repository?.clearReceipt(it) }, onGone = { receiptsGone++ })

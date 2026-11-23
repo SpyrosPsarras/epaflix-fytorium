@@ -69,6 +69,7 @@ internal fun leaveQuestion(body: String): Triple<String, String, String> = when 
     body == "The location you typed is not saved." -> Triple("Discard these coordinates?", "Keep editing", "Discard")
     body == inviteDraftBody -> Triple("Discard this invite?", "Keep editing", "Discard")
     body.startsWith("You can't see this link again.") -> Triple("Leave without sending the link?", "Stay", "Leave")
+    body.endsWith(" is not added yet.") -> Triple("Discard this plant?", "Keep editing", "Discard")
     else -> Triple("Discard changes?", "Keep editing", "Discard")
 }
 

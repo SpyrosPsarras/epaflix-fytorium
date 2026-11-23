@@ -198,7 +198,9 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     val discardBody = if (id == null) "Your changes to this new plant are not saved yet." else "Your changes to ${plant?.displayName ?: "this plant"} are not saved yet."
     val currentDirty by rememberUpdatedState(onFormDirty)
     // The shell asks the same question before a tab or notification leaves a form with changes.
-    SideEffect { onFormDirty { subpageDraft() ?: discardBody.takeIf { unsaved() } } }
+    // A new plant with a species chosen asks as its Back does, also when the form is untouched, since closing the flow drops the choice (Astra W6-astra-1, astra-3).
+    SideEffect { onFormDirty { subpageDraft() ?: if (page == "form" && id == null && (unsaved() || selection != null)) "${chosenName.ifBlank { "This plant" }} is not added yet."
+        else discardBody.takeIf { unsaved() } } }
     DisposableEffect(Unit) { onDispose { currentDirty { null } } }
     // A search page opens without the last search's failure, so it cannot flash while the first query loads.
     LaunchedEffect(page) { if (page in listOf("search", "change-species") && searched == null) repository?.clearRead("search") }

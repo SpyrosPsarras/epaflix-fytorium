@@ -3976,6 +3976,53 @@ class PlantPageTest {
         }
     }
 
+    // Astra W6-astra-1, astra-3: reselecting Today from Add plant with a species chosen asks Back's own question, also when the form is untouched.
+    @Test fun reselectingTodayFromANewPlantWithAChosenSpeciesAsks() = withPlantServer({ path -> if (path == "/api/species/search") speciesSearch else null }) { repo, showing ->
+        val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+        try {
+            compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+            compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+            compose.onNodeWithContentDescription("Add plant").performClick()
+            val query = hasText("Species name") and hasSetTextAction()
+            compose.waitUntil(5_000) { compose.onAllNodes(query and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(query).performTextInput("nova")
+            compose.onNodeWithContentDescription("Search species").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(starResult).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(starResult).performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Save plant").fetchSemanticsNodes().isNotEmpty() && Running.count.get() == 0 }
+            compose.onNode(isTab("Today")).performClick()
+            compose.onNodeWithText("Discard this plant?").assertIsDisplayed()
+            compose.onNodeWithText(" is not added yet.", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("Keep editing").performClick()
+            compose.onNodeWithText("Save plant").assertExists()
+            compose.onNode(isTab("Today")).performClick()
+            compose.onNodeWithText("Discard").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Save plant").assertDoesNotExist()
+        } finally { controller.close() }
+    }
+
+    // Astra W6-astra-2: Find a plant shown again reads the plants, so one added elsewhere shows without a pull.
+    @Test fun findAPlantShownAgainShowsAPlantAddedElsewhere() {
+        val plants = java.util.concurrent.atomic.AtomicReference("[$plantFixture]")
+        withPlantServer({ path -> if (path == "/api/plants") plants.get() else null }) { repo, showing ->
+            val controller = CareController(RuntimeEnvironment.getApplication(), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }, repo, api)
+            try {
+                compose.setContent { if (showing.value) FytoriumTheme { val care by repo.state.collectAsState()
+                    AppShell(true, care.updateRequired, careState = care, controller = controller, sitesApi = api, sitesConnected = { true }) } }
+                compose.waitUntil(5_000) { synchronized(paths()) { "/api/meta" in paths() } && !repo.state.value.busy }
+                compose.onNodeWithContentDescription("Search plants").performClick()
+                compose.onNode(hasText("Find a plant") and isHeading()).assertIsDisplayed()
+                compose.waitUntil(5_000) { compose.onAllNodesWithTag("plant:plant-one").fetchSemanticsNodes().isNotEmpty() }
+                plants.set("[$plantFixture," + JSONObject(plantFixture).put("id", "plant-two").put("display_name", "Synthetic twin").put("nickname", "Synthetic twin") + "]")
+                compose.onNode(isTab("More")).performClick()
+                compose.onNode(isTab("Today")).performClick()
+                compose.waitUntil(5_000) { compose.onAllNodesWithTag("plant:plant-two").fetchSemanticsNodes().isNotEmpty() }
+            } finally { controller.close() }
+        }
+    }
+
     // C19: Discard after reselecting Plants also drops the form's refused save, so a later Add plant shows nothing of it.
     @Test fun discardFromAReselectDropsTheFormsRefusedSave() {
         val refusing = AtomicBoolean(false)
