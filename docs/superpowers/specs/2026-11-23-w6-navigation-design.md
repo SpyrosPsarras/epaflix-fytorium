@@ -274,7 +274,7 @@ Run as the W5b brief describes (`emu ui`, `emu tap`, `emu text`, `emu key 4`, `e
 - W6-A3. The same plant can be open in two tabs. A save in one shows in the other when that page next reads.
 - W6-A4. Every notification opens Today; there are no deep links to a plant or task.
 - W6-A5. A kept identify photo whose draft is lost with its task (the app swiped away before Save) stays in app storage until log out. Camera captures of a dropped draft stay until the existing startup sweep or log out (the shortcut at `A/photos/PhotoImages.kt:31`).
-- W6-A6. A tab tap during a request that hangs waits up to 20 s for it to end (W6-P21).
+- W6-A6. A tab tap during a request that hangs waits up to 20 s for it to end (W6-P21). After a plant save or command that succeeded, it also waits for the plant's read, so the page opens with it (W3 held-update rule; Sol W6-S18); each of those requests has the same 20 s timeout.
 - W6-A7. A receipt raised while More is shown appears when Today, Plants or the Journal is next shown, since More does not draw receipts.
 - W6-A8. Back at Today's root leaves the app even with Upcoming selected (W6-Q3).
 - W6-A9. Sitters keep the Plants tab and Today's search; both show only their shared plants (K10).

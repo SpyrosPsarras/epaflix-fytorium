@@ -405,6 +405,19 @@ class ShellNavigationTest {
         assertTrue(photo.exists())
     }
 
+    // Sol W6-S16, S22: closing an add flow that only searched leaves Identify's photos to the flow that took them.
+    @Test fun closingASearchOnlyAddFlowKeepsIdentifyPhotos() {
+        val captures = java.io.File(org.robolectric.RuntimeEnvironment.getApplication().cacheDir, "captures/identify").apply { mkdirs() }
+        val photo = java.io.File(captures, "synthetic.jpg").apply { writeText("synthetic") }
+        val shown = mutableStateOf(true)
+        compose.setContent { if (shown.value) FytoriumTheme {
+            com.epaflix.fytorium.plants.PlantsScreen(CareState(member = Member("owner", Role.owner)), null, initialAdd = true, pushed = true) } }
+        compose.onNode(hasText("Add plant") and isHeading()).assertIsDisplayed()
+        compose.runOnIdle { shown.value = false }
+        compose.waitForIdle()
+        assertTrue(photo.exists())
+    }
+
     // W6-T18: the app opts in to predictive back.
     @Test fun theAppOptsInToPredictiveBack() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
