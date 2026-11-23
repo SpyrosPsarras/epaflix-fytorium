@@ -16,7 +16,6 @@ Rules for agents delivering Fytorium waves. They keep the quality bar and cut th
 - `./scripts/android test` verifies screenshots against the committed baselines. Record only for an intended visual change: `ANDROID_RECORD_SCREENSHOTS=1 ./scripts/android screenshots`, then review the image diff before committing it. When CI fails on screenshots, the `roborazzi-diffs` artifact holds the compare images.
 - Run the full check once per candidate, not once per fix.
 - Agents may push fytorium feature branches and open draft pull requests so CI runs. Pushing to main and merging still need the owner's yes.
-- In the 6 GiB lab container, pass `-PtestForks=1` to Gradle until two test processes are measured there.
 
 ## Flaky tests
 
