@@ -197,6 +197,10 @@ private fun allowed(route: String, role: Role?) = when {
     }
     // Back above a root closes the page; at the Plants, Journal and More roots it shows Today; Today's root leaves the app (W6-P9).
     BackHandler(enabled = loggedIn && !updateRequired && (route != null || tab != "Today")) { if (route != null) pop() else show("Today") }
+    // While a form waits in a hidden tab, Back at Today's root keeps the app in the background, also when a notification started it,
+    // where Android would close it and drop the form (Opus W6-opus-1). Otherwise Android's own back-to-home stays.
+    val activity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+    BackHandler(enabled = loggedIn && !updateRequired && route == null && tab == "Today" && drafts.isNotEmpty() && activity != null) { activity?.moveTaskToBack(true) }
     val receipts = remember { SnackbarHostState() }
     val receipt = receipts.currentSnackbarData
     val receiptsOnBar = remember { mutableSetOf<SnackbarData>() }

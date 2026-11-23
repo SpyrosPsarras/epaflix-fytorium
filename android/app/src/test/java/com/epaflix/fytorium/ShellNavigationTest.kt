@@ -227,6 +227,17 @@ class ShellNavigationTest {
         compose.runOnIdle { assertFalse(back().hasEnabledCallbacks()) }
     }
 
+    // Opus W6-opus-1: with a form waiting in a hidden tab, Back at Today's root keeps the app instead of letting Android close it.
+    @Test fun backAtTodayWithAHiddenDraftKeepsTheApp() = shell {
+        compose.runOnIdle { assertFalse(back().hasEnabledCallbacks()) }
+        openSiteDraft()
+        tab("Today").performClick()
+        compose.runOnIdle { assertTrue(back().hasEnabledCallbacks()); back().onBackPressed() }
+        tab("Today").assertIsSelected()
+        tab("Plants").performClick()
+        compose.onNodeWithText("Synthetic draft room").assertExists()
+    }
+
     // W6-T12 (a): a notification shows Today and leaves another tab's draft alone.
     @Test fun aNotificationLeavesAnotherTabsDraftAlone() = shell {
         openSiteDraft()
