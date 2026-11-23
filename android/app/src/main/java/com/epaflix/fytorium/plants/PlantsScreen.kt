@@ -90,13 +90,13 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     val forms = rememberSaveableStateHolder()
     val context = androidx.compose.ui.platform.LocalContext.current
     val currentKeepPath by rememberUpdatedState(keepPhotoPath)
-    var addFlowOpen by rememberSaveable { mutableStateOf(false) }
-    val currentAddFlow by rememberUpdatedState(addFlowOpen)
+    var identifyOpened by rememberSaveable { mutableStateOf(false) }
+    val currentIdentify by rememberUpdatedState(identifyOpened)
     val pageLeft = com.epaflix.fytorium.LocalPageLeft.current
     // Closing this page ends the add flow too; rotation and a hidden tab keep it (W6-P19).
     DisposableEffect(Unit) { onDispose {
         if ((context as? android.app.Activity)?.isChangingConfigurations != true && pageLeft()) {
-            if (currentAddFlow) java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
+            if (currentIdentify) java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
             currentKeepPath?.let { java.io.File(it).delete() }
         }
     } }
@@ -176,7 +176,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
         val atGrid = page == "list"
         if (!atGrid) {
             repository?.clearPlantErrors(); clearSearch(); formChanged = { false }; selection = null; discarding = false; leavingFor = null
-            if (page == "form" && id == null) dropKeepPhoto()
+            dropKeepPhoto()
             formLeftChanged = false
             (listOf("form:${id ?: "new"}", "site-pages", "identify", "search:search", "search:change-species") +
                 listOfNotNull(id).flatMap { listOf("detail:$it", "care:$it", "photos:$it", "photo-form:$it") }).forEach(forms::removeState)
@@ -187,13 +187,12 @@ private val formSubpages = setOf("species-care", "identify", "sites")
     LaunchedEffect(page) {
         if (page !in formPages && page !in formSubpages) formChanged = { false }
         if (page !in listOf("care", "species-care")) id?.let { forms.removeState("care:$it") }
-        if (page in listOf("search", "change-species", "identify", "sites") || (page == "form" && id == null)) addFlowOpen = true
-        else if (addFlowOpen) {
-            addFlowOpen = false
+        if (page == "identify") identifyOpened = true
+        if (page !in listOf("search", "change-species", "identify", "sites") && !(page == "form" && id == null)) {
             listOf("search", "change-species").forEach { forms.removeState("search:$it") }
             forms.removeState("identify")
-            // This page's add flow is over, so Identify's own camera photos go too; another tab's add flow keeps its photos (W6-P19).
-            java.io.File(context.cacheDir, "captures/identify").deleteRecursively()
+            // The flow that opened Identify is over, so its camera photos go too; a flow open in another tab keeps its photos (W6-P19).
+            if (identifyOpened) { identifyOpened = false; java.io.File(context.cacheDir, "captures/identify").deleteRecursively() }
         }
     }
     val discardBody = if (id == null) "Your changes to this new plant are not saved yet." else "Your changes to ${plant?.displayName ?: "this plant"} are not saved yet."
@@ -280,6 +279,7 @@ private val formSubpages = setOf("species-care", "identify", "sites")
                 val success = withContext(Dispatchers.IO) { repository!!.plantCommand(key, if (action == "restore-save") "restore" else action, body) }
                 if (success) {
                     if (action == "delete") { id = null; leaveTo(from) }
+                    // The page opens with the fresh read, so the W3 held-update rule never holds this device's own change (Sol W6-S18 declined).
                     else { refreshDetail(key); page = "detail" }
                 }
             }

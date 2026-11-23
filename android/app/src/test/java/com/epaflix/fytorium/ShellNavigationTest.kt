@@ -40,6 +40,7 @@ class ShellNavigationTest {
                 fun answer(request: RecordedRequest) = MockResponse().setBody(responses["${request.method} ${request.path}"] ?: responses[request.path] ?: when (request.path) {
                     "/api/journal" -> "[" + JSONObject(com.epaflix.fytorium.photos.photoFixture).put("plant_name", "Synthetic fern") + "]"
                     "/api/import/planta" -> "[]"
+                    "/api/identification" -> """{"remaining":20}"""
                     "/api/choices" -> """{"plant":{"choices":{},"labels":{},"numbers":[],"booleans":[],"health":["good"]},"nameLanguages":{}}"""
                     "/api/sites" -> "[]"
                     "/api/meta" -> """{"today":"2030-06-01","timezone":"Europe/Oslo"}"""
@@ -282,12 +283,17 @@ class ShellNavigationTest {
         val captures = java.io.File(org.robolectric.RuntimeEnvironment.getApplication().cacheDir, "captures/identify").apply { mkdirs() }
         val photo = java.io.File(captures, "synthetic.jpg").apply { writeText("synthetic") }
         compose.onNodeWithContentDescription("Add plant").performClick()
-        compose.onNode(hasText("Add plant") and isHeading()).assertIsDisplayed()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Identify from photos").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Identify from photos").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications left today.").fetchSemanticsNodes().isNotEmpty() }
         tab("Plants").performClick()
         tab("Today").performClick()
         compose.waitForIdle()
         assertTrue(photo.exists())
         compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNode(hasText("Add plant") and isHeading()).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithTag("task-list").assertIsDisplayed()
         compose.waitForIdle()
         assertFalse(photo.exists())
     }
@@ -380,6 +386,23 @@ class ShellNavigationTest {
         compose.setContent { CompositionLocalProvider(LocalPageBusy provides pages) { FytoriumTheme {
             com.epaflix.fytorium.photos.PhotoScreen(com.epaflix.fytorium.photos.PhotoState(loaded = true, saving = true), true, "Synthetic fern", 0) } } }
         compose.runOnIdle { assertTrue(pages.isNotEmpty()) }
+    }
+
+    // Sol W6-S3, S16: closing a page that never opened Identify keeps the photos of an add flow hidden over Today.
+    @Test fun closingAnotherPageKeepsAHiddenAddFlowsPhotos() = shell {
+        val captures = java.io.File(org.robolectric.RuntimeEnvironment.getApplication().cacheDir, "captures/identify").apply { mkdirs() }
+        val photo = java.io.File(captures, "synthetic.jpg").apply { writeText("synthetic") }
+        compose.onNodeWithContentDescription("Add plant").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Identify from photos").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Identify from photos").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("20 identifications left today.").fetchSemanticsNodes().isNotEmpty() }
+        tab("Journal").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Synthetic fern") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Synthetic fern").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitForIdle()
+        assertTrue(photo.exists())
     }
 
     // W6-T18: the app opts in to predictive back.

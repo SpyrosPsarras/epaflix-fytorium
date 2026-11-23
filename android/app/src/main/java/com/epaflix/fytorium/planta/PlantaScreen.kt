@@ -158,7 +158,8 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                 Column(Modifier.fillMaxSize().onSizeChanged { viewport = it.height }.verticalScroll(page).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (done) {
                         Heading("Import complete", MaterialTheme.typography.titleLarge)
-                        Button(onClick = onPlants, modifier = Modifier.heightIn(min = 48.dp)) { Text("View imported plants") }
+                        // Off while a fetch or import runs, so leaving cannot cut it short (Sol W6-S15).
+                        Button(onClick = onPlants, enabled = !state.saving && !submitting, modifier = Modifier.heightIn(min = 48.dp)) { Text("View imported plants") }
                         if (state.incompleteSites) {
                             Text("New sites from Planta start with default conditions.")
                             OutlinedButton(onClick = onSites, modifier = Modifier.heightIn(min = 48.dp)) { Text("Check sites") }
