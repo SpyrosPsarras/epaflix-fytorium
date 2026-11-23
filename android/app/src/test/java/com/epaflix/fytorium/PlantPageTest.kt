@@ -3691,7 +3691,9 @@ class PlantPageTest {
             val name = hasText("Name") and hasSetTextAction()
             compose.onNode(name).performTextInput("Synthetic porch")
             compose.onNode(isTab("Today")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("view-today")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(isTab("Plants")).performClick()
+            compose.waitUntil(5_000) { compose.onAllNodes(name).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(name).assertTextContains("Synthetic porch")
             compose.onNode(isTab("Plants")).performClick()
             compose.assertDiscard("Your changes to this new site are not saved yet.")
