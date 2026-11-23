@@ -51,7 +51,8 @@ private class CarePageScroll(private var pending: Place? = null) {
 
     suspend fun restore() {
         val place = pending ?: return
-        val measured = snapshotFlow { items }.first { it.isNotEmpty() }
+        // A list shown again holds its intro row before its rows load, so wait for the saved row or enough rows (Sol W6-sol-4).
+        val measured = snapshotFlow { items }.first { rows -> rows.any { it.key == place.key } || rows.size > place.index }
         val item = measured.firstOrNull { it.key == place.key } ?: measured[place.index.coerceAtMost(measured.lastIndex)]
         scroll.scrollTo((item.top + place.offset.coerceAtMost(item.height - 1)).coerceAtLeast(0))
         pending = null

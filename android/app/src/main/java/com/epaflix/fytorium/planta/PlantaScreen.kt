@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
@@ -112,6 +113,13 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     // Each plant's species query outlives its search area being hidden (Astra W5b-astra-5).
     val searches = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val page = rememberScrollState()
+    // A review shown again starts empty, which would clamp its restored place to the top; it goes back there once loaded (Sol W6-sol-3).
+    var place by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(state.loaded) {
+        if (!state.loaded) return@LaunchedEffect
+        if (place > 0) { kotlinx.coroutines.withTimeoutOrNull(2_000) { snapshotFlow { page.maxValue }.first { it >= place } }; page.scrollTo(place) }
+        snapshotFlow { page.value }.collect { place = it }
+    }
     var submitting by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var pulling by remember { mutableStateOf(false) }

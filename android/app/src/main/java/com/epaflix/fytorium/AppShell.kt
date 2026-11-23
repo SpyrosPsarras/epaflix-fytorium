@@ -132,11 +132,13 @@ private fun allowed(route: String, role: Role?) = when {
         popAll("Plants"); plantsShowAll++; controller?.refresh(); show("Plants") }
     // Asks the open page's question first, as its Back would (W6-P18).
     fun ask(target: String, then: () -> Unit) { val title = plantsDiscard(); if (title != null) { leaving = title; destination = target } else then() }
+    fun logOut(): Unit = drafts.entries.firstOrNull()?.let { (t, question) -> leaving = question.first(); destination = "logout:$t" } ?: onLogout()
     fun go(target: String) = when {
         target == "home" -> goHome()
         target == "reselect" -> reselectNow()
         target.startsWith("plants:") -> showAllPlants(target.removePrefix("plants:"))
-        target.startsWith("logout:") -> onLogout()
+        // Each form left in a hidden tab asks in turn before Log out (Sol W6-sol-1).
+        target.startsWith("logout:") -> { drafts.remove(target.removePrefix("logout:")); logOut() }
         else -> Unit
     }
     fun tabTap(title: String) = when {
@@ -157,7 +159,6 @@ private fun allowed(route: String, role: Role?) = when {
     LaunchedEffect(homeRequest) { if (homeRequest > 0 && !homeHandled.value) { homeHandled.value = true; homePending = true } }
     var homeAsk by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(homePending) { if (homePending) { snapshotFlow { busyPages.isEmpty() }.first { it }; show("Today"); homePending = false; homeAsk = true } }
-    fun logOut() { drafts.entries.firstOrNull()?.let { (t, question) -> leaving = question.first(); destination = "logout:$t" } ?: onLogout() }
     LaunchedEffect(homeAsk) { if (homeAsk) { homeAsk = false; if (stack("Today").isNotEmpty()) ask("home") { goHome() } else goHome() } }
     var previousMemberId by rememberSaveable { mutableStateOf(careState?.member?.id) }
     var previousRole by rememberSaveable { mutableStateOf(careState?.member?.role) }

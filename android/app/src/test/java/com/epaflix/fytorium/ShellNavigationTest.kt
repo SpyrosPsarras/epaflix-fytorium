@@ -24,7 +24,7 @@ class ShellNavigationTest {
     @get:Rule val compose = createComposeRule()
 
     private class Shell(val restoration: StateRestorationTester, val homeRequest: MutableIntState, val back: () -> OnBackPressedDispatcher,
-                        val release: () -> Unit, val requests: List<String>)
+                        val release: () -> Unit, val requests: List<String>, val logouts: () -> Int)
 
     private fun shell(role: Role = Role.owner, noPlants: Boolean = false, responses: Map<String, String> = emptyMap(),
                       hold: (RecordedRequest) -> Boolean = { false }, registry: androidx.compose.runtime.saveable.SaveableStateRegistry? = null, test: Shell.() -> Unit) {
@@ -61,13 +61,14 @@ class ShellNavigationTest {
             val feed = FeedRepository(client, { true }).apply { refresh(care.member) }
             val homeRequest = mutableIntStateOf(0)
             var dispatcher: OnBackPressedDispatcher? = null
+            var logouts = 0
             val restoration = StateRestorationTester(compose)
             restoration.setContent {
                 dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-                val shell = @Composable { FytoriumTheme { AppShell(true, false, careState = care, feed = feed, sitesApi = client, sitesConnected = { true }, homeRequest = homeRequest.intValue) } }
+                val shell = @Composable { FytoriumTheme { AppShell(true, false, careState = care, feed = feed, sitesApi = client, sitesConnected = { true }, homeRequest = homeRequest.intValue, onLogout = { logouts++ }) } }
                 if (registry == null) shell() else CompositionLocalProvider(androidx.compose.runtime.saveable.LocalSaveableStateRegistry provides registry) { shell() }
             }
-            try { Shell(restoration, homeRequest, { checkNotNull(dispatcher) }, held::countDown, requests).test() } finally { held.countDown() }
+            try { Shell(restoration, homeRequest, { checkNotNull(dispatcher) }, held::countDown, requests, { logouts }).test() } finally { held.countDown() }
         }
     }
 
@@ -416,6 +417,75 @@ class ShellNavigationTest {
         compose.runOnIdle { shown.value = false }
         compose.waitForIdle()
         assertTrue(photo.exists())
+    }
+
+    private fun shownTexts(prefix: String) = compose.onAllNodes(hasText(prefix, substring = true)).fetchSemanticsNodes()
+        .filter { it.boundsInRoot.top >= 0f && it.boundsInRoot.bottom <= 720f }.map { it.config[SemanticsProperties.Text].joinToString() to it.boundsInRoot.top }
+
+    // Sol W6-sol-1: Log out asks about every form left in a hidden tab, one after the other.
+    @Test fun logOutAsksAboutEveryHiddenDraft() = shell {
+        openSiteDraft()
+        tab("Journal").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Add a photo update").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Add a photo update").performClick()
+        compose.onNodeWithTag("plant:plant-one").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Note") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Note").performTextInput("Synthetic journal note")
+        tab("More").performClick()
+        compose.onNodeWithText("Log out").performScrollTo().performClick()
+        compose.onNode(hasText("Log out") and hasAnyAncestor(isDialog())).performClick()
+        compose.onNodeWithText("Your changes to this new site are not saved yet.").assertIsDisplayed()
+        compose.onNodeWithText("Discard").performClick()
+        compose.onNodeWithText("Your photo update for Synthetic fern is not saved yet.").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, logouts()) }
+        compose.onNodeWithText("Discard").performClick()
+        compose.runOnIdle { assertEquals(1, logouts()) }
+    }
+
+    // Sol W6-sol-2: Back from a plant opened from a scrolled Journal returns to the same cards.
+    @Test fun backFromAJournalPlantKeepsTheJournalPlace() = shell(responses = mapOf("/api/journal" to (1..12).joinToString(",", "[", "]") { n ->
+        JSONObject(com.epaflix.fytorium.photos.photoFixture).put("id", "photo-$n").put("plant_name", "Synthetic fern").put("note", "Synthetic journal $n").toString() })) {
+        tab("Journal").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic journal 1").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(8)
+        val before = shownTexts("Synthetic journal")
+        compose.onAllNodes(hasText("Synthetic fern") and hasClickAction()).onLast().performClick()
+        compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic journal", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(before, shownTexts("Synthetic journal"))
+    }
+
+    // Sol W6-sol-3: Back from an imported plant returns to the same place in a scrolled Planta review.
+    @Test fun backFromAnImportedPlantKeepsTheReviewPlace() = shell(responses = mapOf("/api/import/planta" to (1..10).joinToString(",", "[", "]") { n ->
+        JSONObject(com.epaflix.fytorium.planta.importFixture).put("id", "staging-$n").put("display_name", "Synthetic imported $n").put("status", "committed")
+            .put("can_review", false).put("plant_id", "plant-one").put("candidates", org.json.JSONArray()).toString() })) {
+        tab("More").performClick()
+        compose.onNodeWithText("Import from Planta").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Synthetic imported 9").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("import-heading:staging-9", useUnmergedTree = true).performScrollTo().performClick()
+        compose.onNodeWithText("Open imported plant").performScrollTo()
+        val before = shownTexts("Synthetic imported")
+        compose.onNodeWithText("Open imported plant").performClick()
+        compose.onNodeWithContentDescription("Edit plant").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { shownTexts("Synthetic imported") == before }
+    }
+
+    // Sol W6-sol-4: Back from a species page returns to the same place in a long Species without care data list.
+    @Test fun backFromASpeciesKeepsTheListPlace() = shell(responses = mapOf("/api/species/unmatched" to (1..14).joinToString(",", "[", "]") { n ->
+        """{"gbif_key":${910100 + n},"canonical_name":"Testoria synthetica $n","status":"no_match"}""" },
+        "/api/species/910111/care" to JSONObject(com.epaflix.fytorium.species.careFixture).put("fetches", org.json.JSONArray()).toString(),
+        "/api/species/910111/outdoor-months" to com.epaflix.fytorium.species.outdoorFixture)) {
+        tab("More").performClick()
+        compose.onNodeWithText("Species without care data").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Species care for Testoria synthetica 11").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Species care for Testoria synthetica 11").performScrollTo()
+        val before = shownTexts("Species care for Testoria")
+        compose.onNodeWithText("Species care for Testoria synthetica 11").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Care defaults for this species").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(5_000) { shownTexts("Species care for Testoria") == before }
     }
 
     // W6-T18: the app opts in to predictive back.

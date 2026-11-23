@@ -223,7 +223,8 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("No photos yet", style = MaterialTheme.typography.headlineSmall)
                 Button(onClick = { act(add) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add your first photo") }
-            } else LazyVerticalGrid(GridCells.Adaptive(320.dp), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
+            // Drawn once the list is there: an empty grid would move a grid shown again to its top (Sol W6-sol-2).
+            } else if (state.loaded) LazyVerticalGrid(GridCells.Adaptive(320.dp), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(state.photos, key = { it.id }) { photo ->
                     val day = dayMonthYear(photo.takenOn)
