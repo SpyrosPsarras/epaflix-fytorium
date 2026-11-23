@@ -62,13 +62,14 @@ else
     build) task=assembleDebug;;
     release-check) task=release-check;;
     test) task=testDebugUnitTest; set -- "$@" -Proborazzi.test.verify=true;;
-    lint) task=lintDebug;;
+    lint) task=lintDebug; set -- compileDebugAndroidTestKotlin;;
     screenshots)
       task=verifyRoborazziDebug
       [ "${ANDROID_RECORD_SCREENSHOTS:-0}" != 1 ] || task=recordRoborazziDebug
       ;;
   esac
-  docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e ANDROID_USER_HOME=/tmp/.android \
+  mkdir -p android/.gradle-cache/m2
+  docker run --rm --memory 6g --memory-swap 6g --user "$(id -u):$(id -g)" -e HOME=/tmp -e ANDROID_USER_HOME=/tmp/.android \
     -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp -e GOOGLE_SERVICES_JSON \
-    -v "$PWD":/work -w /work/android "$image-$target" sh -ec 'if [ "$1" = release-check ]; then exec sh docker/release-check; fi; if [ "$1" = testDebugUnitTest ]; then sh docker/release-version-test; fi; ./gradlew --no-daemon --console=plain "$@"; if [ "$1" = assembleRelease ]; then bytes=$(stat -c %s app/build/outputs/apk/release/app-release-unsigned.apk); echo "Release APK size: $bytes bytes"; fi' sh "$task" "$@"
+    -v "$PWD":/work -v "$PWD/android/.gradle-cache/m2":/tmp/.m2 -w /work/android "$image-$target" sh -ec 'if [ "$1" = release-check ]; then exec sh docker/release-check; fi; if [ "$1" = testDebugUnitTest ]; then sh docker/release-version-test; fi; ./gradlew --no-daemon --console=plain "$@"; if [ "$1" = assembleRelease ]; then bytes=$(stat -c %s app/build/outputs/apk/release/app-release-unsigned.apk); echo "Release APK size: $bytes bytes"; fi' sh "$task" "$@"
 fi

@@ -1,7 +1,13 @@
 name: Android
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -10,7 +16,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: gradle/actions/wrapper-validation@41ad77ca97e46ee2e825d5e6b9a95d8169fcc44c # v4.4.2
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: android/.gradle-cache
           key: gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
@@ -23,3 +30,14 @@ jobs:
         run: ./scripts/android test
       - name: Lint
         run: ./scripts/android lint
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: roborazzi-diffs
+          path: android/app/build/outputs/roborazzi
+          if-no-files-found: ignore
+      - if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: android/.gradle-cache
+          key: gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}

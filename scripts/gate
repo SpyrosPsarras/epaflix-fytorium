@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: ./scripts/gate android [--tests PATTERN]...   Android unit tests with screenshot verify
        ./scripts/gate server [API test file]...      typecheck, unit tests and the named API tests
-       ./scripts/gate full                           every check except emulator e2e
+       ./scripts/gate full                           every check, browser tests included, except emulator e2e
 EOF
   exit 2
 }
@@ -41,6 +41,9 @@ case "$mode" in
     step ./scripts/android test
     step ./scripts/android lint
     step ./scripts/android release-check
+    step ./scripts/stack up
+    trap './scripts/stack down >/dev/null 2>&1' EXIT
+    step ./scripts/stack test
     ;;
   *) usage;;
 esac
