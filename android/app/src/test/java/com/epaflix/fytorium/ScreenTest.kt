@@ -54,12 +54,15 @@ class ScreenTest {
         compose.onNodeWithContentDescription("Add plant").assertIsNotEnabled()
     }
     @Test fun moreKeepsSitesAndFeedSettingsIndependentOfCareFailures() {
-        val feed = com.epaflix.fytorium.feed.FeedRepository(ApiClient("https://example.invalid", MemoryCredentials()) {}, { true })
+        val api = ApiClient("https://example.invalid", MemoryCredentials()) {}
+        val feed = com.epaflix.fytorium.feed.FeedRepository(api, { true })
         val care = CareState(member = Member("member-one", Role.owner), busy = true, offline = true, serverUnavailable = true)
-        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care, feed = feed) } }
+        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care, feed = feed, sitesApi = api) } }
         compose.onNode(isTab("More")).performClick()
-        compose.onNodeWithText("Sites").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Weather and feed").assertIsDisplayed().assertIsEnabled()
+        compose.onNode(hasText("Plants") and hasClickAction()).performClick()
+        compose.onNodeWithContentDescription("More options").performClick()
+        compose.onNodeWithText("Sites").assertIsDisplayed().assertIsEnabled()
     }
     @Test fun lightScreens() = screens(false)
     @Test fun darkScreens() = screens(true)

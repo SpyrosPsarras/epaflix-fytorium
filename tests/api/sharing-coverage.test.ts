@@ -20,7 +20,7 @@ const expectations: Record<string, Record<string, number[]>> = {
   '/api/feed': { GET: self(200) },
   '/api/feed/settings': { GET: edit(200), PUT: edit(422) },
   '/api/care-events/[id]/undo': { POST: [404, 404, 404, 404, 401, 401] },
-  '/api/custom-tasks': { GET: edit(422), POST: edit(422) },
+  '/api/custom-tasks': { GET: edit(200), POST: edit(422) },
   '/api/custom-tasks/[id]': { GET: edit(404), PUT: edit(404), DELETE: edit(404) },
   '/api/household/invites': { GET: ownerOnly(200), POST: ownerOnly(422) },
   '/api/household/invites/[id]': { DELETE: ownerOnly(404) },

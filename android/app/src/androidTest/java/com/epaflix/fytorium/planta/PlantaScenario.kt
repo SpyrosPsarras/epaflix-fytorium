@@ -44,11 +44,12 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         compose.runOnUiThread { compose.activity.hideIme() }
         compose.waitForState("A11 keyboard closed", 10_000) {
             androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == false }
-        action("Fetch Planta plants").performClick()
+        action("Fetch plants").performClick()
         compose.waitForState("A11 fake Planta staging loaded", 30_000) {
             compose.onAllNodesWithText("Test import amber").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
+        // With a review open, the code step folds into one button (W5b-P21).
+        compose.waitForNode(hasText("Fetch again with a new code"))
         val staged = rows(json("/api/import/planta"))
         val fuzzy = staged.single { it.getJSONObject("mapped").getString("nickname") == "Test import amber" }
         assertEquals("review", fuzzy.getString("status"))
@@ -56,19 +57,19 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         assertEquals("pending", fuzzy.getString("cover_status"))
         assertTrue(rows(fuzzy.getJSONArray("candidates").toString()).any { it.getLong("gbif_key") == 910002L && it.getBoolean("requires_confirmation") })
         val nebulosa = "This is " + if (existed) "Synthetic cloudleaf" else "Testoria nebulosa"
-        compose.onNodeWithText("Import confirmed plants").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("import-button").assert(hasStateDescription("Choose a species or skip the plants above first."))
         // Actual Activity restoration re-fetches server staging without another code exchange.
         compose.activityRule.scenario.recreate()
         compose.waitForState("A11 review resumed after recreation", 30_000) {
             compose.onAllNodes(hasContentDescription(nebulosa) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("One-time app code").assertTextEquals("One-time app code", "")
+        compose.onNodeWithText("One-time app code").assertDoesNotExist()
         val unmatched = staged.single { it.getJSONObject("mapped").getString("nickname") == "Test import unmatched" }
         val unmatchedCard = hasAnyAncestor(hasTestTag("import:${unmatched.getString("id")}"))
         compose.onNode(hasText("Search species") and unmatchedCard).performScrollTo().assertIsEnabled()
         compose.onNode(hasText("Skip plant") and unmatchedCard).performScrollTo().performClick()
         compose.waitForState("A11 unmatched plant skipped", 30_000) {
-            compose.onAllNodes(hasText("Undo skip") and unmatchedCard).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(hasText("Skipped") and unmatchedCard).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNode(hasText("Search for another species") and hasAnyAncestor(hasTestTag("import:${fuzzy.getString("id")}"))).performScrollTo().assertIsEnabled()
         compose.onAllNodesWithText("This is my plant").onFirst().performScrollTo().assertIsDisplayed()
@@ -77,8 +78,8 @@ fun runPlantaScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainA
         compose.waitForState("A11 fuzzy species confirmed", 30_000) {
             compose.onAllNodesWithTag("import-ready:${fuzzy.getString("id")}").fetchSemanticsNodes().isNotEmpty()
         }
-        action("Import confirmed plants").performClick()
-        compose.waitForState("A11 commit complete", 30_000) { compose.onAllNodesWithText("Import complete.").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForNode(hasTestTag("import-button") and isEnabled() and !hasStateDescription("Choose a species or skip the plants above first.")).performClick()
+        compose.waitForState("A11 commit complete", 30_000) { compose.onAllNodesWithText("Import complete").fetchSemanticsNodes().isNotEmpty() }
         val committed = rows(json("/api/import/planta"))
         assertTrue(committed.all { it.getString("status") == (if (it.getString("id") == unmatched.getString("id")) "skipped" else "committed") && !it.getBoolean("can_commit") })
         assertEquals("imported", committed.single { it.getString("id") == fuzzy.getString("id") }.getString("cover_status"))

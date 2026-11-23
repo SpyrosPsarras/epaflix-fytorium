@@ -123,6 +123,32 @@ class PlantaRepositoryTest {
             assertEquals(3, server.requestCount)
         }
     }
+    // Sol W5b-S10: a 426 from the post-import sites check still reaches the update stop.
+    @Test fun aRefusedVersionDuringTheSitesCheckStopsTheApp() {
+        MockWebServer().use { server ->
+            server.start()
+            val repo = repository(server)
+            server.enqueue(MockResponse().setResponseCode(426).setBody("{}"))
+            repo.checkSites()
+            assertTrue(repo.state.value.updateRequired)
+            assertFalse(repo.state.value.incompleteSites)
+        }
+    }
+    // Opus W5b-opus-9: deciding one card keeps another card's open search results.
+    @Test fun decidingOneCardKeepsAnothersSearch() {
+        MockWebServer().use { server ->
+            server.start()
+            val repo = repository(server)
+            val other = JSONObject(importFixture).put("id", "staging-two")
+            server.enqueue(MockResponse().setBody("[$importFixture,$other]")); repo.refresh()
+            server.enqueue(MockResponse().setBody("""{"search_id":"search-one","candidates":[$importCandidate]}""")); repo.search("staging-two", "Testoria")
+            assertEquals("staging-two", repo.state.value.searchRow)
+            server.enqueue(MockResponse().setBody("{}")); server.enqueue(MockResponse().setBody("[$importFixture,$other]"))
+            assertTrue(repo.skip("staging-one"))
+            assertEquals("staging-two", repo.state.value.searchRow)
+            assertNotNull(repo.state.value.search)
+        }
+    }
     @Test fun lostResponseAndUpdateRequiredPreserveRowsAndBlockWrites() {
         for (status in listOf(426, 503)) MockWebServer().use { server ->
             server.start()
@@ -131,7 +157,8 @@ class PlantaRepositoryTest {
             server.enqueue(MockResponse().setResponseCode(status).setBody("{}")); assertFalse(repo.refresh())
             assertEquals(status == 426, repo.state.value.updateRequired)
             assertTrue(repo.state.value.blocked)
-            if (status == 503) assertTrue(repo.state.value.error!!.startsWith("Fytorium isn't responding."))
+            // A failed read now belongs to the line under the title (W5b-P26).
+            if (status == 503) assertTrue(repo.state.value.readError!!.startsWith("Fytorium isn't responding."))
             assertEquals(1, repo.state.value.rows.size)
             assertFalse(repo.confirm("staging-one", 910002))
             assertEquals(2, server.requestCount)

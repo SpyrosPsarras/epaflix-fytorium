@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -59,26 +60,28 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun CareState.lateDaysByPlant(): Map<String, Int> = today?.sections.orEmpty().flatMap { it.tasks }.filter { it.completedEvent == null && it.lateDays > 0 }
+    .groupBy { it.plantId }.mapValues { (_, tasks) -> tasks.maxOf { it.lateDays } }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlantsList(state: CareState, plants: List<Plant>, graveyard: Boolean, onPlant: (String) -> Unit,
     onAdd: () -> Unit, onGraveyard: () -> Unit, onRefresh: () -> Unit, thumbnails: Thumbnails? = null, enabled: Boolean = true,
     search: MutableState<String>? = null, focusSearch: Boolean = false, onFocused: () -> Unit = {}, onBack: () -> Unit = {},
     refreshing: Boolean = false, addBlocked: String? = null, onBlocked: (String) -> Unit = {}, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {},
-    chooseTitle: String? = null, grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState()) {
+    chooseTitle: String? = null, grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState(),
+    onSites: (() -> Unit)? = null, onSite: ((String) -> Unit)? = null) {
     val query = search ?: rememberSaveable { mutableStateOf("") }
     val editor = state.member?.role != Role.sitter
     val canAdd = enabled && addBlocked == null
     fun add() { if (canAdd) onAdd() else addBlocked?.let(onBlocked) }
-    val late = remember(state.today) {
-        state.today?.sections.orEmpty().flatMap { it.tasks }.filter { it.completedEvent == null && it.lateDays > 0 }
-            .groupBy { it.plantId }.mapValues { (_, tasks) -> tasks.maxOf { it.lateDays } }
-    }
+    val late = remember(state.today) { state.lateDaysByPlant() }
     val wanted = query.value.trim()
     val shown = remember(plants, wanted) {
         plants.filter { listOfNotNull(it.displayName, it.scientificName, it.siteName).any { name -> name.contains(wanted, ignoreCase = true) } }
     }
     val groups = remember(shown) {
-        shown.groupBy { it.siteName }.entries.sortedWith(compareBy({ it.key == null }, { it.key?.lowercase() }))
+        // By site id, so two sites with one name never merge; headings still sort by name.
+        shown.groupBy { JSONObject(it.attributesJson).nullable("site_id") to it.siteName }.entries.sortedWith(compareBy({ it.key.second == null }, { it.key.second?.lowercase() }))
             .map { (site, members) -> site to members.sortedBy { it.displayName.lowercase() } }
     }
     val focus = remember { FocusRequester() }
@@ -98,6 +101,7 @@ import org.json.JSONObject
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More options") }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                        onSites?.let { DropdownMenuItem(text = { Text("Sites") }, onClick = { menu = false; it() }) }
                         DropdownMenuItem(text = { Text("Graveyard") }, onClick = { menu = false; onGraveyard() })
                     }
                 }
@@ -129,10 +133,18 @@ import org.json.JSONObject
                 }
             } else LazyVerticalGrid(GridCells.Fixed(2), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                val headed = groups.size > 1 || groups.firstOrNull()?.first != null
+                val headed = groups.size > 1 || groups.firstOrNull()?.first?.second != null
                 groups.forEach { (site, members) ->
-                    if (headed) item(key = "site:$site", span = { GridItemSpan(maxLineSpan) }) {
-                        Heading(site ?: "No site", MaterialTheme.typography.titleMedium, Modifier.padding(top = 8.dp))
+                    val (siteId, siteName) = site
+                    if (headed) item(key = "site:$siteId:$siteName", span = { GridItemSpan(maxLineSpan) }) {
+                        val open = onSite?.takeIf { siteId != null && editor && !graveyard && chooseTitle == null }
+                        if (open == null) Heading(siteName ?: "No site", MaterialTheme.typography.titleMedium, Modifier.padding(top = 8.dp))
+                        // The heading opens its site's page as one target (W5b-P2).
+                        else Row(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(min = 48.dp).clickable(onClickLabel = "Open $siteName") { open(siteId!!) }
+                            .semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
+                            Text(siteName.orEmpty(), style = MaterialTheme.typography.titleMedium)
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+                        }
                     }
                     items(members, key = { it.id }) { plant ->
                         val subtitle = if (graveyard) JSONObject(plant.attributesJson).nullable("graveyard_on")?.let { "Since " + dayMonthYear(it) } else plant.siteName
@@ -144,7 +156,7 @@ import org.json.JSONObject
     }
 }
 
-@Composable private fun PlantTile(plant: Plant, late: Int, subtitle: String?, thumbnails: Thumbnails?, onOpen: () -> Unit) {
+@Composable internal fun PlantTile(plant: Plant, late: Int, subtitle: String?, thumbnails: Thumbnails?, onOpen: () -> Unit) {
     Column(Modifier.fillMaxWidth().testTag("plant:${plant.id}")
         .clickable(onClickLabel = "Open ${plant.displayName}", onClick = onOpen), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
@@ -276,7 +288,8 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
     enabled: Boolean = true, options: PlantOptions? = null, onBack: () -> Unit = {}, onSpeciesCare: (() -> Unit)? = null,
     todayTask: CareTask? = null, onTask: (CareTask, String) -> Unit = { _, _ -> }, onBlocked: (String) -> Unit = {},
     refreshing: Boolean = false, onRefresh: () -> Unit = {}, writeBlocked: String? = null, request: PlantsRequestState = PlantsRequestState(), onRetry: () -> Unit = {},
-    scroll: PlantPageScroll = rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() }) {
+    scroll: PlantPageScroll = rememberSaveable(saver = PlantPageScroll.Saver) { PlantPageScroll() }, onSite: ((String) -> Unit)? = null,
+    onAddTask: (() -> Unit)? = null) {
     val list = scroll.list
     val plant = detail.plant
     val owner = state.member?.role != Role.sitter
@@ -366,7 +379,10 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
                         val species = attributes.nullable("canonical_name") ?: header.scientificName
                         if (!species.equals(header.displayName, ignoreCase = true)) Text(species, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         header.siteName?.let { site ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            val open = onSite?.let { go -> attributes.nullable("site_id")?.takeIf { !buried }?.let { id -> { go(id) } } }
+                            // The site line opens its site's page as one target (W5b-P2).
+                            Row(if (open == null) Modifier else Modifier.heightIn(min = 48.dp).clickable(onClickLabel = "Open $site", onClick = open),
+                                verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Place, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text(site, style = MaterialTheme.typography.bodyMedium)
@@ -425,6 +441,9 @@ class PlantPageScroll(private var item: String? = null, private var offset: Int 
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp))
                     }
                 }
+                // W5b-P18: owner and family add a custom task for this plant right here.
+                if (!buried && owner) onAddTask?.let { add -> pageItem("care-add") {
+                    TextButton(onClick = add, modifier = Modifier.padding(horizontal = 4.dp).heightIn(min = 48.dp)) { Text("Add a task") } } }
                 if (owner) {
                     pageItem("history-heading") { SectionHeading("History") }
                     if (moments.isEmpty()) pageItem("history-none") { Text("No care recorded yet.", Modifier.padding(horizontal = 16.dp)) }

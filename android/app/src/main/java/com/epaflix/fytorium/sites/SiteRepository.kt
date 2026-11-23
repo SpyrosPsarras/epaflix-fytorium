@@ -10,7 +10,7 @@ import org.json.JSONObject
 internal val temperatureFields = linkedMapOf("warm_min_c" to "Warm minimum °C", "warm_max_c" to "Warm maximum °C",
     "cold_min_c" to "Cold minimum °C", "cold_max_c" to "Cold maximum °C")
 internal val siteChoices = linkedMapOf("location" to ("Location" to listOf("indoor", "outdoor")),
-    "light" to ("Light level" to listOf("full_shade", "part_shade", "part_sun", "full_sun")),
+    "light" to ("Light" to listOf("full_shade", "part_shade", "part_sun", "full_sun")),
     "humidity" to ("Humidity" to listOf("dry", "normal", "humid")))
 
 data class Site(val id: String? = null, val fields: Map<String, String> = mapOf("name" to "", "location" to "indoor",
@@ -33,14 +33,18 @@ private fun parseSite(json: JSONObject) = Site(json.getString("id"),
     }, json.getBoolean("grow_light"), json.getBoolean("draft"), json.optInt("plant_count"), json.optBoolean("imported_conditions_incomplete"))
 
 data class SiteState(val sites: List<Site> = emptyList(), val busy: Boolean = false, val loaded: Boolean = false,
-    val blocked: Boolean = false, val updateRequired: Boolean = false, val errors: Map<String, String> = emptyMap(), val readError: String? = null)
+    val blocked: Boolean = false, val updateRequired: Boolean = false, val errors: Map<String, String> = emptyMap(), val readError: String? = null,
+    val updatedAt: Long? = null, val created: String? = null)
 private class SiteFailure(val status: Int, val errors: Map<String, String>) : Exception()
 
-// In-memory only. The screen owns this repository for one member and discards it on exit.
-class SiteRepository(private val api: ApiClient, private val allowed: () -> Boolean, private val connected: () -> Boolean) {
+// The screen owns this repository for one member; the last list is kept in the care cache so the pages read offline (W5b-P27).
+private const val cacheKey = "site-list"
+class SiteRepository(private val api: ApiClient, private val allowed: () -> Boolean, private val connected: () -> Boolean,
+    private val cached: (String) -> Pair<String, Long>? = { null }, private val keep: (String, String) -> Long? = { _, _ -> null }) {
     private val mutable = MutableStateFlow(SiteState())
     val state = mutable.asStateFlow()
     fun clearErrors() { mutable.value = mutable.value.copy(errors = emptyMap()) }
+    fun clearError(key: String) { mutable.value = mutable.value.let { it.copy(errors = it.errors - key) } }
     private fun requireSafeId(id: String): String {
         require(id.matches(Regex("[A-Za-z0-9_-]+")))
         return id
@@ -57,17 +61,21 @@ class SiteRepository(private val api: ApiClient, private val allowed: () -> Bool
             }
             text
         }
+    private fun parse(text: String) = JSONArray(text).let { list -> (0 until list.length()).map { parseSite(list.getJSONObject(it)) } }
     private fun load() {
-        val list = JSONArray(request("/api/sites"))
-        val sites = (0 until list.length()).map { parseSite(list.getJSONObject(it)) }
-        if (allowed()) mutable.value = mutable.value.copy(sites = sites, loaded = true, blocked = false, readError = null)
+        val text = request("/api/sites")
+        val sites = parse(text)
+        if (allowed()) { val at = keep(cacheKey, text) ?: System.currentTimeMillis(); mutable.value = mutable.value.copy(sites = sites, loaded = true, blocked = false, readError = null, updatedAt = at) }
     }
-    @Synchronized fun refresh() = run(write = false) { load() }
+    @Synchronized fun refresh(): Boolean {
+        if (!state.value.loaded && allowed()) cached(cacheKey)?.let { (json, at) -> runCatching { parse(json) }.getOrNull()?.let { mutable.value = mutable.value.copy(sites = it, loaded = true, updatedAt = at) } }
+        return run(write = false) { load() }
+    }
     @Synchronized fun save(site: Site, created: (String) -> Unit = {}): Boolean = run(write = true) {
         val saved = request(site.id?.let { "/api/sites/${requireSafeId(it)}" } ?: "/api/sites", if (site.id == null) "POST" else "PUT", site.json(),
             fallback = "Could not save the site. Try again.")
         // The site exists once the server accepted it, so a reply without its id only leaves it unselected.
-        if (site.id == null) runCatching { JSONObject(saved).getString("id") }.onSuccess(created)
+        if (site.id == null) runCatching { JSONObject(saved).getString("id") }.onSuccess { mutable.value = mutable.value.copy(created = it); created(it) }
     }.also { if (it) refresh() }
     @Synchronized fun delete(id: String): Boolean = run(write = true) {
         request("/api/sites/${requireSafeId(id)}", "DELETE", fallback = "Could not delete the site. Try again.")

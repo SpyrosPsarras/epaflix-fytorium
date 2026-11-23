@@ -46,7 +46,6 @@ internal fun roleName(role: Role) = when (role) { Role.owner -> "Owner"; Role.fa
             "You" to listOf(MoreRow("notifications", "Notifications", "Reminders, alerts and devices", Icons.Outlined.Notifications)),
             "Household" to listOfNotNull(
                 MoreRow("weather", "Weather and feed", "Location and cards on Today", Icons.Outlined.WbSunny),
-                MoreRow("sites", "Sites", "Where your plants live", Icons.Outlined.Place),
                 MoreRow("members", "Members", "People and invites", Icons.Outlined.Group).takeIf { member.role == Role.owner },
                 MoreRow("custom", "Custom tasks", "Your own repeating tasks", Icons.Outlined.Checklist)),
             "Tools" to listOfNotNull(

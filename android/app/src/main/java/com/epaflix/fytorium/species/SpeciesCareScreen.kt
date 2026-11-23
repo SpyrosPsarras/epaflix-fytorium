@@ -225,7 +225,7 @@ import org.json.JSONObject
                 val label = "Override value for ${lower(careLabels.getValue(field))}"
                 // Each kind of value gets its own control, so nobody types JSON.
                 when {
-                    field in careChoices -> Choice(label, draft, listOf("" to "Choose a value") + careChoices.getValue(field).map { it to choiceText(it) }, enabled) { draft = it; invalid = null }
+                    field in careChoices -> com.epaflix.fytorium.plants.Choice(label, draft, mapOf("" to "Choose a value") + careChoices.getValue(field).associateWith(::choiceText), enabled) { draft = it; invalid = null }
                     field in careRanges -> {
                         Text(label)
                         OutlinedTextField(low, { low = it; invalid = null; onClear() }, label = { Text("Minimum") }, enabled = enabled, singleLine = true, keyboardOptions = numberKeys, modifier = Modifier.fillMaxWidth())

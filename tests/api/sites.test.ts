@@ -156,6 +156,43 @@ test('creates a household site and retrieves its stored conditions', async () =>
   expect(await response.json()).toMatchObject({ ...conditions, id: site.id });
 });
 
+test('site names are unique per household, ignoring case and outer spaces, and a site may change only its own casing', async () => {
+  const kitchen = await createSite('Test unique kitchen');
+  const before = await fixtureDb.query('SELECT count(*)::integer AS count FROM sites');
+  for (const name of ['test unique kitchen ', 'TEST UNIQUE KITCHEN']) {
+    const response = await request('/api/sites', 'POST', { ...conditions, name });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ errors: { name: 'You already have a site called Test unique kitchen.' } });
+  }
+  expect((await fixtureDb.query('SELECT count(*)::integer AS count FROM sites')).rows).toEqual(before.rows);
+  const bath = await createSite('Test unique bath');
+  const renamed = await request('/api/sites/' + bath.id, 'PUT', { ...conditions, name: ' test unique KITCHEN' });
+  expect(renamed.status).toBe(422);
+  expect(await renamed.json()).toEqual({ errors: { name: 'You already have a site called Test unique kitchen.' } });
+  expect(await (await request('/api/sites/' + bath.id)).json()).toMatchObject({ name: 'Test unique bath' });
+  const recased = await request('/api/sites/' + kitchen.id, 'PUT', { ...conditions, name: 'test unique kitchen' });
+  expect(recased.status).toBe(200);
+  expect(await recased.json()).toMatchObject({ name: 'test unique kitchen' });
+});
+
+test('older duplicate site names still save while each keeps its own name', async () => {
+  const site = await createSite('Test old porch');
+  await fixtureDb.query(`INSERT INTO sites (household_id, name, location, light, grow_light, humidity, draft)
+    SELECT household_id, 'test old porch', location, light, grow_light, humidity, draft FROM sites WHERE id = $1`, [site.id]);
+  const twins = await fixtureDb.query<{ id: string; name: string }>("SELECT id, name FROM sites WHERE lower(name) = 'test old porch' ORDER BY name");
+  expect(twins.rows).toHaveLength(2);
+  for (const twin of twins.rows) {
+    const response = await request('/api/sites/' + twin.id, 'PUT', { ...conditions, name: twin.name, humidity: 'humid' });
+    expect(response.status).toBe(200);
+  }
+});
+
+test('two concurrent creates of one site name give one site and one refusal', async () => {
+  const statuses = (await Promise.all([0, 1].map(() => request('/api/sites', 'POST', { ...conditions, name: 'Test race room' })))).map(response => response.status);
+  expect(statuses.sort()).toEqual([201, 422]);
+  expect((await fixtureDb.query("SELECT count(*)::integer AS count FROM sites WHERE name = 'Test race room'")).rows[0].count).toBe(1);
+});
+
 test('a session loses site access when its member is removed from the household', async () => {
   const site = await createSite('Test removed member room');
   const identity = await (await request('/api/me')).json();

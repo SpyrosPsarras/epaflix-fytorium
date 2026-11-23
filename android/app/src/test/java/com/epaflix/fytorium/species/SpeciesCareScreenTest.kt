@@ -93,8 +93,11 @@ class SpeciesCareScreenTest {
                 compose.onNodeWithText("Override $label").performScrollTo().performClick()
                 when {
                     field in careChoices -> {
-                        compose.onNodeWithText("Override value for $label: 9").performScrollTo().performClick()
-                        compose.onNodeWithText(when (field) { "light" -> "Full sun"; "cycle" -> "Perennial"; else -> "Yes" }).performClick()
+                        // Sol S67: an exposed dropdown field, not a "Label: value" button.
+                        val chosen = when (field) { "light" -> "Full sun"; "cycle" -> "Perennial"; else -> "Yes" }
+                        compose.onNodeWithText("Override value for $label").performScrollTo().performClick()
+                        compose.onNode(hasText(chosen) and hasAnyAncestor(isPopup())).performClick()
+                        compose.onNode(hasText("Override value for $label") and hasText(chosen)).assertExists()
                     }
                     field in setOf("temperatureRangeC", "soilMoistureRangePercent", "hardiness", "dimensions") -> compose.onNodeWithText("Minimum").performScrollTo().performTextReplacement("1")
                     field == "pruningMonths" -> compose.onNodeWithContentDescription("January").performScrollTo().performClick()

@@ -17,24 +17,28 @@ class HouseholdRepositoryTest {
         MockWebServer().use { server ->
             server.start()
             val store = MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }
-            val repo = HouseholdRepository(ApiClient(server.url("").toString().trimEnd('/'), store) {}, HouseholdArea.Tasks, { Role.family }, { true })
-            server.enqueue(MockResponse().setBody("""[{"id":"plant-one","display_name":"Synthetic fern","status":"active"}]"""))
-            server.enqueue(MockResponse().setBody("""[{"id":"graveyard-one","display_name":"Synthetic retired fern","status":"graveyard"}]"""))
-            server.enqueue(MockResponse().setBody("""[{"id":"site-one","name":"Synthetic site"}]"""))
-            repo.refresh(); assertTrue(repo.state.value.loaded); repeat(3) { server.takeRequest() }
-            assertEquals(listOf("plant-one", "graveyard-one"), repo.state.value.plants.map { it.id })
-            val target = repo.state.value.sites.single()
-            server.enqueue(MockResponse().setBody("[]")); repo.selectTarget(target); server.takeRequest()
-            server.enqueue(MockResponse().setBody("{}")); server.enqueue(MockResponse().setBody("""[{"id":"task-one","name":"Inspect","interval_days":14}]"""))
-            assertTrue(repo.saveTask(CustomTask(name = "Inspect", interval = "14")))
+            val repo = CustomTaskRepository(ApiClient(server.url("").toString().trimEnd('/'), store) {}, { true }, { true })
+            fun reads(tasks: String = "[]") {
+                server.enqueue(MockResponse().setBody(tasks))
+                server.enqueue(MockResponse().setBody("""[{"id":"site-one","name":"Synthetic site","plant_count":2}]"""))
+            }
+            // W5b SV2: one household-wide list, with each target named.
+            reads("""[{"id":"task-one","name":"Inspect","interval_days":14,"plant_id":null,"site_id":"site-one","target_name":"Synthetic site","target_site_name":null,"target_status":null,"target_plant_count":2}]""")
+            repo.refresh(); assertTrue(repo.state.value.loaded)
+            assertEquals("/api/custom-tasks", server.takeRequest().path); server.takeRequest()
+            assertEquals(2, repo.state.value.tasks.single().targetPlants)
+            assertEquals(listOf("Synthetic site"), repo.state.value.sites.map { it.name })
+            server.enqueue(MockResponse().setBody("{}")); reads()
+            assertTrue(repo.save(null, TaskFor("site", "site-one", "Synthetic site"), "Wipe", 14))
             val body = JSONObject(server.takeRequest().body.readUtf8())
             assertEquals("site-one", body.getString("site_id")); assertEquals(14, body.getInt("interval_days"))
-            assertFalse(body.has("plant_id")); server.takeRequest()
-            server.enqueue(MockResponse().setResponseCode(422).setBody("""{"errors":{"interval_days":"Enter whole days from 1 to 365."}}"""))
-            assertFalse(repo.saveTask(repo.state.value.tasks.single().copy(interval = "1.5")))
-            assertEquals("Enter whole days from 1 to 365.", repo.state.value.errors["interval_days"])
+            assertFalse(body.has("plant_id")); repeat(2) { server.takeRequest() }
+            server.enqueue(MockResponse().setResponseCode(422).setBody("""{"errors":{"name":"Enter a name from 1 to 60 characters."}}"""))
+            assertFalse(repo.save("task-one", TaskFor("site", "site-one", "Synthetic site"), "Inspect", 7))
+            assertEquals("Enter a name from 1 to 60 characters.", repo.state.value.errors["name"])
+            // A saved task's target never changes, so an edit sends no target.
             val edit = JSONObject(server.takeRequest().body.readUtf8())
-            assertFalse(edit.has("site_id")); assertEquals("1.5", edit.getString("interval_days"))
+            assertFalse(edit.has("site_id")); assertFalse(edit.has("plant_id")); assertEquals(7, edit.getInt("interval_days"))
         }
     }
     @Test fun membersUseServerCapabilitiesAndInviteTokensStayOutOfState() {
@@ -51,9 +55,9 @@ class HouseholdRepositoryTest {
             reads(); repo.refresh()
             repeat(3) { server.takeRequest() }
             assertEquals(listOf("family", "sitter"), repo.state.value.members.single().roleOptions)
-            server.enqueue(MockResponse().setBody("""{"link":"/invite/synthetic-private-token"}""")); reads()
-            val link = repo.createInvite("sitter", setOf("plant-one"))
-            assertEquals("/invite/synthetic-private-token", link)
+            server.enqueue(MockResponse().setBody("""{"id":"invite-one","role":"sitter","expires_at":"2030-06-08T10:00:00Z","link":"/invite/synthetic-private-token"}""")); reads()
+            val created = repo.createInvite("sitter", setOf("plant-one"))
+            assertEquals("/invite/synthetic-private-token", created?.link)
             assertFalse(repo.state.value.toString().contains("synthetic-private-token"))
             val request = server.takeRequest()
             assertEquals("/api/household/invites", request.path)

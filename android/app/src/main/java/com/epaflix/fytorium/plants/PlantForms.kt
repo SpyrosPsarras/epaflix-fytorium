@@ -213,7 +213,10 @@ private val leadingFields = setOf("nickname", "site_id", "gbif_key", "_form")
             PlantError(siteError, keep = "Choose a site in your household.")
         } else Choice("Site", choices["site_id"].orEmpty(), mapOf("" to if (plant?.status == "graveyard") "No site" else "Choose a site") + sites.associate { it.id to it.name }, writable,
             supporting = { PlantError(siteError, keep = "Choose a site in your household.") }) { choices["site_id"] = it; siteMissing = false }
-        if (sites.isEmpty() && onCreateSite == null) Text("Create a site under More before adding or restoring a plant.")
+        // A new site can be made from here even when others exist (Sol W5b-sol-4).
+        if (sites.isNotEmpty()) onCreateSite?.let { create -> TextButton(onClick = { create(texts["nickname"].orEmpty().trim()) }, enabled = writable,
+            contentPadding = PaddingValues(0.dp), modifier = Modifier.heightIn(min = 48.dp)) { Text("Create a site") } }
+        if (sites.isEmpty() && onCreateSite == null) Text("Create a site under Plants, Sites before adding or restoring a plant.")
         if (plant == null) { LastWatered(watered, today, writable) { watered = it }; PlantError(errors["last_watered_on"]) }
         keepPhoto?.invoke()
         val ready = writable && blocked == null
