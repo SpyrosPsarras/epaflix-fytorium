@@ -38,7 +38,6 @@ jobs:
           ./scripts/android build
           ./scripts/android test
           ./scripts/android lint
-          ./scripts/android screenshots
           ./scripts/android release-check
       - name: Decode signing key into runner temp
         env:

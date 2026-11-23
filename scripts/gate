@@ -5,6 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: ./scripts/gate android [--tests PATTERN]...   Android unit tests with screenshot verify
        ./scripts/gate server [API test file]...      typecheck, unit tests and the named API tests
+       ./scripts/gate browser                        Playwright browser tests in a disposable stack
        ./scripts/gate full                           every check, browser tests included, except emulator e2e
 EOF
   exit 2
@@ -20,6 +21,12 @@ step() {
     exit "$code"
   fi
 }
+browser() {
+  export COMPOSE_PROJECT_NAME=fytorium-gate-$$
+  trap './scripts/stack down >/dev/null 2>&1' EXIT
+  step ./scripts/stack up
+  step ./scripts/stack test
+}
 mode=${1:-}
 [ "$#" -eq 0 ] || shift
 case "$mode" in
@@ -32,6 +39,10 @@ case "$mode" in
     step ./scripts/container test:unit
     [ "$#" -eq 0 ] || step ./scripts/container test:api "$@"
     ;;
+  browser)
+    [ "$#" -eq 0 ] || usage
+    browser
+    ;;
   full)
     [ "$#" -eq 0 ] || usage
     step ./scripts/container install --frozen-lockfile
@@ -41,9 +52,7 @@ case "$mode" in
     step ./scripts/android test
     step ./scripts/android lint
     step ./scripts/android release-check
-    step ./scripts/stack up
-    trap './scripts/stack down >/dev/null 2>&1' EXIT
-    step ./scripts/stack test
+    browser
     ;;
   *) usage;;
 esac

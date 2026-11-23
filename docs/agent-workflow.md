@@ -9,7 +9,8 @@ Rules for agents delivering Fytorium waves. They keep the quality bar and cut th
 | Each Android fix | `./scripts/gate android --tests '*ChangedScreenTest'` | matching unit tests, their screenshots verified |
 | Each server fix | `./scripts/gate server tests/api/<touched>.test.ts` | typecheck, unit tests, the touched API files |
 | Each pull request push | CI (`android.yml`, `image.yml`) | everything except browser and emulator tests |
-| Release candidate | `./scripts/gate full` | everything except emulator e2e, browser tests included |
+| Release candidate | green CI on the candidate commit, plus `./scripts/gate browser` | adds the browser tests CI lacks |
+| No CI available | `./scripts/gate full` | everything except emulator e2e |
 | Once per wave | `./scripts/stack up`, then `E2E_LOGIN=1 ./scripts/android e2e` | emulator e2e on the candidate |
 
 - The gate stops at the first failure and exits with its status. Read `GATE FAIL` and fix that before running anything else.
@@ -28,7 +29,7 @@ Start long jobs in the background with an exit marker. Wait on the marker with a
 
 ```sh
 nohup sh -c './scripts/gate full; echo EXIT=$?' > gate.log 2>&1 &
-timeout 5400 sh -c 'until grep -q "^EXIT=" gate.log; do sleep 15; done'; tail -n 20 gate.log; grep '^EXIT=' gate.log
+timeout 5400 sh -c 'until grep -q "^EXIT=" gate.log; do sleep 15; done'; tail -n 20 gate.log; grep -qx 'EXIT=0' gate.log
 ```
 
 ## Reviews
