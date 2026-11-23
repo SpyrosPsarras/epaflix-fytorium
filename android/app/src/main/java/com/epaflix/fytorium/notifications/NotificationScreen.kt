@@ -243,6 +243,7 @@ internal fun clock(time: String, is24: Boolean): String {
                     }
                 }
             }
+            com.epaflix.fytorium.ReportBusy(state.saving)
             if (state.loading || state.saving) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
     }

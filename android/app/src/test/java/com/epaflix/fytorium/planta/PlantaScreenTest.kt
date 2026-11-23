@@ -496,7 +496,8 @@ class PlantaScreenTest {
             compose.onNodeWithText("Imported 1 plant").assertExists()
             compose.onNodeWithText("Check sites").performScrollTo().assertHeightIsAtLeast(48.dp).performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Indoor · 1 plant · Conditions not set").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNode(isTab("Plants")).assertIsSelected()
+            // W6-P15: Sites opens over the review, so More stays selected.
+            compose.onNode(isTab("More")).assertIsSelected()
             compose.onNodeWithText("Import from Planta").assertDoesNotExist()
         }
     }

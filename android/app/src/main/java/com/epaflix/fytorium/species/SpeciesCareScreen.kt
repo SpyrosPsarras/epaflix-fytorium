@@ -124,6 +124,7 @@ import org.json.JSONObject
         })
         // Progress has its own fixed slot under the bar, so it never moves or covers the page.
         Box(Modifier.fillMaxWidth().height(4.dp)) {
+            com.epaflix.fytorium.ReportBusy(state.saving || submitting)
             if (canEdit && (state.loading || state.saving || submitting)) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
     } }) { padding ->

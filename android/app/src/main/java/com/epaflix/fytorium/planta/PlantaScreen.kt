@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
@@ -112,6 +113,13 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
     // Each plant's species query outlives its search area being hidden (Astra W5b-astra-5).
     val searches = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val page = rememberScrollState()
+    // A review shown again starts empty, which would clamp its restored place to the top; it goes back there once loaded (Sol W6-sol-3).
+    var place by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(state.loaded) {
+        if (!state.loaded) return@LaunchedEffect
+        if (place > 0) { kotlinx.coroutines.withTimeoutOrNull(2_000) { snapshotFlow { page.maxValue }.first { it >= place } }; page.scrollTo(place) }
+        snapshotFlow { page.value }.collect { place = it }
+    }
     var submitting by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var pulling by remember { mutableStateOf(false) }
@@ -158,7 +166,8 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                 Column(Modifier.fillMaxSize().onSizeChanged { viewport = it.height }.verticalScroll(page).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (done) {
                         Heading("Import complete", MaterialTheme.typography.titleLarge)
-                        Button(onClick = onPlants, modifier = Modifier.heightIn(min = 48.dp)) { Text("View imported plants") }
+                        // Off while a fetch or import runs, so leaving cannot cut it short (Sol W6-S15).
+                        Button(onClick = onPlants, enabled = !state.saving && !submitting, modifier = Modifier.heightIn(min = 48.dp)) { Text("View imported plants") }
                         if (state.incompleteSites) {
                             Text("New sites from Planta start with default conditions.")
                             OutlinedButton(onClick = onSites, modifier = Modifier.heightIn(min = 48.dp)) { Text("Check sites") }
@@ -203,6 +212,7 @@ private fun plants(n: Int) = if (n == 1) "1 plant" else "$n plants"
                     TextButton(onClick = { uriHandler.openUri("https://www.gbif.org") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Species names from GBIF, CC BY 4.0") }
                 }
             }
+            com.epaflix.fytorium.ReportBusy(state.saving || submitting)
             if (state.loading || state.saving || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
         // W5b-P23: the import bar stays at the bottom while a review is open, and names the plants still to decide.

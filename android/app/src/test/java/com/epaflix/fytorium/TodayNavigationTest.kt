@@ -157,6 +157,8 @@ class TodayNavigationTest {
         val label = if (custom) "Rotate" else "Water"
         val mark = "Mark $label done for ${plant.displayName}, Synthetic site"
         compose.onNodeWithContentDescription(mark).assertIsDisplayed().assertIsEnabled()
+        // W6-T3: the plant opens over Today, so Today stays selected.
+        compose.onNode(isTab("Today")).assertIsSelected()
         if (restore) restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithContentDescription(mark).assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("task:${plant.id}:${if (custom) "synthetic-custom" else "water"}").assertIsDisplayed()

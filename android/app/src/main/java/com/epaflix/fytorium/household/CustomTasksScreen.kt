@@ -280,6 +280,7 @@ private fun validInterval(text: String) = text.trim().toIntOrNull()?.takeIf { it
                 }
             }
         }
+        com.epaflix.fytorium.ReportBusy(submitting)
         if (state.busy || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
     } }
     if (discarding) DiscardDialog("Discard changes?", discardBody.orEmpty(), onKeep = { discarding = false }) { discarding = false; close() }

@@ -129,12 +129,43 @@ class MembersScreenTest {
         compose.runOnIdle { assertEquals(1, revokes) }
         compose.onNodeWithText("Share link").assertIsDisplayed()
     }
-    // Sol W5b-S4: a tab tap away from Members forgets any link shown there.
-    @Test fun aTabTapForgetsTheInviteLink() {
-        compose.setContent { FytoriumTheme { AppShell(true, false, careState = care) } }
-        InviteLinks.put("invite-shown", "/invite/synthetic-link")
+    // W6-T17 (was Sol W5b-S4): a tab tap keeps the link page and its link; closing the page forgets the link.
+    @Test fun aTabTapKeepsTheInviteLinkAndClosingThePageForgetsIt() = linkInShell { _ ->
         compose.onNode(isTab("Today")).performClick()
-        assertNull(InviteLinks.get("invite-shown"))
+        compose.onNodeWithText("Leave without sending the link?").assertDoesNotExist()
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("Share link").assertIsDisplayed()
+        assertNotNull(InviteLinks.get("invite-new"))
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("Leave without sending the link?").assertIsDisplayed()
+        compose.onNodeWithText("Stay").performClick()
+        compose.onNodeWithText("Share link").assertIsDisplayed()
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("Leave").performClick()
+        compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
+        assertNull(InviteLinks.get("invite-new"))
+    }
+
+    private fun linkInShell(test: (StateRestorationTester) -> Unit) {
+        okhttp3.mockwebserver.MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(
+                    if (request.method == "POST" && request.path == "/api/household/invites") """{"id":"invite-new","role":"family","expires_at":"$expires","link":"/invite/synthetic-link"}"""
+                    else "[]")
+            }
+            server.start()
+            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care, sitesApi = api, sitesConnected = { true }) } }
+            compose.onNode(isTab("More")).performClick()
+            compose.onNodeWithText("Members").performScrollTo().performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("No pending invites.").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Invite someone").performClick()
+            compose.onNode(hasText("Family", substring = true) and isSelectable()).performClick()
+            compose.onNodeWithText("Create invite link").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Share link").fetchSemanticsNodes().isNotEmpty() }
+            test(restoration)
+        }
     }
 
     // Astra W5b-astra-3: invites for two plants with one name say which site each is on, also when revoking.
@@ -199,33 +230,15 @@ class MembersScreenTest {
         compose.onNodeWithText("Discard changes?").assertIsDisplayed()
         compose.onNodeWithText("Your changes to Synthetic sitter are not saved yet.").assertIsDisplayed()
     }
-    // Astra W5b-astra-9: the shell's question about an unsent link does not outlive the link; the tab tap goes through.
-    @Test fun theShellsLinkQuestionDoesNotOutliveTheLink() {
-        okhttp3.mockwebserver.MockWebServer().use { server ->
-            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
-                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setBody(
-                    if (request.method == "POST" && request.path == "/api/household/invites") """{"id":"invite-new","role":"family","expires_at":"$expires","link":"/invite/synthetic-link"}"""
-                    else "[]")
-            }
-            server.start()
-            val api = ApiClient(server.url("").toString().trimEnd('/'), MemoryCredentials().apply { tokens = Tokens("synthetic-access", "synthetic-refresh") }) {}
-            val restoration = StateRestorationTester(compose)
-            restoration.setContent { FytoriumTheme { AppShell(true, false, careState = care, sitesApi = api, sitesConnected = { true }) } }
-            compose.onNode(isTab("More")).performClick()
-            compose.onNodeWithText("Members").performScrollTo().performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("No pending invites.").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Invite someone").performClick()
-            compose.onNode(hasText("Family", substring = true) and isSelectable()).performClick()
-            compose.onNodeWithText("Create invite link").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Share link").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNode(isTab("Today")).performClick()
-            compose.onNodeWithText("Leave without sending the link?").assertIsDisplayed()
-            InviteLinks.clear()
-            restoration.emulateSavedInstanceStateRestore()
-            compose.waitForIdle()
-            compose.onNodeWithText("Leave without sending the link?").assertDoesNotExist()
-            compose.onNode(isTab("Today")).assertIsSelected()
-        }
+    // Astra W5b-astra-9: the shell's question about an unsent link does not outlive the link; the reselect goes through.
+    @Test fun theShellsLinkQuestionDoesNotOutliveTheLink() = linkInShell { restoration ->
+        compose.onNode(isTab("More")).performClick()
+        compose.onNodeWithText("Leave without sending the link?").assertIsDisplayed()
+        InviteLinks.clear()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitForIdle()
+        compose.onNodeWithText("Leave without sending the link?").assertDoesNotExist()
+        compose.onNodeWithText("Log out").performScrollTo().assertIsDisplayed()
     }
 
     // W5b-P12 to P14: saves, removals and revokes name who or what changed in a receipt.

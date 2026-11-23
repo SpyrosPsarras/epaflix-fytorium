@@ -168,7 +168,8 @@ fun runTodayScenario(compose: AndroidComposeTestRule<ActivityScenarioRule<MainAc
             val block = "task:${task.plantId}:${task.key}"
             // The plant page leads with its cover photo, so a later Care row starts below the fold.
             compose.waitForNode(hasTestTag(block) and !hasAnyAncestor(hasTestTag("task-list"))).performScrollTo().assertIsDisplayed()
-            compose.onNode(hasText("Plants") and hasClickAction()).assertIsSelected()
+            // The plant opens over Today, so Today stays selected (W6-P7).
+            compose.onNode(hasText("Today") and hasClickAction() and !hasTestTag("view-today")).assertIsSelected()
             compose.onNode(hasText(task.label) and hasAnyAncestor(hasTestTag(block))).assertIsDisplayed()
             return position
         }

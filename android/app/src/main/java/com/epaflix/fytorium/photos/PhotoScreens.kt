@@ -181,6 +181,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     formOnly: Boolean = false, onUploaded: () -> Unit = {}, selectedUri: String? = null, onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onRemovePhoto: () -> Unit = {},
     // Held above the viewer and form, so the list returns to the card the user left.
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState()) {
+    com.epaflix.fytorium.ReportBusy(state.saving)
     var form by rememberSaveable { mutableStateOf(formOnly) }
     var note by rememberSaveable { mutableStateOf("") }
     var health by rememberSaveable { mutableStateOf("") }
@@ -222,7 +223,8 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("No photos yet", style = MaterialTheme.typography.headlineSmall)
                 Button(onClick = { act(add) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Add your first photo") }
-            } else LazyVerticalGrid(GridCells.Adaptive(320.dp), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
+            // Drawn once the list is there: an empty grid would move a grid shown again to its top (Sol W6-sol-2).
+            } else if (state.loaded) LazyVerticalGrid(GridCells.Adaptive(320.dp), Modifier.fillMaxSize(), grid, contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(state.photos, key = { it.id }) { photo ->
                     val day = dayMonthYear(photo.takenOn)
@@ -324,6 +326,7 @@ internal fun photoStatus(care: CareState?, online: Boolean, state: PhotoState): 
     onTake: () -> Unit = {}, onChoose: () -> Unit = {}, onSearchByName: () -> Unit = onBack, onExplain: (String) -> Unit = {},
     onDiscard: () -> Unit = {}, care: CareState? = null, api: com.epaflix.fytorium.ApiClient? = null, onFormDirty: (() -> String?) -> Unit = {}) {
     var chosen by rememberSaveable { mutableStateOf<SpeciesCandidate?>(null) }
+    com.epaflix.fytorium.ReportBusy(state.saving)
     var searchId by rememberSaveable { mutableStateOf<String?>(null) }
     var showing by rememberSaveable { mutableStateOf(state.result != null) }
     // The result last brought into view, so recreation keeps Change photos open instead of showing the results again.

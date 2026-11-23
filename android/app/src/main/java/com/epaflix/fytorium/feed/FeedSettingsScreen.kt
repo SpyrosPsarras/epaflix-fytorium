@@ -229,6 +229,7 @@ internal fun placeLine(location: WeatherLocation?) = location?.let { it.label ?:
                     }
                 }
             }
+            com.epaflix.fytorium.ReportBusy(state.saving)
             if (searching || state.saving) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
     }

@@ -183,6 +183,7 @@ internal const val sitesOffline = "Changing sites needs a connection."
             }
         }
         // Progress overlays the top edge, so nothing in the form moves when a save starts or ends.
+        com.epaflix.fytorium.ReportBusy(submitting)
         if (state.busy || submitting) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
     } }
     if (discarding) com.epaflix.fytorium.plants.DiscardDialog("Discard changes?", discardBody.orEmpty(), onKeep = { discarding = false }) { discarding = false; closeEditor() }

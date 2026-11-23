@@ -690,7 +690,8 @@ class SpeciesCareScreenTest {
                     android.view.MotionEvent.obtain(0, 0, action, 1f, 1f, 0).let { dialog.dispatchTouchEvent(it); it.recycle() }
             }
             val question = "Your watering interval override for Synthetic mistleaf is not saved yet."
-            for (leave in listOf<() -> Unit>(::back, ::tapOutside, { compose.onNodeWithText("Cancel").performClick() }, { compose.runOnIdle { home.intValue++ } })) {
+            // W6-P6: reselecting More closes this page, so it asks; a notification leaves More's pages alone (W6-P16).
+            for (leave in listOf<() -> Unit>(::back, ::tapOutside, { compose.onNodeWithText("Cancel").performClick() }, { compose.onNode(isTab("More")).performClick() })) {
                 leave()
                 compose.onNodeWithText("Discard changes?").assertIsDisplayed()
                 compose.onNodeWithText(question).assertIsDisplayed()
@@ -698,6 +699,12 @@ class SpeciesCareScreenTest {
                 compose.onNodeWithText("Days").assertTextContains("9")
             }
             compose.runOnIdle { home.intValue++ }
+            compose.onNodeWithText("Discard changes?").assertDoesNotExist()
+            compose.onNode(isTab("More")).performClick()
+            // The page reads its species again, and the dialog shows again once the card is back.
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("Days").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Days").assertTextContains("9")
+            compose.onNode(isTab("More")).performClick()
             compose.onNodeWithText("Discard").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Days").fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithText("Discard changes?").assertDoesNotExist()
