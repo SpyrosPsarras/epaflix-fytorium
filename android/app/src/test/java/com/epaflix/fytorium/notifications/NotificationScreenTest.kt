@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalMaterial3Api::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
 class NotificationScreenTest {
@@ -38,11 +38,11 @@ class NotificationScreenTest {
         var savedTime: String? = null
         var enables = 0
         val receipts = mutableListOf<String>()
-        compose.setContent { FytoriumTheme(dark) { Surface(Modifier.fillMaxSize()) {
+        compose.setContent { CompositionLocalProvider(LocalRippleConfiguration provides null) { FytoriumTheme(dark) { Surface(Modifier.fillMaxSize()) {
             NotificationScreen(state.value, online.value, permissionAsked = asked.value, notificationsEnabled = enabled.value, onSystemSettings = { settingsLinks++ },
                 onUpdate = { change -> savedTime = change(state.value.settings).time; true }, onEnable = { enables++; asked.value = true },
                 onReceipt = { receipts += it }, onTest = { 1 })
-        } } }
+        } } } }
         fun capture(name: String) {
             compose.mainClock.advanceTimeBy(1000)
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()

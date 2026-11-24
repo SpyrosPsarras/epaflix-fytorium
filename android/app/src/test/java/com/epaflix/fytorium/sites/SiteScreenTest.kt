@@ -1,6 +1,7 @@
 package com.epaflix.fytorium.sites
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -19,7 +20,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-mdpi")
 class SiteScreenTest {
@@ -346,11 +347,11 @@ class SiteScreenTest {
         val online = mutableStateOf(true)
         var saved: Site? = null
         val care = CareState(member = Member("synthetic-member", Role.owner), plants = listOf(plantOn("plant-a", "Synthetic fern", "site-one"), plantOn("plant-b", "Synthetic aloe", "site-one")))
-        compose.setContent { FytoriumTheme(dark) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        compose.setContent { CompositionLocalProvider(LocalRippleConfiguration provides null) { FytoriumTheme(dark) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             SitesScreen(state.value, online.value, care = care, onSave = { saved = it; false }, onDelete = {
                 state.value = state.value.copy(errors = mapOf("_form" to "Move or remove the 1 plant on this site first.")); false
             })
-        } } }
+        } } } }
         fun capture(name: String) {
             compose.mainClock.advanceTimeBy(1000)
             compose.onAllNodes(isRoot()).tryPerformAccessibilityChecks()

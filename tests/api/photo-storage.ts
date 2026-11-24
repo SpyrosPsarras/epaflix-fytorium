@@ -4,6 +4,11 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import { Client } from 'minio';
 import { close, listen } from './oidc-provider';
 
+export function buildMinioImage() {
+  const tag = createHash('sha256').update(process.cwd()).digest('hex').slice(0, 12);
+  return GenericContainer.fromDockerfile(process.cwd(), 'tests/stack/Minio.Dockerfile').withTarget('server').build('fytorium-minio-api-' + tag, { deleteOnExit: false });
+}
+
 export function createPhotoStorage() {
   let minio: StartedTestContainer | undefined;
   let storage: Client;
@@ -38,8 +43,7 @@ export function createPhotoStorage() {
     failThumbnailWrites(value: boolean) { failThumbnailWrites = value; },
     failDeletes(value: boolean) { failDeletes = value; },
     async start() {
-      const tag = createHash('sha256').update(process.cwd()).digest('hex').slice(0, 12);
-      const image = await GenericContainer.fromDockerfile(process.cwd(), 'tests/stack/Minio.Dockerfile').withTarget('server').build('fytorium-minio-api-' + tag, { deleteOnExit: false });
+      const image = await buildMinioImage();
       minio = await image.withEnvironment({ MINIO_ROOT_USER: env.MINIO_ACCESS_KEY, MINIO_ROOT_PASSWORD: env.MINIO_SECRET_KEY }).withCommand(['server', '/data']).withExposedPorts(9000).withWaitStrategy(Wait.forHttp('/minio/health/live', 9000)).start();
       minioOrigin = `http://${minio.getHost()}:${minio.getMappedPort(9000)}`;
       env.MINIO_ENDPOINT = `http://127.0.0.1:${await listen(proxy)}`;
