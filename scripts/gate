@@ -49,6 +49,7 @@ case "$mode" in
     step ./scripts/container typecheck
     step ./scripts/container test:unit
     step ./scripts/container test:api
+    step ./scripts/android build
     step ./scripts/android test
     step ./scripts/android lint
     step ./scripts/android release-check

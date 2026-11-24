@@ -27,7 +27,7 @@ jobs:
         run: ./scripts/container test:api
   image:
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
