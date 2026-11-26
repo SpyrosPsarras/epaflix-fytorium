@@ -18,38 +18,44 @@ Behaviour references: `CONTEXT.md`, `android/README.md` and the W1–W6 specs in
 
 ## Stack
 
-`mobile/` has its own pnpm lockfile (`node-linker=hoisted`, required by Expo) and pins Node 22 LTS in `.nvmrc` and the build image. `mobile/android` and `mobile/ios` are generated and gitignored. Native behaviour Expo modules do not give lives in one local Expo module, `mobile/modules/fytorium-native` (Kotlin + Swift), listed in N1–N9.
+`mobile/` has its own pnpm lockfile (`node-linker=hoisted`, required by Expo) and pins Node 22 LTS in `.nvmrc` and the build image. `mobile/android` and `mobile/ios` are generated and gitignored. Native behaviour that Expo modules do not give lives in one local Expo module, `mobile/modules/fytorium-native` (Kotlin + Swift, N1–N10), and its config plugin.
 
 | Concern | Choice |
 | --- | --- |
 | Framework | Expo SDK (latest stable at W1, pinned), New Architecture, TypeScript strict. |
+| App identity | `android.package` and iOS bundle id `com.epaflix.fytorium`; scheme `com.epaflix.fytorium`; `expo-build-properties` `minSdkVersion` 29, `targetSdkVersion` 35; `allowBackup: false` and the current `data_extraction_rules.xml` (cloud backup and device transfer exclude everything) through the config plugin; Photo Picker backport metadata from `AndroidManifest.xml:20-23`. Release APK inspection asserts all of them. |
 | Navigation | `@react-navigation/bottom-tabs` + `native-stack`; `predictiveBackGestureEnabled`. No URL deep links, so no expo-router. |
 | UI | `react-native-paper` (MD3), `@expo/vector-icons`, `@react-native-community/datetimepicker`. Palette from `Theme.kt`, system light/dark. |
 | Credentials | `expo-secure-store`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`. Tokens and the pending login attempt. |
 | Read cache and drafts | `expo-sqlite`: `cached_care(member_id, resource, json, refreshed_at)` as in Room, plus `drafts`. No offline write queue; settings writes stay serialized in memory as in `WriteQueue.kt`. |
-| Login | `expo-web-browser` `openAuthSessionAsync` + `expo-crypto`, hand-written PKCE and JSON code exchange (the server takes JSON on `/api/app/token`). |
-| HTTP | `fetch`, XHR for upload progress. One client: single-flight refresh, one replay per 401, invalid grant vs transient failure as in `ApiClient.kt`, `X-App-Version`, `Accept-Language`, 426 stop. |
-| Server URL | `extra.serverUrl` in `app.config.ts`, default `https://fytorium.epaflix.com`; release config fails unless HTTPS. Debug may use `http://app:3000`. |
-| Connectivity | `@react-native-community/netinfo`, `reachabilityUrl` set to `<serverUrl>/healthz`, plus request outcomes. |
-| Background refresh | `expo-background-task` for the 6 h read (WorkManager / BGTaskScheduler, iOS best effort). The push-triggered one-shot runs inside the push handler (N4). |
-| Push | `@react-native-firebase/app` + `messaging` for FCM tokens and rotation on both platforms. Android display through N4; iOS through APNs alerts (S2). |
-| Photos | `expo-image-picker` for the system photo picker; camera through N6 if the picker's camera needs `CAMERA` (decided by the W1 permission check). `expo-image-manipulator` (2560 px, JPEG 85, no EXIF), `expo-file-system`. Authenticated images use our own file cache (50 MiB LRU, 1 MiB per image, wiped per member); `expo-image` runs with `cachePolicy: 'memory'`. |
+| Login | `expo-web-browser` `openAuthSessionAsync` + `expo-crypto`, hand-written PKCE. Initial URL, live URL and the browser result go through one single-use validator (ported `LoginAttempt`). |
+| HTTP | All server requests go through N1. JS owns single-flight refresh, one replay per 401, invalid grant vs transient failure, `X-App-Version`, `Accept-Language` and the 426 stop, as in `ApiClient.kt`. |
+| Server URL | `extra.serverUrl` in `app.config.ts`, default `https://fytorium.epaflix.com`. Release config fails unless HTTPS; debug may use `http://app:3000`. |
+| Connectivity | `@react-native-community/netinfo` with native reachability and no probe URL (Android `VALIDATED`) decides Offline; request outcomes decide "Fytorium isn't responding", as in `Connectivity.kt:5-7`. |
+| Background refresh | `expo-background-task` for the 6 h read (WorkManager / BGTaskScheduler, iOS best effort). |
+| Push | `@react-native-firebase/app` + `messaging` for FCM tokens and rotation on both platforms, auto-registration off (`firebase.json`), iOS foreground presentation on. Android display through N4; iOS through APNs alerts (S2). |
+| Photos | Android pick and capture through N6; iOS through `expo-image-picker`, whose copy is deleted after N10 prepares it. `expo-image` with `cachePolicy: 'memory'`. |
 | Other | `expo-clipboard`, RN `Share` and `Linking`, `expo-application`, `expo-device` (device name), `expo-localization` (24-hour setting, time zone). |
-| Tests | Jest + `jest-expo` + `@testing-library/react-native` (labels, roles, selected state, 48 dp `minHeight`), a palette contrast test (4.5:1), Maestro for e2e and screenshots. |
+| Tests | Jest + `jest-expo` + `@testing-library/react-native` (labels, roles, selected state, 48 dp `minHeight`), a palette contrast test (4.5:1), native module unit tests, Maestro for e2e and screenshots. |
 
 ### Local native module
 
-- **N1** Android `OkHttpClientFactory`: `retryOnConnectionFailure(false)`, no redirects, no cookie jar, 1 s idle keep-alive (the server closes at 5 s), `evictAll` on network loss. Requests to `/api/app/token` send `Connection: close`. The one-time login code exchange must never be sent twice; refresh has the server's 120 s grace (`app-auth.ts:139-150`).
-- **N2** iOS: an ephemeral `URLSession` configuration for the same rules, proven by the W2 transport test.
-- **N3** Restore signal: Android reports whether the activity was recreated with saved state. Navigation and drafts restore only then, and never across logout or a member or role change. Swipe-away and iOS cold starts open Today at its root.
-- **N4** Android `FirebaseMessagingService` replacing the library's service in the manifest. Ports `PushMessages.kt`: drop without a session flag (written by JS at login, cleared at logout), channels `daily_reminder`, `weather_alert`, `completion_notice` (same IDs, so mutes survive), tag replacement, tap opens Today, enqueue the one-shot read refresh even when notification permission is denied.
-- **N5** Legacy cleanup on first run, once: delete prefs `credentials`, `diagnostics`, `notification-permission`, Keystore alias `fytorium.credentials`, `care-cache.db`, thumbnail cache, `noBackupFilesDir/photo-drafts`, `cache/captures`, released URI grants, and WorkManager jobs `care-cache-refresh` and `notification-cache-refresh`. Then FCM `deleteToken`; the flag is set only after it succeeds, and registration waits for it.
-- **N6** Camera capture through `ACTION_IMAGE_CAPTURE` and a non-exported FileProvider limited to `cache/captures/`, if needed.
+- **N1 HTTP client.** `request`, `upload` (multipart with progress events) and `download` (to a cache path). Android ports `ApiClient.kt:27-32`: OkHttp with `retryOnConnectionFailure(false)`, no redirects, no cookie jar, connect and read 10 s, call 20 s, a 1 s idle pool, and a separate zero-idle pool for `/api/app/token` with a one-shot body so no follow-up resends it; `evictAll` on network loss. iOS: one `URLSession` per pool with the same timeouts, a delegate that refuses every redirect, no cookie storage, and a separate session without keep-alive for the token endpoint. Both send each request at most once.
+- **N2 Cache files.** Only `/thumb` and `/display` variants go to disk: 50 MiB LRU, 1 MiB per entry, one folder per member, wiped at logout and member change. Originals (up to 15 MiB) stay in memory for the viewer.
+- **N3 Restore signal.** The config plugin records `savedInstanceState != null` in `MainActivity` before Expo's `super.onCreate(null)`. Navigation and drafts restore only then, and never across logout or a member or role change. Swipe-away and iOS cold starts open Today at its root.
+- **N4 Android push service.** Subclasses `ReactNativeFirebaseMessagingService`. Ports `PushMessages.kt`: drop without a session flag (written by JS at login, cleared at logout), channels `daily_reminder`, `weather_alert`, `completion_notice` (same IDs, so mutes survive), tag replacement, tap opens Today. It enqueues a network-constrained WorkManager one-shot that runs the JS cache refresh as a headless task, also when notification permission is denied. It calls `super` so `onTokenRefresh` still fires; JS also compares `getToken()` with the last registered token at start.
+- **N5 Legacy cleanup** on the first run after upgrade, once: prefs `credentials`, `diagnostics`, `notification-permission`; Keystore alias `fytorium.credentials`; `care-cache.db`; the thumbnail cache; `noBackupFilesDir/photo-drafts`; `cache/captures`; persisted URI grants; WorkManager jobs `care-cache-refresh` and `notification-cache-refresh`.
+- **N6 Android photo input.** `PickVisualMedia` (single, or up to five for Identify) with persistable grants where offered, and `ACTION_IMAGE_CAPTURE` into a non-exported FileProvider limited to `cache/captures/`. The pending capture path is kept in prefs and exposed as `pendingCapture()`, read on N3 restore. No `CAMERA` or media permission.
 - **N7** Clipboard copy with `EXTRA_IS_SENSITIVE` for invite links (Android 13+).
 - **N8** Obtainium installed check (`<queries>` for both package names).
-- **N9** iOS: exclude the SQLite and drafts files from backup; wipe Keychain items on the first run after install (Keychain survives uninstall).
+- **N9 iOS storage.** Exclude the SQLite, drafts and cache files from backup; wipe Keychain items on the first run after install (Keychain survives uninstall).
+- **N10 `preparePhoto(uri)`.** Android `ImageDecoder` with a target size, as `PhotoImages.kt:45-58`; iOS `CGImageSourceCreateThumbnailAtIndex`. Longest edge 2560 px, orientation applied, JPEG 85, no metadata, never a full-size decode.
 
 Debug-only code (synthetic Firebase config, cleartext for `app`, `oidc`, `fake-push`, a push replay hook for e2e) lives in a debug source set of the module and a debug-only JS entry; the release check proves it absent.
+
+### Push token lifecycle
+
+A `push_reset_pending` flag in SQLite is set on the first run after upgrade and at every logout, online or not. Logout also calls `unregisterDeviceForRemoteMessages()`, which works offline and stops iOS alerts. While the flag is set, the app calls FCM `deleteToken` whenever online and clears the flag only on success. Registration runs only with an active session and only after the flag is clear, so a new device never reuses a token bound to an old one (`subscriptions.ts:49-50`).
 
 ## Server changes
 
@@ -58,43 +64,42 @@ Debug-only code (synthetic Firebase config, cleartext for `app`, `oidc`, `fake-p
 - **S3** (W8) Device labels: "Android app" becomes "Mobile app" in `src/routes/settings/notifications/+page.svelte:105`; the app's fallback label is platform-neutral.
 - **S4** (W9) Move the release, fingerprint, minimum-version, Firebase and Obtainium sections of `android/README.md` to `mobile/README.md` and update links: `README.md:320`, `README.md:346`, `+page.svelte:83`, `tests/browser/android-app.spec.ts`.
 
-`MIN_APP_VERSION` is shared by both platforms. It is raised only when both have an installable build.
+`MIN_APP_VERSION` is shared. It is raised only when every platform with users has an installable build.
 
 ## iOS
 
 - Firebase iOS app, `GoogleService-Info.plist` from secret `GOOGLE_SERVICE_INFO_PLIST` (validated like `GOOGLE_SERVICES_JSON`, synthetic in debug), push entitlement, APNs key in Firebase. `scripts/firebase-setup` gains the iOS steps.
-- Offline logout: APNs shows alerts without running app code, so logout always calls `unregisterDeviceForRemoteMessages()`, which works without a network, before wiping local data.
-- No Mac in the homelab. Per wave, GitHub `macos-latest` runs Jest, a simulator build and a Maestro smoke flow (launch, login screen, light and dark). Real login, push and upgrade on iOS are checked on the owner's iPhone with a TestFlight build before the first iOS release. iOS parity rests on the shared JS and these checks.
+- No Mac in the homelab. Per wave, GitHub `macos-latest` runs Jest, N1/N9/N10 native tests, a simulator build and a Maestro smoke flow (launch, login screen, light and dark). Before the first TestFlight release, on the owner's iPhone: login, push delivery and tap, offline logout then reconnect, relaunch signed out and login as another member with no old alert and working new delivery.
 - The update stop links to the TestFlight invite; Obtainium is hidden.
 
 ## Test environment (D3)
 
-Namespace `fytorium-e2e`, PodSecurity `privileged`, one pod `fytorium-lab` pinned to a worker with `/dev/kvm`: a `docker:dind` container (12 GiB memory, `/var/lib/docker` on a 25 GiB local-path PVC) and a `work` container with git and the Docker CLI. Inside it the existing tooling runs unchanged: `./scripts/stack up` starts the synthetic stack (separate containers, so OIDC and fake-push keep port 8080), and `./scripts/mobile e2e` starts the emulator container on the stack's network with the current dnsmasq, guest DNS, Chrome and readiness gates from `android/docker/e2e`, moved to `mobile/e2e/`. Failure screenshots and window dumps go to `.scratch/e2e-failures/`. `scripts/mobile apk` and release builds run in the same dind with a digest-pinned image, so any host with Docker can run them too. The manifest is `mobile/e2e/lab.yaml`; `mobile/README.md` says how to create and delete it.
+Namespace `fytorium-e2e`, PodSecurity `privileged`, pod `fytorium-lab` on a worker with `/dev/kvm`: a `docker:dind` container (daemon on a pod-local unix socket only, `/var/lib/docker` on a 25 GiB local-path PVC) and a privileged `work` container with git and the Docker CLI. Both mount the checkout at the same path, `/src`, so bind mounts in `compose.yaml` (fake-push, WireMock mappings) and the emulator's `$PWD` mount resolve inside the daemon. Inside it the existing tooling runs: `./scripts/stack up` starts the synthetic stack in its own containers, and `./scripts/mobile e2e` starts the emulator container on the stack's network with the dnsmasq, guest DNS, Chrome and readiness gates from `android/docker/e2e`, moved to `mobile/e2e/`. Failure screenshots and window dumps go to `.scratch/e2e-failures/`. `scripts/mobile apk` and release builds run in the same daemon with a digest-pinned image, so any host with Docker can run them. The manifest is `mobile/e2e/lab.yaml`; `mobile/README.md` says how to create and delete it.
 
 ## Release checks
 
-`mobile/release/` keeps `release-version` and its test unchanged. The no-CI gate and both workflows run:
+`mobile/release/` keeps `release-version`; its test resolves the script relative to itself. Two lanes:
 
-- **Before signing:** full JS suite, release APK built from a clean prebuild, rejecting a missing or synthetic `GOOGLE_SERVICES_JSON` and a non-HTTPS server URL even with warm outputs.
-- **APK inspection:** `aapt dump permissions` equals the allow-list `POST_NOTIFICATIONS`, `INTERNET`, `ACCESS_NETWORK_STATE` (anything Expo adds goes in `blockedPermissions`); merged manifest has no cleartext and no debug receiver; DEX and Hermes bundle have no debug hook class or test host; APK size reported.
-- **Launch:** the signed dry-run APK starts without Metro on the emulator and reaches the login screen without a crash.
-- **Tag release:** strictly higher versionCode than every published `android-v*`, package and version check, certificate SHA-256 pin, throwaway signer rejected, `fytorium-X.Y.Z.apk`, `SHA256SUMS`, changelog over `mobile/`.
+- **Fixture lane** (PRs, `gate full`, upgrade tests): synthetic Firebase config with the explicit test-only flag, as `android/docker/release-check:5-13`, and a throwaway signer. It proves a missing config fails even with warm outputs, a non-HTTPS server URL fails, and a synthetic config fails without the flag. The APK it makes is never publishable.
+- **Tag lane** (`android-release.yml`): production config and key; synthetic config rejected.
+
+Both lanes inspect the release APK: `aapt dump permissions` must match `mobile/release/permissions.txt`, taken from the last published Kotlin APK; additions fail review, and `CAMERA`, `RECORD_AUDIO`, `READ_MEDIA_*` and `READ_EXTERNAL_STORAGE` are blocked. The merged manifest keeps identity, `minSdk`, no backup, extraction rules and no cleartext; DEX and Hermes bundle hold no debug hook class or test host; APK size is reported. The APK starts without Metro on the emulator and reaches the login screen without a crash. The tag lane also checks strictly higher versionCode than every published `android-v*`, package and version, certificate SHA-256 pin and throwaway-signer rejection, and publishes `fytorium-X.Y.Z.apk` and `SHA256SUMS` with a changelog over `mobile/`.
 
 ## Waves
 
-Each wave is one diff. Before review: typecheck, lint, Jest, debug APK, iOS simulator build, the wave's Maestro flows on the emulator with light and dark screenshots attached. Every council member scores it 9.5 or more.
+Each wave is one diff. Before review: typecheck, lint, Jest, native module tests, fixture-lane release APK, iOS simulator build, and the wave's Maestro flows on the emulator with light and dark screenshots attached. Every council member scores it 9.5 or more.
 
 | Wave | Scope | Acceptance |
 | --- | --- | --- |
-| W1 Scaffold | `mobile/` app shell, `app.config.ts`, local module skeleton with N1, N4, N5, N8, Jest, `scripts/mobile`, `mobile.yml`, lab namespace. | Lab boots a fresh AVD, guest reaches `app`, `oidc`, `fake-push`. Debug APK and iOS simulator build in CI. Permission allow-list holds. A release APK signed with a throwaway key installs over a populated Kotlin install signed with the same key; N5 leaves no legacy file, pref, key or job; registration happens only after `deleteToken`. N4 receives a replayed data message, drops it without a session and replaces by tag. |
-| W2 Session | Login (initial and live callback URLs through one single-use validator), SecureStore, API client, N2, logout with local wipe, update stop and 426, About, diagnostics, crash handler, S1. | Jest ports of `AuthTest` and `NetworkConfigTest`. Native transport test on both platforms: dropped token response, redirect, cookie, concurrent 401s, no second code exchange. Maestro: login through the synthetic OIDC page, process death during browser login, logout offline. |
-| W3 Shell and data | Tabs and per-tab stacks with the W6 back table, role gating, reselect, discard guards, N3 restore, SQLite cache with member binding and in-flight read guard, thumbnail cache, connectivity, background refresh, theme. Stub screens for later waves. | RNTL test per W6 navigation row using stubs. Repository tests: cached read, logout and member-switch wipe, late response after wipe ignored, thumbnail cap eviction, background job cancelled at logout. Maestro: process kill vs swipe-away, role downgrade with a hidden draft. |
+| W1 Scaffold | `mobile/` app shell, `app.config.ts`, module skeleton with N1, N3, N4, N5, N8, Jest, `scripts/mobile`, `mobile.yml`, lab manifest, fixture lane. | Lab boots a fresh AVD; guest reaches `app`, `oidc`, `fake-push`; WireMock and fake-push see their mounted files; artifacts land in the checkout. Debug APK and iOS simulator build in CI. Release APK passes inspection. A fixture-lane APK installs over a populated Kotlin install signed with the same throwaway key, and N5 leaves no legacy file, pref, key or job. Module test: registration waits for a successful `deleteToken`. N4 replay: dropped without a session, shown with one, replaced by tag. |
+| W2 Session | Login, SecureStore, N1 in JS client, logout with local wipe and token lifecycle, push registration on login, update stop and 426, About, diagnostics, crash handler, S1. | Jest ports of `AuthTest` and `NetworkConfigTest`. Native transport tests on both platforms against a test server: redirect refused, cookie ignored, dropped token response not resent, 503 with `Retry-After: 0` not followed, token exchange on a fresh connection after the pool is primed, concurrent 401s refresh once. Maestro: login through the synthetic OIDC page, process death during browser login, logout offline then reconnect clears the token. |
+| W3 Shell and data | Tabs and per-tab stacks with the W6 back table, role gating, reselect, discard guards, N3 restore, SQLite cache with member binding and in-flight read guard, N2, connectivity, background refresh, theme. Stub screens for later waves. | RNTL test per W6 navigation row using stubs. Repository tests: cached read, logout and member-switch wipe, late response after wipe ignored, N2 cap eviction, background job cancelled at logout. Maestro: process kill vs swipe-away, role downgrade with a hidden draft, airplane mode vs a reachable server returning 503. |
 | W4 Today | Today/Upcoming, task view sheet, receipts and Undo, row stability, Handle all, feed strip, rain watering, feed settings. | Jest ports of `TodayPresentationTest` occurrence cases. Maestro: `TodayScenario` up to the plant page, `FeedScenarios`, offline cold start shows cached Today. |
 | W5 Plants and sites | Plants grid, plant page, add/edit, lifecycle, species search and change, sites. | Maestro: `PlantsE2eTest` up to species names, `SiteScenario`, the rest of `TodayScenario`. |
 | W6 Species care | Species names, care overrides, unmatched species. | Maestro: `SpeciesCareScenario`, the rest of `PlantsE2eTest`. |
-| W7 Photos | Add photo, Journal, viewer, Identify, N6, draft cleanup. | Maestro: `PhotoScenario` with seeded MediaStore images and the emulator camera. Device test with the 144 MB / 48 MP rotated fixture from `PhotoMemoryDeviceTest`: no full decode, bounded output, no EXIF, no original on disk; caches wiped at logout. |
-| W8 More and push | Notifications and devices, members and invites with N7, custom tasks, Planta import, S2, S3. | Maestro: `NotificationScenario`, `HouseholdScenario`, `PlantaScenario`; fake-push send then N4 replay, cold and warm tap open Today, logged-out drop. Invite copy sets `EXTRA_IS_SENSITIVE`. Large-text landscape flow over the main screens. |
-| W9 Release and delete | Release workflow and checks, S4, delete list. Every Maestro flow runs once more on the candidate. | Dry-run release passes every release check. `android/` and `scripts/android` do not exist; `rg 'android/|scripts/android|roborazzi'` finds nothing outside `docs/superpowers/`. `./scripts/gate full` and browser tests pass. Lab recipe recreates the namespace from `mobile/e2e/lab.yaml`. |
+| W7 Photos | Add photo, Journal, viewer, Identify, N6, N10, draft cleanup. | Maestro: `PhotoScenario` with seeded MediaStore images and the emulator camera, including a capture returned after the process was killed. Device tests: the 8000×6000 BMP from `PhotoMemoryDeviceTest` prepares to 2560×1920 without a full decode; a rotated JPEG with EXIF and GPS comes out upright with no metadata; a 2 MiB original opens in the viewer and leaves no disk copy; caches wiped at logout. |
+| W8 More and push | Notifications and devices, members and invites with N7, custom tasks, Planta import, S2, S3. | Maestro: `NotificationScenario`, `HouseholdScenario`, `PlantaScenario`; fake-push send then N4 replay, cold and warm tap open Today, logged-out drop, headless refresh runs with notifications denied. Invite copy sets `EXTRA_IS_SENSITIVE`. Large-text landscape flow over the main screens. |
+| W9 Release and delete | Release workflow, tag lane, S4, delete list. Every Maestro flow runs once more on the candidate. | Tag-lane dry run passes every check. `git ls-files android scripts/android .github/workflows/android.yml` is empty and `rg 'android/(README|docker|app|gradle)|scripts/android|roborazzi' -g '!docs/superpowers/**'` finds nothing. `./scripts/gate full` and browser tests pass. The lab recreates from `mobile/e2e/lab.yaml`. |
 
 ## Delete list (W9)
 
@@ -109,7 +114,7 @@ Kept: `src/`, `tests/`, `migrations/`, `api/`, `compose.yaml`, `scripts/stack`, 
 ## Risks
 
 - **R1 Size.** About 9.3k lines of Kotlin and 1,030 tests carry the behaviour. W4, W5 and W7 will take several rounds.
-- **R2 iOS.** No homelab Mac; real-login, push and upgrade checks on iOS are manual on the owner's iPhone, and release waits for the Apple account.
+- **R2 iOS.** No homelab Mac; real login, push and offline-logout checks on iOS are manual on the owner's iPhone, and release waits for the Apple account.
 - **R3 Visual regressions.** Screenshot review replaces pixel diffs (D4).
 - **R4 APK size** grows by several MB with Hermes and React Native.
 - **R5 Old device rows.** The old Android device stops receiving push after 90 idle days but stays listed until a member removes it.
