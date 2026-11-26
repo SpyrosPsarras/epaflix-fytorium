@@ -31,7 +31,7 @@ run() {
 case "$command" in
   install) run "$image" pnpm install --frozen-lockfile;;
   typecheck|lint) run "$image" pnpm -s "$command";;
-  test) run "$image" sh -ec 'sh release/release-version-test; pnpm -s test "$@"' sh "$@";;
+  test) run "$image" sh -ec 'sh release/release-version-test; sh release/test-hosts-test; pnpm -s test "$@"' sh "$@";;
   apk) run -e FYTORIUM_VARIANT=debug "$image" sh -ec '
     npx expo prebuild --platform android --clean --no-install >/dev/null
     (cd android && ./gradlew --no-daemon --console=plain :fytorium-native:testDebugUnitTest assembleDebug)

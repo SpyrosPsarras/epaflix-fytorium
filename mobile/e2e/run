@@ -108,10 +108,10 @@ w1() {
   pass 'N4: dropped while push_ready clear, shown once set, replaced by tag'
   device_online() { [ "$(adb get-state 2>/dev/null)" = device ]; }
   for scheme in light dark; do
+    wait_ready 60 "adb transport online before Maestro ($scheme)" device_online
     if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
     out="../.scratch/e2e-screenshots/android-$scheme"
     rm -rf "$out"
-    wait_ready 60 "adb transport online before Maestro ($scheme)" device_online
     if ! maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "$out" >/dev/null; then
       # Maestro's driver can drop the adb transport; only that infrastructure failure earns one retry.
       grep -rq 'device offline' "$out" || fail "Maestro launch flow ($scheme)"

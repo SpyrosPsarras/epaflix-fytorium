@@ -12,7 +12,8 @@ object FirstRun {
 
     // Every step treats an already-absent item as done. A failed step leaves first_run_done unset, so the next start retries.
     fun run(context: Context): Boolean {
-        if (Flags.get(context, Flags.FIRST_RUN_DONE)) return true
+        // SharedPreferences keeps a failed write in memory, so the marker is committed again before it counts.
+        if (Flags.get(context, Flags.FIRST_RUN_DONE)) return Flags.set(context, Flags.FIRST_RUN_DONE, true)
         val asked = context.getSharedPreferences("notification-permission", Context.MODE_PRIVATE).getBoolean("asked", false)
         // The legacy prefs are deleted only after the copied values are on disk.
         val carried = mapOf(Flags.PUSH_RESET_PENDING to true) + (if (asked) mapOf(Flags.NOTIFICATIONS_ASKED to true) else emptyMap())

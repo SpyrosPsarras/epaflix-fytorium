@@ -1,0 +1,4 @@
+#!/bin/sh
+# usage: test-hosts <file>. Fails when the file names a lab host after "//", with any scheme and any terminator, NUL included.
+# React Native ships a localhost:8081 dev-server string, so localhost is refused by the config check instead.
+! LC_ALL=C grep -aPq '//(app|oidc|fake-push)\.?(?:[:/"\x00\s]|$)' "$1"

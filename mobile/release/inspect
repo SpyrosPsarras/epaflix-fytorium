@@ -43,13 +43,13 @@ unzip -p "$apk" assets/app.config >"$temp/app.config"
 node -e '
   const config = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   const url = new URL(config.extra.serverUrl);
-  if (config.extra.variant !== "release" || url.protocol !== "https:" || !url.hostname || ["app", "oidc", "fake-push", "localhost"].includes(url.hostname)) process.exit(1);
+  if (config.extra.variant !== "release" || url.protocol !== "https:" || !url.hostname || ["app", "oidc", "fake-push", "localhost"].includes(url.hostname.replace(/\.$/, ""))) process.exit(1);
 ' "$temp/app.config" || fail 'embedded app config is not an HTTPS release for a production host'
 unzip -p "$apk" 'classes*.dex' >"$temp/dex"
-# React Native ships a localhost:8081 dev-server string; config rejects localhost, the binary scan does not.
-hosts='//(app|oidc|fake-push)([:/"]|$)'
-! grep -aEq "DebugPushReceiver|$hosts" "$temp/dex" || fail 'debug hook or test host in DEX'
+! grep -aEq 'DebugPushReceiver' "$temp/dex" || fail 'debug hook in DEX'
+sh test-hosts "$temp/dex" || fail 'test host in DEX'
 unzip -q "$apk" 'assets/*' -d "$temp/apk"
 [ -s "$temp/apk/assets/index.android.bundle" ] || fail 'no embedded JS bundle'
-! grep -raEq "DebugTokenProvider|$hosts" "$temp/apk/assets" || fail 'debug hook or test host in assets'
+! grep -raq 'DebugTokenProvider' "$temp/apk/assets" || fail 'debug hook in assets'
+for asset in $(find "$temp/apk/assets" -type f); do sh test-hosts "$asset" || fail "test host in $asset"; done
 echo 'Release inspection PASS: permissions, identity, SDK levels, not debuggable, backup and extraction rules, cleartext, sole push handler, picker backport, release config, no debug code or test hosts.'

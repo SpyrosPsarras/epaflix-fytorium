@@ -22,7 +22,7 @@ export function resolve(env: Env) {
     let url: URL;
     try { url = new URL(serverUrl); } catch { throw new Error('Release server URL must use https://'); }
     if (url.protocol !== 'https:' || !url.hostname) throw new Error('Release server URL must use https://');
-    if (LAB_HOSTS.includes(url.hostname)) throw new Error('Release server URL must not be a test host');
+    if (LAB_HOSTS.includes(url.hostname.replace(/\.$/, ''))) throw new Error('Release server URL must not be a test host');
   }
   let googleServicesFile = './firebase/google-services.synthetic.json';
   if (variant === 'release') {
