@@ -60,7 +60,8 @@ jobs:
         run: pnpm -s test
       - name: Simulator build
         run: |
-          npx expo prebuild --platform ios --clean
+          npx expo prebuild --platform ios --clean --no-install
+          (cd ios && pod install)
           xcodebuild -workspace ios/Fytorium.xcworkspace -scheme Fytorium -configuration Release -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO -quiet
       - name: Info.plist contract

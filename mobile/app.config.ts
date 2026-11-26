@@ -60,7 +60,7 @@ export default (): ExpoConfig => {
     plugins: [
       ['expo-build-properties', {
         android: { minSdkVersion: 29, targetSdkVersion: 35 },
-        ios: { useFrameworks: 'static', deploymentTarget: '16.4' },
+        ios: { useFrameworks: 'dynamic', deploymentTarget: '16.4' },
       }],
       '@react-native-firebase/app',
       '@react-native-firebase/messaging',

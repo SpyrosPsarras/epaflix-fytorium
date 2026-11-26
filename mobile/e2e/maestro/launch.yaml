@@ -1,7 +1,6 @@
 appId: com.epaflix.fytorium
 ---
-- launchApp:
-    clearState: true
+- launchApp
 - assertVisible:
     id: fytorium-root
 - assertVisible: Fytorium
