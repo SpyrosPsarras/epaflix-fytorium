@@ -20,7 +20,10 @@ class Http {
     val client: OkHttpClient = OkHttpClient.Builder().retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
         // Retire idle sockets before the server's five-second keep-alive timeout.
         .connectionPool(ConnectionPool(5, 1, TimeUnit.SECONDS))
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).build()
+        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS)
+        // OkHttp resends any request after a 503 with Retry-After: 0; without the header it returns the 503.
+        .addNetworkInterceptor { chain -> chain.proceed(chain.request()).let { if (it.code == 503) it.newBuilder().removeHeader("Retry-After").build() else it } }
+        .build()
     // Token exchanges never reuse a pooled socket that may have expired during browser login.
     val tokenClient: OkHttpClient = client.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()
 

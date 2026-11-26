@@ -6,4 +6,7 @@ COPY fetch-sdk /usr/local/bin/fetch-sdk
 RUN fetch-sdk emulator-linux_x64-16428233.zip cd7362ea55dfb86a418958138dc396e74165dd01 emulator && \
     fetch-sdk sys-img/google_apis/x86_64-35_r09.zip 0103e6dab21290c4b9d16550a3ce99476f884eef system-images/android-35/google_apis/x86_64
 COPY emulator-package.xml /opt/android/emulator/package.xml
-ENV PATH=/opt/android/emulator:$PATH
+RUN curl --retry 3 -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.12.1/maestro.zip -o /tmp/maestro.zip && \
+    echo '54dbb0716425626604973cbb374c585ca30272375d9ce15177a1152765ddd9d7  /tmp/maestro.zip' | sha256sum -c - && \
+    unzip -q /tmp/maestro.zip -d /opt && rm /tmp/maestro.zip
+ENV PATH=/opt/android/emulator:/opt/maestro/bin:$PATH MAESTRO_CLI_NO_ANALYTICS=1

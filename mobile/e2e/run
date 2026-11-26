@@ -1,21 +1,31 @@
 #!/bin/sh
 # usage: e2e/run w1. Runs inside the emulator image on the stack network, from mobile/.
 set -eu
-scenario=${1:?scenario}
-artifacts=/src/cache/artifacts/e2e
+scenario=${1:-w1}
+case "$scenario" in w1) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
+artifacts=../.scratch/e2e-failures
 mkdir -p "$artifacts"
 . e2e/device
 package=com.epaflix.fytorium
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*" >&2; adb logcat -d > "$artifacts/logcat.txt" 2>/dev/null || true; grep -A25 "FATAL EXCEPTION" "$artifacts/logcat.txt" | head -60 >&2 || true; adb exec-out screencap -p > "$artifacts/failure.png" 2>/dev/null || true; adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 && adb pull /sdcard/window.xml "$artifacts/failure-window.xml" >/dev/null 2>&1 || true; exit 1; }
-in_app() { adb shell run-as "$package" "$@"; }
+data=/data/data/$package
+app_file() { adb exec-out su 0 cat "$data/$1"; }
+app_has() { adb shell su 0 ls "$data/$1" >/dev/null 2>&1; }
+keystore_alias() {
+  uid=$(adb shell pm list packages -U "$package" | tr -d '\r' | sed -n "s/^package:$package uid:\([0-9]*\)$/\1/p")
+  case "$uid" in ''|*[!0-9]*) fail "no single uid for $package: $uid";; esac
+  for suffix in '' -wal -shm; do adb exec-out su 0 cat "/data/misc/keystore/persistent.sqlite$suffix" > "/tmp/keystore.db$suffix" 2>/dev/null || rm -f "/tmp/keystore.db$suffix"; done
+  sqlite3 /tmp/keystore.db "SELECT count(*) FROM keyentry WHERE alias = 'fytorium.credentials' AND namespace = $uid"
+}
+flag() { app_file shared_prefs/fytorium-platform.xml 2>/dev/null | grep -q "name=\"$1\" value=\"true\""; }
 launch_without_crash() {
   adb logcat -c
   adb shell am start -W -n "$package/.MainActivity" >/dev/null
   sleep 8
   adb shell pidof "$package" >/dev/null || fail "$1: process not running"
   adb shell uiautomator dump /sdcard/window.xml >/dev/null && adb pull /sdcard/window.xml /tmp/window.xml >/dev/null
-  grep -q 'text="Fytorium"' /tmp/window.xml || fail "$1: Fytorium screen not shown"
+  grep -q 'resource-id="fytorium-root"' /tmp/window.xml || fail "$1: app root not shown"
   ! adb logcat -d | grep -E "FATAL EXCEPTION|Force finishing activity.*$package" || fail "$1: crashed"
   pass "$1: launched without Metro and without a crash"
 }
@@ -34,29 +44,42 @@ w1() {
   adb shell am instrument -w -e class com.epaflix.fytorium.SeedTest -e pushToken "$push_id" -e denyNotifications true \
     "$package.test/androidx.test.runner.AndroidJUnitRunner" > "$artifacts/seed.txt" || true
   grep -q '^OK (1 test)' "$artifacts/seed.txt" || { cat "$artifacts/seed.txt" >&2; fail 'Kotlin seed did not complete'; }
-  in_app ls shared_prefs databases | tee "$artifacts/kotlin-files.txt" | grep -q credentials.xml || fail 'seeded install has no credentials'
+  app_has shared_prefs/credentials.xml || fail 'seeded install has no credentials'
   pass "Kotlin $fixture/app.apk seeded: logged in, Today and a plant cached, token registered"
 
+  aliases=$(keystore_alias)
+  if [ "$aliases" != 1 ]; then
+    ls -la /tmp/keystore.db* >&2; sqlite3 /tmp/keystore.db '.tables' 'SELECT alias, namespace, domain FROM keyentry' >&2 || true; echo "uid=$uid" >&2
+    fail 'seeded install has no Keystore alias'
+  fi
+  # A capture folder the app cannot empty makes the first cleanup attempt fail.
+  adb shell su 0 chmod 500 "$data/cache/captures"
   adb install -r /src/cache/artifacts/fytorium-release-fixture.apk >/dev/null || fail 'release fixture APK did not install over the Kotlin app'
-  launch_without_crash 'Release fixture over Kotlin'
-  adb install -r /src/cache/artifacts/fytorium-debug-fixture.apk >/dev/null || fail 'debug fixture APK did not install over the release fixture'
-  launch_without_crash 'Debug fixture'
-  in_app cat shared_prefs/fytorium-platform.xml > /tmp/flags.xml
-  for flag in first_run_done push_reset_pending notifications_asked; do
-    grep -q "name=\"$flag\" value=\"true\"" /tmp/flags.xml || fail "N5 did not set $flag"
-  done
+  launch_without_crash 'Release fixture over Kotlin, cleanup blocked'
+  flag push_reset_pending || fail 'N5 did not set push_reset_pending before cleanup'
+  flag notifications_asked || fail 'N5 did not carry over the asked flag'
+  ! flag first_run_done || fail 'N5 marked itself done after a failed step'
+  app_has cache/captures/seed.jpg || fail 'the blocked capture was removed anyway'
+  pass 'N5 left first_run_done unset after a failed step'
+  adb shell su 0 chmod 700 "$data/cache/captures"
+  adb shell am force-stop "$package"
+  launch_without_crash 'Release fixture retry'
+  flag first_run_done || fail 'N5 retry did not complete'
   for path in shared_prefs/credentials.xml shared_prefs/diagnostics.xml shared_prefs/notification-permission.xml \
     databases/care-cache.db cache/thumbnails cache/captures no_backup/photo-drafts; do
-    ! in_app ls "$path" >/dev/null 2>&1 || fail "N5 left $path"
+    ! app_has "$path" || fail "N5 left $path"
   done
-  in_app cat no_backup/androidx.work.workdb > /tmp/work.db || fail "WorkManager database missing"
-  for wal in -wal -shm; do in_app cat "no_backup/androidx.work.workdb$wal" > "/tmp/work.db$wal" 2>/dev/null || rm -f "/tmp/work.db$wal"; done
+  aliases=$(keystore_alias)
+  [ "$aliases" = 0 ] || fail "N5 left the Keystore alias ($aliases)"
+  for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
+  [ -s /tmp/work.db ] || fail 'WorkManager database missing'
   live=$(sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name IN ('care-cache-refresh','notification-cache-refresh') AND workspec.state NOT IN (2,3,5)")
   [ "$live" = 0 ] || fail 'N5 left legacy WorkManager jobs scheduled'
   cancelled=$(sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = 'care-cache-refresh' AND workspec.state = 5")
-  [ "$cancelled" -ge 1 ] || fail "the seeded care-cache-refresh job was not found cancelled"
-
-  pass 'N5 removed legacy prefs, database, caches, drafts and jobs; set the reset flag; carried over the asked flag'
+  [ "$cancelled" -ge 1 ] || fail 'the seeded care-cache-refresh job was not found cancelled'
+  pass 'Release N5 retry removed legacy prefs, Keystore alias, database, caches, drafts and jobs'
+  adb install -r /src/cache/artifacts/fytorium-debug-fixture.apk >/dev/null || fail 'debug fixture APK did not install over the release fixture'
+  launch_without_crash 'Debug fixture'
 
   adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
   push() { adb shell am broadcast -n "$package/com.epaflix.fytorium.platform.DebugPushReceiver" -a com.epaflix.fytorium.DEBUG_PUSH \
@@ -67,13 +90,18 @@ w1() {
   adb shell am force-stop "$package"
   printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" '<map>' \
     '<boolean name="first_run_done" value="true" />' '<boolean name="push_ready" value="true" />' '</map>' \
-    | adb shell "run-as $package sh -c 'cat > /data/data/$package/shared_prefs/fytorium-platform.xml'"
+    | adb shell "run-as $package sh -c 'cat > $data/shared_prefs/fytorium-platform.xml'"
   push 'Synthetic reminder one' 'Synthetic body one'
   [ "$(posted)" = 1 ] || fail 'N4 did not show a push once push_ready was set'
   push 'Synthetic reminder two' 'Synthetic body two'
   [ "$(posted)" = 1 ] || fail 'N4 did not replace the notification by tag'
   adb shell dumpsys notification --noredact | grep -q 'Synthetic reminder two' || fail 'replacement text not shown'
   pass 'N4: dropped while push_ready clear, shown once set, replaced by tag'
+  for scheme in light dark; do
+    [ "$scheme" = dark ] && adb shell cmd uimode night yes >/dev/null || adb shell cmd uimode night no >/dev/null
+    maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "../.scratch/e2e-screenshots/android-$scheme" >/dev/null || fail "Maestro launch flow ($scheme)"
+  done
+  pass 'Maestro launch flow in light and dark; screenshots in .scratch/e2e-screenshots/'
 }
-"$scenario"
+w1
 echo "E2E $scenario PASS"

@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <queries>
         <package android:name="dev.imranr.obtainium" />
         <package android:name="dev.imranr.obtainium.fdroid" />
@@ -6,6 +6,11 @@
     <application>
         <service android:name="com.epaflix.fytorium.platform.PushService" android:exported="false">
             <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+        <!-- Ask Play services for the Photo Picker backport on Android 10 through 12. -->
+        <service android:name="com.google.android.gms.metadata.ModuleDependencies" android:enabled="false" android:exported="false" tools:ignore="MissingClass">
+            <intent-filter><action android:name="com.google.android.gms.metadata.MODULE_DEPENDENCIES" /></intent-filter>
+            <meta-data android:name="photopicker_activity:0:required" android:value="" />
         </service>
     </application>
 </manifest>

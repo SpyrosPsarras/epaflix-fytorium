@@ -13,19 +13,31 @@ sort permissions.txt | diff -u - "$temp/permissions" || fail 'permissions differ
 grep -q "^package: name='com.epaflix.fytorium'" "$temp/badging" || fail 'package name'
 grep -qx "sdkVersion:'29'" "$temp/badging" || fail 'minSdk is not 29'
 grep -qx "targetSdkVersion:'35'" "$temp/badging" || fail 'targetSdk is not 35'
+! grep -q 'application-debuggable' "$temp/badging" || fail 'release APK is debuggable'
 "$tools/aapt" dump xmltree "$apk" AndroidManifest.xml >"$temp/manifest"
 grep -q 'android:allowBackup(0x01010280)=(type 0x12)0x0' "$temp/manifest" || fail 'backup is allowed'
-grep -q 'android:dataExtractionRules' "$temp/manifest" || fail 'data extraction rules missing'
 grep -q 'android:usesCleartextTraffic(0x010104ec)=(type 0x12)0x0' "$temp/manifest" || fail 'cleartext is not off'
 ! grep -q 'android:networkSecurityConfig' "$temp/manifest" || fail 'release has a network security config'
 ! grep -Eq 'DebugPushReceiver|ReactNativeFirebaseMessaging(Receiver|Service|HeadlessService)' "$temp/manifest" || fail 'debug or library push component in manifest'
+grep -q 'photopicker_activity:0:required' "$temp/manifest" || fail 'Photo Picker backport request missing'
 awk '/E: (service|receiver)/{name=""} /A: android:name/ && name=="" {name=$0} /MESSAGING_EVENT/{print name}' "$temp/manifest" \
-  | sed 's/.*Raw: "\(.*\)")/\1/' | sort >"$temp/handlers"
-printf '%s\n' com.epaflix.fytorium.platform.PushService com.google.firebase.messaging.FirebaseMessagingService | diff -u - "$temp/handlers" \
-  || fail 'MESSAGING_EVENT handlers must be PushService plus the Firebase default'
+  | sed 's/.*Raw: "\(.*\)")/\1/' >"$temp/handlers"
+[ "$(cat "$temp/handlers")" = com.epaflix.fytorium.platform.PushService ] || fail "MESSAGING_EVENT handlers must be PushService only: $(cat "$temp/handlers")"
+rules=$("$tools/aapt2" dump resources "$apk" | grep -A1 'xml/data_extraction_rules$' | sed -n 's/.*(file) \([^ ]*\).*/\1/p')
+[ -n "$rules" ] || fail 'data extraction rules resource missing'
+"$tools/aapt2" dump xmltree --file "$rules" "$apk" >"$temp/rules"
+for section in cloud-backup device-transfer; do
+  for domain in root sharedpref file database external; do
+    awk -v s="$section" '/E: /{if ($2 ~ /^(cloud-backup|device-transfer)$/) cur=$2} cur==s && /A: domain=/{print}' "$temp/rules" \
+      | grep -q "\"$domain\"" || fail "$section does not exclude $domain"
+  done
+done
+unzip -p "$apk" assets/app.config >"$temp/app.config"
+grep -q '"variant":"release"' "$temp/app.config" || fail 'embedded app config is not the release variant'
+grep -q '"serverUrl":"https://' "$temp/app.config" || fail 'embedded server URL is not HTTPS'
 unzip -p "$apk" 'classes*.dex' >"$temp/dex"
 ! grep -aEq 'DebugPushReceiver|fake-push|http://app:3000|oidc:8080' "$temp/dex" || fail 'debug hook or test host in DEX'
-unzip -p "$apk" assets/index.android.bundle >"$temp/bundle"
-[ -s "$temp/bundle" ] || fail 'no embedded JS bundle'
-! grep -aEq 'fake-push|http://app:3000|oidc:8080|DebugTokenProvider' "$temp/bundle" || fail 'debug hook or test host in JS bundle'
-echo 'Release inspection PASS: permissions, identity, SDK levels, backup, cleartext, push handlers, no debug code or test hosts.'
+unzip -q "$apk" 'assets/*' -d "$temp/apk"
+[ -s "$temp/apk/assets/index.android.bundle" ] || fail 'no embedded JS bundle'
+! grep -raEq 'fake-push|http://app:3000|oidc:8080|DebugTokenProvider' "$temp/apk/assets" || fail 'debug hook or test host in assets'
+echo 'Release inspection PASS: permissions, identity, SDK levels, not debuggable, backup and extraction rules, cleartext, sole push handler, picker backport, release config, no debug code or test hosts.'

@@ -32,14 +32,15 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         const val PUSH_WORK = "fytorium-push-refresh"
         const val PERIODIC_WORK = "fytorium-care-refresh"
         private const val TASK_TIMEOUT_MS = 60_000L
-        private val connected = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED)
+        val pushConstraints: Constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+        val periodicConstraints: Constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresBatteryNotLow(true).build()
 
         fun enqueueOnce(context: Context) = WorkManager.getInstance(context).enqueueUniqueWork(PUSH_WORK, ExistingWorkPolicy.REPLACE,
-            OneTimeWorkRequestBuilder<RefreshWorker>().setConstraints(connected.build()).build())
+            OneTimeWorkRequestBuilder<RefreshWorker>().setConstraints(pushConstraints).build())
 
         fun schedulePeriodic(context: Context) = WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC_WORK, ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<RefreshWorker>(6, TimeUnit.HOURS).setInitialDelay(6, TimeUnit.HOURS)
-                .setConstraints(connected.setRequiresBatteryNotLow(true).build()).build())
+                .setConstraints(periodicConstraints).build())
 
         fun cancel(context: Context) = WorkManager.getInstance(context).run { cancelUniqueWork(PUSH_WORK); cancelUniqueWork(PERIODIC_WORK) }
 

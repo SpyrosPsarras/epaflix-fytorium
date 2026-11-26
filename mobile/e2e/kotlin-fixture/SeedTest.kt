@@ -1,12 +1,16 @@
 package com.epaflix.fytorium
 
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import com.epaflix.fytorium.notifications.PushDebugBridge
 import org.json.JSONArray
 import org.json.JSONObject
@@ -72,16 +76,27 @@ class SeedTest {
         app.care.refresh()
         compose.waitForState("Plant cached", 30_000) { app.repository.state.value.plants.any { it.displayName == "Synthetic W1 seed fern $run" } }
         PushDebugBridge.token(app, pushId)
-        compose.waitForState("Server lists the seeded FCM device", 30_000) {
+        compose.waitForState("Server lists this device's FCM registration", 30_000) {
             val rows = JSONArray(json("/api/notifications/subscriptions"))
-            (0 until rows.length()).any { rows.getJSONObject(it).getString("transport") == "fcm" }
+            (0 until rows.length()).map { rows.getJSONObject(it) }.any { it.getString("transport") == "fcm" && it.optBoolean("current_device") }
         }
         // Leftovers the upgrade must remove: a camera capture, a kept Identify draft and a diagnostics entry.
         File(app.cacheDir, "captures").apply { mkdirs() }.resolve("seed.jpg").writeBytes(byteArrayOf(1))
         File(app.noBackupFilesDir, "photo-drafts").apply { mkdirs() }.resolve("seed.jpg").writeBytes(byteArrayOf(1))
         Diagnostics(app).record(ErrorEvent.SESSION_ENDED)
         if (args.getString("denyNotifications") == "true") {
-            app.getSharedPreferences("notification-permission", android.content.Context.MODE_PRIVATE).edit().putBoolean("asked", true).commit()
+            compose.selectTab("More")
+            compose.waitForNode(hasText("Notifications") and hasClickAction()).performScrollTo().performClick()
+            compose.waitForNode(hasText("Turn on") and hasClickAction()).performScrollTo().performClick()
+            val deny = By.res("com.android.permissioncontroller", "permission_deny_button")
+            assertTrue("Permission dialog shown", device.wait(Until.hasObject(deny), 10_000))
+            compose.waitForState("Permission dialog takes input", 10_000) {
+                InstrumentationRegistry.getInstrumentation().uiAutomation.windows.any { it.isFocused && it.root?.packageName?.endsWith("permissioncontroller") == true }
+            }
+            device.findObject(deny).click()
+            assertTrue("Permission dialog closed", device.wait(Until.gone(deny), 10_000))
+            assertTrue(app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            assertTrue(app.getSharedPreferences("notification-permission", android.content.Context.MODE_PRIVATE).getBoolean("asked", false))
         }
         assertTrue(app.getDatabasePath("care-cache.db").isFile)
         assertTrue(app.store.tokens != null)

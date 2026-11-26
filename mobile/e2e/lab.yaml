@@ -20,6 +20,13 @@ apiVersion: v1
 kind: Pod
 metadata: {name: fytorium-lab, namespace: fytorium-e2e, labels: {app: fytorium-lab}}
 spec:
+  # Workers with /dev/kvm; scripts/mobile e2e also checks for it before booting.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - {key: kubernetes.io/hostname, operator: In, values: [k3s-worker-61, k3s-worker-62, k3s-worker-63, k3s-worker-65]}
   automountServiceAccountToken: false
   enableServiceLinks: false
   containers:
@@ -38,7 +45,7 @@ spec:
     image: docker:28-cli
     securityContext: {privileged: true}
     command: ["sh", "-c", "ln -sf /run/dind/docker.sock /var/run/docker.sock && apk add --no-cache git bash coreutils curl jq >/dev/null && sleep infinity"]
-    env: [{name: DOCKER_HOST, value: unix:///run/dind/docker.sock}]
+    env: [{name: DOCKER_HOST, value: unix:///run/dind/docker.sock}, {name: FYTORIUM_MOBILE_LAB, value: "1"}]
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {cpu: "1", memory: 1Gi}

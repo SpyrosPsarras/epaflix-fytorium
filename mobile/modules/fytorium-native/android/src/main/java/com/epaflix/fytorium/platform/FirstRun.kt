@@ -10,23 +10,26 @@ object FirstRun {
     val legacyPreferences = listOf("credentials", "diagnostics", "notification-permission")
     val legacyWork = listOf("care-cache-refresh", "notification-cache-refresh")
 
+    // Every step treats an already-absent item as done. A failed step leaves first_run_done unset, so the next start retries.
     fun run(context: Context): Boolean {
-        if (Flags.get(context, Flags.FIRST_RUN_DONE)) return false
+        if (Flags.get(context, Flags.FIRST_RUN_DONE)) return true
         Flags.set(context, Flags.PUSH_RESET_PENDING, true)
         if (context.getSharedPreferences("notification-permission", Context.MODE_PRIVATE).getBoolean("asked", false)) {
             Flags.set(context, Flags.NOTIFICATIONS_ASKED, true)
         }
-        legacyPreferences.forEach { context.deleteSharedPreferences(it) }
-        runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry("fytorium.credentials") }
-        context.deleteDatabase("care-cache.db")
-        File(context.cacheDir, "thumbnails").deleteRecursively()
-        File(context.cacheDir, "captures").deleteRecursively()
-        File(context.noBackupFilesDir, "photo-drafts").deleteRecursively()
-        context.contentResolver.persistedUriPermissions.forEach { permission ->
-            runCatching { context.contentResolver.releasePersistableUriPermission(permission.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-        }
-        WorkManager.getInstance(context).let { work -> legacyWork.forEach(work::cancelUniqueWork) }
-        Flags.set(context, Flags.FIRST_RUN_DONE, true)
-        return true
+        val steps = listOf(
+            { legacyPreferences.all { context.deleteSharedPreferences(it) } },
+            { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.run { deleteEntry("fytorium.credentials"); !containsAlias("fytorium.credentials") } },
+            { context.deleteDatabase("care-cache.db"); !context.getDatabasePath("care-cache.db").exists() },
+            { listOf(File(context.cacheDir, "thumbnails"), File(context.cacheDir, "captures"), File(context.noBackupFilesDir, "photo-drafts"))
+                .all { it.deleteRecursively() && !it.exists() } },
+            { context.contentResolver.persistedUriPermissions.forEach {
+                context.contentResolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }; context.contentResolver.persistedUriPermissions.isEmpty() },
+            { WorkManager.getInstance(context).let { work -> legacyWork.forEach { work.cancelUniqueWork(it).result.get() } }; true },
+        )
+        val done = steps.map { step -> runCatching(step).getOrDefault(false) }.all { it }
+        if (done) Flags.set(context, Flags.FIRST_RUN_DONE, true)
+        return done
     }
 }

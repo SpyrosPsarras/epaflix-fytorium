@@ -71,13 +71,15 @@ jobs:
           ! /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$plist"
       - name: Launch smoke on a simulator
         run: |
-          curl -fsSL https://get.maestro.mobile.dev | bash
+          curl --retry 3 -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.12.1/maestro.zip -o "$RUNNER_TEMP/maestro.zip"
+          echo "54dbb0716425626604973cbb374c585ca30272375d9ce15177a1152765ddd9d7  $RUNNER_TEMP/maestro.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$HOME"
           udid=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices; console.log(Object.values(d).flat().find(x=>x.name.startsWith("iPhone")).udid)')
           xcrun simctl boot "$udid"
           xcrun simctl install "$udid" build/Build/Products/Release-iphonesimulator/Fytorium.app
           for scheme in light dark; do
             xcrun simctl ui "$udid" appearance "$scheme"
-            "$HOME/.maestro/bin/maestro" --device "$udid" test e2e/maestro/launch.yaml --test-output-dir "maestro-$scheme"
+            MAESTRO_CLI_NO_ANALYTICS=1 "$HOME/maestro/bin/maestro" --device "$udid" test e2e/maestro/launch.yaml --test-output-dir "maestro-$scheme"
           done
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

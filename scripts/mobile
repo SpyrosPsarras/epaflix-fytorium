@@ -11,10 +11,12 @@ case "$command" in install|typecheck|lint|test|apk|release-check|kotlin-fixture|
 id=$(printf '%s' "$PWD" | sha256sum | cut -c1-12)
 cache=${FYTORIUM_MOBILE_CACHE:-$PWD/mobile/.cache}
 mkdir -p "$cache"
-used=$(df -Pk "$cache" | awk 'NR==2 {print $3}')
-echo "Mobile cache volume: $((used / 1048576)) GiB used"
-if [ "$used" -gt $((20 * 1048576)) ]; then
-  echo 'Over 20 GiB: pruning unused Docker data and the Gradle build cache.'
+usage_gib() { df -Pk "$cache" | awk 'NR==2 {printf "%.1f", $3 / 1048576}'; }
+echo "Mobile cache volume before $command: $(usage_gib) GiB used"
+trap 'echo "Mobile cache volume after $command: $(usage_gib) GiB used"' EXIT
+# Only the disposable lab daemon is pruned; elsewhere other workloads share Docker.
+if [ "${FYTORIUM_MOBILE_LAB:-0}" = 1 ] && [ "$(df -Pk "$cache" | awk 'NR==2 {print $3}')" -gt $((20 * 1048576)) ]; then
+  echo 'Lab volume over 20 GiB: pruning unused Docker data and the Gradle build cache.'
   docker system prune -f >/dev/null
   find "$cache/gradle/caches" -maxdepth 1 -name 'build-cache-*' -exec rm -rf {} + 2>/dev/null || true
 fi
@@ -32,12 +34,17 @@ case "$command" in
   test) run "$image" sh -ec 'sh release/release-version-test; pnpm -s test "$@"' sh "$@";;
   apk) run -e FYTORIUM_VARIANT=debug "$image" sh -ec '
     npx expo prebuild --platform android --clean --no-install >/dev/null
-    (cd android && ./gradlew --no-daemon --console=plain assembleDebug)
+    (cd android && ./gradlew --no-daemon --console=plain :fytorium-native:testDebugUnitTest assembleDebug)
     sh e2e/fixture-sign android/app/build/outputs/apk/debug/app-debug.apk /src/cache/artifacts/fytorium-debug-fixture.apk
     echo "Debug APK: $PWD/android/app/build/outputs/apk/debug/app-debug.apk"';;
   kotlin-fixture) FYTORIUM_MOBILE_CACHE=$cache sh mobile/e2e/kotlin-fixture/build;;
   release-check) run "$image" sh release/check;;
   e2e)
+    scenario=${1:-w1}
+    case "$scenario" in w1) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
+    [ -c /dev/kvm ] || { echo 'e2e needs /dev/kvm on this host.' >&2; exit 1; }
+    # The emulator's 6 GiB data partition does not fit the 25 GiB lab beside the Gradle cache, which e2e never reads.
+    [ "${FYTORIUM_MOBILE_LAB:-0}" != 1 ] || find "$cache/gradle" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
     app=$(docker compose ps -q app)
     if [ -z "$app" ] || [ "$(docker inspect -f '{{.State.Running}}' "$app")" != true ]; then
       echo 'Start this worktree stack with ./scripts/stack up before e2e.' >&2
@@ -45,7 +52,7 @@ case "$command" in
     fi
     network=$(docker inspect -f '{{range $name, $config := .NetworkSettings.Networks}}{{$name}}{{end}}' "$app")
     name="fytorium-mobile-e2e-$id-$$"
-    trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+    trap 'docker rm -f "$name" >/dev/null 2>&1 || true; echo "Mobile cache volume after e2e: $(usage_gib) GiB used"' EXIT
     run --name "$name" --device /dev/kvm --network "$network" -e E2E_BOOT_TIMEOUT -e E2E_GUEST_NETWORK_TIMEOUT \
-      "$image" sh e2e/run "${1:-launch}";;
+      "$image" sh e2e/run "$scenario";;
 esac

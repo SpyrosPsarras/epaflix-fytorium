@@ -15,5 +15,5 @@ docker run --rm -v "$PWD:$PWD" -v "$cache:/src/cache" -w "$PWD/mobile" "fytorium
   sh e2e/fixture-sign /src/cache/kotlin-fixture/source/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /src/cache/kotlin-fixture/test.apk'
 # The 25 GiB lab keeps only the two signed APKs; rebuilding the fixture is rare.
 docker rmi fytorium-kotlin-fixture >/dev/null
-docker run --rm -v "$cache:/src/cache" alpine rm -rf /src/cache/kotlin-fixture/source/android/.gradle-cache /src/cache/kotlin-fixture/source/android/app/build
+docker run --rm -v "$cache:/src/cache" "fytorium-mobile-$(printf '%s' "$PWD" | sha256sum | cut -c1-12)-build" rm -rf /src/cache/kotlin-fixture/source/android/.gradle-cache /src/cache/kotlin-fixture/source/android/app/build
 echo "Kotlin fixture: $cache/kotlin-fixture/app.apk and test.apk"

@@ -8,6 +8,7 @@ const firebaseComponents = [
   ['service', 'io.invertase.firebase.messaging.ReactNativeFirebaseMessagingService'],
   ['service', 'io.invertase.firebase.messaging.ReactNativeFirebaseMessagingHeadlessService'],
   ['receiver', 'io.invertase.firebase.messaging.ReactNativeFirebaseMessagingReceiver'],
+  ['service', 'com.google.firebase.messaging.FirebaseMessagingService'],
 ];
 
 const extractionRules = `<?xml version="1.0" encoding="utf-8"?>
@@ -31,22 +32,27 @@ const debugNetwork = `<?xml version="1.0" encoding="utf-8"?>
 </network-security-config>
 `;
 
-const signing = `
-    def fytoriumKeystore = System.getenv("ANDROID_KEYSTORE_PATH")
-    if (fytoriumKeystore) {
-        signingConfigs {
-            fytorium {
-                storeFile file(fytoriumKeystore)
-                storeType "PKCS12"
-                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("ANDROID_KEY_ALIAS")
-                keyPassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            }
-        }
-    }
+const releaseGradle = `
     buildTypes.configureEach { buildType ->
-        buildType.signingConfig = fytoriumKeystore ? signingConfigs.fytorium : (buildType.name == "debug" ? signingConfigs.debug : null)
+        buildType.signingConfig = buildType.name == "debug" ? signingConfigs.debug : null
     }
+`;
+
+const releaseGuard = `
+def validateFytoriumRelease = tasks.register("validateFytoriumRelease") {
+    doLast {
+        if (System.getenv("FYTORIUM_VARIANT") != "release") throw new GradleException("FYTORIUM_VARIANT=release is required for release builds")
+        def mobile = rootDir.parentFile
+        def process = new ProcessBuilder("npx", "expo", "config", "--type", "public", "--json").directory(mobile).redirectErrorStream(true).start()
+        def output = process.inputStream.text
+        if (process.waitFor() != 0) throw new GradleException("Release config refused: " + output.trim())
+        def config = new groovy.json.JsonSlurper().parseText(output.substring(output.indexOf("{")))
+        if (config.extra?.variant != "release" || !config.extra?.serverUrl?.startsWith("https://")) throw new GradleException("Release config is not an HTTPS release")
+        def expected = mobile.toPath().resolve(System.getenv("GOOGLE_SERVICES_FILE")).toFile().text
+        if (file("google-services.json").text != expected) throw new GradleException("android/app/google-services.json is stale; run expo prebuild again")
+    }
+}
+tasks.configureEach { if (it.name == "preReleaseBuild") it.dependsOn(validateFytoriumRelease) }
 `;
 
 function write(file, text) {
@@ -86,11 +92,12 @@ module.exports = function withFytoriumNative(config) {
   });
   config = withAppBuildGradle(config, (mod) => {
     let gradle = mod.modResults.contents;
-    if (!gradle.includes('fytoriumKeystore')) {
-      gradle = gradle.replace(/\n    buildTypes \{/, `${signing}\n    buildTypes {`);
+    if (!gradle.includes('validateFytoriumRelease')) {
       gradle = gradle.replace(/^\s*signingConfig signingConfigs\.debug\s*$/gm, '');
+      gradle = gradle.replace(/\n    buildTypes \{/, `${releaseGradle}\n    buildTypes {`);
       gradle = gradle.replace(/\nreact \{\n/, '\nreact {\n    debuggableVariants = []\n');
-      if (!gradle.includes('fytoriumKeystore') || !gradle.includes('debuggableVariants = []')) throw new Error('app/build.gradle layout changed');
+      gradle += releaseGuard;
+      if (!gradle.includes('buildType.signingConfig') || !gradle.includes('debuggableVariants = []')) throw new Error('app/build.gradle layout changed');
     }
     mod.modResults.contents = gradle;
     return mod;

@@ -10,14 +10,13 @@ final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
   }
 }
 
-private func session(keepAlive: Bool) -> URLSession {
+private func session() -> URLSession {
   let configuration = URLSessionConfiguration.ephemeral
   configuration.urlCache = nil
   configuration.httpCookieStorage = nil
   configuration.httpShouldSetCookies = false
   configuration.timeoutIntervalForRequest = 10
   configuration.timeoutIntervalForResource = 20
-  if !keepAlive { configuration.httpAdditionalHeaders = ["Connection": "close"] }
   return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: nil)
 }
 
@@ -31,8 +30,7 @@ struct RequestOptions: Record {
 }
 
 public class FytoriumNativeModule: Module {
-  private let api = session(keepAlive: true)
-  private let tokenSession = session(keepAlive: false)
+  private let api = session()
   private let defaults = UserDefaults.standard
 
   public func definition() -> ModuleDefinition {
@@ -47,10 +45,12 @@ public class FytoriumNativeModule: Module {
       #endif
     }
 
+    // Keychain items survive an uninstall. A failed delete leaves first_run_done unset, so the next start retries.
     Function("firstRun") { () -> Bool in
-      if self.defaults.bool(forKey: "first_run_done") { return false }
+      if self.defaults.bool(forKey: "first_run_done") { return true }
       self.defaults.set(true, forKey: "push_reset_pending")
-      SecItemDelete([kSecClass as String: kSecClassGenericPassword] as CFDictionary)
+      let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword] as CFDictionary)
+      guard status == errSecSuccess || status == errSecItemNotFound else { return false }
       self.defaults.set(true, forKey: "first_run_done")
       return true
     }
@@ -78,7 +78,10 @@ public class FytoriumNativeModule: Module {
       request.httpMethod = options.method
       options.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
       request.httpBody = options.body?.data(using: .utf8)
-      (options.tokenEndpoint ? self.tokenSession : self.api).dataTask(with: request) { data, response, error in
+      // A token exchange gets its own session, so it never reuses a pooled connection.
+      let client = options.tokenEndpoint ? session() : self.api
+      client.dataTask(with: request) { data, response, error in
+        if options.tokenEndpoint { client.finishTasksAndInvalidate() }
         guard error == nil, let http = response as? HTTPURLResponse else { promise.reject("ERR_NETWORK", "Network request failed"); return }
         let bytes = data ?? Data()
         var headers: [String: String] = [:]

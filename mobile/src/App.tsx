@@ -5,7 +5,7 @@ import { palette } from './theme';
 export default function App() {
   const colors = palette(useColorScheme());
   return (
-    <View style={[styles.root, { backgroundColor: colors.background }]}>
+    <View testID="fytorium-root" style={[styles.root, { backgroundColor: colors.background }]}>
       <Text accessibilityRole="header" style={[styles.title, { color: colors.onBackground }]}>Fytorium</Text>
       <StatusBar style="auto" />
     </View>
