@@ -1,0 +1,9 @@
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+uses-permission: name='android.permission.WAKE_LOCK'
+uses-permission: name='com.google.android.c2dm.permission.RECEIVE'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+permission: com.epaflix.fytorium.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+uses-permission: name='com.epaflix.fytorium.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'

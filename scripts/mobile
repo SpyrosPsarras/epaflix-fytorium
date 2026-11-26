@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+usage() {
+  echo 'Usage: ./scripts/mobile install|typecheck|lint|test [jest args]|apk|release-check|kotlin-fixture|e2e [scenario]' >&2
+  exit 2
+}
+command=${1:-}
+[ "$#" -eq 0 ] || shift
+case "$command" in install|typecheck|lint|test|apk|release-check|kotlin-fixture|e2e) ;; *) usage;; esac
+id=$(printf '%s' "$PWD" | sha256sum | cut -c1-12)
+cache=${FYTORIUM_MOBILE_CACHE:-$PWD/mobile/.cache}
+mkdir -p "$cache"
+used=$(df -Pk "$cache" | awk 'NR==2 {print $3}')
+echo "Mobile cache volume: $((used / 1048576)) GiB used"
+if [ "$used" -gt $((20 * 1048576)) ]; then
+  echo 'Over 20 GiB: pruning unused Docker data and the Gradle build cache.'
+  docker system prune -f >/dev/null
+  find "$cache/gradle/caches" -maxdepth 1 -name 'build-cache-*' -exec rm -rf {} + 2>/dev/null || true
+fi
+target=build
+[ "$command" != e2e ] || target=emulator
+image="fytorium-mobile-$id-$target"
+docker build -q --target "$target" -t "$image" mobile/docker >/dev/null
+run() {
+  docker run --rm --memory "${FYTORIUM_MOBILE_MEMORY:-10g}" -v "$PWD:$PWD" -v "$cache:/src/cache" -w "$PWD/mobile" \
+    -e CI=true -e FYTORIUM_ABIS -e FYTORIUM_SERVER_URL "$@"
+}
+case "$command" in
+  install) run "$image" pnpm install --frozen-lockfile;;
+  typecheck|lint) run "$image" pnpm -s "$command";;
+  test) run "$image" sh -ec 'sh release/release-version-test; pnpm -s test "$@"' sh "$@";;
+  apk) run -e FYTORIUM_VARIANT=debug "$image" sh -ec '
+    npx expo prebuild --platform android --clean --no-install >/dev/null
+    (cd android && ./gradlew --no-daemon --console=plain assembleDebug)
+    sh e2e/fixture-sign android/app/build/outputs/apk/debug/app-debug.apk /src/cache/artifacts/fytorium-debug-fixture.apk
+    echo "Debug APK: $PWD/android/app/build/outputs/apk/debug/app-debug.apk"';;
+  kotlin-fixture) FYTORIUM_MOBILE_CACHE=$cache sh mobile/e2e/kotlin-fixture/build;;
+  release-check) run "$image" sh release/check;;
+  e2e)
+    app=$(docker compose ps -q app)
+    if [ -z "$app" ] || [ "$(docker inspect -f '{{.State.Running}}' "$app")" != true ]; then
+      echo 'Start this worktree stack with ./scripts/stack up before e2e.' >&2
+      exit 1
+    fi
+    network=$(docker inspect -f '{{range $name, $config := .NetworkSettings.Networks}}{{$name}}{{end}}' "$app")
+    name="fytorium-mobile-e2e-$id-$$"
+    trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+    run --name "$name" --device /dev/kvm --network "$network" -e E2E_BOOT_TIMEOUT -e E2E_GUEST_NETWORK_TIMEOUT \
+      "$image" sh e2e/run "${1:-launch}";;
+esac

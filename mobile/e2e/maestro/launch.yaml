@@ -1,0 +1,6 @@
+appId: com.epaflix.fytorium
+---
+- launchApp:
+    clearState: true
+- assertVisible: Fytorium
+- takeScreenshot: launch

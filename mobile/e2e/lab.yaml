@@ -1,0 +1,52 @@
+# Disposable mobile lab (design D3, D8). Create: kubectl apply -f mobile/e2e/lab.yaml
+# Delete: kubectl delete namespace fytorium-e2e, then delete the retained PV that lab-workspace was bound to.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fytorium-e2e
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    purpose: disposable-fytorium-mobile-lab
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: lab-workspace, namespace: fytorium-e2e}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: truenas-iscsi
+  resources: {requests: {storage: 25Gi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: fytorium-lab, namespace: fytorium-e2e, labels: {app: fytorium-lab}}
+spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  containers:
+  - name: dind
+    image: docker:28-dind
+    securityContext: {privileged: true}
+    command: ["dind", "dockerd", "--host=unix:///run/dind/docker.sock"]
+    resources:
+      requests: {cpu: "1", memory: 4Gi}
+      limits: {cpu: "6", memory: 12Gi}
+    volumeMounts:
+    - {name: ws, mountPath: /var/lib/docker, subPath: docker}
+    - {name: ws, mountPath: /src, subPath: src}
+    - {name: sock, mountPath: /run/dind}
+  - name: work
+    image: docker:28-cli
+    securityContext: {privileged: true}
+    command: ["sh", "-c", "ln -sf /run/dind/docker.sock /var/run/docker.sock && apk add --no-cache git bash coreutils curl jq >/dev/null && sleep infinity"]
+    env: [{name: DOCKER_HOST, value: unix:///run/dind/docker.sock}]
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 1Gi}
+    volumeMounts:
+    - {name: ws, mountPath: /src, subPath: src}
+    - {name: sock, mountPath: /run/dind}
+  volumes:
+  - name: ws
+    persistentVolumeClaim: {claimName: lab-workspace}
+  - name: sock
+    emptyDir: {}

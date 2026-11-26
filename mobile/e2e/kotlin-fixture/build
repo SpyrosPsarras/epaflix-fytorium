@@ -1,0 +1,19 @@
+#!/bin/sh
+# Builds the pinned Kotlin app (e0edd63) and its seed test, both signed with the fixture key. Runs on the Docker host.
+set -eu
+cd "$(dirname "$0")/../../.."
+cache=${FYTORIUM_MOBILE_CACHE:-$PWD/mobile/.cache}
+tree=$cache/kotlin-fixture/source
+[ -d "$tree/android" ] || git worktree add --detach "$tree" e0edd63
+cp mobile/e2e/kotlin-fixture/SeedTest.kt "$tree/android/app/src/androidTest/java/com/epaflix/fytorium/SeedTest.kt"
+docker build -q --target sdk -t fytorium-kotlin-fixture "$tree/android/docker" >/dev/null
+docker run --rm --memory "${FYTORIUM_MOBILE_MEMORY:-10g}" -e HOME=/tmp -e JAVA_TOOL_OPTIONS=-Duser.home=/tmp -v "$tree:/work" -v "$cache:/src/cache" -w /work/android \
+  fytorium-kotlin-fixture sh -ec '
+    ./gradlew --no-daemon --console=plain -PserverUrl=http://app:3000 assembleDebug assembleDebugAndroidTest'
+docker run --rm -v "$PWD:$PWD" -v "$cache:/src/cache" -w "$PWD/mobile" "fytorium-mobile-$(printf '%s' "$PWD" | sha256sum | cut -c1-12)-build" sh -ec '
+  sh e2e/fixture-sign /src/cache/kotlin-fixture/source/android/app/build/outputs/apk/debug/app-debug.apk /src/cache/kotlin-fixture/app.apk
+  sh e2e/fixture-sign /src/cache/kotlin-fixture/source/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /src/cache/kotlin-fixture/test.apk'
+# The 25 GiB lab keeps only the two signed APKs; rebuilding the fixture is rare.
+docker rmi fytorium-kotlin-fixture >/dev/null
+docker run --rm -v "$cache:/src/cache" alpine rm -rf /src/cache/kotlin-fixture/source/android/.gradle-cache /src/cache/kotlin-fixture/source/android/app/build
+echo "Kotlin fixture: $cache/kotlin-fixture/app.apk and test.apk"

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Fixture lane: proves the release guards, then builds and inspects a never-publishable release APK.
+set -eu
+cd "$(dirname "$0")/.."
+temp=$(mktemp -d)
+trap 'rm -rf "$temp"' EXIT
+synthetic=./firebase/google-services.synthetic.json
+
+refused() {
+  expected=$1; shift
+  if env "$@" npx expo config --type public >"$temp/refused.log" 2>&1; then echo "Release config accepted: $expected" >&2; exit 1; fi
+  grep -q "$expected" "$temp/refused.log" || { cat "$temp/refused.log" >&2; exit 1; }
+  echo "Refused: $expected"
+}
+refused 'GOOGLE_SERVICES_FILE is required for release' FYTORIUM_VARIANT=release GOOGLE_SERVICES_FILE=
+refused 'Release server URL must use https://' FYTORIUM_VARIANT=release GOOGLE_SERVICES_FILE=$synthetic FYTORIUM_FIREBASE_TEST_CONFIG=true FYTORIUM_SERVER_URL=http://app:3000
+refused 'Synthetic Firebase config cannot be released' FYTORIUM_VARIANT=release GOOGLE_SERVICES_FILE=$synthetic FYTORIUM_FIREBASE_TEST_CONFIG=
+
+export FYTORIUM_VARIANT=release GOOGLE_SERVICES_FILE=$synthetic FYTORIUM_FIREBASE_TEST_CONFIG=true
+npx expo prebuild --platform android --clean --no-install >"$temp/prebuild.log" 2>&1 || { cat "$temp/prebuild.log" >&2; exit 1; }
+(cd android && ./gradlew --no-daemon --console=plain assembleRelease)
+apk=android/app/build/outputs/apk/release/app-release-unsigned.apk
+sh release/inspect "$apk"
+
+sh e2e/fixture-sign "$apk" /src/cache/artifacts/fytorium-release-fixture.apk
+if sh release/verify-signer /src/cache/artifacts/fytorium-release-fixture.apk "$(cat release/fingerprint)" >"$temp/signer.log" 2>&1; then
+  echo 'Production fingerprint check accepted the fixture key.' >&2; exit 1
+fi
+echo 'Production fingerprint check refused the fixture key.'
+echo "Release APK size: $(stat -c %s "$apk") bytes"
+echo 'Fixture lane PASS. Never publish /src/cache/artifacts/fytorium-release-fixture.apk.'

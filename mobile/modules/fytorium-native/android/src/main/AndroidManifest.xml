@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="dev.imranr.obtainium" />
+        <package android:name="dev.imranr.obtainium.fdroid" />
+    </queries>
+    <application>
+        <service android:name="com.epaflix.fytorium.platform.PushService" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+    </application>
+</manifest>

@@ -1,0 +1,87 @@
+name: Mobile
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: mobile/.cache
+          key: mobile-${{ hashFiles('mobile/pnpm-lock.yaml', 'mobile/docker/Dockerfile') }}
+          restore-keys: mobile-
+      - name: Install
+        run: ./scripts/mobile install
+      - name: Typecheck, lint and unit tests
+        run: |
+          ./scripts/mobile typecheck
+          ./scripts/mobile lint
+          ./scripts/mobile test
+      - name: Debug APK
+        run: ./scripts/mobile apk
+      - name: Release fixture lane
+        run: ./scripts/mobile release-check
+      - if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            mobile/.cache/gradle/caches
+            mobile/.cache/gradle/wrapper
+            mobile/.cache/pnpm-store
+          key: mobile-${{ hashFiles('mobile/pnpm-lock.yaml', 'mobile/docker/Dockerfile') }}
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: mobile/.nvmrc
+      - name: Install
+        run: |
+          npm install -g pnpm@10.18.3
+          pnpm install --frozen-lockfile
+      - name: Unit tests
+        run: pnpm -s test
+      - name: Simulator build
+        run: |
+          npx expo prebuild --platform ios --clean
+          xcodebuild -workspace ios/Fytorium.xcworkspace -scheme Fytorium -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO -quiet
+      - name: Info.plist contract
+        run: |
+          plist=build/Build/Products/Release-iphonesimulator/Fytorium.app/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$plist")" = false
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = com.epaflix.fytorium
+          ! /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$plist"
+      - name: Launch smoke on a simulator
+        run: |
+          curl -fsSL https://get.maestro.mobile.dev | bash
+          udid=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices; console.log(Object.values(d).flat().find(x=>x.name.startsWith("iPhone")).udid)')
+          xcrun simctl boot "$udid"
+          xcrun simctl install "$udid" build/Build/Products/Release-iphonesimulator/Fytorium.app
+          for scheme in light dark; do
+            xcrun simctl ui "$udid" appearance "$scheme"
+            "$HOME/.maestro/bin/maestro" --device "$udid" test e2e/maestro/launch.yaml --test-output-dir "maestro-$scheme"
+          done
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-maestro
+          path: mobile/maestro-*
+          if-no-files-found: ignore

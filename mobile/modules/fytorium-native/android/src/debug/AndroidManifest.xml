@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver android:name="com.epaflix.fytorium.platform.DebugPushReceiver" android:exported="true">
+            <intent-filter><action android:name="com.epaflix.fytorium.DEBUG_PUSH" /></intent-filter>
+        </receiver>
+    </application>
+</manifest>

@@ -1,0 +1,132 @@
+#!/bin/sh
+# Sourced by e2e/run: boots a fresh AVD on the stack network with guest DNS and HTTP readiness gates.
+# Ported from android/docker/e2e at e0edd63; the readiness rationale is in mobile/README.md.
+export HOME=/tmp/android-home ANDROID_USER_HOME=/tmp/android-home/.android
+unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_ADDRESS
+export ANDROID_ADB_SERVER_PORT=5037 ANDROID_SERIAL=emulator-5554
+: "${E2E_BOOT_TIMEOUT:=360}" "${E2E_PM_TIMEOUT:=180}" "${E2E_DNS_TIMEOUT:=180}" "${E2E_GUEST_NETWORK_TIMEOUT:=180}"
+for value in "$E2E_BOOT_TIMEOUT" "$E2E_PM_TIMEOUT" "$E2E_DNS_TIMEOUT" "$E2E_GUEST_NETWORK_TIMEOUT"; do
+  case "$value" in ''|*[!0-9]*) echo 'E2E readiness timeouts must be whole seconds from 1 to 3600' >&2; exit 2;; esac
+  [ "$value" -ge 1 ] && [ "$value" -le 3600 ] || { echo 'E2E readiness timeouts must be whole seconds from 1 to 3600' >&2; exit 2; }
+done
+mkdir -p "$ANDROID_USER_HOME"
+device_cleanup() {
+  adb emu kill >/dev/null 2>&1 || true
+  [ -z "${emulator_pid:-}" ] || kill "$emulator_pid" 2>/dev/null || true
+  [ -z "${dns_pid:-}" ] || kill "$dns_pid" 2>/dev/null || true
+}
+trap device_cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# The guest uses Docker's DNS through a container-local forwarder. Both app and oidc retain their canonical URLs.
+ip=$(ip -4 -o addr show eth0 | awk '{split($4,a,"/"); print a[1]}')
+dnsmasq --keep-in-foreground --no-resolv --server=127.0.0.11 --listen-address="$ip" --bind-interfaces --no-hosts --no-negcache --log-queries --log-facility=- >/tmp/dns.log 2>&1 &
+dns_pid=$!
+wait_ready() {
+  limit=$1
+  description=$2
+  shift 2
+  deadline=$(($(date +%s) + limit))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if "$@" >/tmp/readiness-check.log 2>&1; then
+      echo "Ready: $description"
+      return 0
+    fi
+    if [ -n "${emulator_pid:-}" ] && ! kill -0 "$emulator_pid" 2>/dev/null; then
+      echo 'Emulator exited before readiness' >&2
+      break
+    fi
+    sleep 1
+  done
+  echo "Readiness timed out after ${limit}s: $description" >&2
+  for log in /tmp/readiness-check.log /tmp/dns.log /tmp/emulator.log; do
+    [ ! -f "$log" ] || tail -n 20 "$log" >&2
+  done
+  timeout 10 adb shell -n getprop sys.boot_completed >&2 || true
+  timeout 10 adb shell -n pm path android >&2 || true
+  grep -E '(query|reply|cached).* (app|oidc)( |$)' /tmp/dns.log | tail -n 20 >&2 || true
+  mkdir -p "$artifacts"
+  guest_diagnostics 2>&1 | tee "$artifacts/guest-network-timeout.log" >&2
+  return 1
+}
+guest_diagnostics() {
+  echo 'Guest DNS diagnostics: resolver state, addresses, routes, and app/oidc lookups'
+  timeout 10 adb shell -n su 0 dumpsys dnsresolver || true
+  timeout 10 adb shell -n ip addr || true
+  timeout 10 adb shell -n ip route || true
+  for host in app oidc; do
+    timeout 10 adb shell -n ping -c 1 -W 1 "$host" || true
+    dig +time=2 +tries=1 @"$ip" "$host" A || true
+    address=$(dig +time=2 +tries=1 +short @"$ip" "$host" A | head -n 1)
+    case "$host" in app) port=3000; path=/healthz;; oidc) port=8080; path=/default/.well-known/openid-configuration;; esac
+    echo "Guest HTTP by numeric address: $host $address:$port"
+    timeout 10 adb shell -n "{ printf 'GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n'; sleep 5; } | toybox nc -w 3 -W 3 $address $port" || true
+  done
+  timeout 10 adb shell -n dumpsys connectivity || true
+  echo 'dnsmasq queries and answers:'
+  tail -n 80 /tmp/dns.log || true
+}
+dns_ready() {
+  kill -0 "$dns_pid" || return 1
+  for host in app oidc; do
+    dig +time=2 +tries=1 +short @"$ip" "$host" A > /tmp/dns-answer
+    grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' /tmp/dns-answer || return 1
+  done
+  curl --silent --show-error --fail --max-time 5 http://app:3000/healthz || return 1
+  curl --silent --show-error --fail --max-time 5 http://oidc:8080/default/.well-known/openid-configuration >/dev/null
+}
+wait_ready "$E2E_DNS_TIMEOUT" 'DNS/network: dnsmasq resolves app/oidc and stack HTTP responds' dns_ready
+printf 'no\n' | avdmanager create avd -n fytorium -k 'system-images;android-35;google_apis;x86_64' -d pixel_2 --force >/dev/null
+# Netsim Wi-Fi can strand DNS under load; use the per-container QEMU DNS backend.
+emulator -avd fytorium -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -feature -WiFiPacketStream -dns-server "$ip" -memory 2048 >/tmp/emulator.log 2>&1 &
+emulator_pid=$!
+adb start-server
+boot_ready() {
+  [ "$(timeout 10 adb shell -n getprop sys.boot_completed | tr -d '\r')" = 1 ]
+}
+package_manager_ready() {
+  timeout 10 adb shell -n pm path android | grep -q '^package:' || return 1
+  # svc data below needs the phone service, which can register after the package manager answers.
+  timeout 10 adb shell -n service check phone | grep -q ': found'
+}
+wait_ready "$E2E_BOOT_TIMEOUT" 'Emulator boot: sys.boot_completed=1' boot_ready
+wait_ready "$E2E_PM_TIMEOUT" 'Package manager: pm path android succeeds and the phone service is registered' package_manager_ready
+# Only this disposable guest uses captive_portal_mode=0: public probes are unreachable.
+# Keep the real app/oidc HTTP readiness checks below; this does not bypass API checks.
+adb shell settings put global window_animation_scale 0
+adb shell settings put global transition_animation_scale 0
+# Android skips connectivity probes and treats every connected network as VALIDATED.
+# Airplane mode still tests offline; connected-but-unvalidated relies on unit tests.
+adb shell settings put global captive_portal_mode 0
+# Recreate the network monitors so they read the setting before any tests run.
+adb shell svc wifi disable
+adb shell svc data disable
+adb shell svc wifi enable
+adb shell svc data enable
+adb shell settings put global animator_duration_scale 0
+# Only this disposable guest hides crash and ANR dialogs, so a busy image app cannot cover Chrome or Fytorium.
+adb shell settings put global hide_error_dialogs 1
+adb shell input keyevent 82
+# Bypass the emulator's intermittent 10.0.2.3 DNS proxy, not Docker DNS or hostname checks.
+# These rules exist only inside this disposable guest; the ready forwarder is container-local.
+for protocol in udp tcp; do
+  adb shell su 0 iptables -t nat -A OUTPUT -d 10.0.2.3 -p "$protocol" --dport 53 -j DNAT --to-destination "$ip:53"
+done
+guest_http() {
+  # Keep stdin open until the response; toybox nc otherwise exits at pipe EOF.
+  timeout 10 adb shell -n "{ printf 'GET $3 HTTP/1.1\r\nHost: $1\r\nConnection: close\r\n\r\n'; sleep 5; } | toybox nc -w 3 -W 3 $1 $2" > /tmp/guest-http || return 1
+  grep -Eq '^HTTP/1\.[01] 200 ' /tmp/guest-http || { tail -n 10 /tmp/guest-http; return 1; }
+}
+guest_ready() {
+  guest_http app 3000 /healthz || return 1
+  guest_http oidc 8080 /default/.well-known/openid-configuration || return 1
+  guest_http fake-push 8080 /fcm/stats
+}
+wait_ready "$E2E_GUEST_NETWORK_TIMEOUT" 'Guest network: app, oidc and fake-push DNS and HTTP return 200' guest_ready
+# Fresh Chrome otherwise opens its welcome screen instead of the login Custom Tab.
+adb shell pm path com.android.chrome | grep -q '^package:' || { echo 'The pinned image must supply Chrome for Custom Tabs'; exit 1; }
+adb shell am set-debug-app --persistent com.android.chrome
+adb shell 'echo "chrome --disable-fre --no-default-browser-check --no-first-run" > /data/local/tmp/chrome-command-line'
+adb shell am force-stop com.android.chrome
+

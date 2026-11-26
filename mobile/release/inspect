@@ -1,0 +1,31 @@
+#!/bin/sh
+# usage: inspect <release apk>. Fails on any difference from the shipped Android contract.
+set -eu
+apk=$(realpath "$1")
+cd "$(dirname "$0")"
+tools=$(ls -d /opt/android/build-tools/* | tail -n 1)
+temp=$(mktemp -d)
+trap 'rm -rf "$temp"' EXIT
+fail() { echo "Release inspection FAIL: $*" >&2; exit 1; }
+"$tools/aapt" dump permissions "$apk" | grep -v '^package:' | sort >"$temp/permissions"
+sort permissions.txt | diff -u - "$temp/permissions" || fail 'permissions differ from release/permissions.txt'
+"$tools/aapt" dump badging "$apk" >"$temp/badging"
+grep -q "^package: name='com.epaflix.fytorium'" "$temp/badging" || fail 'package name'
+grep -qx "sdkVersion:'29'" "$temp/badging" || fail 'minSdk is not 29'
+grep -qx "targetSdkVersion:'35'" "$temp/badging" || fail 'targetSdk is not 35'
+"$tools/aapt" dump xmltree "$apk" AndroidManifest.xml >"$temp/manifest"
+grep -q 'android:allowBackup(0x01010280)=(type 0x12)0x0' "$temp/manifest" || fail 'backup is allowed'
+grep -q 'android:dataExtractionRules' "$temp/manifest" || fail 'data extraction rules missing'
+grep -q 'android:usesCleartextTraffic(0x010104ec)=(type 0x12)0x0' "$temp/manifest" || fail 'cleartext is not off'
+! grep -q 'android:networkSecurityConfig' "$temp/manifest" || fail 'release has a network security config'
+! grep -Eq 'DebugPushReceiver|ReactNativeFirebaseMessaging(Receiver|Service|HeadlessService)' "$temp/manifest" || fail 'debug or library push component in manifest'
+awk '/E: (service|receiver)/{name=""} /A: android:name/ && name=="" {name=$0} /MESSAGING_EVENT/{print name}' "$temp/manifest" \
+  | sed 's/.*Raw: "\(.*\)")/\1/' | sort >"$temp/handlers"
+printf '%s\n' com.epaflix.fytorium.platform.PushService com.google.firebase.messaging.FirebaseMessagingService | diff -u - "$temp/handlers" \
+  || fail 'MESSAGING_EVENT handlers must be PushService plus the Firebase default'
+unzip -p "$apk" 'classes*.dex' >"$temp/dex"
+! grep -aEq 'DebugPushReceiver|fake-push|http://app:3000|oidc:8080' "$temp/dex" || fail 'debug hook or test host in DEX'
+unzip -p "$apk" assets/index.android.bundle >"$temp/bundle"
+[ -s "$temp/bundle" ] || fail 'no embedded JS bundle'
+! grep -aEq 'fake-push|http://app:3000|oidc:8080|DebugTokenProvider' "$temp/bundle" || fail 'debug hook or test host in JS bundle'
+echo 'Release inspection PASS: permissions, identity, SDK levels, backup, cleartext, push handlers, no debug code or test hosts.'
