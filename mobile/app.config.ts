@@ -5,6 +5,7 @@ export type Variant = 'debug' | 'release';
 type Env = Record<string, string | undefined>;
 
 const DEFAULT_SERVER_URL = 'https://fytorium.epaflix.com';
+const LAB_HOSTS = ['app', 'oidc', 'fake-push', 'localhost'];
 
 function firebaseProject(path: string): string {
   const json = JSON.parse(readFileSync(path, 'utf8'));
@@ -17,7 +18,12 @@ function firebaseProject(path: string): string {
 export function resolve(env: Env) {
   const variant: Variant = env.FYTORIUM_VARIANT === 'release' ? 'release' : 'debug';
   const serverUrl = env.FYTORIUM_SERVER_URL || (variant === 'debug' ? 'http://app:3000' : DEFAULT_SERVER_URL);
-  if (variant === 'release' && !serverUrl.startsWith('https://')) throw new Error('Release server URL must use https://');
+  if (variant === 'release') {
+    let url: URL;
+    try { url = new URL(serverUrl); } catch { throw new Error('Release server URL must use https://'); }
+    if (url.protocol !== 'https:' || !url.hostname) throw new Error('Release server URL must use https://');
+    if (LAB_HOSTS.includes(url.hostname)) throw new Error('Release server URL must not be a test host');
+  }
   let googleServicesFile = './firebase/google-services.synthetic.json';
   if (variant === 'release') {
     if (!env.GOOGLE_SERVICES_FILE) throw new Error('GOOGLE_SERVICES_FILE is required for release');

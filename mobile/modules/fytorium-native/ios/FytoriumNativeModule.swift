@@ -45,15 +45,7 @@ public class FytoriumNativeModule: Module {
       #endif
     }
 
-    // Keychain items survive an uninstall. A failed delete leaves first_run_done unset, so the next start retries.
-    Function("firstRun") { () -> Bool in
-      if self.defaults.bool(forKey: "first_run_done") { return true }
-      self.defaults.set(true, forKey: "push_reset_pending")
-      let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword] as CFDictionary)
-      guard status == errSecSuccess || status == errSecItemNotFound else { return false }
-      self.defaults.set(true, forKey: "first_run_done")
-      return true
-    }
+    Function("firstRun") { () -> Bool in runFirstRun(self.defaults, deleteKeychain: deleteAllGenericPasswords) }
     Function("restoredFromSavedState") { false }
     Function("getFlag") { (name: String) -> Bool in self.defaults.bool(forKey: name) }
     Function("setFlag") { (name: String, value: Bool) throws in

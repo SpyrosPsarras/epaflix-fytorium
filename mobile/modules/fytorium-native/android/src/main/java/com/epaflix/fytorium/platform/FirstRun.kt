@@ -13,10 +13,10 @@ object FirstRun {
     // Every step treats an already-absent item as done. A failed step leaves first_run_done unset, so the next start retries.
     fun run(context: Context): Boolean {
         if (Flags.get(context, Flags.FIRST_RUN_DONE)) return true
-        Flags.set(context, Flags.PUSH_RESET_PENDING, true)
-        if (context.getSharedPreferences("notification-permission", Context.MODE_PRIVATE).getBoolean("asked", false)) {
-            Flags.set(context, Flags.NOTIFICATIONS_ASKED, true)
-        }
+        val asked = context.getSharedPreferences("notification-permission", Context.MODE_PRIVATE).getBoolean("asked", false)
+        // The legacy prefs are deleted only after the copied values are on disk.
+        val carried = mapOf(Flags.PUSH_RESET_PENDING to true) + (if (asked) mapOf(Flags.NOTIFICATIONS_ASKED to true) else emptyMap())
+        if (!Flags.setAll(context, carried)) return false
         val steps = listOf(
             { legacyPreferences.all { context.deleteSharedPreferences(it) } },
             { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.run { deleteEntry("fytorium.credentials"); !containsAlias("fytorium.credentials") } },
@@ -29,7 +29,6 @@ object FirstRun {
             { WorkManager.getInstance(context).let { work -> legacyWork.forEach { work.cancelUniqueWork(it).result.get() } }; true },
         )
         val done = steps.map { step -> runCatching(step).getOrDefault(false) }.all { it }
-        if (done) Flags.set(context, Flags.FIRST_RUN_DONE, true)
-        return done
+        return done && Flags.set(context, Flags.FIRST_RUN_DONE, true)
     }
 }

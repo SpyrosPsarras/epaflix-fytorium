@@ -23,21 +23,33 @@ grep -q 'photopicker_activity:0:required' "$temp/manifest" || fail 'Photo Picker
 awk '/E: (service|receiver)/{name=""} /A: android:name/ && name=="" {name=$0} /MESSAGING_EVENT/{print name}' "$temp/manifest" \
   | sed 's/.*Raw: "\(.*\)")/\1/' >"$temp/handlers"
 [ "$(cat "$temp/handlers")" = com.epaflix.fytorium.platform.PushService ] || fail "MESSAGING_EVENT handlers must be PushService only: $(cat "$temp/handlers")"
-rules=$("$tools/aapt2" dump resources "$apk" | grep -A1 'xml/data_extraction_rules$' | sed -n 's/.*(file) \([^ ]*\).*/\1/p')
-[ -n "$rules" ] || fail 'data extraction rules resource missing'
+ref=$(sed -n 's/.*android:dataExtractionRules(0x0101063e)=@\(0x[0-9a-f]*\).*/\1/p' "$temp/manifest" | head -n 1)
+[ -n "$ref" ] || fail 'application has no data extraction rules'
+rules=$("$tools/aapt2" dump resources "$apk" | awk -v id="$ref" '$1=="resource" && $2==id {found=1; next} found && /\(file\)/ {print $3; exit}')
+[ -n "$rules" ] || fail "data extraction rules resource $ref not found"
 "$tools/aapt2" dump xmltree --file "$rules" "$apk" >"$temp/rules"
+# Each section must hold <exclude domain="D" path="."/> for every domain.
+awk 'function flush() { if (el=="exclude" && path==".") print section ":" domain; el=""; domain=""; path="" }
+  /E: / { flush(); el=$2; if ($2=="cloud-backup" || $2=="device-transfer") section=$2 }
+  /A: domain=/ { split($0, a, "\""); domain=a[2] }
+  /A: path=/ { split($0, a, "\""); path=a[2] }
+  END { flush() }' "$temp/rules" | sort -u >"$temp/excluded"
 for section in cloud-backup device-transfer; do
   for domain in root sharedpref file database external; do
-    awk -v s="$section" '/E: /{if ($2 ~ /^(cloud-backup|device-transfer)$/) cur=$2} cur==s && /A: domain=/{print}' "$temp/rules" \
-      | grep -q "\"$domain\"" || fail "$section does not exclude $domain"
+    grep -qx "$section:$domain" "$temp/excluded" || fail "$section does not exclude all of $domain"
   done
 done
 unzip -p "$apk" assets/app.config >"$temp/app.config"
-grep -q '"variant":"release"' "$temp/app.config" || fail 'embedded app config is not the release variant'
-grep -q '"serverUrl":"https://' "$temp/app.config" || fail 'embedded server URL is not HTTPS'
+node -e '
+  const config = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const url = new URL(config.extra.serverUrl);
+  if (config.extra.variant !== "release" || url.protocol !== "https:" || !url.hostname || ["app", "oidc", "fake-push", "localhost"].includes(url.hostname)) process.exit(1);
+' "$temp/app.config" || fail 'embedded app config is not an HTTPS release for a production host'
 unzip -p "$apk" 'classes*.dex' >"$temp/dex"
-! grep -aEq 'DebugPushReceiver|fake-push|http://app:3000|oidc:8080' "$temp/dex" || fail 'debug hook or test host in DEX'
+# React Native ships a localhost:8081 dev-server string; config rejects localhost, the binary scan does not.
+hosts='//(app|oidc|fake-push)([:/"]|$)'
+! grep -aEq "DebugPushReceiver|$hosts" "$temp/dex" || fail 'debug hook or test host in DEX'
 unzip -q "$apk" 'assets/*' -d "$temp/apk"
 [ -s "$temp/apk/assets/index.android.bundle" ] || fail 'no embedded JS bundle'
-! grep -raEq 'fake-push|http://app:3000|oidc:8080|DebugTokenProvider' "$temp/apk/assets" || fail 'debug hook or test host in assets'
+! grep -raEq "DebugTokenProvider|$hosts" "$temp/apk/assets" || fail 'debug hook or test host in assets'
 echo 'Release inspection PASS: permissions, identity, SDK levels, not debuggable, backup and extraction rules, cleartext, sole push handler, picker backport, release config, no debug code or test hosts.'

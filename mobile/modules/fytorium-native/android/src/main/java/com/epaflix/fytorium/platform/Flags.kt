@@ -11,8 +11,10 @@ object Flags {
 
     private fun prefs(context: Context) = context.getSharedPreferences("fytorium-platform", Context.MODE_PRIVATE)
     fun get(context: Context, name: String) = prefs(context).getBoolean(name, false)
-    fun set(context: Context, name: String, value: Boolean) {
-        require(name in names) { "Unknown flag" }
-        prefs(context).edit().putBoolean(name, value).commit()
+    fun set(context: Context, name: String, value: Boolean) = setAll(context, mapOf(name to value))
+    // One commit for all values; false when the write did not reach disk.
+    fun setAll(context: Context, values: Map<String, Boolean>): Boolean {
+        require(values.keys.all { it in names }) { "Unknown flag" }
+        return prefs(context).edit().apply { values.forEach { (name, value) -> putBoolean(name, value) } }.commit()
     }
 }

@@ -9,5 +9,5 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.9'
   s.source         = { git: '' }
   s.dependency 'ExpoModulesCore'
-  s.source_files = '**/*.swift'
+  s.source_files = '*.swift'
 end

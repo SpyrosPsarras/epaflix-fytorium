@@ -52,17 +52,26 @@ w1() {
     ls -la /tmp/keystore.db* >&2; sqlite3 /tmp/keystore.db '.tables' 'SELECT alias, namespace, domain FROM keyentry' >&2 || true; echo "uid=$uid" >&2
     fail 'seeded install has no Keystore alias'
   fi
-  # A capture folder the app cannot empty makes the first cleanup attempt fail.
-  adb shell su 0 chmod 500 "$data/cache/captures"
+  # Prefs the app cannot write make the first attempt fail before anything is deleted.
   adb install -r /src/cache/artifacts/fytorium-release-fixture.apk >/dev/null || fail 'release fixture APK did not install over the Kotlin app'
-  launch_without_crash 'Release fixture over Kotlin, cleanup blocked'
+  adb shell su 0 chmod 500 "$data/shared_prefs"
+  launch_without_crash 'Release fixture over Kotlin, prefs write blocked'
+  adb shell am force-stop "$package"
+  adb shell su 0 chmod 771 "$data/shared_prefs"
+  app_file shared_prefs/notification-permission.xml | grep -q 'name="asked" value="true"' || fail 'a failed flag write lost the legacy asked value'
+  app_has shared_prefs/credentials.xml || fail 'a failed flag write still deleted legacy prefs'
+  ! flag first_run_done || fail 'N5 marked itself done after a failed flag write'
+  pass 'N5 kept the legacy prefs when its own flags could not be written'
+  # A capture folder the app cannot empty makes the next cleanup attempt fail.
+  adb shell su 0 chmod 500 "$data/cache/captures"
+  launch_without_crash 'Release fixture, capture cleanup blocked'
   flag push_reset_pending || fail 'N5 did not set push_reset_pending before cleanup'
   flag notifications_asked || fail 'N5 did not carry over the asked flag'
   ! flag first_run_done || fail 'N5 marked itself done after a failed step'
   app_has cache/captures/seed.jpg || fail 'the blocked capture was removed anyway'
   pass 'N5 left first_run_done unset after a failed step'
-  adb shell su 0 chmod 700 "$data/cache/captures"
   adb shell am force-stop "$package"
+  adb shell su 0 chmod 700 "$data/cache/captures"
   launch_without_crash 'Release fixture retry'
   flag first_run_done || fail 'N5 retry did not complete'
   for path in shared_prefs/credentials.xml shared_prefs/diagnostics.xml shared_prefs/notification-permission.xml \
@@ -97,9 +106,21 @@ w1() {
   [ "$(posted)" = 1 ] || fail 'N4 did not replace the notification by tag'
   adb shell dumpsys notification --noredact | grep -q 'Synthetic reminder two' || fail 'replacement text not shown'
   pass 'N4: dropped while push_ready clear, shown once set, replaced by tag'
+  device_online() { [ "$(adb get-state 2>/dev/null)" = device ]; }
   for scheme in light dark; do
-    [ "$scheme" = dark ] && adb shell cmd uimode night yes >/dev/null || adb shell cmd uimode night no >/dev/null
-    maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "../.scratch/e2e-screenshots/android-$scheme" >/dev/null || fail "Maestro launch flow ($scheme)"
+    if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
+    out="../.scratch/e2e-screenshots/android-$scheme"
+    rm -rf "$out"
+    wait_ready 60 "adb transport online before Maestro ($scheme)" device_online
+    if ! maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "$out" >/dev/null; then
+      # Maestro's driver can drop the adb transport; only that infrastructure failure earns one retry.
+      grep -rq 'device offline' "$out" || fail "Maestro launch flow ($scheme)"
+      echo "Maestro lost the adb transport ($scheme); reconnecting and retrying once."
+      adb reconnect offline >/dev/null 2>&1 || true
+      wait_ready 60 "adb transport back online ($scheme)" device_online
+      rm -rf "$out"
+      maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "$out" >/dev/null || fail "Maestro launch flow ($scheme)"
+    fi
   done
   pass 'Maestro launch flow in light and dark; screenshots in .scratch/e2e-screenshots/'
 }

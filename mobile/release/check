@@ -26,9 +26,12 @@ refused 'Release server URL must use https://' FYTORIUM_SERVER_URL=http://app:30
 refused 'Synthetic Firebase config cannot be released' FYTORIUM_FIREBASE_TEST_CONFIG=
 
 sh e2e/fixture-sign "$apk" /src/cache/artifacts/fytorium-release-fixture.apk
+fixture=$(keytool -exportcert -keystore /src/cache/fixture.p12 -storepass fixture -alias fixture | sha256sum | cut -d' ' -f1)
+sh release/verify-signer /src/cache/artifacts/fytorium-release-fixture.apk "$fixture" >"$temp/signer.log" 2>&1 || { cat "$temp/signer.log" >&2; exit 1; }
 if sh release/verify-signer /src/cache/artifacts/fytorium-release-fixture.apk "$(cat release/fingerprint)" >"$temp/signer.log" 2>&1; then
   echo 'Production fingerprint check accepted the fixture key.' >&2; exit 1
 fi
-echo 'Production fingerprint check refused the fixture key.'
+grep -q 'does not match the expected SHA-256 fingerprint' "$temp/signer.log" || { cat "$temp/signer.log" >&2; exit 1; }
+echo 'Fixture APK verifies against its own key; the production fingerprint check refused it.'
 echo "Release APK size: $(stat -c %s "$apk") bytes"
 echo 'Fixture lane PASS. Never publish /src/cache/artifacts/fytorium-release-fixture.apk.'

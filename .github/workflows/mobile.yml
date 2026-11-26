@@ -18,7 +18,10 @@ jobs:
       - id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: mobile/.cache
+          path: |
+            mobile/.cache/gradle/caches
+            mobile/.cache/gradle/wrapper
+            mobile/.cache/pnpm-store
           key: mobile-${{ hashFiles('mobile/pnpm-lock.yaml', 'mobile/docker/Dockerfile') }}
           restore-keys: mobile-
       - name: Install
@@ -58,6 +61,10 @@ jobs:
           pnpm install --frozen-lockfile
       - name: Unit tests
         run: pnpm -s test
+      - name: Native first-run tests
+        run: |
+          xcrun swiftc -o "$RUNNER_TEMP/first-run-tests" modules/fytorium-native/ios/FirstRun.swift modules/fytorium-native/ios/tests/main.swift
+          "$RUNNER_TEMP/first-run-tests"
       - name: Simulator build
         run: |
           npx expo prebuild --platform ios --clean --no-install

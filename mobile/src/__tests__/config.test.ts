@@ -25,6 +25,16 @@ test('release refuses a cleartext server URL', () => {
     .toThrow('Release server URL must use https://');
 });
 
+test.each(['https://', 'http://fytorium.epaflix.com', 'ftp://fytorium.epaflix.com'])('release refuses the malformed URL %s', (url) => {
+  expect(() => resolve({ FYTORIUM_VARIANT: 'release', FYTORIUM_SERVER_URL: url, GOOGLE_SERVICES_FILE: firebase('p') }))
+    .toThrow('Release server URL must use https://');
+});
+
+test.each(['https://app:3000', 'https://oidc', 'https://fake-push:8080', 'https://localhost'])('release refuses the test host %s', (url) => {
+  expect(() => resolve({ FYTORIUM_VARIANT: 'release', FYTORIUM_SERVER_URL: url, GOOGLE_SERVICES_FILE: firebase('p') }))
+    .toThrow('Release server URL must not be a test host');
+});
+
 test('release needs a Firebase config', () => {
   expect(() => resolve({ FYTORIUM_VARIANT: 'release' })).toThrow('GOOGLE_SERVICES_FILE is required for release');
 });
