@@ -77,10 +77,11 @@ jobs:
           unzip -q "$RUNNER_TEMP/maestro.zip" -d "$HOME"
           udid=$(xcrun simctl list devices available -j | node -e 'const d=JSON.parse(require("fs").readFileSync(0)).devices; console.log(Object.values(d).flat().find(x=>x.name.startsWith("iPhone")).udid)')
           xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
           xcrun simctl install "$udid" build/Build/Products/Release-iphonesimulator/Fytorium.app
           for scheme in light dark; do
             xcrun simctl ui "$udid" appearance "$scheme"
-            MAESTRO_CLI_NO_ANALYTICS=1 "$HOME/maestro/bin/maestro" --device "$udid" test e2e/maestro/launch.yaml --test-output-dir "maestro-$scheme"
+            MAESTRO_CLI_NO_ANALYTICS=1 MAESTRO_DRIVER_STARTUP_TIMEOUT=600000 "$HOME/maestro/bin/maestro" --device "$udid" test e2e/maestro/launch.yaml --test-output-dir "maestro-$scheme"
           done
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
