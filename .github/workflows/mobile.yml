@@ -69,7 +69,7 @@ jobs:
         run: pnpm -s test
       - name: Native first-run tests
         run: |
-          xcrun swiftc -o "$RUNNER_TEMP/first-run-tests" modules/fytorium-native/ios/FirstRun.swift modules/fytorium-native/ios/tests/first-run/main.swift
+          xcrun swiftc -o "$RUNNER_TEMP/first-run-tests" modules/fytorium-native/ios/FlagStore.swift modules/fytorium-native/ios/FirstRun.swift modules/fytorium-native/ios/tests/first-run/main.swift
           "$RUNNER_TEMP/first-run-tests"
       - name: Native transport tests
         run: |

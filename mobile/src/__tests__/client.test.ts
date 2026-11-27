@@ -361,3 +361,15 @@ test('a logout whose local delete fails still ends the session and reports no er
   expect(wipe.get()).toBe(true);
   expect(lost()).toBe(1);
 });
+
+test('a 426 that arrives after logout does not bring back the update stop', async () => {
+  const { server, api, updates } = await setup({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  const held = deferred<Reply>();
+  server.dispatch((request) => (request.url.endsWith('/api/app/logout') ? { status: 204 } : held.promise));
+  const push = api.request('/api/notifications/subscriptions', { method: 'POST', body: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  await api.logout();
+  held.resolve({ status: 426, body: '{"minAppVersion":"3.0.0"}' });
+  await push;
+  expect(updates).toEqual([]);
+});

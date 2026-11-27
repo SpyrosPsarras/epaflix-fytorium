@@ -2,13 +2,12 @@ import Foundation
 import Security
 
 // Keychain items survive an uninstall. A failed delete leaves first_run_done unset, so the next start retries.
-func runFirstRun(_ defaults: UserDefaults, deleteKeychain: () -> OSStatus) -> Bool {
-  if defaults.bool(forKey: "first_run_done") { return true }
-  defaults.set(true, forKey: "push_reset_pending")
+func runFirstRun(_ flags: FlagStore, deleteKeychain: () -> OSStatus) -> Bool {
+  if flags.get("first_run_done") { return flags.set(["first_run_done": true]) }
+  guard flags.set(["push_reset_pending": true]) else { return false }
   let status = deleteKeychain()
   guard status == errSecSuccess || status == errSecItemNotFound else { return false }
-  defaults.set(true, forKey: "first_run_done")
-  return true
+  return flags.set(["first_run_done": true])
 }
 
 func deleteAllGenericPasswords() -> OSStatus {

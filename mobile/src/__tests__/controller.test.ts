@@ -1,5 +1,6 @@
 import { NetworkError, type Api } from '../api/client';
 import { createSession } from '../session/controller';
+import { WipeError } from '../session/credentials';
 
 type Meta = { status: number; body: string } | 'offline';
 
@@ -8,6 +9,7 @@ function harness({ ready = true } = {}) {
   const logins: string[] = [];
   const metas: Meta[] = [];
   let release: (() => void) | null = null;
+  let wipeFails = false;
   const api = {
     request: async () => {
       const next = metas.shift() ?? { status: 200, body: '{"minAppVersion":null}' };
@@ -21,13 +23,17 @@ function harness({ ready = true } = {}) {
       return null;
     },
     cancelLogin: async () => undefined,
-    loginUrl: async () => 'https://fytorium.test/auth/login',
+    loginUrl: async () => {
+      if (wipeFails) throw new WipeError("Fytorium couldn't clear the last login on this phone.");
+      return 'https://fytorium.test/auth/login';
+    },
     logout: async () => { loggedIn = false; },
   } as unknown as Api;
   const session = createSession({ api, appVersion: '2.0.0', loggedIn: () => loggedIn, ready: () => ready, onLoggedIn: () => undefined });
   return {
     session, logins, metas,
     holdLogin() { release = () => undefined; },
+    failWipe(value: boolean) { wipeFails = value; },
     releaseLogin() { const done = release; release = null; done?.(); },
   };
 }
@@ -98,4 +104,13 @@ test('logout drops the stop', async () => {
   await settle();
   h.session.logout();
   expect(h.session.get().updateRequired).toBe(false);
+});
+
+test('tapping Log in while an earlier wipe cannot finish says why and opens no browser', async () => {
+  const h = harness();
+  h.failWipe(true);
+  await expect(h.session.loginUrl()).resolves.toBeNull();
+  expect(h.session.get().message).toBe("Fytorium couldn't clear the last login on this phone. Try again.");
+  h.failWipe(false);
+  await expect(h.session.loginUrl()).resolves.toBe('https://fytorium.test/auth/login');
 });

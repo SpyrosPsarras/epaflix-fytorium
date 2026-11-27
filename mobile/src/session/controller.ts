@@ -107,7 +107,13 @@ export function createSession(deps: Deps) {
         set({ message: "Fytorium couldn't finish setting up. Close it and open it again." });
         return null;
       }
-      return deps.api.loginUrl();
+      try {
+        return await deps.api.loginUrl();
+      } catch (error) {
+        if (!(error instanceof WipeError)) throw error;
+        set({ message: `${error.message} Try again.` });
+        return null;
+      }
     },
     loginLaunchFailed() {
       void deps.api.cancelLogin();
@@ -118,7 +124,10 @@ export function createSession(deps: Deps) {
     // The stop goes with the session.
     logout() {
       set({ updateRequired: false });
-      work(() => deps.api.logout());
+      work(async () => {
+        await deps.api.logout();
+        set({ updateRequired: false });
+      });
     },
     recheck,
     // A 426 from any request shows the stop at once; /api/meta then refreshes its details.

@@ -1,8 +1,6 @@
 import ExpoModulesCore
 import Security
 
-private let flagNames: Set<String> = ["push_ready", "push_reset_pending", "notifications_asked", "first_run_done", "session_wipe_pending"]
-
 struct RequestOptions: Record {
   @Field var method: String = "GET"
   @Field var url: String = ""
@@ -14,7 +12,7 @@ struct RequestOptions: Record {
 
 public class FytoriumNativeModule: Module {
   private let transport = Transport()
-  private let defaults = UserDefaults.standard
+  private let flags = FlagStore.standard()
 
   public func definition() -> ModuleDefinition {
     Name("FytoriumNative")
@@ -28,17 +26,16 @@ public class FytoriumNativeModule: Module {
       #endif
     }
 
-    Function("firstRun") { () -> Bool in runFirstRun(self.defaults, deleteKeychain: deleteAllGenericPasswords) }
+    Function("firstRun") { () -> Bool in runFirstRun(self.flags, deleteKeychain: deleteAllGenericPasswords) }
     Function("restoredFromSavedState") { false }
-    Function("getFlag") { (name: String) -> Bool in self.defaults.bool(forKey: name) }
+    Function("getFlag") { (name: String) -> Bool in self.flags.get(name) }
     Function("setFlags") { (values: [String: Bool]) throws -> Bool in
       guard values.keys.allSatisfy({ flagNames.contains($0) }) else { throw Exception(name: "ERR_FLAG", description: "Unknown flag") }
-      values.forEach { self.defaults.set($0.value, forKey: $0.key) }
-      return true
+      return self.flags.set(values)
     }
     Function("setFlag") { (name: String, value: Bool) throws in
       guard flagNames.contains(name) else { throw Exception(name: "ERR_FLAG", description: "Unknown flag") }
-      self.defaults.set(value, forKey: name)
+      self.flags.set([name: value])
     }
     Function("obtainiumPackage") { () -> String? in nil }
     Function("openObtainium") { false }

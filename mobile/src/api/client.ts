@@ -111,17 +111,18 @@ export function createApi(deps: Deps) {
     });
     const session = credentials.session;
     const original = credentials.tokens();
-    const response = await checked(send(original));
+    const response = await checked(send(original), session);
     if (response.status !== 401 || !original) return response;
     const refreshed = await refreshAfter(original, session);
     // No unauthenticated replay, no second refresh and no replay under another session.
     if (!refreshed || credentials.session !== session) return { ...response, body: '' };
-    return checked(send(refreshed));
+    return checked(send(refreshed), session);
   }
 
-  async function checked(pending: Promise<RawResponse>): Promise<RawResponse> {
+  // A 426 counts only while the session that sent the request is still the current one.
+  async function checked(pending: Promise<RawResponse>, session: number): Promise<RawResponse> {
     const response = await pending;
-    if (response.status === 426) {
+    if (response.status === 426 && credentials.session === session) {
       let minimum: string | null = null;
       try {
         const parsed = JSON.parse(response.body)?.minAppVersion;
