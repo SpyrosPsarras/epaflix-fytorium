@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { useNavigation, usePreventRemove, useRoute, type NavigationAction } from '@react-navigation/native';
+import { useIsFocused, useNavigation, usePreventRemove, useRoute, type NavigationAction } from '@react-navigation/native';
 import { Button, Dialog, Portal, Text } from 'react-native-paper';
 import { useDraft, useTab } from './context';
 import type { TabName } from './routes';
@@ -20,6 +20,8 @@ type Shell = {
   // W6-P26: pages with unsaved changes, so log out can ask about one that a tab tap hid.
   dirty: Map<string, Hidden>;
   setDirty(page: string, entry: Hidden | null): void;
+  // Called when the set of pages with changes changes.
+  watchDirty(listener: () => void): void;
   // Pages whose question was already answered with leave elsewhere (W6-P15); they close without asking again.
   discarded: Set<string>;
   setSaving(page: string, saving: boolean): void;
@@ -37,6 +39,7 @@ function createShell(): Shell {
   const saving = new Set<string>();
   const dirty = new Map<string, Hidden>();
   let execute = (intent: Intent) => { if (intent.kind === 'run') intent.run(); };
+  let dirtyChanged = () => undefined as void;
   const shell: Shell = {
     saving,
     dirty,
@@ -49,7 +52,9 @@ function createShell(): Shell {
     setExecutor(next) { execute = next; },
     setDirty(page, entry) {
       if (entry) dirty.set(page, entry); else dirty.delete(page);
+      dirtyChanged();
     },
+    watchDirty(listener) { dirtyChanged = listener; },
     setSaving(page, value) {
       if (value) saving.add(page); else saving.delete(page);
       if (saving.size === 0 && shell.pending) {
@@ -92,6 +97,8 @@ export function LeaveGuard({ dirty, question = DISCARD, onLeave }: { dirty: bool
   // The open question and what it would close survive Android recreating the activity, as Kotlin's do.
   const [pending, setPending] = useDraft<NavigationAction | null>('leave', null);
   const [leaving, setLeaving] = useState<NavigationAction | null>(null);
+  // Dialogs render above every tab, so a page's question shows only while the page is shown; it stays saved.
+  const focused = useIsFocused();
   useEffect(() => {
     shell.setDirty(route.key, dirty ? { tab, question } : null);
     return () => shell.setDirty(route.key, null);
@@ -100,10 +107,14 @@ export function LeaveGuard({ dirty, question = DISCARD, onLeave }: { dirty: bool
     if (shell.discarded.has(route.key)) setLeaving(data.action); else setPending(data.action);
   }, [shell, route.key]));
   // The confirmed action runs once the guard is off, so it is not stopped again.
-  useEffect(() => { if (leaving) navigation.dispatch(leaving); }, [leaving, navigation]);
+  // An action saved before Android recreated the activity names the old stack's key; the page's stack has a new one.
+  useEffect(() => {
+    const stack = navigation.getState()?.key;
+    if (leaving) navigation.dispatch(leaving.target && stack ? { ...leaving, target: stack } : leaving);
+  }, [leaving, navigation]);
   return (
     <Portal>
-      <Dialog visible={pending !== null} onDismiss={() => setPending(null)}>
+      <Dialog visible={pending !== null && focused} onDismiss={() => setPending(null)}>
         <Dialog.Title accessibilityRole="header">{question.title}</Dialog.Title>
         <Dialog.Content><Text>{question.body}</Text></Dialog.Content>
         <Dialog.Actions>

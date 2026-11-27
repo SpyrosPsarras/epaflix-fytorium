@@ -52,8 +52,8 @@ const SHAPES = {
   plants: objects((plant) => text(plant.id) && text(plant.display_name) && text(plant.scientific_name) && text(plant.status)
     && optional(number)(plant.pot_size_cm)),
   meta: (body: unknown) => isObject(body) && validZone(body.timezone),
-  plant: (body: unknown) => isObject(body) && text(body.id),
 };
+const isPlant = (id: string) => (body: unknown) => SHAPES.plants([body]) && (body as { id: unknown }).id === id;
 
 function checked(json: string, shape: (body: unknown) => boolean): string {
   let body: unknown;
@@ -150,7 +150,8 @@ export function createRepository(deps: Deps) {
       checked(today, SHAPES.tasks); checked(upcoming, SHAPES.tasks); checked(plants, SHAPES.plants); checked(meta, SHAPES.meta);
       deps.cache.save(member, { today, upcoming, plants, meta }, now());
       loadCached();
-      set({ offline: false, serverUnavailable: false, message: null });
+      // The data is new, but a connection lost while it was on its way still shows as Offline.
+      set({ offline: !deps.online(), serverUnavailable: false, message: null });
     } catch (error) {
       failed(error, epoch);
     } finally {
@@ -183,7 +184,7 @@ export function createRepository(deps: Deps) {
       const resource = `plant/${id}`;
       if (deps.online()) {
         try {
-          const json = checked(await read(`/api/plants/${id}`), SHAPES.plant);
+          const json = checked(await read(`/api/plants/${id}`), isPlant(id));
           if (epoch === generation) deps.cache.save(member, { [resource]: json }, now());
         } catch (error) {
           failed(error, epoch);

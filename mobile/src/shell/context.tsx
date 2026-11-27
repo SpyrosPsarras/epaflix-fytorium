@@ -18,6 +18,8 @@ export type AppDeps = {
   copyDiagnostics(): void;
   // W6-P9: keeps the task when Back at Today's root would otherwise drop a waiting draft.
   moveTaskToBack(): void;
+  // W6-P11: tells Android whether Back goes to the app.
+  setBackHandled(value: boolean): void;
 };
 
 // The tab whose stack a page is in, so a question can lead back to it (W6-P26).

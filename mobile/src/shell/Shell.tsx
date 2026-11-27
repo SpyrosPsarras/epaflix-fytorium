@@ -10,7 +10,7 @@ import { TabContext, useDeps } from './context';
 import {
   AboutRoute, FindPage, JournalAdd, JournalPick, JournalRoot, MoreRoot, PageHeader, PlantEdit, PlantPage, PlantaStub, PlantsRoot, StubPage, TodayRoot, UnmatchedStub,
 } from './pages';
-import { filterState, pageKey, routeKeys, tabsFor, TAB_ROOTS, type StackParams, type TabName } from './routes';
+import { backHandled, filterState, pageKey, routeKeys, tabsFor, TAB_ROOTS, type StackParams, type TabName } from './routes';
 
 export { navigation };
 
@@ -87,7 +87,7 @@ function run(intent: Intent) {
 
 export function Shell({ member, theme, initialState, onState, subscribeOpenHome }: ShellProps) {
   const shell = useShell();
-  const { drafts } = useDeps();
+  const { drafts, setBackHandled } = useDeps();
   const shown = useRef(new Set<string>());
   // The member the navigator was built for. A new member or role builds a new one (W6-P17): no question can stop it,
   // and no page keeps state from before; for the same member only the pages the new role may open come along.
@@ -101,6 +101,9 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
   }
 
   useEffect(() => shell.setExecutor(run), [shell]);
+  const syncBack = () => setBackHandled(backHandled(navigation.isReady() ? navigation.getRootState() : undefined, shell.dirty.size));
+  useEffect(() => shell.watchDirty(syncBack));
+  useEffect(() => () => setBackHandled(false), [setBackHandled]);
   useEffect(() => subscribeOpenHome(() => shell.request({ kind: 'home' })));
 
   return (
@@ -111,6 +114,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         shown.current = routeKeys(navigation.getRootState());
         // The first screen is saved too, so its scroll or draft comes back even if nothing was opened yet (N3).
         onState(navigation.getRootState() as NavigationState);
+        syncBack();
       }}
       onStateChange={(state) => {
         // W6-P4: a page's saved state goes when its route leaves the stack, never when Android only destroys the view.
@@ -119,11 +123,14 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         shown.current.forEach((key) => { if (!now.has(key)) drafts.removeUnder(pageKey(owner, key)); });
         shown.current = now;
         onState(state as NavigationState | undefined);
+        syncBack();
       }}>
       <Tab.Navigator
         backBehavior="firstRoute"
         screenOptions={({ route }) => ({
           headerShown: false,
+          // As Kotlin's showTabs: the bar gives the keyboard its place.
+          tabBarHideOnKeyboard: true,
           // After a restore every tab mounts, so a restored form in a tab not yet shown still asks before log out (W6-P26).
           lazy: !applied.initialState,
           tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name={ICONS[route.name as TabName]} color={color} size={size} />,

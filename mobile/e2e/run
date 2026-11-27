@@ -326,6 +326,10 @@ w3() {
 
   # A plant with a cover photo, made through the API as the same member.
   token=$(api_login "$owner") || fail 'API login failed'
+  # Plants that an earlier failed run left go first, so Today's list stays short enough to find the new one.
+  q "SELECT id || '|' || nickname FROM plants WHERE nickname LIKE 'Synthetic W3 fern %'" | while IFS='|' read -r old name; do
+    api "$token" DELETE "/api/plants/$old" "{\"confirm_name\":\"$name\"}" >/dev/null || true
+  done
   site=$(api "$token" POST /api/sites "{\"name\":\"Synthetic W3 site $run_id\",\"location\":\"indoor\",\"light\":\"part_shade\",\"humidity\":\"normal\",\"grow_light\":false,\"draft\":false}" | json_field id)
   search=$(api "$token" GET '/api/species/search?q=Testoria%20lucida' | json_field search_id)
   plant=$(api "$token" POST /api/plants "{\"nickname\":\"$plant_name\",\"site_id\":\"$site\",\"search_id\":\"$search\",\"gbif_key\":910001,\"pot_type\":\"plastic\",\"soil_type\":\"all_purpose\",\"plant_size\":\"small\",\"growth_stage\":\"young\",\"fertilizer_type\":\"liquid\",\"pot_size_cm\":null,\"window_distance_cm\":null,\"drainage\":true,\"grow_light\":false,\"near_ac\":false,\"near_heater\":false}" | json_field id)
@@ -355,23 +359,29 @@ w3() {
   wait_for 'the draft after process death' visible 'text="Kept draft"'
   pass 'After process death the Plants stack and its draft came back'
 
-  # Removing the task in Recents (Clear all, as a swipe does) ends it; the next start opens Today at its root without the draft.
+  # Removing the task in Recents ends it; the next start opens Today at its root without the draft.
   adb shell input keyevent KEYCODE_APP_SWITCH
   # Recents can take a moment to draw; App Switch is sent again only while the app still has the focus.
   recents_open() {
-    visible 'text="Clear all"' && return 0
+    visible 'resource-id="com.google.android.apps.nexuslauncher:id/snapshot"' && return 0
     adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" && adb shell input keyevent KEYCODE_APP_SWITCH
     sleep 2
     return 1
   }
-  wait_for 'Clear all in Recents' recents_open
-  adb shell uiautomator dump /sdcard/w.xml >/dev/null
-  clear_all=$(adb shell cat /sdcard/w.xml | grep -o '<node[^>]*text="Clear all"[^>]*>' | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p')
-  [ -n "$clear_all" ] || fail 'Recents shows no Clear all'
-  set -- $clear_all
-  adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2)); sleep 2
+  wait_for 'the task card in Recents' recents_open
+  bounds() { adb shell cat /sdcard/w.xml | grep -o "<node[^>]*$1[^>]*>" | head -n 1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p'; }
+  # Clear all sits left of the oldest task; when the launcher centres the only card it is scrolled into view first.
+  clear_all() {
+    adb shell uiautomator dump /sdcard/w.xml >/dev/null
+    found=$(bounds 'text="Clear all"')
+    if [ -z "$found" ]; then adb shell input swipe 200 900 1000 900 300; sleep 1; return 1; fi
+    set -- $found
+    adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
+  }
+  wait_for 'Clear all in Recents' clear_all
+  sleep 2
   task_listed() { adb shell dumpsys activity recents | grep -q "realActivity={$package/"; }
-  ! task_listed || fail 'the task is still in Recents after Clear all'
+  ! task_listed || fail 'the task is still in Recents after it was removed'
   adb shell input keyevent KEYCODE_HOME
   launch
   wait_for 'Today after a fresh start' visible 'resource-id="today-root"'
@@ -437,12 +447,38 @@ w3() {
   for scheme in light dark; do
     if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
     sleep 2
+    maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+    wait_for 'Today shown' visible 'resource-id="today-root"'
     shot "w3-today-$scheme"
     maestro --device emulator-5554 test e2e/maestro/tap-more.yaml >/dev/null 2>&1 || fail 'tap More'
+    wait_for 'More shown' visible 'resource-id="more-root"'
     shot "w3-more-$scheme"
-    maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
   done
   adb shell cmd uimode night no >/dev/null
+
+  # A notification tap that started the task opens Today once; Android recreating the activity later keeps Find.
+  adb shell am force-stop "$package"
+  adb shell am start -W -a com.epaflix.fytorium.OPEN_HOME -n "$package/.MainActivity" >/dev/null
+  wait_for 'Today after the notification start' visible 'resource-id="today-root"'
+  flow open-find.yaml -e QUERY='Synthetic W3'
+  ! visible 'resource-id="tab-Today"' || fail 'the tab bar stayed over the keyboard'
+  adb shell input keyevent KEYCODE_BACK
+  wait_for 'the tab bar back after the keyboard closed' visible 'resource-id="tab-Today"'
+  adb shell input keyevent KEYCODE_HOME; sleep 2
+  adb shell am kill "$package"; sleep 1
+  ! adb shell pidof "$package" >/dev/null || fail 'process survived am kill'
+  launch
+  wait_for 'Find after the activity came back' visible 'text="Synthetic W3"'
+  visible 'resource-id="find-search"' || fail 'the notification start ran again and closed Find'
+  pass 'A notification start opens Today once, Find keeps its query after recreation, and the keyboard hides the tab bar'
+  # One Back closes the restored Find (after the keyboard, if it came up); Android keeps the app in front.
+  if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+  adb shell input keyevent KEYCODE_BACK
+  find_back() {
+    adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" || fail 'Back from the restored Find left the app'
+    visible 'resource-id="today-root"' && ! visible 'resource-id="find-search"'
+  }
+  wait_for 'Today after Back from the restored Find' find_back
 
   # Logout cancels the 6-hour refresh.
   flow logout.yaml -e EXPECT='Plants and photos saved on this phone are removed, and this phone stops getting Fytorium notifications. You need a connection to log in again.'

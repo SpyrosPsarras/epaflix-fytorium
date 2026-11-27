@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, FlatList, ScrollView, View } from 'react-native';
-import { CommonActions, useFocusEffect, useNavigation, useRoute, type NavigationProp, type RouteProp } from '@react-navigation/native';
+import { CommonActions, useFocusEffect, useIsFocused, useNavigation, useRoute, type NavigationProp, type RouteProp } from '@react-navigation/native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import { Appbar, Button, List, Text, TextInput, useTheme } from 'react-native-paper';
@@ -52,18 +52,19 @@ function useSavedScroll() {
   return { ref: ref as never, contentOffset: { x: 0, y: offset }, onScrollEndDrag: save, onMomentumScrollEnd: save };
 }
 
-// W6-P22: a list shown again (a tab tap, Back to it) reads again; nothing moves while it stays in view.
-function useReloadOnReturn() {
+// W6-P22: a list reads on entry and each time it is shown again (a tab tap, Back to it); nothing moves while it
+// stays in view. Today's first showing is the app start, which App's own refresh covers.
+function useReadOnShow(onEntry: boolean) {
   const { care } = useDeps();
   const shown = useRef(false);
   useFocusEffect(useCallback(() => {
-    if (shown.current) void care.refresh();
+    if (shown.current || onEntry) void care.refresh();
     shown.current = true;
-  }, [care]));
+  }, [care, onEntry]));
 }
 
-function PlantRows({ plants, open, header }: { plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement }) {
-  useReloadOnReturn();
+function PlantRows({ plants, open, header, onEntry = true }: { plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement; onEntry?: boolean }) {
+  useReadOnShow(onEntry);
   return (
     <FlatList
       data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
@@ -97,7 +98,7 @@ export function TodayRoot() {
     <View style={{ flex: 1 }} testID="today-root">
       <Text testID="status-line" style={{ marginHorizontal: 16, minHeight: 20 }}>{status}</Text>
       <PlantRows
-        plants={plants}
+        plants={plants} onEntry={false}
         open={(plant) => navigation.navigate('Plant', { id: plant.id })}
         header={(
           <View style={{ padding: 16, gap: 8 }}>
@@ -154,6 +155,7 @@ export function MoreRoot() {
   const [confirming, setConfirming] = useDraft('confirming', false);
   const [hidden, setHidden] = useDraft<[string, Hidden] | null>('hidden', null);
   const [answered, setAnswered] = useDraft<string[]>('answered', []);
+  const focused = useIsFocused();
   // W6-P26: each form with changes in another tab asks its own question, in turn, before log out drops it.
   const askNext = (done: string[]) => {
     const next = [...shell.dirty].find(([page]) => !done.includes(page)) ?? null;
@@ -188,14 +190,14 @@ export function MoreRoot() {
         onPress={() => navigation.navigate('About')} />
       <Button onPress={() => setConfirming(true)} disabled={deps.busy} style={{ alignSelf: 'flex-start', margin: 8 }} contentStyle={{ minHeight: 48 }}>Log out</Button>
       <LogoutDialog
-        visible={confirming} online={deps.online} onDismiss={() => setConfirming(false)}
+        visible={confirming && focused} online={deps.online} onDismiss={() => setConfirming(false)}
         onConfirm={() => {
           setConfirming(false);
           setAnswered([]);
           askNext([]);
         }} />
       <QuestionDialog
-        question={hidden?.[1].question ?? null}
+        question={focused ? hidden?.[1].question ?? null : null}
         onStay={() => { const tab = hidden?.[1].tab; setHidden(null); if (tab) navigation.navigate(tab as never); }}
         onLeave={() => {
           const done = hidden ? [...answered, hidden[0]] : answered;
@@ -223,7 +225,8 @@ export function PlantPage() {
   const { colors } = useTheme();
   const [plant, setPlant] = useState<Plant | null>(() => parsePlants(care.plants).find((row) => row.id === route.params.id) ?? null);
   const [cover, setCover] = useState<string | null>(null);
-  useEffect(() => {
+  // W6-P22: the plant reads each time its page is shown, so a return shows a change made elsewhere.
+  useFocusEffect(useCallback(() => {
     let current = true;
     void deps.care.plant(route.params.id).then((row) => {
       if (!current || !row) return;
@@ -231,7 +234,7 @@ export function PlantPage() {
       setPlant(read);
     });
     return () => { current = false; };
-  }, [deps.care, route.params.id]);
+  }, [deps.care, route.params.id]));
   useEffect(() => {
     let current = true;
     if (plant?.coverPhotoId && care.member) void deps.photos.load(care.member, plant.coverPhotoId, 'display').then((uri) => { if (current) setCover(uri); });
@@ -289,6 +292,7 @@ export function PlantaStub() {
   const shell = useShell();
   const first = parsePlants(useCare().plants)[0];
   const [asking, setAsking] = useDraft<Hidden | null>('asking', null);
+  const focused = useIsFocused();
   const viewImported = () => {
     const plants = stackOf('Plants');
     navigation.goBack();
@@ -303,11 +307,16 @@ export function PlantaStub() {
       {first && <Button mode="outlined" onPress={() => navigation.navigate('Plant', { id: first.id })} contentStyle={{ minHeight: 48 }}>Open imported plant</Button>}
       <Button mode="outlined" onPress={() => navigation.navigate('Sites')} contentStyle={{ minHeight: 48 }}>Check sites</Button>
       <Button mode="outlined" contentStyle={{ minHeight: 48 }}
-        onPress={() => shell.request({ kind: 'run', run: () => { const [form] = plantsForms(); if (form) setAsking(form[1]); else viewImported(); } })}>
+        onPress={() => shell.request({ kind: 'run', run: () => {
+          // A request held for a save is dropped if the review closed meanwhile.
+          if (!navigation.isFocused()) return;
+          const [form] = plantsForms();
+          if (form) setAsking(form[1]); else viewImported();
+        } })}>
         View imported plants
       </Button>
       <QuestionDialog
-        question={asking?.question ?? null}
+        question={focused ? asking?.question ?? null : null}
         onStay={() => setAsking(null)}
         onLeave={() => { setAsking(null); plantsForms().forEach(([page]) => shell.discarded.add(page)); viewImported(); }} />
     </View>

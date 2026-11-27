@@ -13,6 +13,40 @@ import expo.modules.kotlin.records.Record
 
 object RestoreState {
     @JvmStatic var restored = false
+
+    // A notification tap that started the task stays in its base intent; once handled it must not run again when
+    // Android recreates the activity from saved state (Kotlin's saved homeHandled).
+    @JvmStatic fun created(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {
+        restored = savedInstanceState != null
+        if (restored && activity.intent?.action == Push.OPEN_HOME) activity.intent.action = null
+    }
+}
+
+// W6-P11 at targetSdk 35: with predictive back on, Android calls no onBackPressed, and React Native registers its
+// own callback only from targetSdk 36. This callback hands Back to React Native while the app has a use for it;
+// at Today's root with nothing to ask, it is off, so the system shows its back-to-home preview.
+object BackState {
+    private var wanted = false
+    private var callback: androidx.activity.OnBackPressedCallback? = null
+
+    @JvmStatic fun attach(activity: androidx.activity.ComponentActivity) {
+        callback = object : androidx.activity.OnBackPressedCallback(wanted) {
+            @Suppress("DEPRECATION")
+            override fun handleOnBackPressed() = activity.onBackPressed()
+        }.also { activity.onBackPressedDispatcher.addCallback(activity, it) }
+    }
+
+    fun handled(value: Boolean) {
+        wanted = value
+        callback?.isEnabled = value
+    }
+
+    // React Native's default Back goes back through the dispatcher, which must not call this callback again.
+    @JvmStatic fun whileDefault(run: Runnable) {
+        callback?.isEnabled = false
+        run.run()
+        callback?.isEnabled = wanted
+    }
 }
 
 class RequestOptions : Record {
@@ -55,6 +89,7 @@ class FytoriumNativeModule : Module() {
         Function("consumeRestoredFromSavedState") { RestoreState.restored.also { RestoreState.restored = false } }
         // W6-P9: Back at Today's root with a draft waiting keeps the task instead of finishing the activity.
         Function("moveTaskToBack") { appContext.currentActivity?.moveTaskToBack(true) == true }
+        Function("setBackHandled") { value: Boolean -> appContext.currentActivity?.runOnUiThread { BackState.handled(value) }; Unit }
         Function("excludeFromBackup") { _: String -> true }
         Function("getFlag") { name: String -> Flags.get(context, name) }
         Function("setFlag") { name: String, value: Boolean -> Flags.set(context, name, value) }

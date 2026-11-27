@@ -18,6 +18,8 @@ type NativeModule = {
   firstRun(): boolean;
   consumeRestoredFromSavedState(): boolean;
   moveTaskToBack(): boolean;
+  // Android: whether Back goes to the app (W6-P11); off at Today's root with nothing to ask.
+  setBackHandled(value: boolean): void;
   excludeFromBackup(path: string): boolean;
   getFlag(name: Flag): boolean;
   setFlag(name: Flag, value: boolean): void;

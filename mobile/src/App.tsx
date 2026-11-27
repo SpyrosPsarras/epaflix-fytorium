@@ -53,6 +53,7 @@ function useOnline(): boolean {
 }
 
 const clock = () => new Date().toTimeString().slice(0, 8);
+const setBackHandled = (value: boolean) => Native.setBackHandled(value);
 const subscribeOpenHome = (listener: () => void) => {
   if (Native.consumeOpenHome()) setTimeout(listener, 0);
   const subscription = Native.addListener('openHome', listener);
@@ -104,6 +105,7 @@ export default function App() {
   const deps = {
     care, photos, drafts, appVersion, serverVersion: state.serverVersion, online, busy: state.busy,
     logout: () => session.logout(), copyDiagnostics, moveTaskToBack: () => { Native.moveTaskToBack(); },
+    setBackHandled,
   };
   const navigationTheme = { ...(scheme === 'dark' ? NavigationDark : NavigationLight), colors: {
     ...(scheme === 'dark' ? NavigationDark : NavigationLight).colors, primary: colors.primary, background: colors.background, card: colors.surface,

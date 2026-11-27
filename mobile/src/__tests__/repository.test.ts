@@ -16,6 +16,7 @@ const plantRow = (id: string, name: string) => ({ id, display_name: name, scient
 const TODAY = tasks('today');
 const UPCOMING = tasks('upcoming');
 const PLANTS = JSON.stringify([plantRow('p1', 'Synthetic fern')]);
+const DETAIL = JSON.stringify(plantRow('p1', 'Synthetic fern'));
 const META = '{"timezone":"Europe/Athens","minAppVersion":null}';
 type Reply = Partial<RawResponse> | 'drop' | Promise<Partial<RawResponse>>;
 
@@ -107,10 +108,10 @@ test('offline versus a server that is not responding', async () => {
 test('a plant page reads through the cache and shows the last copy offline', async () => {
   const h = setup();
   await h.repository.refresh();
-  h.route('/api/plants/p1', () => ({ body: '{"id":"p1","name":"Synthetic fern"}' }));
-  expect((await h.repository.plant('p1'))?.json).toBe('{"id":"p1","name":"Synthetic fern"}');
+  h.route('/api/plants/p1', () => ({ body: DETAIL }));
+  expect((await h.repository.plant('p1'))?.json).toBe(DETAIL);
   h.setOnline(false);
-  expect((await h.repository.plant('p1'))?.json).toBe('{"id":"p1","name":"Synthetic fern"}');
+  expect((await h.repository.plant('p1'))?.json).toBe(DETAIL);
   await expect(h.repository.plant('../x')).rejects.toThrow('Invalid plant');
 });
 
@@ -197,7 +198,7 @@ test('a plant read started before a role change is dropped, even if the role cha
   await h.repository.refresh();
   h.route('/api/me', () => ({ body: identity('m1', 'owner') }));
   await h.repository.refresh();
-  release({ body: '{"id":"p1","name":"Owner copy"}' });
+  release({ body: JSON.stringify(plantRow('p1', 'Owner copy')) });
   expect(await late).toBeNull();
   expect(h.cache.get({ id: 'm1', role: 'owner' }, 'plant/p1')).toBeNull();
 });
@@ -243,11 +244,12 @@ test('a 200 the lists cannot use keeps the last good copy and its time, and says
 test('a plant page 200 the page cannot use keeps the last good copy', async () => {
   const h = setup();
   await h.repository.refresh();
-  h.route('/api/plants/p1', () => ({ body: '{"id":"p1","display_name":"Synthetic fern"}' }));
+  h.route('/api/plants/p1', () => ({ body: DETAIL }));
   await h.repository.plant('p1');
-  for (const body of ['<html>proxy</html>', '[]']) {
+  const kept = h.cache.get({ id: 'm1', role: 'owner' }, 'plant/p1');
+  for (const body of ['<html>proxy</html>', '[]', '{"id":"p1"}', JSON.stringify(plantRow('p2', 'Another plant'))]) {
     h.route('/api/plants/p1', () => ({ body }));
-    expect((await h.repository.plant('p1'))?.json).toBe('{"id":"p1","display_name":"Synthetic fern"}');
+    expect(await h.repository.plant('p1')).toEqual(kept);
     expect(h.repository.get().serverUnavailable).toBe(true);
   }
 });
@@ -263,4 +265,17 @@ test('a refresh asked for during the one in flight does not run after logout', a
   release();
   await first;
   expect(h.seen.filter((key) => key === '/api/me')).toHaveLength(1);
+});
+
+test('a refresh that lands after the connection went keeps its data and still shows Offline', async () => {
+  const h = setup();
+  let release!: (reply: Partial<RawResponse>) => void;
+  h.route('/api/meta', () => new Promise((resolve) => { release = resolve; }));
+  const refresh = h.repository.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.setOnline(false);
+  h.repository.connectivityChanged(false);
+  release({ body: META });
+  await refresh;
+  expect(h.repository.get()).toMatchObject({ plants: PLANTS, offline: true, serverUnavailable: false });
 });

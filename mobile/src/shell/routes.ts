@@ -61,6 +61,15 @@ export function filterState(state: AnyState, role: Role | null): AnyState {
 // Where a page's saved state lives: under its member and route, so it can go when the route leaves its stack.
 export const pageKey = (memberKey: string, routeKey: string, name?: string) => `${memberKey}/${routeKey}${name ? `/${name}` : ''}`;
 
+// W6-P11: the app takes Back unless Today's root shows with no form with changes anywhere (W6-P9); there Android
+// leaves the app and shows its back-to-home preview.
+export function backHandled(state: AnyState | undefined, dirtyForms: number): boolean {
+  if (!state) return false;
+  const shown = state.routes[state.index ?? 0];
+  if (shown?.name !== 'Today') return true;
+  return (shown.state?.routes.length ?? 1) > 1 || dirtyForms > 0;
+}
+
 // Every route key in a navigation state, tabs and their pages.
 export function routeKeys(state: AnyState | undefined): Set<string> {
   const keys = new Set<string>();
