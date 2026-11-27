@@ -1,6 +1,6 @@
 import { requireNativeModule, type EventSubscription } from 'expo-modules-core';
 
-export type Flag = 'push_ready' | 'push_reset_pending' | 'notifications_asked' | 'first_run_done';
+export type Flag = 'push_ready' | 'push_reset_pending' | 'notifications_asked' | 'first_run_done' | 'session_wipe_pending';
 
 export type RequestOptions = {
   method: string;
@@ -19,6 +19,7 @@ type NativeModule = {
   restoredFromSavedState(): boolean;
   getFlag(name: Flag): boolean;
   setFlag(name: Flag, value: boolean): void;
+  setFlags(values: Partial<Record<Flag, boolean>>): boolean;
   obtainiumPackage(): string | null;
   openObtainium(): boolean;
   consumeOpenHome(): boolean;

@@ -12,12 +12,17 @@ jest.mock('expo-crypto', () => {
 
 jest.mock('expo-secure-store', () => {
   const items = new Map();
+  let failDeletes = false;
   return {
+    __failDeletes: (value) => { failDeletes = value; },
     AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 1,
     WHEN_UNLOCKED_THIS_DEVICE_ONLY: 2,
     getItem: (key) => items.get(key) ?? null,
     setItemAsync: async (key, value) => { items.set(key, value); },
-    deleteItemAsync: async (key) => { items.delete(key); },
+    deleteItemAsync: async (key) => {
+      if (failDeletes) throw new Error('keystore busy');
+      items.delete(key);
+    },
     __items: items,
   };
 });

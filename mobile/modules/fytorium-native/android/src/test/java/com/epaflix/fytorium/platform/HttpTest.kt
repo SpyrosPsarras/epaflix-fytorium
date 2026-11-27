@@ -2,6 +2,7 @@ package com.epaflix.fytorium.platform
 
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,11 +16,12 @@ class HttpTest {
     private val http = Http()
     @After fun stop() = server.shutdown()
 
-    private fun send(method: String, body: String? = null, token: Boolean = false): HttpResult {
+    private fun attempt(method: String, body: String? = null, token: Boolean = false): Result<HttpResult> {
         val done = CompletableFuture<Result<HttpResult>>()
         http.enqueue(http.request(method, server.url("/api/x").toString(), mapOf("Content-Type" to "application/json"), body, token), false) { done.complete(it) }
-        return done.get(30, TimeUnit.SECONDS).getOrThrow()
+        return done.get(30, TimeUnit.SECONDS)
     }
+    private fun send(method: String, body: String? = null, token: Boolean = false) = attempt(method, body, token).getOrThrow()
 
     @Test fun bodylessRequestIsNotResentAfter503RetryAfterZero() {
         server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
@@ -55,6 +57,22 @@ class HttpTest {
         assertEquals(1, reused)
         send("POST", "{}", token = true)
         assertEquals(0, server.takeRequest().sequenceNumber)
+    }
+
+    @Test fun aDroppedTokenResponseIsNotResent() {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("{}"))
+        assertTrue(attempt("POST", "{\"grant_type\":\"authorization_code\"}", token = true).isFailure)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun aDroppedWriteResponseIsNotResent() {
+        server.enqueue(MockResponse().setBody("{}"))
+        send("GET")
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("{}"))
+        assertTrue(attempt("POST", "{}").isFailure)
+        assertEquals(2, server.requestCount)
     }
 
     @Test fun pushRefreshDoesNotInheritThePeriodicBatteryConstraint() {

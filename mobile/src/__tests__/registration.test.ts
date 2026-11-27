@@ -11,8 +11,9 @@ function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
   const posts: string[] = [];
   const gates: (() => void)[] = [];
   let gated = false;
+  let onGet: (() => void) | null = null;
   const tokens: PushTokens = {
-    get: async () => token,
+    get: async () => { onGet?.(); return token; },
     delete: async () => {
       if (failures > 0) { failures -= 1; throw new Error('offline'); }
       token = 'synthetic-' + (posts.length + 1);
@@ -30,7 +31,11 @@ function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
   };
   const registration = createPushRegistration({
     api: api as never, tokens, ios: false, ready: () => true, session: () => session,
-    flags: { getFlag: (name) => flags.get(name) ?? false, setFlag: (name, value) => { flags.set(name, value); } },
+    flags: {
+      getFlag: (name) => flags.get(name) ?? false,
+      setFlag: (name, value) => { flags.set(name, value); },
+      setFlags: (values) => Object.entries(values).forEach(([name, value]) => flags.set(name, value!)),
+    },
   });
   return {
     registration, flags, posts,
@@ -38,6 +43,8 @@ function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
     gate(on: boolean) { gated = on; },
     open: () => gates.splice(0).forEach((resolve) => resolve()),
     endSession() { session = null; },
+    switchSession(next: number) { session = next; },
+    duringTokenRead(action: () => void) { onGet = action; },
   };
 }
 
@@ -88,7 +95,6 @@ test('a registration that finishes after the session ended does not open the pus
   h.open();
   await run;
   expect(h.flags.get('push_ready')).toBe(false);
-  expect(h.flags.get('push_reset_pending')).toBe(true);
 });
 
 test('logged out, the old token is still deleted but nothing registers', async () => {
@@ -97,4 +103,24 @@ test('logged out, the old token is still deleted but nothing registers', async (
   await h.registration.sync();
   expect(h.flags.get('push_reset_pending')).toBe(false);
   expect(h.posts).toEqual([]);
+});
+
+test('a member change while the token is read posts nothing for the old session', async () => {
+  const h = harness();
+  h.flags.set('push_reset_pending', false);
+  h.duringTokenRead(() => h.switchSession(2));
+  await h.registration.sync();
+  expect(h.posts).toEqual([]);
+  expect(h.flags.get('push_ready')).toBeFalsy();
+});
+
+test('a session end closes the gate and starts deleting the token at once', async () => {
+  const h = harness();
+  h.flags.set('push_reset_pending', false);
+  h.flags.set('push_ready', true);
+  h.endSession();
+  await h.registration.sessionEnded();
+  await settle();
+  expect(h.flags.get('push_ready')).toBe(false);
+  expect(h.flags.get('push_reset_pending')).toBe(false);
 });

@@ -1,24 +1,7 @@
 import ExpoModulesCore
 import Security
 
-private let flagNames: Set<String> = ["push_ready", "push_reset_pending", "notifications_asked", "first_run_done"]
-
-final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
-  func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                  newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-    completionHandler(nil)
-  }
-}
-
-private func session() -> URLSession {
-  let configuration = URLSessionConfiguration.ephemeral
-  configuration.urlCache = nil
-  configuration.httpCookieStorage = nil
-  configuration.httpShouldSetCookies = false
-  configuration.timeoutIntervalForRequest = 10
-  configuration.timeoutIntervalForResource = 20
-  return URLSession(configuration: configuration, delegate: RefuseRedirects(), delegateQueue: nil)
-}
+private let flagNames: Set<String> = ["push_ready", "push_reset_pending", "notifications_asked", "first_run_done", "session_wipe_pending"]
 
 struct RequestOptions: Record {
   @Field var method: String = "GET"
@@ -30,7 +13,7 @@ struct RequestOptions: Record {
 }
 
 public class FytoriumNativeModule: Module {
-  private let api = session()
+  private let transport = Transport()
   private let defaults = UserDefaults.standard
 
   public func definition() -> ModuleDefinition {
@@ -48,6 +31,11 @@ public class FytoriumNativeModule: Module {
     Function("firstRun") { () -> Bool in runFirstRun(self.defaults, deleteKeychain: deleteAllGenericPasswords) }
     Function("restoredFromSavedState") { false }
     Function("getFlag") { (name: String) -> Bool in self.defaults.bool(forKey: name) }
+    Function("setFlags") { (values: [String: Bool]) throws -> Bool in
+      guard values.keys.allSatisfy({ flagNames.contains($0) }) else { throw Exception(name: "ERR_FLAG", description: "Unknown flag") }
+      values.forEach { self.defaults.set($0.value, forKey: $0.key) }
+      return true
+    }
     Function("setFlag") { (name: String, value: Bool) throws in
       guard flagNames.contains(name) else { throw Exception(name: "ERR_FLAG", description: "Unknown flag") }
       self.defaults.set(value, forKey: name)
@@ -74,17 +62,14 @@ public class FytoriumNativeModule: Module {
       request.httpMethod = options.method
       options.headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
       request.httpBody = options.body?.data(using: .utf8)
-      // A token exchange gets its own session, so it never reuses a pooled connection.
-      let client = options.tokenEndpoint ? session() : self.api
-      client.dataTask(with: request) { data, response, error in
-        if options.tokenEndpoint { client.finishTasksAndInvalidate() }
-        guard error == nil, let http = response as? HTTPURLResponse else { promise.reject("ERR_NETWORK", "Network request failed"); return }
-        let bytes = data ?? Data()
-        var headers: [String: String] = [:]
-        http.allHeaderFields.forEach { headers[String(describing: $0.key).lowercased()] = String(describing: $0.value) }
-        promise.resolve(["status": http.statusCode, "headers": headers,
-                         "body": options.binary ? bytes.base64EncodedString() : String(decoding: bytes, as: UTF8.self)])
-      }.resume()
+      self.transport.send(request, tokenEndpoint: options.tokenEndpoint) { result in
+        switch result {
+        case .failure: promise.reject("ERR_NETWORK", "Network request failed")
+        case .success(let response):
+          promise.resolve(["status": response.status, "headers": response.headers,
+                           "body": options.binary ? response.body.base64EncodedString() : String(decoding: response.body, as: UTF8.self)])
+        }
+      }
     }
   }
 }

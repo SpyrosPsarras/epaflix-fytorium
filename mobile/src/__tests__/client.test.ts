@@ -21,18 +21,29 @@ function fakeServer() {
   return { requests, transport, enqueue: (...replies: Reply[]) => queue.push(...replies), dispatch: (fn: typeof dispatch) => { dispatch = fn; } };
 }
 
+function marker(initial = false) {
+  let value = initial;
+  return { get: () => value, set: (next: boolean) => { value = next; } };
+}
+
 async function setup(tokens?: { access: string; refresh: string }) {
   const server = fakeServer();
-  const credentials = new Credentials();
+  const wipe = marker();
+  const credentials = new Credentials(true, wipe);
   await credentials.clear();
   if (tokens) await credentials.setTokens(tokens);
   let lost = 0;
+  let updates = 0;
+  const events: string[] = [];
   let language = 'el-GR';
   const api = createApi({
     baseUrl: 'https://fytorium.test', credentials, transport: server.transport, appVersion: '2.0.0', platform: 'android',
-    language: () => language, deviceName: () => 'Synthetic phone', onSessionLost: () => { lost += 1; },
+    language: () => language, deviceName: () => 'Synthetic phone',
+    beforeWipe: () => { events.push(`gate closed, wipe marker ${wipe.get()}`); },
+    onSessionLost: () => { lost += 1; events.push(`session lost, wipe marker ${wipe.get()}`); },
+    onUpdateRequired: () => { updates += 1; },
   });
-  return { server, credentials, api, lost: () => lost, setLanguage: (value: string) => { language = value; } };
+  return { server, credentials, api, wipe, events, lost: () => lost, updates: () => updates, setLanguage: (value: string) => { language = value; } };
 }
 
 const json = (request: RequestOptions) => JSON.parse(request.body ?? '{}');
@@ -209,4 +220,98 @@ test('paths outside the API are refused before any request', async () => {
   const { server, api } = await setup();
   for (const path of ['/auth/login', '/api/../x', '/api/x?y=1', '/api/x#y']) await expect(api.request(path)).rejects.toThrow('Invalid API path');
   expect(server.requests).toHaveLength(0);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('a refresh that starts during the logout request cannot restore the session', async () => {
+  const { server, api, credentials } = await setup({ access: 'synthetic-old', refresh: 'synthetic-refresh' });
+  const logoutReply = deferred<Reply>();
+  const refreshReply = deferred<Reply>();
+  server.dispatch((request) => {
+    if (request.tokenEndpoint) return refreshReply.promise;
+    if (request.url.endsWith('/api/app/logout')) return logoutReply.promise;
+    return { status: 401 };
+  });
+  const logout = api.logout();
+  await new Promise((resolve) => setImmediate(resolve));
+  const pending = api.request('/api/meta');
+  await new Promise((resolve) => setImmediate(resolve));
+  logoutReply.resolve({ status: 204 });
+  await logout;
+  refreshReply.resolve({ body: pair });
+  expect((await pending).status).toBe(401);
+  expect(credentials.tokens()).toBeNull();
+  expect(jest.requireMock('expo-secure-store').__items.has('fytorium.tokens')).toBe(false);
+});
+
+test("a 401 that arrives after another member logged in is not replayed with that member's tokens", async () => {
+  const { server, api, credentials } = await setup({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
+  const first = deferred<Reply>();
+  const seen: (string | undefined)[] = [];
+  server.dispatch((request) => {
+    seen.push(request.headers.Authorization);
+    return request.headers.Authorization === 'Bearer synthetic-a' ? first.promise : { body: '{}' };
+  });
+  const pending = api.request('/api/plants');
+  await new Promise((resolve) => setImmediate(resolve));
+  await credentials.clear();
+  await credentials.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' });
+  first.resolve({ status: 401 });
+  expect((await pending).status).toBe(401);
+  expect(seen).toEqual(['Bearer synthetic-a']);
+  expect(credentials.tokens()!.access).toBe('synthetic-b');
+});
+
+test('any 426 asks the session to show the update stop', async () => {
+  const { server, api, updates } = await setup({ access: 'synthetic-old', refresh: 'synthetic-refresh' });
+  server.enqueue({ status: 426 });
+  await api.request('/api/notifications/subscriptions', { method: 'POST', body: {} });
+  expect(updates()).toBe(1);
+});
+
+test('the push gate closes before the wipe starts, and the wipe marker clears only after it finished', async () => {
+  const { server, api, events, wipe } = await setup({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  server.enqueue({ status: 204 });
+  await api.logout();
+  expect(events).toEqual(['gate closed, wipe marker false', 'session lost, wipe marker false']);
+  expect(wipe.get()).toBe(false);
+});
+
+test('a failed SecureStore delete keeps the wipe marker, and the next start refuses the stored tokens and retries', async () => {
+  const store = jest.requireMock('expo-secure-store') as { __items: Map<string, string>; __failDeletes(value: boolean): void };
+  const wipe = marker();
+  const first = new Credentials(true, wipe);
+  await first.setTokens({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
+  store.__failDeletes(true);
+  await expect(first.clear()).rejects.toThrow('keystore busy');
+  store.__failDeletes(false);
+  expect(wipe.get()).toBe(true);
+  expect(store.__items.has('fytorium.tokens')).toBe(true);
+  const restarted = new Credentials(true, wipe);
+  expect(restarted.tokens()).toBeNull();
+  await restarted.setPending(null);
+  expect(store.__items.has('fytorium.tokens')).toBe(false);
+  expect(wipe.get()).toBe(false);
+});
+
+test('without a finished first run, stored credentials and a pending attempt are not used', async () => {
+  const stored = new Credentials(true, marker());
+  await stored.setTokens({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
+  await stored.setPending({ verifier: 'v', state: 's', createdAt: 1 });
+  const blocked = new Credentials(false, marker());
+  expect(blocked.tokens()).toBeNull();
+  expect(blocked.pending()).toBeNull();
+  await expect(blocked.setTokens({ access: 'x', refresh: 'y' })).resolves.toBe(false);
+});
+
+test('a browser that never opened cancels the attempt', async () => {
+  const { api, credentials } = await setup();
+  await api.loginUrl();
+  await api.cancelLogin();
+  expect(credentials.pending()).toBeNull();
 });

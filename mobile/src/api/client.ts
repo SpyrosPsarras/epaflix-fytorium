@@ -16,7 +16,11 @@ type Deps = {
   platform: 'android' | 'ios';
   language: () => string;
   deviceName: () => string;
+  // Runs synchronously before the wipe, so a crash mid-wipe can never leave the push gate open.
+  beforeWipe: () => void;
   onSessionLost: () => Promise<void> | void;
+  // Any 426 means this app version is too old; the session reads /api/meta and shows the stop.
+  onUpdateRequired: () => void;
   now?: () => number;
 };
 
@@ -55,12 +59,18 @@ export function createApi(deps: Deps) {
   }
 
   async function loseSession() {
-    await credentials.clear();
-    await deps.onSessionLost();
+    deps.beforeWipe();
+    try {
+      await credentials.clear();
+    } finally {
+      await deps.onSessionLost();
+    }
   }
 
   // Refresh tokens rotate once, so every caller sharing these credentials waits for one exchange.
-  function refreshAfter(original: Tokens): Promise<Tokens | null> {
+  // A refresh belongs to the session it started in; its result is dropped once that session ended.
+  function refreshAfter(original: Tokens, session: number): Promise<Tokens | null> {
+    if (credentials.session !== session) return Promise.resolve(null);
     const current = credentials.tokens();
     if (!current) return Promise.resolve(null);
     if (current.refresh !== original.refresh) return Promise.resolve(current);
@@ -68,9 +78,12 @@ export function createApi(deps: Deps) {
       credentials.refreshing = (async () => {
         try {
           const next = await exchange({ grant_type: 'refresh_token', refresh_token: current.refresh }, true);
-          if (next) await credentials.setTokens(next);
-          else await loseSession();
-          return next;
+          if (credentials.session !== session) return null;
+          if (!next) {
+            await loseSession();
+            return null;
+          }
+          return (await credentials.setTokens(next, session)) ? next : null;
         } finally {
           credentials.refreshing = null;
         }
@@ -93,13 +106,20 @@ export function createApi(deps: Deps) {
         ...(tokens ? { Authorization: 'Bearer ' + tokens.access } : {}),
       },
     });
+    const session = credentials.session;
     const original = credentials.tokens();
-    const response = await send(original);
+    const response = await checked(send(original));
     if (response.status !== 401 || !original) return response;
-    const refreshed = await refreshAfter(original);
-    // No unauthenticated replay and no second refresh.
-    if (!refreshed) return { ...response, body: '' };
-    return send(refreshed);
+    const refreshed = await refreshAfter(original, session);
+    // No unauthenticated replay, no second refresh and no replay under another session.
+    if (!refreshed || credentials.session !== session) return { ...response, body: '' };
+    return checked(send(refreshed));
+  }
+
+  async function checked(pending: Promise<RawResponse>): Promise<RawResponse> {
+    const response = await pending;
+    if (response.status === 426) deps.onUpdateRequired();
+    return response;
   }
 
   async function loginUrl(): Promise<string> {
@@ -129,23 +149,27 @@ export function createApi(deps: Deps) {
       grant_type: 'authorization_code', code, code_verifier: attempt.verifier, device_name: deps.deviceName().slice(0, 100),
     }, false);
     if (!tokens) return 'invalid';
-    await credentials.setTokens(tokens);
-    return null;
+    return (await credentials.setTokens(tokens)) ? null : 'invalid';
   }
+
+  // The browser never opened, so the attempt can never complete.
+  const cancelLogin = () => credentials.setPending(null);
 
   // The session ends on this phone even when Fytorium can't be told.
   async function logout(): Promise<void> {
     await credentials.refreshing?.catch(() => null);
+    const session = credentials.session;
     try {
       if (credentials.tokens()) await request('/api/app/logout', { method: 'POST' });
     } catch {
       // Offline logout still wipes this phone.
     } finally {
-      await loseSession();
+      // A refused refresh during the logout request may already have ended this session.
+      if (credentials.session === session) await loseSession();
     }
   }
 
-  return { request, loginUrl, completeLogin, logout };
+  return { request, loginUrl, completeLogin, cancelLogin, logout };
 }
 
 export type Api = ReturnType<typeof createApi>;

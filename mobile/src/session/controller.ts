@@ -75,7 +75,7 @@ export function createSession(deps: Deps) {
   }
 
   function handleRedirect(redirect: string) {
-    if (deps.loggedIn() || handled.has(redirect)) return;
+    if (!deps.ready() || deps.loggedIn() || handled.has(redirect)) return;
     if (state.busy) { queued.push(redirect); return; }
     handled.add(redirect);
     work(async () => {
@@ -109,6 +109,7 @@ export function createSession(deps: Deps) {
       return deps.api.loginUrl();
     },
     loginLaunchFailed() {
+      void deps.api.cancelLogin();
       diagnostics.record('LOGIN_REJECTED');
       set({ message: "Couldn't open login. Install a browser and try again." });
     },
@@ -119,6 +120,10 @@ export function createSession(deps: Deps) {
       work(() => deps.api.logout());
     },
     recheck,
+    // A 426 from any request: read the minimum again and show the stop, once.
+    updateRequired() {
+      if (!state.updateRequired) recheck();
+    },
     checkAgain(checkedAt: () => string) {
       work(async () => {
         await checkVersionNow();

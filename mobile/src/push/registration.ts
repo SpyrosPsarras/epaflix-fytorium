@@ -6,7 +6,7 @@ import { readyToRegister } from './reset';
 type Deps = {
   api: Pick<Api, 'request'>;
   tokens: PushTokens;
-  flags: { getFlag(name: Flag): boolean; setFlag(name: Flag, value: boolean): void };
+  flags: { getFlag(name: Flag): boolean; setFlag(name: Flag, value: boolean): void; setFlags(values: Partial<Record<Flag, boolean>>): void };
   // First-run cleanup finished; nothing touches tokens before it.
   ready(): boolean;
   // The current session number, or null when logged out; see Credentials.session.
@@ -27,6 +27,8 @@ export function createPushRegistration(deps: Deps) {
     if (session === null) return;
     if (deps.ios) await deps.tokens.registerDevice();
     const token = await deps.tokens.get();
+    // Another session may have started, or ended and left a reset pending, while the token was read.
+    if (deps.session() !== session || deps.flags.getFlag('push_reset_pending')) return;
     const response = await deps.api.request('/api/notifications/subscriptions', { method: 'POST', body: { transport: 'fcm', token } });
     // A result that arrives after the session ended belongs to nobody.
     if (deps.session() !== session || response.status < 200 || response.status > 299) return;
@@ -49,12 +51,17 @@ export function createPushRegistration(deps: Deps) {
   }
 
   // Session end, online or not: stop showing pushes, delete the token before any new registration, stop APNs delivery.
+  // Synchronous and first in the wipe: from here on N4 drops every push and the token is deleted before any reuse.
+  function closeGate() {
+    deps.flags.setFlags({ push_ready: false, push_reset_pending: true });
+  }
+
   async function sessionEnded() {
-    deps.flags.setFlag('push_ready', false);
-    deps.flags.setFlag('push_reset_pending', true);
+    closeGate();
     try { await deps.tokens.unregisterDevice(); } catch { /* best effort; the reset flag still blocks reuse */ }
+    void sync();
   }
 
   const stopRefresh = deps.tokens.onRefresh(() => { void sync(); });
-  return { sync, sessionEnded, close: stopRefresh };
+  return { sync, closeGate, sessionEnded, close: stopRefresh };
 }

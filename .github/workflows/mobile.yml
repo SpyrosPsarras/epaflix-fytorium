@@ -45,6 +45,12 @@ jobs:
           key: mobile-${{ hashFiles('mobile/pnpm-lock.yaml', 'mobile/docker/Dockerfile') }}
   ios:
     runs-on: macos-latest
+    # A release-variant build without production secrets: synthetic Firebase config, a host that never resolves.
+    env:
+      FYTORIUM_VARIANT: release
+      FYTORIUM_FIREBASE_TEST_CONFIG: 'true'
+      GOOGLE_SERVICES_FILE: ./firebase/google-services.synthetic.json
+      FYTORIUM_SERVER_URL: https://fytorium.invalid
     defaults:
       run:
         working-directory: mobile
@@ -63,8 +69,14 @@ jobs:
         run: pnpm -s test
       - name: Native first-run tests
         run: |
-          xcrun swiftc -o "$RUNNER_TEMP/first-run-tests" modules/fytorium-native/ios/FirstRun.swift modules/fytorium-native/ios/tests/main.swift
+          xcrun swiftc -o "$RUNNER_TEMP/first-run-tests" modules/fytorium-native/ios/FirstRun.swift modules/fytorium-native/ios/tests/first-run/main.swift
           "$RUNNER_TEMP/first-run-tests"
+      - name: Native transport tests
+        run: |
+          python3 modules/fytorium-native/ios/tests/transport/server.py > "$RUNNER_TEMP/port" &
+          until [ -s "$RUNNER_TEMP/port" ]; do sleep 1; done
+          xcrun swiftc -o "$RUNNER_TEMP/transport-tests" modules/fytorium-native/ios/Transport.swift modules/fytorium-native/ios/tests/transport/main.swift
+          "$RUNNER_TEMP/transport-tests" "http://127.0.0.1:$(cat "$RUNNER_TEMP/port")"
       - name: Simulator build
         run: |
           npx expo prebuild --platform ios --clean --no-install
@@ -77,6 +89,9 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$plist")" = false
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = com.epaflix.fytorium
           ! /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$plist"
+          bundle=build/Build/Products/Release-iphonesimulator/Fytorium.app/main.jsbundle
+          test -s "$bundle"
+          ! grep -aEq 'FytoriumSyntheticPush|synthetic\.push\.current' "$bundle"
       - name: Launch smoke on a simulator
         run: |
           curl --retry 3 -fsSL https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.12.1/maestro.zip -o "$RUNNER_TEMP/maestro.zip"

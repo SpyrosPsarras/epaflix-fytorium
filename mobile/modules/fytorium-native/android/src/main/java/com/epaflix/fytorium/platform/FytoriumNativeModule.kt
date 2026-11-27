@@ -54,6 +54,7 @@ class FytoriumNativeModule : Module() {
         Function("restoredFromSavedState") { RestoreState.restored }
         Function("getFlag") { name: String -> Flags.get(context, name) }
         Function("setFlag") { name: String, value: Boolean -> Flags.set(context, name, value) }
+        Function("setFlags") { values: Map<String, Boolean> -> Flags.setAll(context, values) }
         Function("obtainiumPackage") {
             listOf("dev.imranr.obtainium", "dev.imranr.obtainium.fdroid").firstOrNull { name ->
                 runCatching { context.packageManager.getPackageInfo(name, 0) }.isSuccess

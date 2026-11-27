@@ -13,24 +13,35 @@ import * as diagnostics from './diagnostics';
 
 export const serverUrl: string = Constants.expoConfig?.extra?.serverUrl;
 export const appVersion = Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '0.0.0';
-// First-run cleanup runs once per process; login and push registration wait for it to succeed.
+// First-run cleanup runs once per process; credentials, login and push registration wait for it to succeed.
 const firstRunDone = Native.firstRun();
 
-export const credentials = new Credentials();
-let sessionEnded: () => Promise<void> = async () => undefined;
+// Native module functions live on the module object, so they are wrapped rather than spread.
+const flags = {
+  getFlag: (name: Parameters<typeof Native.getFlag>[0]) => Native.getFlag(name),
+  setFlag: (name: Parameters<typeof Native.setFlag>[0], value: boolean) => Native.setFlag(name, value),
+  setFlags: (values: Parameters<typeof Native.setFlags>[0]) => { Native.setFlags(values); },
+};
+
+export const credentials = new Credentials(firstRunDone, {
+  get: () => Native.getFlag('session_wipe_pending'),
+  set: (value) => Native.setFlag('session_wipe_pending', value),
+});
+
+const late = { sessionEnded: async () => undefined as void, updateRequired: () => undefined as void };
 
 export const api = createApi({
   baseUrl: serverUrl, credentials, transport: Native.request, appVersion,
   platform: Platform.OS === 'ios' ? 'ios' : 'android',
   language: () => getLocales()[0]?.languageTag ?? 'en',
   deviceName: () => (Device.deviceName ?? Device.modelName ?? 'Fytorium phone').trim() || 'Fytorium phone',
-  onSessionLost: () => sessionEnded(),
+  beforeWipe: () => push.closeGate(),
+  onSessionLost: () => late.sessionEnded(),
+  onUpdateRequired: () => late.updateRequired(),
 });
 
 export const push = createPushRegistration({
-  api, tokens: pushTokens, ios: Platform.OS === 'ios',
-  // Native module functions live on the module object, so they are wrapped rather than spread.
-  flags: { getFlag: (name) => Native.getFlag(name), setFlag: (name, value) => Native.setFlag(name, value) },
+  api, tokens: pushTokens, flags, ios: Platform.OS === 'ios',
   ready: () => firstRunDone,
   session: () => (credentials.tokens() ? credentials.session : null),
 });
@@ -39,7 +50,8 @@ export const session = createSession({
   api, appVersion, loggedIn: () => credentials.tokens() !== null, ready: () => firstRunDone, onLoggedIn: () => { void push.sync(); },
 });
 
-sessionEnded = async () => {
+late.updateRequired = session.updateRequired;
+late.sessionEnded = async () => {
   await push.sessionEnded();
   Native.cancelRefresh();
   diagnostics.clear();
