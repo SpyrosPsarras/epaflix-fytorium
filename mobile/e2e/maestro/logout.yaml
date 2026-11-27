@@ -1,12 +1,15 @@
 # env: EXPECT, the dialog sentence for this connection state
 appId: com.epaflix.fytorium
 ---
+- tapOn:
+    id: tab-More
+- scrollUntilVisible:
+    element: "Log out"
 - tapOn: "Log out"
 - assertVisible: "Log out of Fytorium?"
 - assertVisible: ${EXPECT}
 - tapOn:
-    text: "Log out"
-    index: 1
+    id: logout-confirm
 - extendedWaitUntil:
     visible: "Log in"
     timeout: 30000

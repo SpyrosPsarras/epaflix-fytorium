@@ -9,7 +9,13 @@ import { Credentials } from './session/credentials';
 import { createSession } from './session/controller';
 import { createPushRegistration } from './push/registration';
 import { pushTokens } from './push/tokens';
+import Storage from 'expo-sqlite/kv-store';
 import * as diagnostics from './diagnostics';
+import { openAppDb } from './data/db';
+import { CareCache } from './data/cache';
+import { createRepository } from './data/repository';
+import { PhotoCache, fileDisk } from './data/photos';
+import { Drafts } from './data/drafts';
 
 export const serverUrl: string = Constants.expoConfig?.extra?.serverUrl;
 export const appVersion = Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '0.0.0';
@@ -29,6 +35,21 @@ export const credentials = new Credentials(firstRunDone, {
   set: (value) => Native.setFlags({ session_wipe_pending: value }),
 });
 
+// The 6-hour read: WorkManager through the native worker on Android, BGTaskScheduler through expo-background-task on iOS.
+export const BACKGROUND_TASK = 'fytorium-care-refresh';
+export const background = {
+  start() {
+    if (Platform.OS === 'android') { Native.schedulePeriodicRefresh(); return; }
+    const BackgroundTask = require('expo-background-task') as typeof import('expo-background-task');
+    void BackgroundTask.registerTaskAsync(BACKGROUND_TASK, { minimumInterval: 360 }).catch(() => undefined);
+  },
+  stop() {
+    if (Platform.OS === 'android') { Native.cancelRefresh(); return; }
+    const BackgroundTask = require('expo-background-task') as typeof import('expo-background-task');
+    void BackgroundTask.unregisterTaskAsync(BACKGROUND_TASK).catch(() => undefined);
+  },
+};
+
 const late = { sessionEnded: async () => undefined as void, updateRequired: (_minimum: string | null) => undefined as void };
 
 export const api = createApi({
@@ -47,14 +68,42 @@ export const push = createPushRegistration({
   session: () => (credentials.tokens() ? credentials.session : null),
 });
 
+// Validated network as NetInfo reports it; the App keeps it current.
+let online = true;
+export const connection = { online: () => online, set: (value: boolean) => { online = value; } };
+
+const db = openAppDb();
+export const drafts = new Drafts(db);
+export const photos = new PhotoCache(db, fileDisk(), api, connection.online);
+const NAV = 'nav.state';
+// Navigation is brought back only when Android recreated the activity (N3) and for the same member and role.
+export const navigationStore = {
+  read(): { member: string; state: unknown } | null {
+    try { return JSON.parse(Storage.getItemSync(NAV) ?? 'null'); } catch { return null; }
+  },
+  write(member: string, state: unknown) { Storage.setItemSync(NAV, JSON.stringify({ member, state })); },
+  clear() { Storage.removeItemSync(NAV); },
+};
+export const care = createRepository({
+  api, cache: new CareCache(db), online: connection.online,
+  // A new member or role starts without the last one's photos, drafts or pages.
+  onMemberChanged: () => { photos.wipe(); drafts.wipe(); navigationStore.clear(); },
+});
+
 export const session = createSession({
-  api, appVersion, loggedIn: () => credentials.tokens() !== null, ready: () => firstRunDone, onLoggedIn: () => { void push.sync(); },
+  api, appVersion, loggedIn: () => credentials.tokens() !== null, ready: () => firstRunDone,
+  onLoggedIn: () => {
+    void push.sync();
+    background.start();
+    void care.refresh();
+  },
 });
 
 late.updateRequired = session.updateRequired;
 late.sessionEnded = async () => {
   await push.sessionEnded();
-  Native.cancelRefresh();
+  background.stop();
+  care.wipe();
   diagnostics.clear();
   diagnostics.record('SESSION_ENDED');
   session.sessionChanged();

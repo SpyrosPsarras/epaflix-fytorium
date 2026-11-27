@@ -1,2 +1,6 @@
-// shortcut: no cache exists before W3, so a background refresh has nothing to update yet.
-export async function refreshInBackground(): Promise<void> {}
+import { care, credentials } from './services';
+
+// The background read: Android's worker runs it as a headless task, iOS through expo-background-task.
+export async function refreshInBackground(): Promise<void> {
+  if (credentials.tokens()) await care.refresh();
+}

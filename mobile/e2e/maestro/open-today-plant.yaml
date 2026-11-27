@@ -1,0 +1,13 @@
+# env: PLANT
+appId: com.epaflix.fytorium
+---
+- tapOn:
+    id: tab-Today
+- scrollUntilVisible:
+    element: ${PLANT}
+- tapOn: ${PLANT}
+- extendedWaitUntil:
+    visible:
+      text: ${PLANT}
+      index: 0
+    timeout: 30000

@@ -1,0 +1,173 @@
+import type { RawResponse } from '../../modules/fytorium-native';
+import { NetworkError } from '../api/client';
+import { CareCache, type Member } from '../data/cache';
+import { createRepository } from '../data/repository';
+import { PhotoCache, type Disk } from '../data/photos';
+import { Drafts } from '../data/drafts';
+import { nodeDb } from './helpers/nodeDb';
+
+const identity = (id: string, role: string) => JSON.stringify({ member: { id, role, display_name: 'Synthetic' }, household: { id: 'h1' } });
+type Reply = Partial<RawResponse> | 'drop' | Promise<Partial<RawResponse>>;
+
+function server() {
+  const routes = new Map<string, () => Reply>();
+  const seen: string[] = [];
+  const api = {
+    request: async (path: string, options?: { query?: Record<string, string>; binary?: boolean }) => {
+      const key = path + (options?.query?.view ? `?view=${options.query.view}` : '');
+      seen.push(key);
+      const reply = await (routes.get(key)?.() ?? { status: 404 });
+      if (reply === 'drop') throw new NetworkError("Can't reach Fytorium.");
+      return { status: 200, headers: {}, body: '', ...reply } as RawResponse;
+    },
+  };
+  return { api, seen, route: (key: string, reply: () => Reply) => routes.set(key, reply) };
+}
+
+function setup(online = true) {
+  const db = nodeDb();
+  const cache = new CareCache(db);
+  const s = server();
+  let connected = online;
+  const changes: (Member | null)[] = [];
+  const repository = createRepository({ api: s.api as never, cache, online: () => connected, onMemberChanged: (member) => changes.push(member), now: () => 1_000 });
+  s.route('/api/me', () => ({ body: identity('m1', 'owner') }));
+  s.route('/api/tasks?view=today', () => ({ body: '{"groups":["today"]}' }));
+  s.route('/api/tasks?view=upcoming', () => ({ body: '{"groups":["upcoming"]}' }));
+  s.route('/api/plants', () => ({ body: '[{"id":"p1"}]' }));
+  s.route('/api/meta', () => ({ body: '{"minAppVersion":null}' }));
+  return { db, cache, repository, ...s, changes, setOnline: (value: boolean) => { connected = value; } };
+}
+
+test('a refresh caches every list for the member, and a cold start reads them back offline', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  expect(h.repository.get()).toMatchObject({ member: { id: 'm1', role: 'owner' }, today: '{"groups":["today"]}', plants: '[{"id":"p1"}]', lastUpdated: 1000 });
+  const cold = createRepository({ api: h.api as never, cache: new CareCache(h.db), online: () => false, onMemberChanged: () => undefined });
+  cold.restore();
+  expect(cold.get()).toMatchObject({ member: { id: 'm1' }, upcoming: '{"groups":["upcoming"]}', offline: true });
+});
+
+test('a different member, or the same member in another role, starts an empty cache', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  await h.repository.plant('p1');
+  h.route('/api/me', () => ({ body: identity('m1', 'sitter') }));
+  h.route('/api/plants', () => 'drop');
+  await h.repository.refresh();
+  expect(h.changes).toEqual([{ id: 'm1', role: 'owner' }, { id: 'm1', role: 'sitter' }]);
+  expect(h.repository.get().plants).toBeNull();
+  expect(h.cache.get({ id: 'm1', role: 'sitter' }, 'plant/p1')).toBeNull();
+  expect(h.db.all('SELECT resource FROM cached_care')).toEqual([{ resource: 'identity' }]);
+});
+
+test('logout wipes the cache, and a read that returns after the wipe is ignored', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  let release!: (reply: Partial<RawResponse>) => void;
+  h.route('/api/plants', () => new Promise((resolve) => { release = resolve; }));
+  const late = h.repository.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.repository.wipe();
+  release({ body: '[{"id":"stale"}]' });
+  await late;
+  expect(h.repository.get()).toMatchObject({ member: null, plants: null, busy: false });
+  expect(h.db.all('SELECT * FROM cached_care')).toEqual([]);
+});
+
+test('offline versus a server that is not responding', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  h.route('/api/me', () => ({ status: 503 }));
+  await h.repository.refresh();
+  expect(h.repository.get()).toMatchObject({ offline: false, serverUnavailable: true, plants: '[{"id":"p1"}]' });
+  h.route('/api/me', () => 'drop');
+  await h.repository.refresh();
+  expect(h.repository.get()).toMatchObject({ offline: false, serverUnavailable: true });
+  h.setOnline(false);
+  h.repository.connectivityChanged(false);
+  await h.repository.refresh();
+  expect(h.repository.get()).toMatchObject({ offline: true, serverUnavailable: false, plants: '[{"id":"p1"}]' });
+  h.setOnline(true);
+  h.route('/api/me', () => ({ body: identity('m1', 'owner') }));
+  await h.repository.refresh();
+  expect(h.repository.get()).toMatchObject({ offline: false, serverUnavailable: false });
+});
+
+test('a plant page reads through the cache and shows the last copy offline', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  h.route('/api/plants/p1', () => ({ body: '{"id":"p1","name":"Synthetic fern"}' }));
+  expect((await h.repository.plant('p1'))?.json).toBe('{"id":"p1","name":"Synthetic fern"}');
+  h.setOnline(false);
+  expect((await h.repository.plant('p1'))?.json).toBe('{"id":"p1","name":"Synthetic fern"}');
+  await expect(h.repository.plant('../x')).rejects.toThrow('Invalid plant');
+});
+
+function memoryDisk() {
+  const files = new Map<string, string>();
+  const disk: Disk = {
+    uri: (folder, name) => (files.has(`${folder}/${name}`) ? `file:///cache/photos/${folder}/${name}` : null),
+    write: async (folder, name, base64) => { files.set(`${folder}/${name}`, base64); },
+    remove: (folder, name) => { files.delete(`${folder}/${name}`); },
+    removeAll: () => files.clear(),
+  };
+  return { disk, files };
+}
+
+const base64Of = (bytes: number) => Buffer.alloc(bytes, 1).toString('base64');
+const owner: Member = { id: 'm1', role: 'owner' };
+
+test('photo copies stay under the cap, oldest use first out, and none over 1 MiB', async () => {
+  const db = nodeDb();
+  const { disk, files } = memoryDisk();
+  const s = server();
+  for (const id of ['a', 'b', 'c']) s.route(`/api/photos/${id}/thumb`, () => ({ body: base64Of(400_000) }));
+  s.route('/api/photos/big/display', () => ({ body: base64Of(1_048_577) }));
+  const photos = new PhotoCache(db, disk, s.api as never, () => true, 1_000_000);
+  expect(await photos.load(owner, 'a')).toBe('file:///cache/photos/m1.owner/a.thumb.jpg');
+  await photos.load(owner, 'b');
+  await photos.load(owner, 'a');
+  await photos.load(owner, 'c');
+  expect([...files.keys()].sort()).toEqual(['m1.owner/a.thumb.jpg', 'm1.owner/c.thumb.jpg']);
+  expect(photos.totalBytes()).toBe(800_000);
+  expect(await photos.load(owner, 'big', 'display')).toBeNull();
+  expect(files.size).toBe(2);
+  await expect(photos.load(owner, '../a')).rejects.toThrow('Invalid photo');
+});
+
+test('a cached photo shows offline, a missing one does not fetch, and a wipe drops everything including a late download', async () => {
+  const db = nodeDb();
+  const { disk, files } = memoryDisk();
+  const s = server();
+  let online = true;
+  let release!: () => void;
+  s.route('/api/photos/a/display', () => ({ body: base64Of(10) }));
+  s.route('/api/photos/late/display', () => new Promise((resolve) => { release = () => resolve({ body: base64Of(10) }); }));
+  const photos = new PhotoCache(db, disk, s.api as never, () => online);
+  await photos.load(owner, 'a', 'display');
+  online = false;
+  expect(await photos.load(owner, 'a', 'display')).not.toBeNull();
+  expect(await photos.load(owner, 'b', 'display')).toBeNull();
+  expect(s.seen).toEqual(['/api/photos/a/display']);
+  online = true;
+  const late = photos.load(owner, 'late', 'display');
+  await new Promise((resolve) => setImmediate(resolve));
+  photos.wipe();
+  release();
+  expect(await late).toBeNull();
+  expect(files.size).toBe(0);
+  expect(db.all('SELECT * FROM photo_cache')).toEqual([]);
+});
+
+test('drafts go with their page route and at a wipe', () => {
+  const drafts = new Drafts(nodeDb());
+  drafts.put('m1.owner/Plants/plant:p1/edit', { nickname: 'Fern' });
+  drafts.put('m1.owner/Plants/plant:p1', { scroll: 3 });
+  drafts.put('m1.owner/Plants/plant:p10', { scroll: 4 });
+  drafts.removeUnder('m1.owner/Plants/plant:p1');
+  expect(drafts.get('m1.owner/Plants/plant:p1/edit')).toBeNull();
+  expect(drafts.get('m1.owner/Plants/plant:p10')).toEqual({ scroll: 4 });
+  drafts.wipe();
+  expect(drafts.get('m1.owner/Plants/plant:p10')).toBeNull();
+});

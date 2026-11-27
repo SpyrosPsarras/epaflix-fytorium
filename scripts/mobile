@@ -46,7 +46,7 @@ case "$command" in
   release-check) run "$image" sh release/check;;
   e2e)
     scenario=${1:-w1}
-    case "$scenario" in w1|w2) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
+    case "$scenario" in w1|w2|w3) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
     [ -c /dev/kvm ] || { echo 'e2e needs /dev/kvm on this host.' >&2; exit 1; }
     app=$(docker compose ps -q app)
     if [ -z "$app" ] || [ "$(docker inspect -f '{{.State.Running}}' "$app")" != true ]; then

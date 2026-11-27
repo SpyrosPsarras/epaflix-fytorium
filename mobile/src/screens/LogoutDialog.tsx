@@ -14,7 +14,7 @@ export function LogoutDialog({ visible, online, onDismiss, onConfirm }: { visibl
         </Dialog.Content>
         <Dialog.Actions>
           <Button onPress={onDismiss} style={{ minHeight: 48, justifyContent: 'center' }}>Cancel</Button>
-          <Button onPress={onConfirm} style={{ minHeight: 48, justifyContent: 'center' }}>Log out</Button>
+          <Button testID="logout-confirm" onPress={onConfirm} style={{ minHeight: 48, justifyContent: "center" }}>Log out</Button>
         </Dialog.Actions>
       </Dialog>
     </Portal>

@@ -1,0 +1,62 @@
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import type { Repository, CareState } from '../data/repository';
+import type { PhotoCache } from '../data/photos';
+import type { Drafts } from '../data/drafts';
+import type { Member } from '../data/cache';
+import { memberKey } from '../data/cache';
+
+export type AppDeps = {
+  care: Repository;
+  photos: PhotoCache;
+  drafts: Drafts;
+  appVersion: string;
+  serverVersion: string | null;
+  online: boolean;
+  busy: boolean;
+  logout(): void;
+  copyDiagnostics(): void;
+};
+
+const DepsContext = createContext<AppDeps | null>(null);
+export const DepsProvider = DepsContext.Provider;
+
+export function useDeps(): AppDeps {
+  const deps = useContext(DepsContext);
+  if (!deps) throw new Error('No app dependencies');
+  return deps;
+}
+
+export function useCare(): CareState {
+  const { care } = useDeps();
+  return useSyncExternalStore(care.subscribe, care.get);
+}
+
+export function useMemberKey(): string {
+  const member = useCare().member;
+  return member ? memberKey(member) : 'none';
+}
+
+// Unsaved page state that survives Android ending the process; it goes when the page leaves its stack.
+export function useDraft<T>(key: string, initial: T): [T, (value: T) => void] {
+  const { drafts } = useDeps();
+  const [value, setValue] = useState<T>(() => drafts.get<T>(key) ?? initial);
+  useEffect(() => () => drafts.removeUnder(key), [drafts, key]);
+  return [value, (next: T) => { setValue(next); drafts.put(key, next); }];
+}
+
+export type Plant = { id: string; name: string; coverPhotoId: string | null };
+
+// The few plant fields the W3 pages need; the plant waves read the rest.
+export function parsePlants(json: string | null): Plant[] {
+  if (!json) return [];
+  try {
+    const rows = JSON.parse(json);
+    return Array.isArray(rows)
+      ? rows.map((row) => ({ id: String(row.id), name: String(row.display_name ?? row.nickname ?? row.canonical_name ?? 'Plant'), coverPhotoId: row.cover_photo_id ?? null }))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export const memberOf = (state: CareState): Member | null => state.member;

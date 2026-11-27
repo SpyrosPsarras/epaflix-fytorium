@@ -17,6 +17,7 @@ Run from the repository root on any host with Docker. Every command runs in the 
 ./scripts/stack up
 ./scripts/mobile e2e w1          # scaffold: upgrade cleanup, push gate, launch
 ./scripts/mobile e2e w2          # session: login, logout, push token lifecycle
+./scripts/mobile e2e w3          # shell and data: restore, role change, offline, background refresh
 ```
 
 `FYTORIUM_ABIS=x86_64` limits native code to the emulator ABI for faster local builds. `FYTORIUM_SERVER_URL` overrides the server; debug builds default to `http://app:3000`, release builds to `https://fytorium.epaflix.com` and refuse anything but HTTPS.
@@ -30,6 +31,14 @@ Run from the repository root on any host with Docker. Every command runs in the 
 `src/session` holds PKCE login, SecureStore credentials and the session controller; `src/api/client.ts` is the API client over the native transport (single-flight refresh, one replay per 401, invalid grant ends the session, logout wipes even offline); `src/push` holds the push token lifecycle from the design. Android opens login in a plain Custom Tab and receives the redirect through `MainActivity`, which keeps redirects that arrive before React is ready, such as after process death during login. iOS uses `ASWebAuthenticationSession` through `expo-web-browser`.
 
 Debug builds replace Firebase tokens with synthetic ones. Launch arguments `pushToken` and `pushDeleteFailures` seed the current token and how many deletions fail; e2e reads the counts from the app's key-value store.
+
+## Shell and data
+
+`src/shell` is the tab shell from the W6 navigation spec: one native stack per tab (Today, Plants, Journal, More; sitters have no Journal), Back at a tab root goes to Today, a tab tap never closes a page, a reselect returns to the root and asks first about a form with changes, a notification tap shows Today at its root, and a tab change waits for a save in flight. Pages a role may not open close when the role changes. Navigation state and drafts come back only when Android recreated the activity for the same member and role.
+
+`src/data` holds the SQLite read cache (`cached_care`, bound to one member and role, as Room's `CachedCare` was), drafts, and the photo cache: only `thumb` and `display` copies on disk, 1 MiB each, 50 MiB in all, wiped with the member. A read that returns after a wipe or a member change is dropped. Offline means no validated network; a failed request or a 5xx on a validated network means Fytorium isn't responding. The 6-hour background read runs through the native WorkManager worker on Android and `expo-background-task` on iOS. W3's root pages and most pushed pages are holding pages that later waves replace.
+
+`e2e/api.sh` logs a synthetic member in through the real app login to seed data with the API.
 
 ## Native module
 
