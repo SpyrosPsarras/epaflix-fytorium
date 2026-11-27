@@ -216,7 +216,12 @@ test('a 200 the lists cannot use keeps the last good copy and its time, and says
   await h.repository.refresh();
   let now = 2_000;
   const repository = createRepository({ api: h.api as never, cache: h.cache, online: () => true, onMemberChanged: () => undefined, now: () => now });
-  for (const [route, body] of [['/api/plants', '<html>proxy</html>'], ['/api/plants', '{"rows":[]}'], ['/api/tasks?view=today', '[]'], ['/api/meta', '{}']]) {
+  const badTasks = (change: object) => JSON.stringify({ ...JSON.parse(TODAY), ...change });
+  for (const [route, body] of [
+    ['/api/plants', '<html>proxy</html>'], ['/api/plants', '{"rows":[]}'], ['/api/tasks?view=today', '[]'], ['/api/meta', '{}'], ['/api/me', '{}'],
+    ['/api/tasks?view=today', badTasks({ sections: [null] })], ['/api/tasks?view=today', badTasks({ groups: { watering: null } })],
+  ]) {
+    h.route('/api/me', () => ({ body: identity('m1', 'owner') }));
     h.route('/api/plants', () => ({ body: PLANTS }));
     h.route('/api/tasks?view=today', () => ({ body: TODAY }));
     h.route('/api/meta', () => ({ body: META }));
@@ -225,4 +230,29 @@ test('a 200 the lists cannot use keeps the last good copy and its time, and says
     await repository.refresh();
     expect(repository.get()).toMatchObject({ plants: PLANTS, today: TODAY, lastUpdated: 1000, serverUnavailable: true });
   }
+});
+
+test('a plant page 200 the page cannot use keeps the last good copy', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  h.route('/api/plants/p1', () => ({ body: '{"id":"p1","display_name":"Synthetic fern"}' }));
+  await h.repository.plant('p1');
+  for (const body of ['<html>proxy</html>', '[]']) {
+    h.route('/api/plants/p1', () => ({ body }));
+    expect((await h.repository.plant('p1'))?.json).toBe('{"id":"p1","display_name":"Synthetic fern"}');
+    expect(h.repository.get().serverUnavailable).toBe(true);
+  }
+});
+
+test('a refresh asked for during the one in flight does not run after logout', async () => {
+  const h = setup();
+  let release!: () => void;
+  h.route('/api/me', () => new Promise((resolve) => { release = () => resolve({ body: identity('m1', 'owner') }); }));
+  const first = h.repository.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  void h.repository.refresh();
+  h.repository.wipe();
+  release();
+  await first;
+  expect(h.seen.filter((key) => key === '/api/me')).toHaveLength(1);
 });

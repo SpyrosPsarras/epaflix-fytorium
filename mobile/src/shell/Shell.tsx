@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import {
-  CommonActions, NavigationContainer, StackActions, createNavigationContainerRef, type NavigationState, type Theme,
-} from '@react-navigation/native';
+import { CommonActions, NavigationContainer, type NavigationState, type Theme } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { memberKey, type Member } from '../data/cache';
 import { useShell } from './guards';
+import { navigation, popToRoot, reselect, stackOf } from './actions';
 import { TabContext, useDeps } from './context';
 import {
   AboutRoute, FindPage, JournalAdd, JournalPick, JournalRoot, MoreRoot, PageHeader, PlantEdit, PlantPage, PlantaStub, PlantsRoot, StubPage, TodayRoot, UnmatchedStub,
 } from './pages';
 import { filterState, pageKey, routeKeys, tabsFor, TAB_ROOTS, type StackParams, type TabName } from './routes';
 
-export const navigation = createNavigationContainerRef();
+export { navigation };
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<StackParams>();
@@ -74,23 +73,13 @@ export type ShellProps = {
 
 type Intent = { kind: 'home' } | { kind: 'tab'; tab: string; reselect: boolean };
 
-function stackOf(tab: string) {
-  return navigation.getRootState()?.routes.find((route) => route.name === tab)?.state;
-}
-
-// A reselect (W6-P6) or a notification tap (W6-P16) closes the pages over a root; their questions ask first.
-function popToRoot(tab: string) {
-  const stack = stackOf(tab);
-  if (stack && (stack.routes?.length ?? 0) > 1) navigation.dispatch({ ...StackActions.popToTop(), target: stack.key });
-}
-
 function run(intent: Intent) {
   if (!navigation.isReady()) return;
   if (intent.kind === 'home') {
     navigation.dispatch(CommonActions.navigate('Today'));
     popToRoot('Today');
   } else if (intent.reselect) {
-    popToRoot(intent.tab);
+    reselect(intent.tab);
   } else {
     navigation.dispatch(CommonActions.navigate(intent.tab));
   }
@@ -131,7 +120,11 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
     <NavigationContainer
       key={`${applied.member ? memberKey(applied.member) : 'none'}-${applied.version}`}
       ref={navigation} theme={theme} initialState={applied.initialState as never}
-      onReady={() => { shown.current = routeKeys(navigation.getRootState()); }}
+      onReady={() => {
+        shown.current = routeKeys(navigation.getRootState());
+        // The first screen is saved too, so its scroll or draft comes back even if nothing was opened yet (N3).
+        onState(navigation.getRootState() as NavigationState);
+      }}
       onStateChange={(state) => {
         // W6-P4: a page's saved state goes when its route leaves the stack, never when Android only destroys the view.
         const now = routeKeys(state);
@@ -152,9 +145,13 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         })}
         screenListeners={({ navigation: tabNavigation, route }) => ({
           tabPress: (event) => {
-            if (shell.saving.size === 0) return;
-            event.preventDefault();
-            pending.current = { kind: 'tab', tab: route.name, reselect: tabNavigation.isFocused() };
+            const again = tabNavigation.isFocused();
+            if (shell.saving.size > 0) {
+              event.preventDefault();
+              pending.current = { kind: 'tab', tab: route.name, reselect: again };
+            } else if (again && (stackOf(route.name)?.routes?.length ?? 1) === 1) {
+              reselect(route.name);
+            }
           },
         })}>
         {tabs.map((tab) => <Tab.Screen key={tab} name={tab} component={STACKS[tab]} />)}

@@ -22,29 +22,33 @@ export type PageParams = {
   JournalPick: undefined;
   JournalAdd: { plantId: string };
 };
-export type StackParams = PageParams & { TodayRoot: undefined; PlantsRoot: undefined; JournalRoot: undefined; MoreRoot: undefined };
+// A root's params are signals from the shell: `top` scrolls it to the top (W6-P6), `clear` drops the Plants search (W6-P15).
+export type RootParams = { top?: number; clear?: number } | undefined;
+export type StackParams = PageParams & { TodayRoot: RootParams; PlantsRoot: RootParams; JournalRoot: RootParams; MoreRoot: RootParams };
 
 // Until the member is known only the tabs every role has show, so a sitter never sees Journal flash by.
 export function tabsFor(role: Role | null): TabName[] {
   return role === 'owner' || role === 'family' ? ['Today', 'Plants', 'Journal', 'More'] : ['Today', 'Plants', 'More'];
 }
 
-// W6-P17 with its build amendment: which pages a role may keep open.
+// W6-P17 with its build amendment: which pages a role may keep open (as Kotlin's AppShell `allowed`).
 export function allowed(route: string, role: Role | null): boolean {
-  if (role === 'sitter') return ['TodayRoot', 'PlantsRoot', 'MoreRoot', 'Notifications', 'About'].includes(route);
-  if (role === 'family') return !['Planta', 'Members'].includes(route);
+  if (role === 'sitter') return ['TodayRoot', 'PlantsRoot', 'MoreRoot', 'Plant', 'Find', 'Notifications', 'About'].includes(route);
+  if (role === 'family') return !['Planta', 'Members', 'Sites'].includes(route);
   return true;
 }
 
 type AnyState = NavigationState | PartialState<NavigationState>;
 
-// Drops tabs and pages the role may not see; a stack whose top went shows the page under it.
+// Drops tabs the role may not see, and in each stack the first page it may not open with every page above it;
+// the stack then shows the page under it.
 export function filterState(state: AnyState, role: Role | null): AnyState {
   const tabs = tabsFor(role);
   const routes = state.routes.filter((tab) => tabs.includes(tab.name as TabName)).map((tab) => {
     const stack = tab.state;
     if (!stack) return tab;
-    const pages = stack.routes.filter((page) => allowed(page.name, role));
+    const blocked = stack.routes.findIndex((page) => !allowed(page.name, role));
+    const pages = blocked < 0 ? stack.routes : stack.routes.slice(0, blocked);
     return { ...tab, state: { ...stack, routes: pages, index: Math.max(0, Math.min(stack.index ?? pages.length - 1, pages.length - 1)) } as never };
   });
   const selected = state.routes[state.index ?? 0]?.name;

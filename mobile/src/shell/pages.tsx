@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, FlatList, ScrollView, View } from 'react-native';
-import { useFocusEffect, useNavigation, useRoute, useScrollToTop, type NavigationProp, type RouteProp } from '@react-navigation/native';
+import { CommonActions, useFocusEffect, useNavigation, useRoute, type NavigationProp, type RouteProp } from '@react-navigation/native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import { Appbar, Button, List, Text, TextInput, useTheme } from 'react-native-paper';
@@ -8,7 +8,8 @@ import { AboutPage } from '../screens/AboutPage';
 import { LogoutDialog } from '../screens/LogoutDialog';
 import { parsePlants, useCare, useDeps, useDraft, type Plant } from './context';
 import { LeaveGuard, QuestionDialog, useShell, type Hidden } from './guards';
-import type { StackParams } from './routes';
+import { navigation as root, rootToTop, stackOf } from './actions';
+import type { RootParams, StackParams } from './routes';
 
 type Nav = NavigationProp<StackParams>;
 
@@ -24,20 +25,37 @@ export function PageHeader({ back, options, navigation, route }: NativeStackHead
   );
 }
 
+// A shell signal in the route's params, seen only when it changes, not when a restored state brings it back.
+function useSignal(name: keyof NonNullable<RootParams>, act: () => void) {
+  const value = (useRoute().params as RootParams)?.[name];
+  const seen = useRef(value);
+  useEffect(() => {
+    if (value === seen.current) return;
+    seen.current = value;
+    act();
+  });
+}
+
+type Scrollable = { scrollToOffset?(options: { offset: number; animated: boolean }): void; scrollTo?(options: { y: number; animated: boolean }): void };
+
 // W6-P4: a list keeps its place while its page is in a stack, across process death and activity recreation.
+// W6-P6: a reselect at its root scrolls it to the top and saves that, since a scroll made in code sends no drag event.
 function useSavedScroll() {
   const [offset, setOffset] = useDraft('scroll', 0);
+  const ref = useRef<Scrollable>(null);
+  useSignal('top', () => {
+    if (ref.current?.scrollToOffset) ref.current.scrollToOffset({ offset: 0, animated: true });
+    else ref.current?.scrollTo?.({ y: 0, animated: true });
+    setOffset(0);
+  });
   const save = (event: { nativeEvent: { contentOffset: { y: number } } }) => setOffset(event.nativeEvent.contentOffset.y);
-  return { contentOffset: { x: 0, y: offset }, onScrollEndDrag: save, onMomentumScrollEnd: save };
+  return { ref: ref as never, contentOffset: { x: 0, y: offset }, onScrollEndDrag: save, onMomentumScrollEnd: save };
 }
 
 function PlantRows({ plants, open, header }: { plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement }) {
-  const list = useRef<FlatList<Plant>>(null);
-  // W6-P6: reselecting the tab at its root scrolls to the top.
-  useScrollToTop(list);
   return (
     <FlatList
-      ref={list} data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
+      data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
       renderItem={({ item }) => (
         <List.Item title={item.name} onPress={() => open(item)} accessibilityRole="button" style={{ minHeight: 56 }} />
       )}
@@ -89,6 +107,7 @@ export function PlantsRoot() {
   const navigation = useNavigation<Nav>();
   const care = useCare();
   const [query, setQuery] = useDraft('query', '');
+  useSignal('clear', () => setQuery(''));
   const plants = parsePlants(care.plants).filter((plant) => plant.name.toLowerCase().includes(query.trim().toLowerCase()));
   return (
     <View style={{ flex: 1 }} testID="plants-root">
@@ -120,16 +139,15 @@ export function MoreRoot() {
   const care = useCare();
   const role = care.member?.role;
   const shell = useShell();
-  const [confirming, setConfirming] = useState(false);
+  // An open question survives Android recreating the activity, as Kotlin's saved `confirmLogout` does.
+  const [confirming, setConfirming] = useDraft('confirming', false);
   const [hidden, setHidden] = useState<[string, Hidden] | null>(null);
   const answered = useRef(new Set<string>());
-  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   // W6-P26: each form with changes in another tab asks its own question, in turn, before log out drops it.
   const askNext = () => {
     const next = [...shell.dirty].find(([page]) => !answered.current.has(page)) ?? null;
     if (next) setHidden(next); else deps.logout();
   };
-  useScrollToTop(scroll as never);
   let name: string | null = null;
   try { name = care.identity ? JSON.parse(care.identity)?.member?.display_name ?? null : null; } catch { name = null; }
   const rows: MoreRow[] = role === 'sitter'
@@ -143,7 +161,7 @@ export function MoreRoot() {
       { route: 'Unmatched', title: 'Species without care data', description: 'Species with no care data from sources' },
     ] : [];
   return (
-    <ScrollView ref={scroll} testID="more-root" {...useSavedScroll()}>
+    <ScrollView testID="more-root" {...useSavedScroll()}>
       {role && (
         <View style={{ padding: 16 }} accessible>
           {name && <Text variant="titleLarge">{name}</Text>}
@@ -248,15 +266,34 @@ export function StubPage() {
   );
 }
 
-// Holding pages with only the links later waves keep (W6-P12, W6-P15): Planta opens an imported plant and Sites.
+// Holding pages with only the links later waves keep (W6-P12, W6-P15): Planta opens an imported plant and Sites,
+// and "View imported plants" closes the review and shows the Plants grid at the top without its search.
 export function PlantaStub() {
   const navigation = useNavigation<Nav>();
+  const shell = useShell();
   const first = parsePlants(useCare().plants)[0];
+  const [asking, setAsking] = useState<Hidden | null>(null);
+  const viewImported = () => {
+    const plants = stackOf('Plants');
+    navigation.goBack();
+    if (plants?.key && plants.routes.length > 1) root.dispatch({ type: 'POP_TO_TOP', target: plants.key });
+    rootToTop('Plants', true);
+    root.dispatch(CommonActions.navigate('Plants'));
+  };
+  const plantsForms = () => [...shell.dirty].filter(([, entry]) => entry.tab === 'Plants');
   return (
     <View style={{ padding: 16, gap: 12 }}>
       <StubPage />
       {first && <Button mode="outlined" onPress={() => navigation.navigate('Plant', { id: first.id })} contentStyle={{ minHeight: 48 }}>Open imported plant</Button>}
       <Button mode="outlined" onPress={() => navigation.navigate('Sites')} contentStyle={{ minHeight: 48 }}>Check sites</Button>
+      <Button mode="outlined" contentStyle={{ minHeight: 48 }}
+        onPress={() => { const [form] = plantsForms(); if (form) setAsking(form[1]); else viewImported(); }}>
+        View imported plants
+      </Button>
+      <QuestionDialog
+        question={asking?.question ?? null}
+        onStay={() => setAsking(null)}
+        onLeave={() => { setAsking(null); plantsForms().forEach(([page]) => shell.discarded.add(page)); viewImported(); }} />
     </View>
   );
 }

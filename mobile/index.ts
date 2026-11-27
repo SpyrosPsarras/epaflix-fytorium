@@ -3,7 +3,8 @@ import { registerRootComponent } from 'expo';
 import * as diagnostics from './src/diagnostics';
 import { installCrashHandler } from './src/crash';
 import { refreshInBackground } from './src/refresh';
-import { BACKGROUND_TASK } from './src/services';
+import { background, BACKGROUND_TASK, care, credentials } from './src/services';
+import { reconcileStart } from './src/session/start';
 import App from './src/App';
 
 installCrashHandler(ErrorUtils, () => diagnostics.record('APP_CRASH'));
@@ -16,4 +17,6 @@ if (Platform.OS === 'ios') {
     return BackgroundTask.BackgroundTaskResult.Success;
   });
 }
+// After the iOS task exists, since registering an undefined task fails.
+reconcileStart({ signedIn: credentials.tokens() !== null, care, background });
 registerRootComponent(App);

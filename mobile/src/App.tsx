@@ -9,14 +9,15 @@ import { MD3DarkTheme, MD3LightTheme, PaperProvider, Text } from 'react-native-p
 import Native from '../modules/fytorium-native';
 import { palette } from './theme';
 import { REDIRECT_URI } from './session/pkce';
-import { appVersion, background, care, connection, credentials, drafts, navigationStore, photos, push, session } from './services';
+import { appVersion, care, connection, drafts, navigationStore, photos, push, session } from './services';
 import { refreshInBackground } from './refresh';
-import { reconcileStart } from './session/start';
+import { isOnline } from './online';
 import { decideRestore } from './shell/restore';
 import { memberKey, type Member } from './data/cache';
 import { DepsProvider } from './shell/context';
 import { ShellProvider } from './shell/guards';
 import { Shell } from './shell/Shell';
+import { Stoppable } from './shell/Stoppable';
 import { LoginPage } from './screens/LoginPage';
 import { UpdateStop } from './screens/UpdateStop';
 
@@ -42,7 +43,7 @@ NetInfo.configure({ useNativeReachability: true, reachabilityShouldRun: () => fa
 function useOnline(): boolean {
   const [online, setOnline] = useState(true);
   useEffect(() => NetInfo.addEventListener((state) => {
-    const next = state.isConnected === true && state.isInternetReachable !== false;
+    const next = isOnline(state, Platform.OS);
     connection.set(next);
     setOnline(next);
     care.connectivityChanged(next);
@@ -57,8 +58,6 @@ const subscribeOpenHome = (listener: () => void) => {
   const subscription = Native.addListener('openHome', listener);
   return () => subscription.remove();
 };
-
-reconcileStart({ signedIn: credentials.tokens() !== null, care, background });
 
 export default function App() {
   const scheme = useColorScheme();
@@ -111,14 +110,28 @@ export default function App() {
     text: colors.onSurface, border: colors.outlineVariant,
   } };
 
-  if (state.loggedIn && !state.updateRequired) {
+  const page = (content: React.ReactNode) => (
+    <ScrollView testID="fytorium-root" style={{ backgroundColor: colors.background }} contentContainerStyle={styles.page}>
+      <Text accessibilityRole="header" variant="headlineMedium" style={{ color: colors.onBackground }}>Fytorium</Text>
+      {content}
+    </ScrollView>
+  );
+  const stop = state.updateRequired ? page(
+    <UpdateStop appVersion={appVersion} minimum={state.minAppVersion} message={state.message} busy={state.busy} online={online}
+      onObtainium={obtainium} onCheckAgain={() => session.checkAgain(clock)} onLogout={() => session.logout()} />,
+  ) : null;
+
+  if (state.loggedIn) {
+    // The update stop covers the shell instead of replacing it, so its stacks and drafts are there when it clears.
     return (
       <PaperProvider theme={theme}>
         <DepsProvider value={deps}>
           <ShellProvider>
-            <View testID="fytorium-root" style={{ flex: 1 }}>
-              <ShellHost member={careState.member} theme={navigationTheme} />
-            </View>
+            <Stoppable stop={stop}>
+              <View testID={stop ? undefined : 'fytorium-root'} style={{ flex: 1 }}>
+                <ShellHost member={careState.member} theme={navigationTheme} />
+              </View>
+            </Stoppable>
           </ShellProvider>
         </DepsProvider>
         <StatusBar style="auto" />
@@ -128,13 +141,7 @@ export default function App() {
 
   return (
     <PaperProvider theme={theme}>
-      <ScrollView testID="fytorium-root" style={{ backgroundColor: colors.background }} contentContainerStyle={styles.page}>
-        <Text accessibilityRole="header" variant="headlineMedium" style={{ color: colors.onBackground }}>Fytorium</Text>
-        {state.updateRequired
-          ? <UpdateStop appVersion={appVersion} minimum={state.minAppVersion} message={state.message} busy={state.busy} online={online}
-              onObtainium={obtainium} onCheckAgain={() => session.checkAgain(clock)} onLogout={() => session.logout()} />
-          : <LoginPage key={String(online)} busy={state.busy} message={state.message} online={online} onLogin={() => { void login(); }} />}
-      </ScrollView>
+      {stop ?? page(<LoginPage key={String(online)} busy={state.busy} message={state.message} online={online} onLogin={() => { void login(); }} />)}
       <StatusBar style="auto" />
     </PaperProvider>
   );

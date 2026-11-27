@@ -26,11 +26,16 @@ const empty = (offline: boolean): CareState => ({
 class BadReply extends Error {}
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isTasks = (rows: unknown) => Array.isArray(rows) && rows.every((task) => isObject(task) && typeof task.status === 'string');
+// The parse points Kotlin's parseTaskList, parsePlant and parseTimezone fail on; field-level parsing comes with the pages.
 const SHAPES = {
   tasks: (body: unknown) => isObject(body) && typeof body.today === 'string' && typeof body.view === 'string' && isObject(body.settings)
-    && isObject(body.groups) && Array.isArray(body.sections),
+    && isObject(body.groups) && Object.values(body.groups).every(isTasks)
+    && Array.isArray(body.sections) && body.sections.every((section) => isObject(section)
+      && typeof section.key === 'string' && typeof section.label === 'string' && isTasks(section.tasks)),
   plants: (body: unknown) => Array.isArray(body) && body.every((row) => isObject(row) && typeof row.id === 'string' && typeof row.display_name === 'string'),
   meta: (body: unknown) => isObject(body) && typeof body.timezone === 'string',
+  plant: (body: unknown) => isObject(body) && typeof body.id === 'string',
 };
 
 function checked(json: string, shape: (body: unknown) => boolean): string {
@@ -111,7 +116,8 @@ export function createRepository(deps: Deps) {
     try {
       if (!deps.online()) throw new NetworkError('Offline');
       const identity = await read('/api/me');
-      const member = parseMember(identity);
+      let member: Member;
+      try { member = parseMember(identity); } catch { throw new BadReply('Fytorium sent a reply this app cannot read.'); }
       if (epoch !== generation) return;
       if (deps.cache.bind(identity)) {
         // A new binding ends every read started for the one before; only this refresh carries on under the new one.
@@ -160,7 +166,7 @@ export function createRepository(deps: Deps) {
       const resource = `plant/${id}`;
       if (deps.online()) {
         try {
-          const json = await read(`/api/plants/${id}`);
+          const json = checked(await read(`/api/plants/${id}`), SHAPES.plant);
           if (epoch === generation) deps.cache.save(member, { [resource]: json }, now());
         } catch (error) {
           failed(error, epoch);
@@ -169,6 +175,8 @@ export function createRepository(deps: Deps) {
       return epoch === generation && sameMember(state.member, member) ? deps.cache.get(member, resource) : null;
     },
     wipe() {
+      // A refresh asked for during the one in flight belongs to the session that just ended.
+      again = false;
       generation += 1;
       deps.cache.wipe();
       deps.onMemberChanged(null);

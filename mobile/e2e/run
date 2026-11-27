@@ -327,6 +327,8 @@ w3() {
   flow open-today-plant.yaml -e PLANT="$plant_name"
   photo_cached() { [ "$(app_db "SELECT count(*) FROM photo_cache WHERE key LIKE '%/display'")" -ge 1 ]; }
   wait_for 'the cover photo cached' photo_cached
+  photo_files() { adb shell su 0 find "$data/cache/photos" -type f 2>/dev/null | tr -d '\r'; }
+  [ -n "$(photo_files)" ] || fail 'the cached photo has no file'
   [ "$(app_db "SELECT count(*) FROM cached_care WHERE resource = 'plant/$plant'")" = 1 ] || fail 'plant page not cached'
   shot w3-plant-light
   pass 'The plant page read is cached with its display photo'
@@ -360,13 +362,14 @@ w3() {
 
   # Owner downgraded to sitter with a draft hidden in Plants and a cached plant page and photo.
   flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Hidden draft'
+  [ "$(app_db "SELECT count(*) FROM drafts WHERE json = '\"Hidden draft\"'")" = 1 ] || fail 'the hidden draft was not saved'
   maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
   q "UPDATE members SET role = 'sitter' WHERE subject = '$owner'" >/dev/null
   foreground
   wait_for 'the Journal tab gone' sh -c "! adb shell uiautomator dump /sdcard/w.xml >/dev/null || ! adb shell cat /sdcard/w.xml | grep -q 'resource-id=\"tab-Journal\"'"
   [ "$(app_db "SELECT count(*) FROM cached_care WHERE resource = 'plant/$plant'")" = 0 ] || fail 'the owner plant page stayed cached'
   [ "$(app_db 'SELECT count(*) FROM photo_cache')" = 0 ] || fail 'the owner photos stayed cached'
-  [ -z "$(adb shell su 0 find "$data/cache/photos" -type f 2>/dev/null | tr -d '\r')" ] || fail 'the owner photo files stayed on disk'
+  [ -z "$(photo_files)" ] || fail 'the owner photo files stayed on disk'
   [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'the owner draft stayed'
   maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
   ! visible 'text="Hidden draft"' || fail 'the hidden draft survived the role change'

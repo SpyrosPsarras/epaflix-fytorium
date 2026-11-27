@@ -17,6 +17,8 @@ type Shell = {
   // W6-P26: pages with unsaved changes, so log out can ask about one that a tab tap hid.
   dirty: Map<string, Hidden>;
   setDirty(page: string, entry: Hidden | null): void;
+  // Pages whose question was already answered with leave elsewhere (W6-P15); they close without asking again.
+  discarded: Set<string>;
   setSaving(page: string, saving: boolean): void;
   subscribe(listener: () => void): () => void;
 };
@@ -30,6 +32,7 @@ function createShell(): Shell {
   return {
     saving,
     dirty,
+    discarded: new Set<string>(),
     setDirty(page, entry) {
       if (entry) dirty.set(page, entry); else dirty.delete(page);
     },
@@ -75,7 +78,9 @@ export function LeaveGuard({ dirty, question = DISCARD, onLeave }: { dirty: bool
     shell.setDirty(route.key, dirty ? { tab, question } : null);
     return () => shell.setDirty(route.key, null);
   }, [shell, route.key, dirty, tab, question]);
-  usePreventRemove(dirty && !leaving, useCallback(({ data }: { data: { action: NavigationAction } }) => setPending(data.action), []));
+  usePreventRemove(dirty && !leaving, useCallback(({ data }: { data: { action: NavigationAction } }) => {
+    if (shell.discarded.has(route.key)) setLeaving(data.action); else setPending(data.action);
+  }, [shell, route.key]));
   // The confirmed action runs once the guard is off, so it is not stopped again.
   useEffect(() => { if (leaving) navigation.dispatch(leaving); }, [leaving, navigation]);
   return (

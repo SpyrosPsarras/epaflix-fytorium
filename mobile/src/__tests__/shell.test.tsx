@@ -214,7 +214,8 @@ test('W6-P17: a form with changes cannot stop a role change, and no page keeps s
   await press(tab('Plants'));
   await press(tab('Plants'));
   expect(screen.getByTestId('plants-search').props.value).toBe('');
-  expect(h.drafts.any()).toBe(false);
+  expect(h.db.all<{ json: string }>('SELECT json FROM drafts').map((row) => row.json)).not.toContain('"Monty"');
+  expect(h.db.all<{ json: string }>('SELECT json FROM drafts').map((row) => row.json)).not.toContain('"fern"');
 });
 
 test('W6-P21: a tab tap, a reselect and a notification tap during a save happen when it ends', async () => {
@@ -400,4 +401,89 @@ test('W6-P12: Back from each page goes to the page or tab that opened it', async
   expect(screen.getAllByText('Choose a plant').length).toBeGreaterThan(0);
   await systemBack();
   expect(screen.getByTestId('journal-root')).toBeTruthy();
+});
+
+test('W6-P17: losing a page removes every page opened from it; a sitter keeps plant pages and Find', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await press(screen.getByText('Check sites'));
+  await h.becomes({ id: 'm1', role: 'family' });
+  expect(selected('More')).toBe(true);
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+  expect(screen.queryByText('Check sites')).toBeNull();
+  expect(screen.queryByLabelText('Back')).toBeNull();
+
+  await press(tab('Today'));
+  await press(within(screen.getByTestId('today-root')).getByText('Find a plant'));
+  await press(screen.getAllByText('Synthetic fern').at(-1)!);
+  await h.becomes({ id: 'm1', role: 'sitter' });
+  expect(screen.getByTestId('plant-p1')).toBeTruthy();
+  await systemBack();
+  expect(screen.getByTestId('find-search')).toBeTruthy();
+});
+
+test('N3: the first screen is saved before anything opens, so its scroll comes back', async () => {
+  const h = await setup();
+  await fireEvent(within(screen.getByTestId('today-root')).getByTestId('plant-rows'), 'scrollEndDrag', { nativeEvent: { contentOffset: { x: 0, y: 80 } } });
+  const saved = h.states.at(-1);
+  expect(saved).toBeDefined();
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(within(screen.getByTestId('today-root')).getByTestId('plant-rows').props.contentOffset).toEqual({ x: 0, y: 80 });
+  await restored.unmount();
+});
+
+test('W6-P4: the log out question is still open after Android recreated the activity', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await press(screen.getByText('Log out'));
+  expect(screen.getByTestId('logout-confirm')).toBeTruthy();
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(screen.getByTestId('logout-confirm')).toBeTruthy();
+  await restored.unmount();
+});
+
+test('W6-P6: reselecting a tab at its root scrolls to the top and keeps that, also when it waited for a save', async () => {
+  const h = await setup();
+  const rows = () => within(screen.getByTestId('plants-root')).getByTestId('plant-rows');
+  await press(tab('Plants'));
+  await fireEvent(rows(), 'scrollEndDrag', { nativeEvent: { contentOffset: { x: 0, y: 200 } } });
+  await press(tab('Plants'));
+  expect(rows().props.contentOffset).toEqual({ x: 0, y: 0 });
+  await fireEvent(rows(), 'scrollEndDrag', { nativeEvent: { contentOffset: { x: 0, y: 150 } } });
+  await act(async () => h.shell().setSaving('plants', true));
+  await press(tab('Plants'));
+  expect(rows().props.contentOffset).toEqual({ x: 0, y: 150 });
+  await act(async () => h.shell().setSaving('plants', false));
+  expect(rows().props.contentOffset).toEqual({ x: 0, y: 0 });
+});
+
+test('W6-P15: View imported plants asks about a Plants form first, then shows the grid without its search', async () => {
+  await setup();
+  await press(tab('Plants'));
+  await fireEvent.changeText(screen.getByTestId('plants-search'), 'fern');
+  await press(screen.getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await press(tab('More'));
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await press(screen.getByText('View imported plants'));
+  expect(await screen.findByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Keep editing'));
+  expect(selected('More')).toBe(true);
+  expect(screen.getByText('View imported plants')).toBeTruthy();
+  expect(screen.getByTestId('draft-field', { includeHiddenElements: true }).props.value).toBe('Monty');
+
+  await press(screen.getByText('View imported plants'));
+  await press(await screen.findByText('Discard'));
+  expect(selected('Plants')).toBe(true);
+  expect(screen.queryByTestId('draft-field')).toBeNull();
+  expect(screen.getByTestId('plants-search').props.value).toBe('');
+  expect(screen.getByText('Synthetic thyme')).toBeTruthy();
+  await press(tab('More'));
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+  expect(screen.queryByText('View imported plants')).toBeNull();
 });
