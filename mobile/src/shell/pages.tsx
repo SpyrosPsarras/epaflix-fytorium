@@ -6,9 +6,9 @@ import { Image } from 'expo-image';
 import { Appbar, Button, List, Text, TextInput, useTheme } from 'react-native-paper';
 import { AboutPage } from '../screens/AboutPage';
 import { LogoutDialog } from '../screens/LogoutDialog';
-import { parsePlants, useCare, useDeps, useDraft, useMemberKey, type Plant } from './context';
+import { parsePlants, useCare, useDeps, useDraft, type Plant } from './context';
 import { LeaveGuard, QuestionDialog, useShell, type Hidden } from './guards';
-import { pageKey, type StackParams } from './routes';
+import type { StackParams } from './routes';
 
 type Nav = NavigationProp<StackParams>;
 
@@ -24,13 +24,20 @@ export function PageHeader({ back, options, navigation, route }: NativeStackHead
   );
 }
 
+// W6-P4: a list keeps its place while its page is in a stack, across process death and activity recreation.
+function useSavedScroll() {
+  const [offset, setOffset] = useDraft('scroll', 0);
+  const save = (event: { nativeEvent: { contentOffset: { y: number } } }) => setOffset(event.nativeEvent.contentOffset.y);
+  return { contentOffset: { x: 0, y: offset }, onScrollEndDrag: save, onMomentumScrollEnd: save };
+}
+
 function PlantRows({ plants, open, header }: { plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement }) {
   const list = useRef<FlatList<Plant>>(null);
   // W6-P6: reselecting the tab at its root scrolls to the top.
   useScrollToTop(list);
   return (
     <FlatList
-      ref={list} data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header}
+      ref={list} data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
       renderItem={({ item }) => (
         <List.Item title={item.name} onPress={() => open(item)} accessibilityRole="button" style={{ minHeight: 56 }} />
       )}
@@ -43,15 +50,16 @@ export function TodayRoot() {
   const navigation = useNavigation<Nav>();
   const care = useCare();
   const deps = useDeps();
-  // W6-P9: with a draft waiting in a hidden tab, Back here keeps the task instead of letting Android finish it.
+  const shell = useShell();
+  // W6-P9: with a form with changes in a hidden tab, Back here keeps the task instead of letting Android finish it.
   useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (!deps.drafts.any()) return false;
+      if (shell.dirty.size === 0) return false;
       deps.moveTaskToBack();
       return true;
     });
     return () => subscription.remove();
-  }, [deps]));
+  }, [deps, shell]));
   const plants = parsePlants(care.plants);
   const writer = care.member?.role === 'owner' || care.member?.role === 'family';
   const updated = care.lastUpdated ? new Date(care.lastUpdated).toTimeString().slice(0, 5) : null;
@@ -80,8 +88,7 @@ export function TodayRoot() {
 export function PlantsRoot() {
   const navigation = useNavigation<Nav>();
   const care = useCare();
-  const key = pageKey(useMemberKey(), 'Plants', 'root');
-  const [query, setQuery] = useDraft(key, '');
+  const [query, setQuery] = useDraft('query', '');
   const plants = parsePlants(care.plants).filter((plant) => plant.name.toLowerCase().includes(query.trim().toLowerCase()));
   return (
     <View style={{ flex: 1 }} testID="plants-root">
@@ -114,8 +121,14 @@ export function MoreRoot() {
   const role = care.member?.role;
   const shell = useShell();
   const [confirming, setConfirming] = useState(false);
-  const [hidden, setHidden] = useState<Hidden | null>(null);
+  const [hidden, setHidden] = useState<[string, Hidden] | null>(null);
+  const answered = useRef(new Set<string>());
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  // W6-P26: each form with changes in another tab asks its own question, in turn, before log out drops it.
+  const askNext = () => {
+    const next = [...shell.dirty].find(([page]) => !answered.current.has(page)) ?? null;
+    if (next) setHidden(next); else deps.logout();
+  };
   useScrollToTop(scroll as never);
   let name: string | null = null;
   try { name = care.identity ? JSON.parse(care.identity)?.member?.display_name ?? null : null; } catch { name = null; }
@@ -130,7 +143,7 @@ export function MoreRoot() {
       { route: 'Unmatched', title: 'Species without care data', description: 'Species with no care data from sources' },
     ] : [];
   return (
-    <ScrollView ref={scroll} testID="more-root">
+    <ScrollView ref={scroll} testID="more-root" {...useSavedScroll()}>
       {role && (
         <View style={{ padding: 16 }} accessible>
           {name && <Text variant="titleLarge">{name}</Text>}
@@ -148,14 +161,13 @@ export function MoreRoot() {
         visible={confirming} online={deps.online} onDismiss={() => setConfirming(false)}
         onConfirm={() => {
           setConfirming(false);
-          // W6-P26: a form with changes in another tab asks its own question before log out drops it.
-          const waiting = shell.dirty.values().next().value ?? null;
-          if (waiting) setHidden(waiting); else deps.logout();
+          answered.current.clear();
+          askNext();
         }} />
       <QuestionDialog
-        question={hidden?.question ?? null}
-        onStay={() => { const tab = hidden?.tab; setHidden(null); if (tab) navigation.navigate(tab as never); }}
-        onLeave={() => { setHidden(null); deps.logout(); }} />
+        question={hidden?.[1].question ?? null}
+        onStay={() => { const tab = hidden?.[1].tab; setHidden(null); if (tab) navigation.navigate(tab as never); }}
+        onLeave={() => { if (hidden) answered.current.add(hidden[0]); setHidden(null); askNext(); }} />
     </ScrollView>
   );
 }
@@ -206,8 +218,7 @@ export function PlantPage() {
 
 // A stand-in form with a draft, so the shell's discard and restore rules hold before the real forms arrive.
 export function DraftForm({ label }: { label: string }) {
-  const route = useRoute();
-  const [text, setText] = useDraft(pageKey(useMemberKey(), 'form', route.key), '');
+  const [text, setText] = useDraft('text', '');
   return (
     <View style={{ padding: 16, gap: 12 }}>
       <TextInput label={label} testID="draft-field" value={text} onChangeText={setText} />
@@ -237,9 +248,32 @@ export function StubPage() {
   );
 }
 
+// Holding pages with only the links later waves keep (W6-P12, W6-P15): Planta opens an imported plant and Sites.
+export function PlantaStub() {
+  const navigation = useNavigation<Nav>();
+  const first = parsePlants(useCare().plants)[0];
+  return (
+    <View style={{ padding: 16, gap: 12 }}>
+      <StubPage />
+      {first && <Button mode="outlined" onPress={() => navigation.navigate('Plant', { id: first.id })} contentStyle={{ minHeight: 48 }}>Open imported plant</Button>}
+      <Button mode="outlined" onPress={() => navigation.navigate('Sites')} contentStyle={{ minHeight: 48 }}>Check sites</Button>
+    </View>
+  );
+}
+
+export function UnmatchedStub() {
+  const navigation = useNavigation<Nav>();
+  return (
+    <View style={{ padding: 16, gap: 12 }}>
+      <StubPage />
+      <Button mode="outlined" onPress={() => navigation.navigate('Species', { key: 'synthetic-species' })} contentStyle={{ minHeight: 48 }}>Synthetic species</Button>
+    </View>
+  );
+}
+
 export function FindPage() {
   const navigation = useNavigation<Nav>();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useDraft('query', '');
   const plants = parsePlants(useCare().plants).filter((plant) => plant.name.toLowerCase().includes(query.trim().toLowerCase()));
   return (
     <View style={{ flex: 1 }}>

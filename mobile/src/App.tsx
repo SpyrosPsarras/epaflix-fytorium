@@ -9,7 +9,9 @@ import { MD3DarkTheme, MD3LightTheme, PaperProvider, Text } from 'react-native-p
 import Native from '../modules/fytorium-native';
 import { palette } from './theme';
 import { REDIRECT_URI } from './session/pkce';
-import { appVersion, care, connection, credentials, drafts, navigationStore, photos, push, session } from './services';
+import { appVersion, background, care, connection, credentials, drafts, navigationStore, photos, push, session } from './services';
+import { refreshInBackground } from './refresh';
+import { reconcileStart } from './session/start';
 import { decideRestore } from './shell/restore';
 import { memberKey, type Member } from './data/cache';
 import { DepsProvider } from './shell/context';
@@ -34,6 +36,9 @@ function ShellHost({ member, theme }: { member: Member | null; theme: Theme }) {
   );
 }
 
+// The spec's connectivity source is the platform's own reachability; NetInfo must not probe a URL of its own.
+NetInfo.configure({ useNativeReachability: true, reachabilityShouldRun: () => false });
+
 function useOnline(): boolean {
   const [online, setOnline] = useState(true);
   useEffect(() => NetInfo.addEventListener((state) => {
@@ -41,7 +46,7 @@ function useOnline(): boolean {
     connection.set(next);
     setOnline(next);
     care.connectivityChanged(next);
-    if (next) { void push.sync(); void care.refresh(); }
+    if (next) { void push.sync(); void refreshInBackground(); }
   }), []);
   return online;
 }
@@ -53,9 +58,7 @@ const subscribeOpenHome = (listener: () => void) => {
   return () => subscription.remove();
 };
 
-// Signed out at start: anything an interrupted logout left behind goes before it can show.
-if (credentials.tokens()) care.restore();
-else care.wipe();
+reconcileStart({ signedIn: credentials.tokens() !== null, care, background });
 
 export default function App() {
   const scheme = useColorScheme();
@@ -68,7 +71,7 @@ export default function App() {
   useEffect(() => {
     session.start();
     void push.sync();
-    void care.refresh();
+    void refreshInBackground();
     Linking.getInitialURL().then((url) => url && session.handleRedirect(url));
     const links = Linking.addEventListener('url', ({ url }) => session.handleRedirect(url));
     // Android keeps redirects that arrived before React was ready, such as after process death during login.
@@ -76,7 +79,7 @@ export default function App() {
     takeRedirects();
     const native = Native.addListener('redirect', takeRedirects);
     const foreground = AppState.addEventListener('change', (next) => {
-      if (next === 'active') { void push.sync(); void care.refresh(); }
+      if (next === 'active') { void push.sync(); void refreshInBackground(); }
     });
     return () => { links.remove(); native.remove(); foreground.remove(); };
   }, []);

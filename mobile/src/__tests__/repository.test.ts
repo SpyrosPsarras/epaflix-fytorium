@@ -7,6 +7,11 @@ import { Drafts } from '../data/drafts';
 import { nodeDb } from './helpers/nodeDb';
 
 const identity = (id: string, role: string) => JSON.stringify({ member: { id, role, display_name: 'Synthetic' }, household: { id: 'h1' } });
+const tasks = (view: string) => JSON.stringify({ today: '2026-11-27', view, settings: {}, groups: {}, sections: [] });
+const TODAY = tasks('today');
+const UPCOMING = tasks('upcoming');
+const PLANTS = '[{"id":"p1","display_name":"Synthetic fern"}]';
+const META = '{"timezone":"Europe/Athens","minAppVersion":null}';
 type Reply = Partial<RawResponse> | 'drop' | Promise<Partial<RawResponse>>;
 
 function server() {
@@ -32,20 +37,20 @@ function setup(online = true) {
   const changes: (Member | null)[] = [];
   const repository = createRepository({ api: s.api as never, cache, online: () => connected, onMemberChanged: (member) => changes.push(member), now: () => 1_000 });
   s.route('/api/me', () => ({ body: identity('m1', 'owner') }));
-  s.route('/api/tasks?view=today', () => ({ body: '{"groups":["today"]}' }));
-  s.route('/api/tasks?view=upcoming', () => ({ body: '{"groups":["upcoming"]}' }));
-  s.route('/api/plants', () => ({ body: '[{"id":"p1"}]' }));
-  s.route('/api/meta', () => ({ body: '{"minAppVersion":null}' }));
+  s.route('/api/tasks?view=today', () => ({ body: TODAY }));
+  s.route('/api/tasks?view=upcoming', () => ({ body: UPCOMING }));
+  s.route('/api/plants', () => ({ body: PLANTS }));
+  s.route('/api/meta', () => ({ body: META }));
   return { db, cache, repository, ...s, changes, setOnline: (value: boolean) => { connected = value; } };
 }
 
 test('a refresh caches every list for the member, and a cold start reads them back offline', async () => {
   const h = setup();
   await h.repository.refresh();
-  expect(h.repository.get()).toMatchObject({ member: { id: 'm1', role: 'owner' }, today: '{"groups":["today"]}', plants: '[{"id":"p1"}]', lastUpdated: 1000 });
+  expect(h.repository.get()).toMatchObject({ member: { id: 'm1', role: 'owner' }, today: TODAY, plants: PLANTS, lastUpdated: 1000 });
   const cold = createRepository({ api: h.api as never, cache: new CareCache(h.db), online: () => false, onMemberChanged: () => undefined });
   cold.restore();
-  expect(cold.get()).toMatchObject({ member: { id: 'm1' }, upcoming: '{"groups":["upcoming"]}', offline: true });
+  expect(cold.get()).toMatchObject({ member: { id: 'm1' }, upcoming: UPCOMING, offline: true });
 });
 
 test('a different member, or the same member in another role, starts an empty cache', async () => {
@@ -69,7 +74,7 @@ test('logout wipes the cache, and a read that returns after the wipe is ignored'
   const late = h.repository.refresh();
   await new Promise((resolve) => setImmediate(resolve));
   h.repository.wipe();
-  release({ body: '[{"id":"stale"}]' });
+  release({ body: '[{"id":"stale","display_name":"Stale"}]' });
   await late;
   expect(h.repository.get()).toMatchObject({ member: null, plants: null, busy: false });
   expect(h.db.all('SELECT * FROM cached_care')).toEqual([]);
@@ -80,14 +85,14 @@ test('offline versus a server that is not responding', async () => {
   await h.repository.refresh();
   h.route('/api/me', () => ({ status: 503 }));
   await h.repository.refresh();
-  expect(h.repository.get()).toMatchObject({ offline: false, serverUnavailable: true, plants: '[{"id":"p1"}]' });
+  expect(h.repository.get()).toMatchObject({ offline: false, serverUnavailable: true, plants: PLANTS });
   h.route('/api/me', () => 'drop');
   await h.repository.refresh();
   expect(h.repository.get()).toMatchObject({ offline: false, serverUnavailable: true });
   h.setOnline(false);
   h.repository.connectivityChanged(false);
   await h.repository.refresh();
-  expect(h.repository.get()).toMatchObject({ offline: true, serverUnavailable: false, plants: '[{"id":"p1"}]' });
+  expect(h.repository.get()).toMatchObject({ offline: true, serverUnavailable: false, plants: PLANTS });
   h.setOnline(true);
   h.route('/api/me', () => ({ body: identity('m1', 'owner') }));
   await h.repository.refresh();
@@ -204,4 +209,20 @@ test("a failure from before a role change does not mark the new role's session",
   release({ status: 503 });
   await late;
   expect(h.repository.get()).toMatchObject({ member: { role: 'sitter' }, serverUnavailable: false });
+});
+
+test('a 200 the lists cannot use keeps the last good copy and its time, and says Fytorium is not responding', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  let now = 2_000;
+  const repository = createRepository({ api: h.api as never, cache: h.cache, online: () => true, onMemberChanged: () => undefined, now: () => now });
+  for (const [route, body] of [['/api/plants', '<html>proxy</html>'], ['/api/plants', '{"rows":[]}'], ['/api/tasks?view=today', '[]'], ['/api/meta', '{}']]) {
+    h.route('/api/plants', () => ({ body: PLANTS }));
+    h.route('/api/tasks?view=today', () => ({ body: TODAY }));
+    h.route('/api/meta', () => ({ body: META }));
+    h.route(route, () => ({ body }));
+    now += 1;
+    await repository.refresh();
+    expect(repository.get()).toMatchObject({ plants: PLANTS, today: TODAY, lastUpdated: 1000, serverUnavailable: true });
+  }
 });

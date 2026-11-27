@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import { createContext, useContext, useState, useSyncExternalStore } from 'react';
+import { useRoute } from '@react-navigation/native';
 import type { Repository, CareState } from '../data/repository';
 import type { PhotoCache } from '../data/photos';
 import type { Drafts } from '../data/drafts';
 import { memberKey } from '../data/cache';
-import type { TabName } from './routes';
+import { pageKey, type TabName } from './routes';
 
 export type AppDeps = {
   care: Repository;
@@ -42,11 +43,12 @@ export function useMemberKey(): string {
   return member ? memberKey(member) : 'none';
 }
 
-// Unsaved page state that survives Android ending the process; it goes when the page leaves its stack.
-export function useDraft<T>(key: string, initial: T): [T, (value: T) => void] {
+// Page state (a query, a scroll position, a typed draft) that survives Android ending the process or recreating the
+// activity. It is stored under the page's route, and the shell removes it when that route leaves its stack (W6-P4).
+export function useDraft<T>(name: string, initial: T): [T, (value: T) => void] {
   const { drafts } = useDeps();
+  const key = pageKey(useMemberKey(), useRoute().key, name);
   const [value, setValue] = useState<T>(() => drafts.get<T>(key) ?? initial);
-  useEffect(() => () => drafts.removeUnder(key), [drafts, key]);
   return [value, (next: T) => { setValue(next); drafts.put(key, next); }];
 }
 

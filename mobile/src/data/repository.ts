@@ -22,6 +22,24 @@ const empty = (offline: boolean): CareState => ({
   offline, serverUnavailable: false, busy: false, message: null,
 });
 
+// A 200 whose body is not the shape the lists need; it must not replace the last good copy (Kotlin parses first too).
+class BadReply extends Error {}
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const SHAPES = {
+  tasks: (body: unknown) => isObject(body) && typeof body.today === 'string' && typeof body.view === 'string' && isObject(body.settings)
+    && isObject(body.groups) && Array.isArray(body.sections),
+  plants: (body: unknown) => Array.isArray(body) && body.every((row) => isObject(row) && typeof row.id === 'string' && typeof row.display_name === 'string'),
+  meta: (body: unknown) => isObject(body) && typeof body.timezone === 'string',
+};
+
+function checked(json: string, shape: (body: unknown) => boolean): string {
+  let body: unknown;
+  try { body = JSON.parse(json); } catch { throw new BadReply('Fytorium sent a reply this app cannot read.'); }
+  if (!shape(body)) throw new BadReply('Fytorium sent a reply this app cannot read.');
+  return json;
+}
+
 class ApiFailure extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
@@ -78,7 +96,7 @@ export function createRepository(deps: Deps) {
     // Offline when the phone has no validated network; otherwise a failed request or a 5xx means Fytorium isn't responding.
     const offline = !deps.online();
     const status = error instanceof ApiFailure ? error.status : null;
-    const unavailable = !offline && (error instanceof NetworkError || (status !== null && status >= 500));
+    const unavailable = !offline && (error instanceof NetworkError || error instanceof BadReply || (status !== null && status >= 500));
     set({
       offline: offline || unavailable ? offline : state.offline,
       serverUnavailable: offline || unavailable ? unavailable : state.serverUnavailable,
@@ -106,6 +124,7 @@ export function createRepository(deps: Deps) {
         read('/api/tasks', { view: 'today' }), read('/api/tasks', { view: 'upcoming' }), read('/api/plants'), read('/api/meta'),
       ]);
       if (epoch !== generation) return;
+      checked(today, SHAPES.tasks); checked(upcoming, SHAPES.tasks); checked(plants, SHAPES.plants); checked(meta, SHAPES.meta);
       deps.cache.save(member, { today, upcoming, plants, meta }, now());
       loadCached();
       set({ offline: false, serverUnavailable: false, message: null });

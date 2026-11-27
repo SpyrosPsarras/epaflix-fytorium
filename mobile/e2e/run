@@ -209,7 +209,7 @@ w2() {
   launch --es pushDeleteFailures 0
   wait_for 'registration after deletion' has_token "$first"
   [ "$(device_token "$first")" != "$old" ] || fail 'registered the Kotlin token again'
-  flag push_ready || fail 'push_ready not set after registration'
+  wait_for 'push_ready after registration' flag push_ready
   pass 'Foreground retry deleted the old token and registered a new one'
   shot w2-logged-in-light
 
@@ -286,6 +286,10 @@ app_db() {
   for suffix in '' -wal -shm; do app_file "files/SQLite/fytorium.db$suffix" > "/tmp/app.db$suffix" 2>/dev/null || rm -f "/tmp/app.db$suffix"; done
   sqlite3 /tmp/app.db "$1"
 }
+work_live() {
+  for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
+  sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' AND workspec.state IN (0, 1, 2)"
+}
 work_state() {
   for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
   sqlite3 /tmp/work.db "SELECT workspec.state FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' ORDER BY workspec.last_enqueue_time DESC LIMIT 1"
@@ -336,13 +340,23 @@ w3() {
   wait_for 'the draft after process death' visible 'text="Kept draft"'
   pass 'After process death the Plants stack and its draft came back'
 
-  # A fresh start (the task gone, as after swiping it away) opens Today at its root without the draft.
-  adb shell am force-stop "$package"
+  # Removing the task in Recents (Clear all, as a swipe does) ends it; the next start opens Today at its root without the draft.
+  adb shell input keyevent KEYCODE_APP_SWITCH; sleep 2
+  adb shell uiautomator dump /sdcard/w.xml >/dev/null
+  clear_all=$(adb shell cat /sdcard/w.xml | grep -o '<node[^>]*text="Clear all"[^>]*>' | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p')
+  [ -n "$clear_all" ] || fail 'Recents shows no Clear all'
+  set -- $clear_all
+  adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2)); sleep 2
+  task_listed() { adb shell dumpsys activity recents | grep -q "realActivity={$package/"; }
+  ! task_listed || fail 'the task is still in Recents after Clear all'
+  adb shell input keyevent KEYCODE_HOME
   launch
   wait_for 'Today after a fresh start' visible 'resource-id="today-root"'
   ! visible 'text="Kept draft"' || fail 'the draft came back after a fresh start'
   [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'drafts survived a fresh start'
-  pass 'A fresh start opens Today at its root and drops the draft'
+  pass 'After the task was removed in Recents the app opens Today at its root and drops the draft'
+  [ "$(work_live fytorium-care-refresh)" = 1 ] || fail 'signed-in starts did not leave exactly one 6-hour refresh'
+  pass 'Signed-in starts keep exactly one 6-hour refresh'
 
   # Owner downgraded to sitter with a draft hidden in Plants and a cached plant page and photo.
   flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Hidden draft'
@@ -352,6 +366,7 @@ w3() {
   wait_for 'the Journal tab gone' sh -c "! adb shell uiautomator dump /sdcard/w.xml >/dev/null || ! adb shell cat /sdcard/w.xml | grep -q 'resource-id=\"tab-Journal\"'"
   [ "$(app_db "SELECT count(*) FROM cached_care WHERE resource = 'plant/$plant'")" = 0 ] || fail 'the owner plant page stayed cached'
   [ "$(app_db 'SELECT count(*) FROM photo_cache')" = 0 ] || fail 'the owner photos stayed cached'
+  [ -z "$(adb shell su 0 find "$data/cache/photos" -type f 2>/dev/null | tr -d '\r')" ] || fail 'the owner photo files stayed on disk'
   [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'the owner draft stayed'
   maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
   ! visible 'text="Hidden draft"' || fail 'the hidden draft survived the role change'
@@ -368,15 +383,25 @@ w3() {
   shot w3-offline-light
   airplane disable
   wait_ready "$E2E_GUEST_NETWORK_TIMEOUT" 'Guest network back after airplane mode' online_again
-  adb shell su 0 iptables -I OUTPUT -p tcp --dport 3000 -j REJECT
+  # Fytorium reachable but answering 503: the phone's requests to app:3000 go to a WireMock stub that answers only them.
+  app_ip=$(getent hosts app | cut -d' ' -f1); fakes_ip=$(getent hosts fakes | cut -d' ' -f1)
+  stub=$(curl -fsS -X POST http://fakes:8080/__admin/mappings -H 'Content-Type: application/json' \
+    -d '{"priority":1,"request":{"urlPathPattern":"/api/.*","headers":{"Host":{"equalTo":"app:3000"}}},"response":{"status":503,"body":"Service Unavailable"}}' | sed -n 's/^ *"id" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$stub" ] || fail 'the 503 stub was not created'
+  divert="-p tcp -d $app_ip --dport 3000 -j DNAT --to-destination $fakes_ip:8080"
+  adb shell su 0 iptables -t nat -I OUTPUT $divert || fail 'could not divert app:3000'
   foreground
   unavailable_shown() { status_is "Fytorium isn&apos;t responding" || status_is "Fytorium isn't responding"; }
   wait_for "Fytorium isn't responding on the status line" unavailable_shown
-  adb shell su 0 iptables -D OUTPUT -p tcp --dport 3000 -j REJECT
+  answered=$(curl -fsS -X POST http://fakes:8080/__admin/requests/count -H 'Content-Type: application/json' \
+    -d '{"urlPathPattern":"/api/.*","headers":{"Host":{"equalTo":"app:3000"}}}' | sed -n 's/.*"count" *: *\([0-9]*\).*/\1/p')
+  [ "${answered:-0}" -ge 1 ] || fail 'the phone never reached the 503 stub'
+  adb shell su 0 iptables -t nat -D OUTPUT $divert
+  curl -fsS -X DELETE "http://fakes:8080/__admin/mappings/$stub" >/dev/null
   foreground
   cleared() { ! status_is 'Offline' && ! unavailable_shown; }
   wait_for 'the status line cleared' cleared
-  pass "Airplane mode shows Offline; a reachable network without Fytorium shows Fytorium isn't responding"
+  pass "Airplane mode shows Offline; Fytorium answering 503 shows Fytorium isn't responding"
 
   for scheme in light dark; do
     if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi

@@ -52,5 +52,16 @@ export function filterState(state: AnyState, role: Role | null): AnyState {
   return { ...state, routes, index, stale: true } as never;
 }
 
-// A key that names a page in its tab and position, for drafts that must go when the page leaves its stack.
-export const pageKey = (memberKey: string, tab: string, routeKey: string) => `${memberKey}/${tab}/${routeKey}`;
+// Where a page's saved state lives: under its member and route, so it can go when the route leaves its stack.
+export const pageKey = (memberKey: string, routeKey: string, name?: string) => `${memberKey}/${routeKey}${name ? `/${name}` : ''}`;
+
+// Every route key in a navigation state, tabs and their pages.
+export function routeKeys(state: AnyState | undefined): Set<string> {
+  const keys = new Set<string>();
+  const walk = (node: AnyState | undefined) => node?.routes.forEach((route) => {
+    if (route.key) keys.add(route.key);
+    walk(route.state as AnyState | undefined);
+  });
+  walk(state);
+  return keys;
+}

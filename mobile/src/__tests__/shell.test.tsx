@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { BackHandler } from 'react-native';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { CommonActions, DefaultTheme, type NavigationState } from '@react-navigation/native';
 import { PaperProvider } from 'react-native-paper';
 import type { RawResponse } from '../../modules/fytorium-native';
@@ -31,8 +31,10 @@ async function setup(member: Member = owner) {
         '/api/me': JSON.stringify({ member: { ...identity, display_name: 'Synthetic member' } }),
         '/api/plants': plantsJson,
         '/api/plants/p1': JSON.stringify({ id: 'p1', display_name: 'Synthetic fern' }),
+        '/api/tasks': JSON.stringify({ today: '2026-11-27', view: 'today', settings: {}, groups: {}, sections: [] }),
+        '/api/meta': JSON.stringify({ timezone: 'Europe/Athens' }),
       };
-      return { status: body[path] !== undefined || path === '/api/tasks' || path === '/api/meta' ? 200 : 404, headers: {}, body: body[path] ?? '{}' };
+      return { status: body[path] !== undefined ? 200 : 404, headers: {}, body: body[path] ?? '{}' };
     },
   };
   const drafts = new Drafts(db);
@@ -272,6 +274,10 @@ test('W6-P9: Back at Today keeps the task while a draft waits in another tab, an
   const h = await setup();
   const back = () => handlers.at(-1)!();
   expect(back()).toBe(false);
+  await press(tab('Plants'));
+  await fireEvent.changeText(screen.getByTestId('plants-search'), 'fern');
+  await press(tab('Today'));
+  expect(back()).toBe(false);
   await press(tab('Journal'));
   await press(screen.getByText('Add a photo'));
   await press(screen.getAllByText('Synthetic fern').at(-1)!);
@@ -282,22 +288,116 @@ test('W6-P9: Back at Today keeps the task while a draft waits in another tab, an
   jest.restoreAllMocks();
 });
 
-test('W6-P4, N3: saved stacks and drafts come back after Android recreated the activity', async () => {
+test('W6-P4, N3: every tab pages, drafts, queries and scroll come back after Android recreated the activity', async () => {
   const h = await setup();
   await press(tab('Plants'));
   await press(screen.getByText('Synthetic fern'));
   await press(screen.getByText('Edit'));
   await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await press(tab('Today'));
+  await press(within(screen.getByTestId('today-root')).getByText('Find a plant'));
+  await fireEvent.changeText(screen.getByTestId('find-search'), 'thyme');
+  await press(screen.getAllByText('Synthetic thyme').at(-1)!);
+  await press(tab('Journal'));
+  await fireEvent(within(screen.getByTestId('journal-root')).getByTestId('plant-rows'), 'scrollEndDrag', { nativeEvent: { contentOffset: { x: 0, y: 120 } } });
   await press(tab('More'));
-  await press(screen.getByText('About'));
   const saved = h.states.at(-1)!;
-  // Process death runs no unmount cleanup, so the drafts table keeps what it had.
-  const kept = h.db.all<{ key: string; json: string }>('SELECT key, json FROM drafts');
+  // The same process: React unmounts the old activity's tree, and nothing it runs may drop a draft.
   await h.view.unmount();
-  for (const row of kept) h.db.run('INSERT OR REPLACE INTO drafts (key, json) VALUES (?, ?)', row.key, row.json);
   const restored = await render(h.tree(saved));
-  expect(screen.getByText('Copy diagnostics')).toBeTruthy();
-  await press(screen.getByTestId('tab-Plants'));
+  expect(selected('More')).toBe(true);
+  await press(screen.getByText('Log out'));
+  await press(screen.getByTestId('logout-confirm'));
+  expect(await screen.findByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Keep editing'));
+  expect(selected('Plants')).toBe(true);
   expect(screen.getByTestId('draft-field').props.value).toBe('Monty');
+  expect(h.logout).not.toHaveBeenCalled();
+  await press(tab('Today'));
+  expect(screen.getByTestId('plant-p2')).toBeTruthy();
+  await systemBack();
+  expect(screen.getByTestId('find-search').props.value).toBe('thyme');
+  await press(tab('Journal'));
+  expect(within(screen.getByTestId('journal-root')).getByTestId('plant-rows').props.contentOffset).toEqual({ x: 0, y: 120 });
   await restored.unmount();
+});
+
+test('W6-P4: a page saved state goes with its route, so Find opens empty again', async () => {
+  const h = await setup();
+  await press(screen.getByText('Find a plant'));
+  await fireEvent.changeText(screen.getByTestId('find-search'), 'thyme');
+  await back();
+  expect(h.db.all('SELECT key FROM drafts')).toEqual([]);
+  await press(screen.getByText('Find a plant'));
+  expect(screen.getByTestId('find-search').props.value).toBe('');
+});
+
+test('W6-P26: log out asks about each form with changes in turn', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  await press(screen.getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await press(tab('Journal'));
+  await press(screen.getByText('Add a photo'));
+  await press(screen.getAllByText('Synthetic fern').at(-1)!);
+  await fireEvent.changeText(screen.getAllByTestId('draft-field').at(-1)!, 'New leaf');
+  await press(tab('More'));
+  await press(screen.getByText('Log out'));
+  await press(screen.getByTestId('logout-confirm'));
+  await press(await screen.findByText('Discard'));
+  expect(h.logout).not.toHaveBeenCalled();
+  expect(screen.getByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Keep editing'));
+  expect(selected('Journal')).toBe(true);
+  expect(h.logout).not.toHaveBeenCalled();
+  await press(tab('More'));
+  await press(screen.getByText('Log out'));
+  await press(screen.getByTestId('logout-confirm'));
+  await press(await screen.findByText('Discard'));
+  await press(await screen.findByText('Discard'));
+  expect(h.logout).toHaveBeenCalledTimes(1);
+});
+
+test('W6-P12: Back from each page goes to the page or tab that opened it', async () => {
+  await setup();
+  const today = () => within(screen.getByTestId('today-root'));
+  const more = () => within(screen.getByTestId('more-root'));
+  await press(today().getByText('Weather and feed'));
+  await systemBack();
+  expect(selected('Today')).toBe(true);
+  expect(screen.getByTestId('today-root')).toBeTruthy();
+  await press(today().getByText('Import from Planta'));
+  await systemBack();
+  expect(screen.getByTestId('today-root')).toBeTruthy();
+
+  await press(tab('More'));
+  await press(more().getByText('Weather and feed'));
+  expect(selected('More')).toBe(true);
+  await systemBack();
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+  await press(more().getByText('Import from Planta'));
+  await press(screen.getByText('Open imported plant'));
+  expect(selected('More')).toBe(true);
+  await systemBack();
+  await press(screen.getByText('Check sites'));
+  await systemBack();
+  expect(screen.getByText('Open imported plant')).toBeTruthy();
+  await systemBack();
+  await press(more().getByText('Species without care data'));
+  await press(screen.getByText('Synthetic species'));
+  await systemBack();
+  expect(screen.getByText('Synthetic species')).toBeTruthy();
+  await systemBack();
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+
+  await press(tab('Journal'));
+  await press(screen.getByText('Add a photo'));
+  await press(screen.getAllByText('Synthetic fern').at(-1)!);
+  expect(screen.getByTestId('draft-field')).toBeTruthy();
+  await systemBack();
+  expect(screen.queryByTestId('draft-field')).toBeNull();
+  expect(screen.getAllByText('Choose a plant').length).toBeGreaterThan(0);
+  await systemBack();
+  expect(screen.getByTestId('journal-root')).toBeTruthy();
 });
