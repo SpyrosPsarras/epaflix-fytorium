@@ -63,8 +63,8 @@ export function createApi(deps: Deps) {
     try {
       await credentials.clear();
     } catch (error) {
-      // The wipe marker retries the delete before any new login; the session is already over.
-      if (!(error instanceof WipeError)) throw error;
+      // With the marker saved, a restart and any new login retry the delete; without it the phone must say so.
+      if (!(error instanceof WipeError) || !credentials.wipeRetried()) throw error;
     } finally {
       await deps.onSessionLost();
     }

@@ -23,7 +23,13 @@ function fakeServer() {
 
 function marker(initial = false) {
   let value = initial;
-  return { get: () => value, set: (next: boolean) => { value = next; } };
+  let broken = false;
+  return {
+    get: () => value,
+    // Like the iOS flag store: a write that cannot reach disk reports false and changes nothing.
+    set: (next: boolean) => { if (broken) return false; value = next; return true; },
+    break: (on: boolean) => { broken = on; },
+  };
 }
 
 async function setup(tokens?: { access: string; refresh: string }) {
@@ -372,4 +378,29 @@ test('a 426 that arrives after logout does not bring back the update stop', asyn
   held.resolve({ status: 426, body: '{"minAppVersion":"3.0.0"}' });
   await push;
   expect(updates).toEqual([]);
+});
+
+test('a logout whose wipe marker cannot be saved still deletes the stored login, so a restart finds nothing', async () => {
+  const { server, api, credentials, wipe } = await setup({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  server.enqueue('drop');
+  wipe.break(true);
+  await api.logout();
+  wipe.break(false);
+  expect(credentials.tokens()).toBeNull();
+  expect(secureStore().__items.has('fytorium.tokens')).toBe(false);
+  expect(new Credentials(true, marker()).tokens()).toBeNull();
+});
+
+test('when neither the marker nor the delete succeeds, logout says so and no new login is stored', async () => {
+  const { server, api, credentials, wipe } = await setup({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  server.enqueue('drop');
+  wipe.break(true);
+  secureStore().__failDeletes(true);
+  await expect(api.logout()).rejects.toBeInstanceOf(WipeError);
+  expect(credentials.tokens()).toBeNull();
+  await expect(credentials.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' })).rejects.toBeInstanceOf(WipeError);
+  expect(credentials.pending()).toBeNull();
+  secureStore().__failDeletes(false);
+  wipe.break(false);
+  await expect(credentials.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' })).resolves.toBe(true);
 });

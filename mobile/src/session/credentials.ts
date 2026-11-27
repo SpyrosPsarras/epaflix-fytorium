@@ -5,7 +5,7 @@ export type Tokens = { access: string; refresh: string };
 // The stored copy of an ended session could not be deleted; it is retried before any new login is kept.
 export class WipeError extends Error {}
 // A persistent "wipe still pending" marker: startup refuses stored credentials and retries the wipe while it is set.
-export type WipeMarker = { get(): boolean; set(value: boolean): void };
+export type WipeMarker = { get(): boolean; set(value: boolean): boolean };
 
 // The token pair stays readable after the first unlock, so the iOS background refresh works on a locked phone.
 const TOKENS = { key: 'fytorium.tokens', options: { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY } };
@@ -27,6 +27,8 @@ export class Credentials {
   private queue: Promise<unknown> = Promise.resolve();
   // A new number for every login and every session end, so late results of an ended session are recognised.
   session = 0;
+  // A wipe this process started and has not finished, even if the marker could not be saved.
+  private outstanding = false;
   refreshing: Promise<Tokens | null> | null = null;
 
   // Credentials are usable only after first-run cleanup succeeded and no earlier wipe is unfinished.
@@ -46,16 +48,25 @@ export class Credentials {
     return this.current;
   }
 
-  // Stored copies of an ended session go before anything new is written.
-  private async finishWipe() {
-    if (!this.wipe.get()) return;
+  private async deleteStored() {
     try {
       await SecureStore.deleteItemAsync(TOKENS.key, TOKENS.options);
       await SecureStore.deleteItemAsync(PENDING.key, PENDING.options);
     } catch {
       throw new WipeError("Fytorium couldn't clear the last login on this phone.");
     }
+    this.outstanding = false;
     this.wipe.set(false);
+  }
+
+  // Stored copies of an ended session go before anything new is written.
+  private async finishWipe() {
+    if (this.outstanding || this.wipe.get()) await this.deleteStored();
+  }
+
+  // Whether a restart would retry an unfinished wipe, because its marker reached storage.
+  wipeRetried(): boolean {
+    return this.wipe.get();
   }
 
   // Stores tokens unless the session changed since `session` was read; returns whether they were stored.
@@ -74,7 +85,7 @@ export class Credentials {
   }
 
   pending(): LoginAttempt | null {
-    return this.usable && !this.wipe.get() ? read<LoginAttempt>(PENDING) : null;
+    return this.usable && !this.outstanding && !this.wipe.get() ? read<LoginAttempt>(PENDING) : null;
   }
 
   setPending(attempt: LoginAttempt | null): Promise<void> {
@@ -90,9 +101,11 @@ export class Credentials {
     const had = this.current !== null;
     this.current = null;
     this.session += 1;
+    this.outstanding = true;
     this.wipe.set(true);
     if (had) this.notify();
-    return this.serial(() => this.finishWipe());
+    // The stored copies are deleted even when the marker could not be saved.
+    return this.serial(() => this.deleteStored());
   }
 
   subscribe(listener: () => void): () => void {

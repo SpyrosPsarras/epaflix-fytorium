@@ -26,7 +26,7 @@ const flags = {
 
 export const credentials = new Credentials(firstRunDone, {
   get: () => Native.getFlag('session_wipe_pending'),
-  set: (value) => Native.setFlag('session_wipe_pending', value),
+  set: (value) => Native.setFlags({ session_wipe_pending: value }),
 });
 
 const late = { sessionEnded: async () => undefined as void, updateRequired: (_minimum: string | null) => undefined as void };
