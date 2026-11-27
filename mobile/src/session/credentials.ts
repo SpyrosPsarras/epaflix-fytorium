@@ -29,12 +29,18 @@ export class Credentials {
   session = 0;
   // A wipe this process started and has not finished, even if the marker could not be saved.
   private outstanding = false;
+  // Whether a wipe marker may be on disk: this process confirmed writing one, or found one at start.
+  // Android can show a failed write in memory, so only confirmed writes count.
+  private markerSaved = false;
   refreshing: Promise<Tokens | null> | null = null;
 
   // Credentials are usable only after first-run cleanup succeeded and no earlier wipe is unfinished.
   constructor(private readonly usable: boolean, private readonly wipe: WipeMarker) {
     if (!usable) return;
-    if (wipe.get()) void this.clear().catch(() => undefined);
+    if (wipe.get()) {
+      this.markerSaved = true;
+      void this.clear().catch(() => undefined);
+    }
     else this.current = read<Tokens>(TOKENS);
   }
 
@@ -55,8 +61,10 @@ export class Credentials {
     } catch {
       throw new WipeError("Fytorium couldn't clear the last login on this phone.");
     }
+    // A marker that stays saved would delete the next login on restart, so it must be cleared before anything new.
+    if (!this.wipe.set(false) && this.markerSaved) throw new WipeError("Fytorium couldn't clear the last login on this phone.");
     this.outstanding = false;
-    this.wipe.set(false);
+    this.markerSaved = false;
   }
 
   // Stored copies of an ended session go before anything new is written.
@@ -66,7 +74,7 @@ export class Credentials {
 
   // Whether a restart would retry an unfinished wipe, because its marker reached storage.
   wipeRetried(): boolean {
-    return this.wipe.get();
+    return this.markerSaved;
   }
 
   // Stores tokens unless the session changed since `session` was read; returns whether they were stored.
@@ -102,7 +110,7 @@ export class Credentials {
     this.current = null;
     this.session += 1;
     this.outstanding = true;
-    this.wipe.set(true);
+    this.markerSaved = this.wipe.set(true) || this.markerSaved;
     if (had) this.notify();
     // The stored copies are deleted even when the marker could not be saved.
     return this.serial(() => this.deleteStored());

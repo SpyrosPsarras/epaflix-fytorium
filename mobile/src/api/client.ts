@@ -172,8 +172,9 @@ export function createApi(deps: Deps) {
     const session = credentials.session;
     try {
       if (credentials.tokens()) await request('/api/app/logout', { method: 'POST' });
-    } catch {
-      // Offline logout still wipes this phone.
+    } catch (error) {
+      // Offline logout still wipes this phone; a wipe that failed inside the request must still be reported.
+      if (error instanceof WipeError) throw error;
     } finally {
       // A refused refresh during the logout request may already have ended this session.
       if (credentials.session === session) await loseSession();

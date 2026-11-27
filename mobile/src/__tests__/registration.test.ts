@@ -2,7 +2,7 @@ import type { RawResponse } from '../../modules/fytorium-native';
 import { createPushRegistration } from '../push/registration';
 import type { PushTokens } from '../push/tokens';
 
-function harness({ deleteFailures = 0, replies = [] as number[], ios = false } = {}) {
+function harness({ deleteFailures = 0, replies = [] as number[], ios = false, flagsBroken = false } = {}) {
   let unregistered = 0;
   const flags = new Map<string, boolean>([['push_reset_pending', true]]);
   let token = 'synthetic-old';
@@ -35,7 +35,7 @@ function harness({ deleteFailures = 0, replies = [] as number[], ios = false } =
     flags: {
       getFlag: (name) => flags.get(name) ?? false,
       setFlag: (name, value) => { flags.set(name, value); },
-      setFlags: (values) => Object.entries(values).forEach(([name, value]) => flags.set(name, value!)),
+      setFlags: (values) => { if (flagsBroken) return false; Object.entries(values).forEach(([name, value]) => flags.set(name, value!)); return true; },
     },
   });
   return {
@@ -144,4 +144,14 @@ test('on iOS an unfinished reset unregisters from APNs again before deleting the
   await h.registration.sync();
   expect(h.unregistered()).toBe(2);
   expect(h.flags.get('push_reset_pending')).toBe(false);
+});
+
+test('when the session-end flags cannot be saved, the old token is still deleted before the next registration', async () => {
+  const h = harness({ flagsBroken: true });
+  h.flags.set('push_reset_pending', false);
+  h.registration.closeGate();
+  expect(h.flags.get('push_reset_pending')).toBe(false);
+  await h.registration.sync();
+  expect(h.posts).toHaveLength(1);
+  expect(h.posts[0]).not.toBe('synthetic-old');
 });

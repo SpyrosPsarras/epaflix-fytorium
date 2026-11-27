@@ -32,6 +32,17 @@ function marker(initial = false) {
   };
 }
 
+// Like Android SharedPreferences: a failed commit still changes the value in memory.
+function androidMarker() {
+  let value = false;
+  let broken = false;
+  return {
+    get: () => value,
+    set: (next: boolean) => { value = next; return !broken; },
+    break: (on: boolean) => { broken = on; },
+  };
+}
+
 async function setup(tokens?: { access: string; refresh: string }) {
   const server = fakeServer();
   const wipe = marker();
@@ -403,4 +414,47 @@ test('when neither the marker nor the delete succeeds, logout says so and no new
   secureStore().__failDeletes(false);
   wipe.break(false);
   await expect(credentials.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' })).resolves.toBe(true);
+});
+
+test('on Android a marker that only reached memory does not count as saved', async () => {
+  const server = fakeServer();
+  const wipe = androidMarker();
+  const credentials = new Credentials(true, wipe);
+  await credentials.setTokens({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  const api = createApi({
+    baseUrl: 'https://fytorium.test', credentials, transport: server.transport, appVersion: '2.0.0', platform: 'android',
+    language: () => 'en', deviceName: () => 'Synthetic phone', beforeWipe: () => undefined, onSessionLost: () => undefined, onUpdateRequired: () => undefined,
+  });
+  server.enqueue('drop');
+  wipe.break(true);
+  secureStore().__failDeletes(true);
+  await expect(api.logout()).rejects.toBeInstanceOf(WipeError);
+  secureStore().__failDeletes(false);
+  wipe.break(false);
+});
+
+test('a wipe that fails inside the logout request is still reported', async () => {
+  const { server, api, wipe } = await setup({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  server.dispatch((request) => (request.tokenEndpoint ? { status: 400, body: '{"error":"invalid_grant"}' } : { status: 401 }));
+  wipe.break(true);
+  secureStore().__failDeletes(true);
+  await expect(api.logout()).rejects.toBeInstanceOf(WipeError);
+  secureStore().__failDeletes(false);
+  wipe.break(false);
+});
+
+test('a marker that cannot be cleared blocks new login state until it can', async () => {
+  const wipe = marker();
+  const credentials = new Credentials(true, wipe);
+  await credentials.setTokens({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
+  await credentials.clear();
+  wipe.set(true);
+  const restarted = new Credentials(true, wipe);
+  wipe.break(true);
+  await expect(restarted.setPending({ verifier: 'v', state: 's', createdAt: 1 })).rejects.toBeInstanceOf(WipeError);
+  await expect(restarted.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' })).rejects.toBeInstanceOf(WipeError);
+  wipe.break(false);
+  await restarted.setPending({ verifier: 'v', state: 's', createdAt: 1 });
+  expect(wipe.get()).toBe(false);
+  expect(restarted.pending()).not.toBeNull();
 });

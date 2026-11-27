@@ -6,7 +6,7 @@ import { readyToRegister } from './reset';
 type Deps = {
   api: Pick<Api, 'request'>;
   tokens: PushTokens;
-  flags: { getFlag(name: Flag): boolean; setFlag(name: Flag, value: boolean): void; setFlags(values: Partial<Record<Flag, boolean>>): void };
+  flags: { getFlag(name: Flag): boolean; setFlag(name: Flag, value: boolean): void; setFlags(values: Partial<Record<Flag, boolean>>): boolean };
   // First-run cleanup finished; nothing touches tokens before it.
   ready(): boolean;
   // The current session number, or null when logged out; see Credentials.session.
@@ -18,19 +18,29 @@ type Deps = {
 export function createPushRegistration(deps: Deps) {
   let running: Promise<void> | null = null;
   let again = false;
+  // A reset this process asked for, even if its flag never reached storage: the old token is still deleted first.
+  let resetOutstanding = false;
+  const resetPending = () => resetOutstanding || deps.flags.getFlag('push_reset_pending');
+  const reset = {
+    getFlag: (name: Flag) => (name === 'push_reset_pending' ? resetPending() : deps.flags.getFlag(name)),
+    setFlag: (name: Flag, value: boolean) => {
+      deps.flags.setFlag(name, value);
+      if (name === 'push_reset_pending' && !value) resetOutstanding = false;
+    },
+  };
 
   async function once() {
     if (!deps.ready()) return;
     // An interrupted session end may have missed APNs unregistration; it is repeated while the reset is pending.
-    if (deps.ios && deps.flags.getFlag('push_reset_pending')) await deps.tokens.unregisterDevice().catch(() => undefined);
+    if (deps.ios && resetPending()) await deps.tokens.unregisterDevice().catch(() => undefined);
     // The previous session's token is deleted whenever online, logged in or not.
-    if (!(await readyToRegister({ getFlag: deps.flags.getFlag, setFlag: deps.flags.setFlag, deleteToken: deps.tokens.delete }))) return;
+    if (!(await readyToRegister({ ...reset, deleteToken: deps.tokens.delete }))) return;
     const session = deps.session();
     if (session === null) return;
     if (deps.ios) await deps.tokens.registerDevice();
     const token = await deps.tokens.get();
     // Another session may have started, or ended and left a reset pending, while the token was read.
-    if (deps.session() !== session || deps.flags.getFlag('push_reset_pending')) return;
+    if (deps.session() !== session || resetPending()) return;
     const response = await deps.api.request('/api/notifications/subscriptions', { method: 'POST', body: { transport: 'fcm', token } });
     // A result that arrives after the session ended belongs to nobody.
     if (deps.session() !== session || response.status < 200 || response.status > 299) return;
@@ -56,6 +66,7 @@ export function createPushRegistration(deps: Deps) {
   // Synchronous and first in the wipe, in one commit with the wipe marker: from here on N4 drops every push, the token is
   // deleted before any reuse and a restart refuses the stored credentials. iOS stops APNs delivery before the delete.
   function closeGate() {
+    resetOutstanding = true;
     deps.flags.setFlags({ push_ready: false, push_reset_pending: true, session_wipe_pending: true });
     if (deps.ios) void deps.tokens.unregisterDevice().catch(() => undefined);
   }
