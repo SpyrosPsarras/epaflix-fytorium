@@ -124,7 +124,7 @@ test('photo copies stay under the cap, oldest use first out, and none over 1 MiB
   const s = server();
   for (const id of ['a', 'b', 'c']) s.route(`/api/photos/${id}/thumb`, () => ({ body: base64Of(400_000) }));
   s.route('/api/photos/big/display', () => ({ body: base64Of(1_048_577) }));
-  const photos = new PhotoCache(db, disk, s.api as never, () => true, 1_000_000);
+  const photos = new PhotoCache(db, disk, s.api as never, () => true, () => owner, 1_000_000);
   expect(await photos.load(owner, 'a')).toBe('file:///cache/photos/m1.owner/a.thumb.jpg');
   await photos.load(owner, 'b');
   await photos.load(owner, 'a');
@@ -144,7 +144,8 @@ test('a cached photo shows offline, a missing one does not fetch, and a wipe dro
   let release!: () => void;
   s.route('/api/photos/a/display', () => ({ body: base64Of(10) }));
   s.route('/api/photos/late/display', () => new Promise((resolve) => { release = () => resolve({ body: base64Of(10) }); }));
-  const photos = new PhotoCache(db, disk, s.api as never, () => online);
+  let bound: Member | null = owner;
+  const photos = new PhotoCache(db, disk, s.api as never, () => online, () => bound);
   await photos.load(owner, 'a', 'display');
   online = false;
   expect(await photos.load(owner, 'a', 'display')).not.toBeNull();
@@ -158,6 +159,9 @@ test('a cached photo shows offline, a missing one does not fetch, and a wipe dro
   expect(await late).toBeNull();
   expect(files.size).toBe(0);
   expect(db.all('SELECT * FROM photo_cache')).toEqual([]);
+  bound = { id: 'm2', role: 'owner' };
+  expect(await photos.load(owner, 'a', 'display')).toBeNull();
+  expect(files.size).toBe(0);
 });
 
 test('drafts go with their page route and at a wipe', () => {
@@ -170,4 +174,34 @@ test('drafts go with their page route and at a wipe', () => {
   expect(drafts.get('m1.owner/Plants/plant:p10')).toEqual({ scroll: 4 });
   drafts.wipe();
   expect(drafts.get('m1.owner/Plants/plant:p10')).toBeNull();
+});
+
+test('a plant read started before a role change is dropped, even if the role changes back before it returns', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  let release!: (reply: Partial<RawResponse>) => void;
+  h.route('/api/plants/p1', () => new Promise((resolve) => { release = resolve; }));
+  const late = h.repository.plant('p1');
+  await new Promise((resolve) => setImmediate(resolve));
+  h.route('/api/me', () => ({ body: identity('m1', 'sitter') }));
+  await h.repository.refresh();
+  h.route('/api/me', () => ({ body: identity('m1', 'owner') }));
+  await h.repository.refresh();
+  release({ body: '{"id":"p1","name":"Owner copy"}' });
+  expect(await late).toBeNull();
+  expect(h.cache.get({ id: 'm1', role: 'owner' }, 'plant/p1')).toBeNull();
+});
+
+test("a failure from before a role change does not mark the new role's session", async () => {
+  const h = setup();
+  await h.repository.refresh();
+  let release!: (reply: Partial<RawResponse>) => void;
+  h.route('/api/plants/p1', () => new Promise((resolve) => { release = resolve; }));
+  const late = h.repository.plant('p1');
+  await new Promise((resolve) => setImmediate(resolve));
+  h.route('/api/me', () => ({ body: identity('m1', 'sitter') }));
+  await h.repository.refresh();
+  release({ status: 503 });
+  await late;
+  expect(h.repository.get()).toMatchObject({ member: { role: 'sitter' }, serverUnavailable: false });
 });

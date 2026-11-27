@@ -72,6 +72,7 @@ export default (): ExpoConfig => {
       }],
       '@react-native-firebase/app',
       '@react-native-firebase/messaging',
+      'expo-background-task',
       './modules/fytorium-native/plugin.js',
     ],
   };

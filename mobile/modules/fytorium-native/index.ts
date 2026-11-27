@@ -16,7 +16,9 @@ export type RawResponse = { status: number; headers: Record<string, string>; bod
 type NativeModule = {
   readonly isDebugBuild: boolean;
   firstRun(): boolean;
-  restoredFromSavedState(): boolean;
+  consumeRestoredFromSavedState(): boolean;
+  moveTaskToBack(): boolean;
+  excludeFromBackup(path: string): boolean;
   getFlag(name: Flag): boolean;
   setFlag(name: Flag, value: boolean): void;
   setFlags(values: Partial<Record<Flag, boolean>>): boolean;

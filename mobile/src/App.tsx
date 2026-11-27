@@ -4,18 +4,35 @@ import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
 import NetInfo from '@react-native-community/netinfo';
-import { DarkTheme as NavigationDark, DefaultTheme as NavigationLight, type NavigationState } from '@react-navigation/native';
+import { DarkTheme as NavigationDark, DefaultTheme as NavigationLight, type Theme } from '@react-navigation/native';
 import { MD3DarkTheme, MD3LightTheme, PaperProvider, Text } from 'react-native-paper';
 import Native from '../modules/fytorium-native';
 import { palette } from './theme';
 import { REDIRECT_URI } from './session/pkce';
-import { appVersion, care, connection, drafts, navigationStore, photos, push, session } from './services';
-import { memberKey } from './data/cache';
+import { appVersion, care, connection, credentials, drafts, navigationStore, photos, push, session } from './services';
+import { decideRestore } from './shell/restore';
+import { memberKey, type Member } from './data/cache';
 import { DepsProvider } from './shell/context';
 import { ShellProvider } from './shell/guards';
 import { Shell } from './shell/Shell';
 import { LoginPage } from './screens/LoginPage';
 import { UpdateStop } from './screens/UpdateStop';
+
+// Mounted once per logged-in screen: the N3 decision is made here, after the activity exists, never at bundle load.
+function ShellHost({ member, theme }: { member: Member | null; theme: Theme }) {
+  const [initialState] = useState(() => {
+    const decision = decideRestore({
+      restored: Native.consumeRestoredFromSavedState(), member: member ? memberKey(member) : null, saved: navigationStore.read(),
+    });
+    if (decision.wipe) { navigationStore.clear(); drafts.wipe(); }
+    return decision.state;
+  });
+  return (
+    <Shell member={member} theme={theme} initialState={initialState}
+      onState={(navigationState) => { if (member && navigationState) navigationStore.write(memberKey(member), navigationState); }}
+      subscribeOpenHome={subscribeOpenHome} />
+  );
+}
 
 function useOnline(): boolean {
   const [online, setOnline] = useState(true);
@@ -36,17 +53,9 @@ const subscribeOpenHome = (listener: () => void) => {
   return () => subscription.remove();
 };
 
-// N3: Android recreated the activity, so pages and drafts come back; any other start opens Today at its root.
-function restoredNavigation(): NavigationState | undefined {
-  const member = care.get().member;
-  const saved = navigationStore.read();
-  if (Native.restoredFromSavedState() && member && saved?.member === memberKey(member)) return saved.state as NavigationState;
-  navigationStore.clear();
-  drafts.wipe();
-  return undefined;
-}
-care.restore();
-const initialNavigation = restoredNavigation();
+// Signed out at start: anything an interrupted logout left behind goes before it can show.
+if (credentials.tokens()) care.restore();
+else care.wipe();
 
 export default function App() {
   const scheme = useColorScheme();
@@ -92,7 +101,7 @@ export default function App() {
 
   const deps = {
     care, photos, drafts, appVersion, serverVersion: state.serverVersion, online, busy: state.busy,
-    logout: () => session.logout(), copyDiagnostics,
+    logout: () => session.logout(), copyDiagnostics, moveTaskToBack: () => { Native.moveTaskToBack(); },
   };
   const navigationTheme = { ...(scheme === 'dark' ? NavigationDark : NavigationLight), colors: {
     ...(scheme === 'dark' ? NavigationDark : NavigationLight).colors, primary: colors.primary, background: colors.background, card: colors.surface,
@@ -105,10 +114,7 @@ export default function App() {
         <DepsProvider value={deps}>
           <ShellProvider>
             <View testID="fytorium-root" style={{ flex: 1 }}>
-            <Shell
-              member={careState.member} theme={navigationTheme} initialState={initialNavigation}
-              onState={(navigationState) => { if (careState.member && navigationState) navigationStore.write(memberKey(careState.member), navigationState); }}
-              onMemberChanged={() => undefined} subscribeOpenHome={subscribeOpenHome} />
+              <ShellHost member={careState.member} theme={navigationTheme} />
             </View>
           </ShellProvider>
         </DepsProvider>

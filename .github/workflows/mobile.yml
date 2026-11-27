@@ -88,6 +88,8 @@ jobs:
           plist=build/Build/Products/Release-iphonesimulator/Fytorium.app/Info.plist
           test "$(/usr/libexec/PlistBuddy -c 'Print :ITSAppUsesNonExemptEncryption' "$plist")" = false
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = com.epaflix.fytorium
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$plist" | grep -qx '    processing'
+          /usr/libexec/PlistBuddy -c 'Print :BGTaskSchedulerPermittedIdentifiers' "$plist" | grep -qx '    com.expo.modules.backgroundtask.processing'
           ! /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$plist"
           bundle=build/Build/Products/Release-iphonesimulator/Fytorium.app/main.jsbundle
           test -s "$bundle"

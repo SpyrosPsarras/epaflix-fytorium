@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react';
+import { BackHandler } from 'react-native';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { CommonActions, DefaultTheme, type NavigationState } from '@react-navigation/native';
 import { PaperProvider } from 'react-native-paper';
@@ -22,34 +24,56 @@ const plantsJson = JSON.stringify([
 async function setup(member: Member = owner) {
   const db = nodeDb();
   const cache = new CareCache(db);
-  cache.bind(JSON.stringify({ member: { ...member, display_name: 'Synthetic owner' } }));
-  cache.save(member, { plants: plantsJson }, 1);
-  const api = { request: async (path: string): Promise<RawResponse> => ({ status: path.startsWith('/api/plants/') ? 200 : 404, headers: {}, body: path === '/api/plants/p1' ? JSON.stringify({ id: 'p1', display_name: 'Synthetic fern' }) : '{}' }) };
-  const care = createRepository({ api: api as never, cache, online: () => false, onMemberChanged: () => undefined });
-  care.restore();
+  let identity = member;
+  const api = {
+    request: async (path: string): Promise<RawResponse> => {
+      const body: Record<string, string> = {
+        '/api/me': JSON.stringify({ member: { ...identity, display_name: 'Synthetic member' } }),
+        '/api/plants': plantsJson,
+        '/api/plants/p1': JSON.stringify({ id: 'p1', display_name: 'Synthetic fern' }),
+      };
+      return { status: body[path] !== undefined || path === '/api/tasks' || path === '/api/meta' ? 200 : 404, headers: {}, body: body[path] ?? '{}' };
+    },
+  };
   const drafts = new Drafts(db);
-  const photos = new PhotoCache(db, { uri: () => null, write: async () => undefined, remove: () => undefined, removeAll: () => undefined }, api as never, () => false);
+  let moved = 0;
+  // The production wiring: a member or role change in the repository wipes drafts (services.ts).
+  const care = createRepository({ api: api as never, cache, online: () => true, onMemberChanged: () => drafts.wipe() });
+  await care.refresh();
+  const photos = new PhotoCache(db, { uri: () => null, write: async () => undefined, remove: () => undefined, removeAll: () => undefined }, api as never, () => false, () => care.get().member);
   const states: (NavigationState | undefined)[] = [];
   const homes = new Set<() => void>();
   let shell: ReturnType<typeof useShell> | null = null;
   function Capture() { shell = useShell(); return null; }
-  const deps = { care, photos, drafts, appVersion: '2.0.0', serverVersion: null, online: true, busy: false, logout: jest.fn(), copyDiagnostics: jest.fn() };
-  const tree = (current: Member, initialState?: NavigationState) => (
+  const logout = jest.fn();
+  const deps = { care, photos, drafts, appVersion: '2.0.0', serverVersion: null, online: true, busy: false, logout, copyDiagnostics: jest.fn(), moveTaskToBack: () => { moved += 1; } };
+  function Host({ initialState }: { initialState?: NavigationState }) {
+    const state = useSyncExternalStore(care.subscribe, care.get);
+    return (
+      <Shell member={state.member} theme={DefaultTheme} initialState={initialState} onState={(next) => states.push(next)}
+        subscribeOpenHome={(listener) => { homes.add(listener); return () => homes.delete(listener); }} />
+    );
+  }
+  const tree = (initialState?: NavigationState) => (
     <PaperProvider>
       <DepsProvider value={deps}>
         <ShellProvider>
           <Capture />
-          <Shell member={current} theme={DefaultTheme} initialState={initialState} onState={(state) => states.push(state)}
-            onMemberChanged={() => drafts.wipe()} subscribeOpenHome={(listener) => { homes.add(listener); return () => homes.delete(listener); }} />
+          <Host initialState={initialState} />
         </ShellProvider>
       </DepsProvider>
     </PaperProvider>
   );
-  const view = await render(tree(member));
+  const view = await render(tree());
   return {
-    view, db, drafts, states, tree,
+    view, db, drafts, states, tree, logout, moved: () => moved,
     shell: () => shell!,
     openHome: () => act(() => homes.forEach((listener) => listener())),
+    becomes: async (next: Member) => {
+      identity = next;
+      await act(async () => { await care.refresh(); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    },
   };
 }
 
@@ -159,23 +183,39 @@ test('W6-P17: a role change closes what the new role may not open; a new member 
   await press(screen.getByText('Import from Planta'));
   await press(tab('More'));
   await press(screen.getByText('Members'));
-  await h.view.rerender(h.tree({ id: 'm1', role: 'family' }));
+  await h.becomes({ id: 'm1', role: 'family' });
   await press(tab('Today'));
   expect(screen.getByTestId('today-root')).toBeTruthy();
   await press(tab('More'));
   expect(screen.getByTestId('more-root')).toBeTruthy();
   await press(screen.getByText('Notifications'));
-  await h.view.rerender(h.tree({ id: 'm1', role: 'sitter' }));
+  await h.becomes({ id: 'm1', role: 'sitter' });
   expect(screen.queryByTestId('tab-Journal')).toBeNull();
   expect(selected('More')).toBe(true);
   expect(screen.getByText('This page arrives in a later update.')).toBeTruthy();
-  await h.view.rerender(h.tree({ id: 'm2', role: 'owner' }));
+  await h.becomes({ id: 'm2', role: 'owner' });
   expect(selected('Today')).toBe(true);
   await press(tab('More'));
   expect(screen.getByTestId('more-root')).toBeTruthy();
 });
 
-test('W6-P21: a tab tap during a save waits for it to end', async () => {
+test('W6-P17: a form with changes cannot stop a role change, and no page keeps state from before it', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  await fireEvent.changeText(screen.getByTestId('plants-search'), 'fern');
+  await press(screen.getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await h.becomes({ id: 'm1', role: 'family' });
+  expect(screen.queryByText('Discard changes?')).toBeNull();
+  expect(screen.getByTestId('draft-field').props.value).toBe('');
+  await press(tab('Plants'));
+  await press(tab('Plants'));
+  expect(screen.getByTestId('plants-search').props.value).toBe('');
+  expect(h.drafts.any()).toBe(false);
+});
+
+test('W6-P21: a tab tap, a reselect and a notification tap during a save happen when it ends', async () => {
   const h = await setup();
   await press(tab('Plants'));
   await act(async () => h.shell().setSaving('plant-edit', true));
@@ -183,6 +223,63 @@ test('W6-P21: a tab tap during a save waits for it to end', async () => {
   expect(selected('Plants')).toBe(true);
   await act(async () => h.shell().setSaving('plant-edit', false));
   expect(selected('More')).toBe(true);
+
+  await press(screen.getByText('About'));
+  await act(async () => h.shell().setSaving('about', true));
+  await press(tab('More'));
+  expect(screen.getByText('Copy diagnostics')).toBeTruthy();
+  await act(async () => h.shell().setSaving('about', false));
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+
+  await press(tab('Today'));
+  await press(screen.getByText('Synthetic thyme'));
+  await press(tab('More'));
+  await act(async () => h.shell().setSaving('more', true));
+  await h.openHome();
+  expect(selected('More')).toBe(true);
+  await act(async () => h.shell().setSaving('more', false));
+  expect(selected('Today')).toBe(true);
+  expect(screen.getByTestId('today-root')).toBeTruthy();
+});
+
+test('W6-P26: log out asks about a form with changes left open in another tab', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  await press(screen.getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await press(tab('More'));
+  await press(screen.getByText('Log out'));
+  await press(screen.getByTestId('logout-confirm'));
+  expect(await screen.findByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Keep editing'));
+  expect(selected('Plants')).toBe(true);
+  expect(screen.getByTestId('draft-field').props.value).toBe('Monty');
+  expect(h.logout).not.toHaveBeenCalled();
+  await press(tab('More'));
+  await press(screen.getByText('Log out'));
+  await press(screen.getByTestId('logout-confirm'));
+  await press(await screen.findByText('Discard'));
+  expect(h.logout).toHaveBeenCalledTimes(1);
+});
+
+test('W6-P9: Back at Today keeps the task while a draft waits in another tab, and leaves normally without one', async () => {
+  const handlers: (() => boolean)[] = [];
+  jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
+    handlers.push(handler as () => boolean);
+    return { remove: () => handlers.splice(handlers.indexOf(handler as () => boolean), 1) };
+  });
+  const h = await setup();
+  const back = () => handlers.at(-1)!();
+  expect(back()).toBe(false);
+  await press(tab('Journal'));
+  await press(screen.getByText('Add a photo'));
+  await press(screen.getAllByText('Synthetic fern').at(-1)!);
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'New leaf');
+  await press(tab('Today'));
+  expect(back()).toBe(true);
+  expect(h.moved()).toBe(1);
+  jest.restoreAllMocks();
 });
 
 test('W6-P4, N3: saved stacks and drafts come back after Android recreated the activity', async () => {
@@ -198,7 +295,7 @@ test('W6-P4, N3: saved stacks and drafts come back after Android recreated the a
   const kept = h.db.all<{ key: string; json: string }>('SELECT key, json FROM drafts');
   await h.view.unmount();
   for (const row of kept) h.db.run('INSERT OR REPLACE INTO drafts (key, json) VALUES (?, ?)', row.key, row.json);
-  const restored = await render(h.tree(owner, saved));
+  const restored = await render(h.tree(saved));
   expect(screen.getByText('Copy diagnostics')).toBeTruthy();
   await press(screen.getByTestId('tab-Plants'));
   expect(screen.getByTestId('draft-field').props.value).toBe('Monty');

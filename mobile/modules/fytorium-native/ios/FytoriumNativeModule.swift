@@ -27,7 +27,10 @@ public class FytoriumNativeModule: Module {
     }
 
     Function("firstRun") { () -> Bool in runFirstRun(self.flags, deleteKeychain: deleteAllGenericPasswords) }
-    Function("restoredFromSavedState") { false }
+    Function("consumeRestoredFromSavedState") { false }
+    Function("moveTaskToBack") { false }
+    // N9: the app's SQLite folder is kept out of iCloud and device backups.
+    Function("excludeFromBackup") { (path: String) -> Bool in excludeFromBackup(URL(fileURLWithPath: path)) }
     Function("getFlag") { (name: String) -> Bool in self.flags.get(name) }
     Function("setFlags") { (values: [String: Bool]) throws -> Bool in
       guard values.keys.allSatisfy({ flagNames.contains($0) }) else { throw Exception(name: "ERR_FLAG", description: "Unknown flag") }

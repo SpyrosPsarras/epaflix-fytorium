@@ -2,8 +2,8 @@ import { createContext, useContext, useEffect, useState, useSyncExternalStore } 
 import type { Repository, CareState } from '../data/repository';
 import type { PhotoCache } from '../data/photos';
 import type { Drafts } from '../data/drafts';
-import type { Member } from '../data/cache';
 import { memberKey } from '../data/cache';
+import type { TabName } from './routes';
 
 export type AppDeps = {
   care: Repository;
@@ -15,7 +15,13 @@ export type AppDeps = {
   busy: boolean;
   logout(): void;
   copyDiagnostics(): void;
+  // W6-P9: keeps the task when Back at Today's root would otherwise drop a waiting draft.
+  moveTaskToBack(): void;
 };
+
+// The tab whose stack a page is in, so a question can lead back to it (W6-P26).
+export const TabContext = createContext<TabName>('Today');
+export const useTab = () => useContext(TabContext);
 
 const DepsContext = createContext<AppDeps | null>(null);
 export const DepsProvider = DepsContext.Provider;
@@ -59,4 +65,3 @@ export function parsePlants(json: string | null): Plant[] {
   }
 }
 
-export const memberOf = (state: CareState): Member | null => state.member;

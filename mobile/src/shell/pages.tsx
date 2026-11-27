@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, ScrollView, View } from 'react-native';
-import { useNavigation, useRoute, useScrollToTop, type NavigationProp, type RouteProp } from '@react-navigation/native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { BackHandler, FlatList, ScrollView, View } from 'react-native';
+import { useFocusEffect, useNavigation, useRoute, useScrollToTop, type NavigationProp, type RouteProp } from '@react-navigation/native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import { Appbar, Button, List, Text, TextInput, useTheme } from 'react-native-paper';
 import { AboutPage } from '../screens/AboutPage';
 import { LogoutDialog } from '../screens/LogoutDialog';
 import { parsePlants, useCare, useDeps, useDraft, useMemberKey, type Plant } from './context';
-import { LeaveGuard } from './guards';
+import { LeaveGuard, QuestionDialog, useShell, type Hidden } from './guards';
 import { pageKey, type StackParams } from './routes';
 
 type Nav = NavigationProp<StackParams>;
@@ -42,6 +42,16 @@ function PlantRows({ plants, open, header }: { plants: Plant[]; open(plant: Plan
 export function TodayRoot() {
   const navigation = useNavigation<Nav>();
   const care = useCare();
+  const deps = useDeps();
+  // W6-P9: with a draft waiting in a hidden tab, Back here keeps the task instead of letting Android finish it.
+  useFocusEffect(useCallback(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!deps.drafts.any()) return false;
+      deps.moveTaskToBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [deps]));
   const plants = parsePlants(care.plants);
   const writer = care.member?.role === 'owner' || care.member?.role === 'family';
   const updated = care.lastUpdated ? new Date(care.lastUpdated).toTimeString().slice(0, 5) : null;
@@ -102,7 +112,9 @@ export function MoreRoot() {
   const deps = useDeps();
   const care = useCare();
   const role = care.member?.role;
+  const shell = useShell();
   const [confirming, setConfirming] = useState(false);
+  const [hidden, setHidden] = useState<Hidden | null>(null);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   useScrollToTop(scroll as never);
   let name: string | null = null;
@@ -132,7 +144,18 @@ export function MoreRoot() {
       <List.Item title="About" description="Version, data sources and diagnostics" accessibilityRole="button" style={{ minHeight: 72 }}
         onPress={() => navigation.navigate('About')} />
       <Button onPress={() => setConfirming(true)} disabled={deps.busy} style={{ alignSelf: 'flex-start', margin: 8 }} contentStyle={{ minHeight: 48 }}>Log out</Button>
-      <LogoutDialog visible={confirming} online={deps.online} onDismiss={() => setConfirming(false)} onConfirm={() => { setConfirming(false); deps.logout(); }} />
+      <LogoutDialog
+        visible={confirming} online={deps.online} onDismiss={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          // W6-P26: a form with changes in another tab asks its own question before log out drops it.
+          const waiting = shell.dirty.values().next().value ?? null;
+          if (waiting) setHidden(waiting); else deps.logout();
+        }} />
+      <QuestionDialog
+        question={hidden?.question ?? null}
+        onStay={() => { const tab = hidden?.tab; setHidden(null); if (tab) navigation.navigate(tab as never); }}
+        onLeave={() => { setHidden(null); deps.logout(); }} />
     </ScrollView>
   );
 }
@@ -226,4 +249,3 @@ export function FindPage() {
   );
 }
 
-export const RowButton = Pressable;

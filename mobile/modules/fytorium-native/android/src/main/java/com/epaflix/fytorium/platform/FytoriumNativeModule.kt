@@ -51,7 +51,11 @@ class FytoriumNativeModule : Module() {
         Constant("isDebugBuild") { context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
 
         Function("firstRun") { FirstRun.run(context) }
-        Function("restoredFromSavedState") { RestoreState.restored }
+        // N3: true once per activity creation from saved state; a later mount in the same process reads false.
+        Function("consumeRestoredFromSavedState") { RestoreState.restored.also { RestoreState.restored = false } }
+        // W6-P9: Back at Today's root with a draft waiting keeps the task instead of finishing the activity.
+        Function("moveTaskToBack") { appContext.currentActivity?.moveTaskToBack(true) == true }
+        Function("excludeFromBackup") { _: String -> true }
         Function("getFlag") { name: String -> Flags.get(context, name) }
         Function("setFlag") { name: String, value: Boolean -> Flags.set(context, name, value) }
         Function("setFlags") { values: Map<String, Boolean> -> Flags.setAll(context, values) }

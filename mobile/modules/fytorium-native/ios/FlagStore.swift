@@ -41,3 +41,17 @@ final class FlagStore {
     return true
   }
 }
+
+// Creates the folder if needed and marks it, and so everything in it, as excluded from backup.
+func excludeFromBackup(_ folder: URL) -> Bool {
+  do {
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    var target = folder
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    try target.setResourceValues(values)
+    return (try? folder.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup) == true
+  } catch {
+    return false
+  }
+}

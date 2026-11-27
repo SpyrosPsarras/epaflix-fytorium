@@ -1,6 +1,6 @@
 import type { Db } from './db';
 import type { Api } from '../api/client';
-import { memberKey, type Member } from './cache';
+import { memberKey, sameMember, type Member } from './cache';
 
 export type Variant = 'thumb' | 'display';
 // Files under one folder per member and role; the app uses expo-file-system, Jest a map.
@@ -26,6 +26,8 @@ export class PhotoCache {
     private readonly disk: Disk,
     private readonly api: Pick<Api, 'request'>,
     private readonly online: () => boolean,
+    // Only the member the cache is bound to may read or write photos; a page left over from before a switch gets nothing.
+    private readonly bound: () => Member | null,
     private readonly capBytes = CAP_BYTES,
   ) {
     this.clock = db.get<{ last: number | null }>('SELECT MAX(used_at) AS last FROM photo_cache')?.last ?? 0;
@@ -33,6 +35,7 @@ export class PhotoCache {
 
   async load(member: Member, photoId: string, variant: Variant = 'thumb'): Promise<string | null> {
     if (!SAFE_ID.test(photoId) || (variant !== 'thumb' && variant !== 'display')) throw new Error('Invalid photo');
+    if (!sameMember(this.bound(), member)) return null;
     const folder = memberKey(member);
     const key = `${folder}/${photoId}/${variant}`;
     const name = `${photoId}.${variant}.jpg`;
@@ -55,8 +58,8 @@ export class PhotoCache {
     const size = decodedSize(body);
     if (size > ENTRY_BYTES || size > this.capBytes || epoch !== this.generation) return null;
     await this.disk.write(folder, name, body);
-    // A wipe during the download belongs to an ended member; the file goes with it.
-    if (epoch !== this.generation) { this.disk.remove(folder, name); return null; }
+    // A wipe or a member change during the download belongs to an ended member; the file goes with it.
+    if (epoch !== this.generation || !sameMember(this.bound(), member)) { this.disk.remove(folder, name); return null; }
     this.db.run('INSERT OR REPLACE INTO photo_cache (key, file, size, used_at) VALUES (?, ?, ?, ?)', key, `${folder}/${name}`, size, ++this.clock);
     this.trim();
     return this.disk.uri(folder, name);

@@ -39,4 +39,8 @@ try! FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath:
 check(!blocked.set(["push_ready": false, "session_wipe_pending": true]), "a write that cannot reach disk reports failure")
 check(blocked.get("push_ready") && !blocked.get("session_wipe_pending"), "a failed write leaves the flags as they were")
 try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
-print("FirstRun and flag store tests passed")
+// N9: the SQLite folder is excluded from backup, created if missing.
+let sqlite = folder.appendingPathComponent("SQLite")
+check(excludeFromBackup(sqlite), "the SQLite folder is marked excluded from backup")
+check((try? sqlite.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup) == true, "the backup exclusion is stored on the folder")
+print("FirstRun, flag store and backup exclusion tests passed")

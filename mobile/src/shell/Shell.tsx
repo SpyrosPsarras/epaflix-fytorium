@@ -5,8 +5,9 @@ import {
   CommonActions, NavigationContainer, StackActions, createNavigationContainerRef, type NavigationState, type Theme,
 } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import type { Member } from '../data/cache';
+import { memberKey, type Member } from '../data/cache';
 import { useShell } from './guards';
+import { TabContext } from './context';
 import {
   AboutRoute, FindPage, JournalAdd, JournalPick, JournalRoot, MoreRoot, PageHeader, PlantEdit, PlantPage, PlantsRoot, StubPage, TodayRoot,
 } from './pages';
@@ -49,10 +50,12 @@ const ROOTS = { Today: TodayRoot, Plants: PlantsRoot, Journal: JournalRoot, More
 function tabStack(tab: TabName) {
   return function TabStack() {
     return (
-      <Stack.Navigator screenOptions={{ header: (props) => <PageHeader {...props} /> }}>
-        <Stack.Screen name={TAB_ROOTS[tab] as keyof StackParams} component={ROOTS[tab]} options={{ title: tab }} />
-        {pages()}
-      </Stack.Navigator>
+      <TabContext.Provider value={tab}>
+        <Stack.Navigator screenOptions={{ header: (props) => <PageHeader {...props} /> }}>
+          <Stack.Screen name={TAB_ROOTS[tab] as keyof StackParams} component={ROOTS[tab]} options={{ title: tab }} />
+          {pages()}
+        </Stack.Navigator>
+      </TabContext.Provider>
     );
   };
 }
@@ -65,56 +68,68 @@ export type ShellProps = {
   // A saved state to bring back (Android recreated the activity), and where to save the next one.
   initialState?: NavigationState;
   onState(state: NavigationState | undefined): void;
-  // Called when the member or role changes, before the stacks change.
-  onMemberChanged(): void;
   // Notification taps that open Today (W6-P16).
   subscribeOpenHome(listener: () => void): () => void;
 };
 
-// W6-P16: Today's view at its root; pages over Today close (their questions ask first); other tabs keep theirs.
-export function openHome() {
-  if (!navigation.isReady()) return;
-  navigation.dispatch(CommonActions.navigate({ name: 'Today' }));
-  const today = (navigation.getRootState()?.routes.find((route) => route.name === 'Today')?.state);
-  if (today && (today.routes?.length ?? 0) > 1) navigation.dispatch({ ...StackActions.popToTop(), target: today.key });
+type Intent = { kind: 'home' } | { kind: 'tab'; tab: string; reselect: boolean };
+
+function stackOf(tab: string) {
+  return navigation.getRootState()?.routes.find((route) => route.name === tab)?.state;
 }
 
-export function Shell({ member, theme, initialState, onState, onMemberChanged, subscribeOpenHome }: ShellProps) {
+// A reselect (W6-P6) or a notification tap (W6-P16) closes the pages over a root; their questions ask first.
+function popToRoot(tab: string) {
+  const stack = stackOf(tab);
+  if (stack && (stack.routes?.length ?? 0) > 1) navigation.dispatch({ ...StackActions.popToTop(), target: stack.key });
+}
+
+function run(intent: Intent) {
+  if (!navigation.isReady()) return;
+  if (intent.kind === 'home') {
+    navigation.dispatch(CommonActions.navigate('Today'));
+    popToRoot('Today');
+  } else if (intent.reselect) {
+    popToRoot(intent.tab);
+  } else {
+    navigation.dispatch(CommonActions.navigate(intent.tab));
+  }
+}
+
+export function Shell({ member, theme, initialState, onState, subscribeOpenHome }: ShellProps) {
   const shell = useShell();
-  const tabs = tabsFor(member?.role ?? null);
-  const previous = useRef<Member | null>(member);
-  const pendingTab = useRef<string | null>(null);
-  const [ready, setReady] = useState(false);
+  const pending = useRef<Intent | null>(null);
+  // The member the navigator was built for. A new member or role builds a new one (W6-P17): no question can stop it,
+  // and no page keeps state from before; for the same member only the pages the new role may open come along.
+  const [applied, setApplied] = useState({ member, version: 0, initialState });
+  const tabs = tabsFor(applied.member?.role ?? null);
 
-  // W6-P17: another member starts every tab at its root; a role change closes what the new role may not open.
-  useEffect(() => {
-    const before = previous.current;
-    previous.current = member;
-    if (!ready || !before || !member || (before.id === member.id && before.role === member.role)) return;
-    onMemberChanged();
-    const state = navigation.getRootState();
-    if (before.id !== member.id || !state) navigation.reset({ index: 0, routes: [{ name: 'Today' }] });
-    else navigation.reset(filterState(state, member.role) as never);
-  }, [member, ready, onMemberChanged]);
+  if (applied.member?.id !== member?.id || applied.member?.role !== member?.role) {
+    const same = applied.member && member && applied.member.id === member.id;
+    const state = same && navigation.isReady() ? navigation.getRootState() : undefined;
+    setApplied({ member, version: applied.version + 1, initialState: state ? (filterState(state, member!.role) as NavigationState) : undefined });
+  }
 
-  useEffect(() => subscribeOpenHome(() => {
-    if (shell.saving.size > 0) pendingTab.current = 'home';
-    else openHome();
-  }), [shell, subscribeOpenHome]);
+  const request = (intent: Intent) => {
+    if (shell.saving.size > 0) pending.current = intent;
+    else run(intent);
+  };
 
-  // W6-P21: a tab change asked for during a save waits for it to end; a second request replaces the first.
+  useEffect(() => subscribeOpenHome(() => request({ kind: 'home' })));
+
+  // W6-P21: what was asked for during a save happens when it ends; a second request replaces the first.
   useEffect(() => shell.subscribe(() => {
-    if (shell.saving.size > 0 || !pendingTab.current) return;
-    const target = pendingTab.current;
-    pendingTab.current = null;
-    if (target === 'home') openHome();
-    else navigation.dispatch(CommonActions.navigate({ name: target }));
+    if (shell.saving.size > 0 || !pending.current) return;
+    const intent = pending.current;
+    pending.current = null;
+    run(intent);
   }), [shell]);
 
   return (
     <NavigationContainer
-      ref={navigation} theme={theme} initialState={initialState as never}
-      onReady={() => setReady(true)} onStateChange={(state) => onState(state as NavigationState | undefined)}>
+      key={`${applied.member ? memberKey(applied.member) : 'none'}-${applied.version}`}
+      ref={navigation} theme={theme} initialState={applied.initialState as never}
+      onStateChange={(state) => onState(state as NavigationState | undefined)}>
       <Tab.Navigator
         backBehavior="firstRoute"
         screenOptions={({ route }) => ({
@@ -123,11 +138,11 @@ export function Shell({ member, theme, initialState, onState, onMemberChanged, s
           tabBarButtonTestID: `tab-${route.name}`,
           tabBarAccessibilityLabel: route.name,
         })}
-        screenListeners={({ route }) => ({
+        screenListeners={({ navigation: tabNavigation, route }) => ({
           tabPress: (event) => {
             if (shell.saving.size === 0) return;
             event.preventDefault();
-            pendingTab.current = route.name;
+            pending.current = { kind: 'tab', tab: route.name, reselect: tabNavigation.isFocused() };
           },
         })}>
         {tabs.map((tab) => <Tab.Screen key={tab} name={tab} component={STACKS[tab]} />)}

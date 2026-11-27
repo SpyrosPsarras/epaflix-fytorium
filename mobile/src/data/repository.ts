@@ -88,7 +88,7 @@ export function createRepository(deps: Deps) {
 
   async function refreshOnce() {
     loadCached();
-    const epoch = generation;
+    let epoch = generation;
     set({ busy: true, message: null });
     try {
       if (!deps.online()) throw new NetworkError('Offline');
@@ -96,6 +96,9 @@ export function createRepository(deps: Deps) {
       const member = parseMember(identity);
       if (epoch !== generation) return;
       if (deps.cache.bind(identity)) {
+        // A new binding ends every read started for the one before; only this refresh carries on under the new one.
+        generation += 1;
+        epoch = generation;
         deps.onMemberChanged(member);
         set({ ...empty(false), member, identity, busy: true });
       }

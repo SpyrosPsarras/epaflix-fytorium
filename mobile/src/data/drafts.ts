@@ -23,6 +23,10 @@ export class Drafts {
     this.db.run("DELETE FROM drafts WHERE key = ? OR key LIKE ? ESCAPE '\\'", prefix, prefix.replace(/[\\%_]/g, '\\$&') + '/%');
   }
 
+  any(): boolean {
+    return this.db.get('SELECT 1 AS found FROM drafts LIMIT 1') !== null;
+  }
+
   wipe() {
     this.db.run('DELETE FROM drafts');
   }

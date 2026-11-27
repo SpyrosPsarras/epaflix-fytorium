@@ -24,8 +24,9 @@ export type PageParams = {
 };
 export type StackParams = PageParams & { TodayRoot: undefined; PlantsRoot: undefined; JournalRoot: undefined; MoreRoot: undefined };
 
+// Until the member is known only the tabs every role has show, so a sitter never sees Journal flash by.
 export function tabsFor(role: Role | null): TabName[] {
-  return role === 'sitter' ? ['Today', 'Plants', 'More'] : ['Today', 'Plants', 'Journal', 'More'];
+  return role === 'owner' || role === 'family' ? ['Today', 'Plants', 'Journal', 'More'] : ['Today', 'Plants', 'More'];
 }
 
 // W6-P17 with its build amendment: which pages a role may keep open.

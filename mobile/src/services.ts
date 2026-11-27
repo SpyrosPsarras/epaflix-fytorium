@@ -11,6 +11,7 @@ import { createPushRegistration } from './push/registration';
 import { pushTokens } from './push/tokens';
 import Storage from 'expo-sqlite/kv-store';
 import * as diagnostics from './diagnostics';
+import { endSession } from './session/end';
 import { openAppDb } from './data/db';
 import { CareCache } from './data/cache';
 import { createRepository } from './data/repository';
@@ -72,9 +73,14 @@ export const push = createPushRegistration({
 let online = true;
 export const connection = { online: () => online, set: (value: boolean) => { online = value; } };
 
+// N9: on iOS the SQLite folder (cache, drafts, navigation, key-value store) is excluded from backup before anything opens.
+if (Platform.OS === 'ios') {
+  const { Paths } = require('expo-file-system') as typeof import('expo-file-system');
+  Native.excludeFromBackup(decodeURI(new URL('SQLite', Paths.document.uri.endsWith('/') ? Paths.document.uri : Paths.document.uri + '/').pathname));
+}
 const db = openAppDb();
 export const drafts = new Drafts(db);
-export const photos = new PhotoCache(db, fileDisk(), api, connection.online);
+export const photos = new PhotoCache(db, fileDisk(), api, connection.online, () => care.get().member);
 const NAV = 'nav.state';
 // Navigation is brought back only when Android recreated the activity (N3) and for the same member and role.
 export const navigationStore = {
@@ -100,11 +106,4 @@ export const session = createSession({
 });
 
 late.updateRequired = session.updateRequired;
-late.sessionEnded = async () => {
-  await push.sessionEnded();
-  background.stop();
-  care.wipe();
-  diagnostics.clear();
-  diagnostics.record('SESSION_ENDED');
-  session.sessionChanged();
-};
+late.sessionEnded = () => endSession({ push, background, care, diagnostics, session });
