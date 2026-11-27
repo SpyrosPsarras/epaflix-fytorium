@@ -2,6 +2,8 @@ import * as SecureStore from 'expo-secure-store';
 import type { LoginAttempt } from './pkce';
 
 export type Tokens = { access: string; refresh: string };
+// The stored copy of an ended session could not be deleted; it is retried before any new login is kept.
+export class WipeError extends Error {}
 // A persistent "wipe still pending" marker: startup refuses stored credentials and retries the wipe while it is set.
 export type WipeMarker = { get(): boolean; set(value: boolean): void };
 
@@ -44,11 +46,26 @@ export class Credentials {
     return this.current;
   }
 
+  // Stored copies of an ended session go before anything new is written.
+  private async finishWipe() {
+    if (!this.wipe.get()) return;
+    try {
+      await SecureStore.deleteItemAsync(TOKENS.key, TOKENS.options);
+      await SecureStore.deleteItemAsync(PENDING.key, PENDING.options);
+    } catch {
+      throw new WipeError("Fytorium couldn't clear the last login on this phone.");
+    }
+    this.wipe.set(false);
+  }
+
   // Stores tokens unless the session changed since `session` was read; returns whether they were stored.
   setTokens(tokens: Tokens, session = this.session): Promise<boolean> {
     return this.serial(async () => {
       if (!this.usable || session !== this.session) return false;
+      await this.finishWipe();
       await SecureStore.setItemAsync(TOKENS.key, JSON.stringify(tokens), TOKENS.options);
+      // A logout during the write ended the session; its queued delete removes this copy.
+      if (session !== this.session) return false;
       if (!this.current) this.session += 1;
       this.current = tokens;
       this.notify();
@@ -57,11 +74,12 @@ export class Credentials {
   }
 
   pending(): LoginAttempt | null {
-    return this.usable ? read<LoginAttempt>(PENDING) : null;
+    return this.usable && !this.wipe.get() ? read<LoginAttempt>(PENDING) : null;
   }
 
   setPending(attempt: LoginAttempt | null): Promise<void> {
     return this.serial(async () => {
+      await this.finishWipe();
       if (attempt) await SecureStore.setItemAsync(PENDING.key, JSON.stringify(attempt), PENDING.options);
       else await SecureStore.deleteItemAsync(PENDING.key, PENDING.options);
     });
@@ -74,11 +92,7 @@ export class Credentials {
     this.session += 1;
     this.wipe.set(true);
     if (had) this.notify();
-    return this.serial(async () => {
-      await SecureStore.deleteItemAsync(TOKENS.key, TOKENS.options);
-      await SecureStore.deleteItemAsync(PENDING.key, PENDING.options);
-      this.wipe.set(false);
-    });
+    return this.serial(() => this.finishWipe());
   }
 
   subscribe(listener: () => void): () => void {

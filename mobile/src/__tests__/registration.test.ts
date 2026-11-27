@@ -2,7 +2,8 @@ import type { RawResponse } from '../../modules/fytorium-native';
 import { createPushRegistration } from '../push/registration';
 import type { PushTokens } from '../push/tokens';
 
-function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
+function harness({ deleteFailures = 0, replies = [] as number[], ios = false } = {}) {
+  let unregistered = 0;
   const flags = new Map<string, boolean>([['push_reset_pending', true]]);
   let token = 'synthetic-old';
   let failures = deleteFailures;
@@ -20,7 +21,7 @@ function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
     },
     onRefresh: (listener) => { refresh.add(listener); return () => refresh.delete(listener); },
     registerDevice: async () => undefined,
-    unregisterDevice: async () => undefined,
+    unregisterDevice: async () => { unregistered += 1; },
   };
   const api = {
     request: async (_path: string, options?: { body?: unknown }): Promise<RawResponse> => {
@@ -30,7 +31,7 @@ function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
     },
   };
   const registration = createPushRegistration({
-    api: api as never, tokens, ios: false, ready: () => true, session: () => session,
+    api: api as never, tokens, ios, ready: () => true, session: () => session,
     flags: {
       getFlag: (name) => flags.get(name) ?? false,
       setFlag: (name, value) => { flags.set(name, value); },
@@ -42,6 +43,7 @@ function harness({ deleteFailures = 0, replies = [] as number[] } = {}) {
     rotate(next: string) { token = next; refresh.forEach((listener) => listener(next)); },
     gate(on: boolean) { gated = on; },
     open: () => gates.splice(0).forEach((resolve) => resolve()),
+    unregistered: () => unregistered,
     endSession() { session = null; },
     switchSession(next: number) { session = next; },
     duringTokenRead(action: () => void) { onGet = action; },
@@ -91,6 +93,7 @@ test('a registration that finishes after the session ended does not open the pus
   const run = h.registration.sync();
   await settle();
   h.endSession();
+  h.registration.closeGate();
   await h.registration.sessionEnded();
   h.open();
   await run;
@@ -119,8 +122,26 @@ test('a session end closes the gate and starts deleting the token at once', asyn
   h.flags.set('push_reset_pending', false);
   h.flags.set('push_ready', true);
   h.endSession();
+  h.registration.closeGate();
   await h.registration.sessionEnded();
   await settle();
   expect(h.flags.get('push_ready')).toBe(false);
+  expect(h.flags.get('push_reset_pending')).toBe(false);
+});
+
+test('closing the gate also persists the wipe marker in the same write', () => {
+  const h = harness();
+  h.flags.set('push_ready', true);
+  h.registration.closeGate();
+  expect(Object.fromEntries(h.flags)).toMatchObject({ push_ready: false, push_reset_pending: true, session_wipe_pending: true });
+});
+
+test('on iOS an unfinished reset unregisters from APNs again before deleting the token', async () => {
+  const h = harness({ ios: true, deleteFailures: 1 });
+  h.endSession();
+  await h.registration.sync();
+  expect(h.unregistered()).toBe(1);
+  await h.registration.sync();
+  expect(h.unregistered()).toBe(2);
   expect(h.flags.get('push_reset_pending')).toBe(false);
 });

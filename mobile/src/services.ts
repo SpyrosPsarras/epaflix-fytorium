@@ -20,7 +20,8 @@ const firstRunDone = Native.firstRun();
 const flags = {
   getFlag: (name: Parameters<typeof Native.getFlag>[0]) => Native.getFlag(name),
   setFlag: (name: Parameters<typeof Native.setFlag>[0], value: boolean) => Native.setFlag(name, value),
-  setFlags: (values: Parameters<typeof Native.setFlags>[0]) => { Native.setFlags(values); },
+  // A failed commit is retried once; SharedPreferences keeps the values in memory either way.
+  setFlags: (values: Parameters<typeof Native.setFlags>[0]) => { if (!Native.setFlags(values)) Native.setFlags(values); },
 };
 
 export const credentials = new Credentials(firstRunDone, {
@@ -28,7 +29,7 @@ export const credentials = new Credentials(firstRunDone, {
   set: (value) => Native.setFlag('session_wipe_pending', value),
 });
 
-const late = { sessionEnded: async () => undefined as void, updateRequired: () => undefined as void };
+const late = { sessionEnded: async () => undefined as void, updateRequired: (_minimum: string | null) => undefined as void };
 
 export const api = createApi({
   baseUrl: serverUrl, credentials, transport: Native.request, appVersion,
@@ -37,7 +38,7 @@ export const api = createApi({
   deviceName: () => (Device.deviceName ?? Device.modelName ?? 'Fytorium phone').trim() || 'Fytorium phone',
   beforeWipe: () => push.closeGate(),
   onSessionLost: () => late.sessionEnded(),
-  onUpdateRequired: () => late.updateRequired(),
+  onUpdateRequired: (minimum) => late.updateRequired(minimum),
 });
 
 export const push = createPushRegistration({

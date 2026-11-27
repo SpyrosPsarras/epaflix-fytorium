@@ -1,5 +1,6 @@
 import type { Api } from '../api/client';
 import { NetworkError } from '../api/client';
+import { WipeError } from './credentials';
 import { requiresUpdate } from './version';
 import * as diagnostics from '../diagnostics';
 
@@ -65,7 +66,7 @@ export function createSession(deps: Deps) {
         await action();
       } catch (error) {
         diagnostics.record('NETWORK_UNAVAILABLE');
-        set({ message: error instanceof NetworkError ? offline : OFFLINE });
+        set({ message: error instanceof WipeError ? `${error.message} Try again.` : error instanceof NetworkError ? offline : OFFLINE });
       } finally {
         set({ busy: false });
         if (recheckWaiting) { recheckWaiting = false; recheck(); }
@@ -120,9 +121,11 @@ export function createSession(deps: Deps) {
       work(() => deps.api.logout());
     },
     recheck,
-    // A 426 from any request: read the minimum again and show the stop, once.
-    updateRequired() {
-      if (!state.updateRequired) recheck();
+    // A 426 from any request shows the stop at once; /api/meta then refreshes its details.
+    updateRequired(minimum: string | null) {
+      if (state.updateRequired) return;
+      set({ updateRequired: true, minAppVersion: minimum ?? state.minAppVersion });
+      recheck();
     },
     checkAgain(checkedAt: () => string) {
       work(async () => {

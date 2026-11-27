@@ -62,12 +62,21 @@ test('a redirect before first-run cleanup finished is ignored, and login says wh
   expect(h.session.get().message).toMatch(/couldn't finish setting up/);
 });
 
-test('a 426 from any request shows the stop with the minimum from /api/meta', async () => {
+test('a 426 from any request shows the stop at once, and /api/meta refreshes its details', async () => {
   const h = harness();
   h.metas.push({ status: 200, body: '{"minAppVersion":"3.1.0","serverVersion":"synthetic"}' });
-  h.session.updateRequired();
+  h.session.updateRequired('3.0.0');
+  expect(h.session.get()).toMatchObject({ updateRequired: true, minAppVersion: '3.0.0' });
   await settle();
   expect(h.session.get()).toMatchObject({ updateRequired: true, minAppVersion: '3.1.0', serverVersion: 'synthetic' });
+});
+
+test('the stop from a 426 stays when /api/meta cannot be reached', async () => {
+  const h = harness();
+  h.metas.push('offline');
+  h.session.updateRequired('3.0.0');
+  await settle();
+  expect(h.session.get()).toMatchObject({ updateRequired: true, minAppVersion: '3.0.0' });
 });
 
 test('Check again offline says it needs a connection and keeps the stop', async () => {

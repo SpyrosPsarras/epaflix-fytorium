@@ -1,6 +1,6 @@
 import type { RawResponse, RequestOptions } from '../../modules/fytorium-native';
 import { challenge, codeFrom, createAttempt, errorFrom, REDIRECT_URI } from '../session/pkce';
-import type { Credentials, Tokens } from '../session/credentials';
+import { WipeError, type Credentials, type Tokens } from '../session/credentials';
 
 export class NetworkError extends Error {}
 
@@ -19,8 +19,8 @@ type Deps = {
   // Runs synchronously before the wipe, so a crash mid-wipe can never leave the push gate open.
   beforeWipe: () => void;
   onSessionLost: () => Promise<void> | void;
-  // Any 426 means this app version is too old; the session reads /api/meta and shows the stop.
-  onUpdateRequired: () => void;
+  // Any 426 means this app version is too old; it carries the server's minimum when it has one.
+  onUpdateRequired: (minimum: string | null) => void;
   now?: () => number;
 };
 
@@ -62,6 +62,9 @@ export function createApi(deps: Deps) {
     deps.beforeWipe();
     try {
       await credentials.clear();
+    } catch (error) {
+      // The wipe marker retries the delete before any new login; the session is already over.
+      if (!(error instanceof WipeError)) throw error;
     } finally {
       await deps.onSessionLost();
     }
@@ -118,7 +121,14 @@ export function createApi(deps: Deps) {
 
   async function checked(pending: Promise<RawResponse>): Promise<RawResponse> {
     const response = await pending;
-    if (response.status === 426) deps.onUpdateRequired();
+    if (response.status === 426) {
+      let minimum: string | null = null;
+      try {
+        const parsed = JSON.parse(response.body)?.minAppVersion;
+        if (typeof parsed === 'string' && parsed.trim()) minimum = parsed;
+      } catch { /* the stop still shows, without a version */ }
+      deps.onUpdateRequired(minimum);
+    }
     return response;
   }
 

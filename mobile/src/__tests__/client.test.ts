@@ -1,6 +1,6 @@
 import type { RawResponse, RequestOptions } from '../../modules/fytorium-native';
 import { createApi, NetworkError, type Transport } from '../api/client';
-import { Credentials } from '../session/credentials';
+import { Credentials, WipeError } from '../session/credentials';
 import { challenge, REDIRECT_URI } from '../session/pkce';
 import { requiresUpdate } from '../session/version';
 
@@ -33,7 +33,7 @@ async function setup(tokens?: { access: string; refresh: string }) {
   await credentials.clear();
   if (tokens) await credentials.setTokens(tokens);
   let lost = 0;
-  let updates = 0;
+  const updates: (string | null)[] = [];
   const events: string[] = [];
   let language = 'el-GR';
   const api = createApi({
@@ -41,9 +41,9 @@ async function setup(tokens?: { access: string; refresh: string }) {
     language: () => language, deviceName: () => 'Synthetic phone',
     beforeWipe: () => { events.push(`gate closed, wipe marker ${wipe.get()}`); },
     onSessionLost: () => { lost += 1; events.push(`session lost, wipe marker ${wipe.get()}`); },
-    onUpdateRequired: () => { updates += 1; },
+    onUpdateRequired: (minimum) => { updates.push(minimum); },
   });
-  return { server, credentials, api, wipe, events, lost: () => lost, updates: () => updates, setLanguage: (value: string) => { language = value; } };
+  return { server, credentials, api, wipe, events, lost: () => lost, updates, setLanguage: (value: string) => { language = value; } };
 }
 
 const json = (request: RequestOptions) => JSON.parse(request.body ?? '{}');
@@ -267,11 +267,12 @@ test("a 401 that arrives after another member logged in is not replayed with tha
   expect(credentials.tokens()!.access).toBe('synthetic-b');
 });
 
-test('any 426 asks the session to show the update stop', async () => {
+test('any 426 asks the session to show the update stop with the minimum it names', async () => {
   const { server, api, updates } = await setup({ access: 'synthetic-old', refresh: 'synthetic-refresh' });
-  server.enqueue({ status: 426 });
+  server.enqueue({ status: 426, body: '{"error":"update_required","minAppVersion":"3.0.0"}' }, { status: 426, body: '' });
   await api.request('/api/notifications/subscriptions', { method: 'POST', body: {} });
-  expect(updates()).toBe(1);
+  await api.request('/api/plants');
+  expect(updates).toEqual(['3.0.0', null]);
 });
 
 test('the push gate closes before the wipe starts, and the wipe marker clears only after it finished', async () => {
@@ -288,7 +289,7 @@ test('a failed SecureStore delete keeps the wipe marker, and the next start refu
   const first = new Credentials(true, wipe);
   await first.setTokens({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
   store.__failDeletes(true);
-  await expect(first.clear()).rejects.toThrow('keystore busy');
+  await expect(first.clear()).rejects.toBeInstanceOf(WipeError);
   store.__failDeletes(false);
   expect(wipe.get()).toBe(true);
   expect(store.__items.has('fytorium.tokens')).toBe(true);
@@ -314,4 +315,49 @@ test('a browser that never opened cancels the attempt', async () => {
   await api.loginUrl();
   await api.cancelLogin();
   expect(credentials.pending()).toBeNull();
+});
+
+const secureStore = () => jest.requireMock('expo-secure-store') as {
+  __items: Map<string, string>; __failDeletes(value: boolean): void; __holdWrites(): () => void;
+};
+
+test('a token write that is still in progress when the session ends is not published', async () => {
+  const credentials = new Credentials(true, marker());
+  await credentials.setTokens({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
+  const release = secureStore().__holdWrites();
+  const write = credentials.setTokens({ access: 'synthetic-a2', refresh: 'synthetic-a2-refresh' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const wipe = credentials.clear();
+  release();
+  await expect(write).resolves.toBe(false);
+  await wipe;
+  expect(credentials.tokens()).toBeNull();
+  expect(secureStore().__items.has('fytorium.tokens')).toBe(false);
+});
+
+test('while an earlier wipe is unfinished, a new login is refused instead of being wiped later', async () => {
+  const wipe = marker();
+  const credentials = new Credentials(true, wipe);
+  await credentials.setTokens({ access: 'synthetic-a', refresh: 'synthetic-a-refresh' });
+  secureStore().__failDeletes(true);
+  await expect(credentials.clear()).rejects.toBeInstanceOf(WipeError);
+  expect(credentials.pending()).toBeNull();
+  await expect(credentials.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' })).rejects.toBeInstanceOf(WipeError);
+  await expect(credentials.setPending({ verifier: 'v', state: 's', createdAt: 1 })).rejects.toBeInstanceOf(WipeError);
+  expect(credentials.tokens()).toBeNull();
+  secureStore().__failDeletes(false);
+  await expect(credentials.setTokens({ access: 'synthetic-b', refresh: 'synthetic-b-refresh' })).resolves.toBe(true);
+  expect(wipe.get()).toBe(false);
+  expect(JSON.parse(secureStore().__items.get('fytorium.tokens')!).access).toBe('synthetic-b');
+});
+
+test('a logout whose local delete fails still ends the session and reports no error', async () => {
+  const { server, api, credentials, lost, wipe } = await setup({ access: 'synthetic-access', refresh: 'synthetic-refresh' });
+  server.enqueue({ status: 204 });
+  secureStore().__failDeletes(true);
+  await expect(api.logout()).resolves.toBeUndefined();
+  secureStore().__failDeletes(false);
+  expect(credentials.tokens()).toBeNull();
+  expect(wipe.get()).toBe(true);
+  expect(lost()).toBe(1);
 });
