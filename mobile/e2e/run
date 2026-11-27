@@ -124,6 +124,7 @@ w1() {
     fi
   done
   pass 'Maestro launch flow in light and dark; screenshots in .scratch/e2e-screenshots/'
+  curl -fsS -H 'Content-Type: application/json' -d '{"action":"reset"}' http://app:3000/__test/clock >/dev/null
 }
 q() { psql -h postgres -U fytorium -d fytorium -tAc "$1"; }
 wait_for() {
@@ -138,7 +139,14 @@ flow() { file=$1; shift; maestro --device emulator-5554 test "$@" "e2e/maestro/$
 launch() { adb shell am start -W -n "$package/.MainActivity" "$@" >/dev/null; }
 foreground() { adb shell input keyevent KEYCODE_HOME; sleep 2; launch; }
 shot() { adb exec-out screencap -p > "../.scratch/e2e-screenshots/$1.png"; }
-newest_device() { q "SELECT d.id FROM app_devices d JOIN members m ON m.id = d.member_id WHERE m.subject = '$1' ORDER BY d.created_at DESC LIMIT 1"; }
+# The test clock moves created_at, so a new device is found by id: the one that did not exist before the login.
+devices() { q "SELECT string_agg(d.id::text, ',') FROM app_devices d JOIN members m ON m.id = d.member_id WHERE m.subject = '$1'"; }
+new_device() {
+  known=",$2,"
+  for id in $(q "SELECT d.id FROM app_devices d JOIN members m ON m.id = d.member_id WHERE m.subject = '$1'"); do
+    case "$known" in *",$id,"*) ;; *) echo "$id"; return;; esac
+  done
+}
 device_token() { q "SELECT fcm_token FROM push_subscriptions WHERE app_device_id = '$1'"; }
 has_token() { [ -n "$(device_token "$1")" ]; }
 airplane() { adb shell cmd connectivity airplane-mode "$1" >/dev/null; sleep 3; }
@@ -182,11 +190,18 @@ w2() {
   wait_for 'login page after upgrade' sh -c "adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q 'text=\"Log in\"'"
   shot w2-login-light
   adb shell cmd uimode night yes >/dev/null; sleep 2; shot w2-login-dark; adb shell cmd uimode night no >/dev/null
+  before=$(devices "$owner")
   flow login.yaml -e SUBJECT="$owner"
   flow logged-in.yaml
-  first=$(newest_device "$owner")
+  first=$(new_device "$owner" "$before")
+  [ -n "$first" ] || fail 'login created no device'
   sleep 5
-  ! has_token "$first" || fail 'registered before the old token was deleted'
+  if has_token "$first"; then
+    echo "device=$first token=$(device_token "$first") old=$old failed=$(deletes failed) deleted=$(deletes deleted)" >&2
+    app_file shared_prefs/fytorium-platform.xml >&2 || true
+    q "SELECT d.id, d.created_at, s.fcm_token FROM app_devices d LEFT JOIN push_subscriptions s ON s.app_device_id = d.id ORDER BY d.created_at" >&2
+    fail 'registered before the old token was deleted'
+  fi
   pass 'After the upgrade and login nothing posts while deleteToken fails'
   # Deletion works again from the next start; the session survives the restart.
   adb shell am force-stop "$package"
@@ -206,12 +221,13 @@ w2() {
   # C. Android kills the app while the browser shows the login page.
   maestro --device emulator-5554 test e2e/maestro/tap-login.yaml >"$artifacts/maestro.log" 2>&1 || fail 'tap Log in'
   wait_for 'Custom Tab login page' sh -c "adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q 'Mock OAuth2 Server Sign-in'"
+  before=$(devices "$owner")
   adb shell am kill "$package"
   ! adb shell pidof "$package" >/dev/null || fail 'the app process survived am kill'
   flow oidc-sign-in.yaml -e SUBJECT="$owner"
   flow logged-in.yaml
-  second=$(newest_device "$owner")
-  [ "$second" != "$first" ] || fail 'no new device after the cold-start login'
+  second=$(new_device "$owner" "$before")
+  [ -n "$second" ] || fail 'no new device after the cold-start login'
   pass 'Login completed after the app process died during browser login'
 
   # D. Offline logout, then another member logs in while the old token's deletion still fails.
@@ -231,9 +247,11 @@ w2() {
   issuer=$(q "SELECT issuer FROM members WHERE subject = '$owner'")
   household=$(q "SELECT household_id FROM members WHERE subject = '$owner'")
   q "INSERT INTO members (issuer, subject, role, household_id) VALUES ('$issuer', '$family', 'family', '$household') ON CONFLICT (issuer, subject) DO UPDATE SET removed_at = NULL" >/dev/null
+  before=$(devices "$family")
   flow login.yaml -e SUBJECT="$family"
   flow logged-in.yaml
-  member_b=$(newest_device "$family")
+  member_b=$(new_device "$family" "$before")
+  [ -n "$member_b" ] || fail 'member B login created no device'
   sleep 5
   [ "$(deletes failed)" -gt "$failed_before" ] || fail 'deletion did not fail as seeded'
   [ "$(deletes deleted)" = "$deleted_before" ] || fail 'the old token was deleted although every deletion should fail'
@@ -251,10 +269,14 @@ w2() {
 
   # E. A refused refresh ends the session the same way as logout.
   q "UPDATE app_devices SET revoked_at = now() WHERE id = '$member_b'" >/dev/null
+  deleted_before=$(deletes deleted)
   foreground
   wait_for 'login page after the refresh was refused' sh -c "adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q 'text=\"Log in\"'"
-  flag push_reset_pending || fail 'invalid grant did not set push_reset_pending'
   ! flag push_ready || fail 'invalid grant left push_ready set'
+  # Online, the session end deletes the token at once, which clears the reset flag again.
+  token_deleted() { [ "$(deletes deleted)" -gt "$deleted_before" ]; }
+  wait_for "member B's token deleted after the session ended" token_deleted
+  ! flag push_reset_pending || fail 'the reset flag stayed set after the deletion succeeded'
   pass 'An invalid grant ended the session like a logout'
   q "DELETE FROM members WHERE subject = '$family'" >/dev/null 2>&1 || true
 }
