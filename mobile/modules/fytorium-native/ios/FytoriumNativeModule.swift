@@ -35,7 +35,7 @@ public class FytoriumNativeModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("FytoriumNative")
-    Events("liveRefresh", "openHome")
+    Events("liveRefresh", "openHome", "redirect")
 
     Constant("isDebugBuild") {
       #if DEBUG
@@ -53,6 +53,9 @@ public class FytoriumNativeModule: Module {
       self.defaults.set(value, forKey: name)
     }
     Function("obtainiumPackage") { () -> String? in nil }
+    Function("openObtainium") { false }
+    Function("takeRedirects") { () -> [String] in [] }
+    Function("openLogin") { (_: String) in false }
     Function("consumeOpenHome") { false }
     Function("debugLaunchArgument") { (name: String) -> String? in
       #if DEBUG
@@ -61,6 +64,7 @@ public class FytoriumNativeModule: Module {
       return nil
       #endif
     }
+    Function("debugLog") { (_: String) in }
     Function("schedulePeriodicRefresh") {}
     Function("cancelRefresh") {}
 

@@ -60,7 +60,7 @@ function write(file, text) {
   fs.writeFileSync(file, text);
 }
 
-module.exports = function withFytoriumNative(config) {
+function withFytoriumNative(config) {
   config = withAndroidManifest(config, (mod) => {
     const manifest = mod.modResults.manifest;
     manifest.$['xmlns:tools'] = 'http://schemas.android.com/tools';
@@ -85,8 +85,10 @@ module.exports = function withFytoriumNative(config) {
   config = withMainActivity(config, (mod) => {
     const marker = 'com.epaflix.fytorium.platform.RestoreState.restored = savedInstanceState != null';
     if (!mod.modResults.contents.includes(marker)) {
-      mod.modResults.contents = mod.modResults.contents.replace(/(override fun onCreate\(savedInstanceState: Bundle\?\) \{\n)/, `$1    ${marker}\n`);
-      if (!mod.modResults.contents.includes(marker)) throw new Error('MainActivity.onCreate not found');
+      mod.modResults.contents = mod.modResults.contents
+        .replace(/(override fun onCreate\(savedInstanceState: Bundle\?\) \{\n)/, `$1    ${marker}\n    com.epaflix.fytorium.platform.Redirects.capture(intent)\n`)
+        .replace(/(\n  override fun getMainComponentName)/, `\n  override fun onNewIntent(intent: android.content.Intent) {\n    com.epaflix.fytorium.platform.Redirects.capture(intent)\n    super.onNewIntent(intent)\n  }\n$1`);
+      if (!mod.modResults.contents.includes(marker) || !mod.modResults.contents.includes('override fun onNewIntent')) throw new Error('MainActivity layout changed');
     }
     return mod;
   });
@@ -114,3 +116,6 @@ module.exports = function withFytoriumNative(config) {
     return mod;
   });
 };
+
+module.exports = withFytoriumNative;
+module.exports.debugNetwork = debugNetwork;

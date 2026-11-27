@@ -20,12 +20,16 @@ type NativeModule = {
   getFlag(name: Flag): boolean;
   setFlag(name: Flag, value: boolean): void;
   obtainiumPackage(): string | null;
+  openObtainium(): boolean;
   consumeOpenHome(): boolean;
+  takeRedirects(): string[];
+  openLogin(url: string): boolean;
   debugLaunchArgument(name: string): string | null;
+  debugLog(message: string): void;
   schedulePeriodicRefresh(): void;
   cancelRefresh(): void;
   request(options: RequestOptions): Promise<RawResponse>;
-  addListener(event: 'liveRefresh' | 'openHome', listener: () => void): EventSubscription;
+  addListener(event: 'liveRefresh' | 'openHome' | 'redirect', listener: () => void): EventSubscription;
 };
 
 export default requireNativeModule<NativeModule>('FytoriumNative');

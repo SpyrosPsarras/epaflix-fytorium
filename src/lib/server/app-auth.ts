@@ -59,7 +59,7 @@ type AppLogin = { challenge: string; state: string };
 export function appLoginParameters(url: URL): AppLogin | undefined {
   const params = url.searchParams;
   if (!params.has('app') && !['redirect_uri', 'code_challenge', 'code_challenge_method', 'state'].some(key => params.has(key))) return;
-  if (params.get('app') !== 'android' || params.get('redirect_uri') !== REDIRECT_URI
+  if (!['android', 'ios'].includes(params.get('app')!) || params.get('redirect_uri') !== REDIRECT_URI
     || params.get('code_challenge_method') !== 'S256' || !validToken(params.get('code_challenge'))
     || !params.get('state') || params.get('state')!.length > 1024 || params.get('state')!.includes('\0')
     || [...params.keys()].some(key => params.getAll(key).length !== 1)) error(400, 'Invalid app login');

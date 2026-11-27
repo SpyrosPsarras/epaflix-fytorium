@@ -1,0 +1,6 @@
+appId: com.epaflix.fytorium
+---
+- extendedWaitUntil:
+    visible:
+      id: logged-in
+    timeout: 60000

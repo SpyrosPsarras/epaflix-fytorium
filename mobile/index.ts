@@ -1,9 +1,14 @@
 import { AppRegistry } from 'react-native';
 import { registerRootComponent } from 'expo';
-import Native from './modules/fytorium-native';
-import App from './src/App';
+import * as diagnostics from './src/diagnostics';
 import { refreshInBackground } from './src/refresh';
+import App from './src/App';
 
-Native.firstRun();
+// Only the event name is kept: crash text can hold credentials.
+const previous = ErrorUtils.getGlobalHandler();
+ErrorUtils.setGlobalHandler((error, fatal) => {
+  if (fatal) diagnostics.record('APP_CRASH');
+  previous(error, fatal);
+});
 AppRegistry.registerHeadlessTask('FytoriumRefresh', () => refreshInBackground);
 registerRootComponent(App);

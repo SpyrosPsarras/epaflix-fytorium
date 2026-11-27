@@ -1,0 +1,5 @@
+# Logs in through the synthetic OIDC page. env: SUBJECT
+appId: com.epaflix.fytorium
+---
+- tapOn: "Log in"
+- runFlow: oidc-sign-in.yaml

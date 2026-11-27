@@ -15,7 +15,8 @@ Run from the repository root on any host with Docker. Every command runs in the 
 ./scripts/mobile release-check    # fixture lane: release guards, release APK inspection, fixture signing
 ./scripts/mobile kotlin-fixture   # Kotlin app at e0edd63 plus e2e/kotlin-fixture/SeedTest.kt, fixture-signed
 ./scripts/stack up
-./scripts/mobile e2e w1
+./scripts/mobile e2e w1          # scaffold: upgrade cleanup, push gate, launch
+./scripts/mobile e2e w2          # session: login, logout, push token lifecycle
 ```
 
 `FYTORIUM_ABIS=x86_64` limits native code to the emulator ABI for faster local builds. `FYTORIUM_SERVER_URL` overrides the server; debug builds default to `http://app:3000`, release builds to `https://fytorium.epaflix.com` and refuse anything but HTTPS.
@@ -23,6 +24,12 @@ Run from the repository root on any host with Docker. Every command runs in the 
 ## Variants and Firebase
 
 `FYTORIUM_VARIANT=debug` (default) uses the synthetic `firebase/google-services.synthetic.json` and `firebase/GoogleService-Info.synthetic.plist`. Debug APKs allow cleartext only to `app`, `oidc` and `fake-push`, and carry the exported `DebugPushReceiver` that e2e uses to replay pushes. `FYTORIUM_VARIANT=release` needs `GOOGLE_SERVICES_FILE`; a synthetic config is refused unless `FYTORIUM_FIREBASE_TEST_CONFIG=true`, which only the fixture lane sets.
+
+## Session
+
+`src/session` holds PKCE login, SecureStore credentials and the session controller; `src/api/client.ts` is the API client over the native transport (single-flight refresh, one replay per 401, invalid grant ends the session, logout wipes even offline); `src/push` holds the push token lifecycle from the design. Android opens login in a plain Custom Tab and receives the redirect through `MainActivity`, which keeps redirects that arrive before React is ready, such as after process death during login. iOS uses `ASWebAuthenticationSession` through `expo-web-browser`.
+
+Debug builds replace Firebase tokens with synthetic ones. Launch arguments `pushToken` and `pushDeleteFailures` seed the current token and how many deletions fail; e2e reads the counts from the app's key-value store.
 
 ## Native module
 

@@ -32,10 +32,11 @@ class FytoriumNativeModule : Module() {
 
     override fun definition() = ModuleDefinition {
         Name("FytoriumNative")
-        Events("liveRefresh", "openHome")
+        Events("liveRefresh", "openHome", "redirect")
 
         OnCreate {
             instance = this@FytoriumNativeModule
+            Redirects.listener = { sendEvent("redirect") }
             Push.channels(context)
             context.getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
         }
@@ -58,6 +59,16 @@ class FytoriumNativeModule : Module() {
                 runCatching { context.packageManager.getPackageInfo(name, 0) }.isSuccess
             }
         }
+        Function("openObtainium") {
+            val launch = listOf("dev.imranr.obtainium", "dev.imranr.obtainium.fdroid").firstNotNullOfOrNull { context.packageManager.getLaunchIntentForPackage(it) }
+            launch?.let { (appContext.currentActivity ?: context).startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } != null
+        }
+        Function("takeRedirects") { Redirects.take() }
+        // A plain Custom Tab, as the Kotlin app used; its redirect returns through MainActivity and Redirects.
+        Function("openLogin") { url: String ->
+            val activity = appContext.currentActivity ?: return@Function false
+            runCatching { androidx.browser.customtabs.CustomTabsIntent.Builder().build().launchUrl(activity, android.net.Uri.parse(url)) }.isSuccess
+        }
         Function("consumeOpenHome") {
             val intent = appContext.currentActivity?.intent
             (intent?.action == Push.OPEN_HOME).also { if (it) intent?.action = null }
@@ -65,6 +76,11 @@ class FytoriumNativeModule : Module() {
         Function("debugLaunchArgument") { name: String ->
             if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) null
             else appContext.currentActivity?.intent?.getStringExtra(name)
+        }
+        // Debug builds only: e2e reads these lines from logcat.
+        Function("debugLog") { message: String ->
+            if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) android.util.Log.i("FytoriumDebug", message)
+            Unit
         }
         Function("schedulePeriodicRefresh") { RefreshWorker.schedulePeriodic(context); Unit }
         Function("cancelRefresh") { RefreshWorker.cancel(context); Unit }

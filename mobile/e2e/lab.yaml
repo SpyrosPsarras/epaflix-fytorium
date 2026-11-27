@@ -33,7 +33,7 @@ spec:
   - name: dind
     image: docker:28-dind
     securityContext: {privileged: true}
-    command: ["dind", "dockerd", "--host=unix:///run/dind/docker.sock"]
+    command: ["dind", "dockerd", "--host=unix:///run/dind/docker.sock", "--host=unix:///var/run/docker.sock"]
     resources:
       requests: {cpu: "1", memory: 4Gi}
       limits: {cpu: "6", memory: 12Gi}

@@ -50,6 +50,6 @@ unzip -p "$apk" 'classes*.dex' >"$temp/dex"
 sh test-hosts "$temp/dex" || fail 'test host in DEX'
 unzip -q "$apk" 'assets/*' -d "$temp/apk"
 [ -s "$temp/apk/assets/index.android.bundle" ] || fail 'no embedded JS bundle'
-! grep -raq 'DebugTokenProvider' "$temp/apk/assets" || fail 'debug hook in assets'
+! grep -raEq 'FytoriumSyntheticPush|synthetic\.push\.current' "$temp/apk/assets" || fail 'synthetic push tokens in assets'
 sh test-hosts "$temp/apk/assets" || fail 'test host in assets'
 echo 'Release inspection PASS: permissions, identity, SDK levels, not debuggable, backup and extraction rules, cleartext, sole push handler, picker backport, release config, no debug code or test hosts.'

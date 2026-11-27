@@ -22,6 +22,11 @@ if [ "${FYTORIUM_MOBILE_LAB:-0}" = 1 ] && [ "$(df -Pk "$cache" | awk 'NR==2 {pri
 fi
 target=build
 [ "$command" != e2e ] || target=emulator
+# The emulator image and its 6 GiB data partition do not fit the 25 GiB lab beside the Gradle cache, which e2e never reads.
+if [ "$command" = e2e ] && [ "${FYTORIUM_MOBILE_LAB:-0}" = 1 ]; then
+  find "$cache/gradle" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+  docker image prune -f >/dev/null
+fi
 image="fytorium-mobile-$id-$target"
 docker build -q --target "$target" -t "$image" mobile/docker >/dev/null
 run() {
@@ -41,10 +46,8 @@ case "$command" in
   release-check) run "$image" sh release/check;;
   e2e)
     scenario=${1:-w1}
-    case "$scenario" in w1) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
+    case "$scenario" in w1|w2) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
     [ -c /dev/kvm ] || { echo 'e2e needs /dev/kvm on this host.' >&2; exit 1; }
-    # The emulator's 6 GiB data partition does not fit the 25 GiB lab beside the Gradle cache, which e2e never reads.
-    [ "${FYTORIUM_MOBILE_LAB:-0}" != 1 ] || find "$cache/gradle" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
     app=$(docker compose ps -q app)
     if [ -z "$app" ] || [ "$(docker inspect -f '{{.State.Running}}' "$app")" != true ]; then
       echo 'Start this worktree stack with ./scripts/stack up before e2e.' >&2
