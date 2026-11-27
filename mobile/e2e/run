@@ -110,6 +110,7 @@ w1() {
   for scheme in light dark; do
     wait_ready 60 "adb transport online before Maestro ($scheme)" device_online
     if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
+    adb shell am start -W -n "$package/.MainActivity" >/dev/null
     out="../.scratch/e2e-screenshots/android-$scheme"
     rm -rf "$out"
     if ! maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "$out" >/dev/null; then

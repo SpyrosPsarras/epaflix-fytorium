@@ -88,6 +88,8 @@ jobs:
           xcrun simctl install "$udid" build/Build/Products/Release-iphonesimulator/Fytorium.app
           for scheme in light dark; do
             xcrun simctl ui "$udid" appearance "$scheme"
+            xcrun simctl terminate "$udid" com.epaflix.fytorium || true
+            xcrun simctl launch "$udid" com.epaflix.fytorium
             MAESTRO_CLI_NO_ANALYTICS=1 MAESTRO_DRIVER_STARTUP_TIMEOUT=600000 "$HOME/maestro/bin/maestro" --device "$udid" test e2e/maestro/launch.yaml --test-output-dir "maestro-$scheme"
           done
       - if: always()
