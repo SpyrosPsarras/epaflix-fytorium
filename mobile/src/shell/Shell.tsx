@@ -4,7 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { CommonActions, NavigationContainer, type NavigationState, type Theme } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { memberKey, type Member } from '../data/cache';
-import { useShell } from './guards';
+import { useShell, type Intent } from './guards';
 import { navigation, popToRoot, reselect, stackOf } from './actions';
 import { TabContext, useDeps } from './context';
 import {
@@ -71,9 +71,9 @@ export type ShellProps = {
   subscribeOpenHome(listener: () => void): () => void;
 };
 
-type Intent = { kind: 'home' } | { kind: 'tab'; tab: string; reselect: boolean };
-
+// W6-P21: the shell carries out what was asked for, at once or when the last save ends; a second request replaces the first.
 function run(intent: Intent) {
+  if (intent.kind === 'run') { intent.run(); return; }
   if (!navigation.isReady()) return;
   if (intent.kind === 'home') {
     navigation.dispatch(CommonActions.navigate('Today'));
@@ -88,7 +88,6 @@ function run(intent: Intent) {
 export function Shell({ member, theme, initialState, onState, subscribeOpenHome }: ShellProps) {
   const shell = useShell();
   const { drafts } = useDeps();
-  const pending = useRef<Intent | null>(null);
   const shown = useRef(new Set<string>());
   // The member the navigator was built for. A new member or role builds a new one (W6-P17): no question can stop it,
   // and no page keeps state from before; for the same member only the pages the new role may open come along.
@@ -101,20 +100,8 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
     setApplied({ member, version: applied.version + 1, initialState: state ? (filterState(state, member!.role) as NavigationState) : undefined });
   }
 
-  const request = (intent: Intent) => {
-    if (shell.saving.size > 0) pending.current = intent;
-    else run(intent);
-  };
-
-  useEffect(() => subscribeOpenHome(() => request({ kind: 'home' })));
-
-  // W6-P21: what was asked for during a save happens when it ends; a second request replaces the first.
-  useEffect(() => shell.subscribe(() => {
-    if (shell.saving.size > 0 || !pending.current) return;
-    const intent = pending.current;
-    pending.current = null;
-    run(intent);
-  }), [shell]);
+  useEffect(() => shell.setExecutor(run), [shell]);
+  useEffect(() => subscribeOpenHome(() => shell.request({ kind: 'home' })));
 
   return (
     <NavigationContainer
@@ -148,7 +135,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
             const again = tabNavigation.isFocused();
             if (shell.saving.size > 0) {
               event.preventDefault();
-              pending.current = { kind: 'tab', tab: route.name, reselect: again };
+              shell.pending = { kind: 'tab', tab: route.name, reselect: again };
             } else if (again && (stackOf(route.name)?.routes?.length ?? 1) === 1) {
               reselect(route.name);
             }

@@ -16,22 +16,20 @@ import { nodeDb } from './helpers/nodeDb';
 jest.mock('expo-image', () => ({ Image: () => null }));
 
 const owner: Member = { id: 'm1', role: 'owner' };
-const plantsJson = JSON.stringify([
-  { id: 'p1', display_name: 'Synthetic fern', cover_photo_id: null },
-  { id: 'p2', display_name: 'Synthetic thyme', cover_photo_id: null },
-]);
+const plantRow = (id: string, name: string) => ({ id, display_name: name, scientific_name: 'Testoria lucida', status: 'active', cover_photo_id: null });
 
 async function setup(member: Member = owner) {
   const db = nodeDb();
   const cache = new CareCache(db);
   let identity = member;
+  let plants = [plantRow('p1', 'Synthetic fern'), plantRow('p2', 'Synthetic thyme')];
   const api = {
     request: async (path: string): Promise<RawResponse> => {
       const body: Record<string, string> = {
         '/api/me': JSON.stringify({ member: { ...identity, display_name: 'Synthetic member' } }),
-        '/api/plants': plantsJson,
+        '/api/plants': JSON.stringify(plants),
         '/api/plants/p1': JSON.stringify({ id: 'p1', display_name: 'Synthetic fern' }),
-        '/api/tasks': JSON.stringify({ today: '2026-11-27', view: 'today', settings: {}, groups: {}, sections: [] }),
+        '/api/tasks': JSON.stringify({ today: '2026-11-27', view: 'today', settings: { sort: 'task', filter: 'all', show_completed: false }, groups: {}, sections: [] }),
         '/api/meta': JSON.stringify({ timezone: 'Europe/Athens' }),
       };
       return { status: body[path] !== undefined ? 200 : 404, headers: {}, body: body[path] ?? '{}' };
@@ -69,6 +67,7 @@ async function setup(member: Member = owner) {
   const view = await render(tree());
   return {
     view, db, drafts, states, tree, logout, moved: () => moved,
+    addPlant: (id: string, name: string) => { plants = [...plants, plantRow(id, name)]; },
     shell: () => shell!,
     openHome: () => act(() => homes.forEach((listener) => listener())),
     becomes: async (next: Member) => {
@@ -403,7 +402,7 @@ test('W6-P12: Back from each page goes to the page or tab that opened it', async
   expect(screen.getByTestId('journal-root')).toBeTruthy();
 });
 
-test('W6-P17: losing a page removes every page opened from it; a sitter keeps plant pages and Find', async () => {
+test('W6-P17: losing a page removes every page opened from it; becoming a sitter closes plant pages and Find too', async () => {
   const h = await setup();
   await press(tab('More'));
   await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
@@ -418,9 +417,12 @@ test('W6-P17: losing a page removes every page opened from it; a sitter keeps pl
   await press(within(screen.getByTestId('today-root')).getByText('Find a plant'));
   await press(screen.getAllByText('Synthetic fern').at(-1)!);
   await h.becomes({ id: 'm1', role: 'sitter' });
+  expect(screen.getByTestId('today-root')).toBeTruthy();
+  expect(screen.queryByTestId('plant-p1')).toBeNull();
+  expect(screen.queryByLabelText('Back')).toBeNull();
+  await press(within(screen.getByTestId('today-root')).getByText('Find a plant'));
+  await press(screen.getAllByText('Synthetic fern').at(-1)!);
   expect(screen.getByTestId('plant-p1')).toBeTruthy();
-  await systemBack();
-  expect(screen.getByTestId('find-search')).toBeTruthy();
 });
 
 test('N3: the first screen is saved before anything opens, so its scroll comes back', async () => {
@@ -486,4 +488,84 @@ test('W6-P15: View imported plants asks about a Plants form first, then shows th
   await press(tab('More'));
   expect(screen.getByTestId('more-root')).toBeTruthy();
   expect(screen.queryByText('View imported plants')).toBeNull();
+});
+
+type Saved = { routes: { name: string; state?: Saved; params?: object }[] };
+const withRootParams = (state: NavigationState, tab: string, params: object) => {
+  const copy = JSON.parse(JSON.stringify(state)) as Saved;
+  copy.routes.find((route) => route.name === tab)!.state!.routes[0].params = params;
+  return copy as unknown as NavigationState;
+};
+
+test('W6-P6, P15: a reselect after a restore is seen although the restored page carries an older signal', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  const saved = withRootParams(h.states.at(-1)!, 'Plants', { top: 1, clear: 1 });
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  const rows = () => within(screen.getByTestId('plants-root')).getByTestId('plant-rows');
+  await fireEvent(rows(), 'scrollEndDrag', { nativeEvent: { contentOffset: { x: 0, y: 200 } } });
+  await press(tab('Plants'));
+  expect(rows().props.contentOffset).toEqual({ x: 0, y: 0 });
+  await restored.unmount();
+});
+
+test('W6-P4: an open question and what it would close survive Android recreating the activity', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  await press(screen.getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await systemBack();
+  expect(screen.getByText('Discard changes?')).toBeTruthy();
+  let saved = h.states.at(-1)!;
+  await h.view.unmount();
+  let restored = await render(h.tree(saved));
+  expect(screen.getByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Keep editing'));
+  expect(screen.getByTestId('draft-field').props.value).toBe('Monty');
+
+  await press(tab('More'));
+  await press(screen.getByText('Log out'));
+  await press(screen.getByTestId('logout-confirm'));
+  expect(await screen.findByText('Discard changes?')).toBeTruthy();
+  saved = h.states.at(-1)!;
+  await restored.unmount();
+  restored = await render(h.tree(saved));
+  expect(screen.getByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Discard'));
+  expect(h.logout).toHaveBeenCalledTimes(1);
+  await restored.unmount();
+});
+
+test('W6-P21: View imported plants waits for a save, and a later tab tap replaces it', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await act(async () => h.shell().setSaving('planta', true));
+  await press(screen.getByText('View imported plants'));
+  expect(selected('More')).toBe(true);
+  expect(screen.getByText('View imported plants')).toBeTruthy();
+  await act(async () => h.shell().setSaving('planta', false));
+  expect(selected('Plants')).toBe(true);
+
+  await press(tab('More'));
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await act(async () => h.shell().setSaving('planta', true));
+  await press(screen.getByText('View imported plants'));
+  await press(tab('Today'));
+  await act(async () => h.shell().setSaving('planta', false));
+  expect(selected('Today')).toBe(true);
+  await press(tab('More'));
+  expect(screen.getByText('View imported plants')).toBeTruthy();
+});
+
+test('W6-P22: a list shown again reads again', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  await press(tab('More'));
+  h.addPlant('p3', 'Synthetic ivy');
+  await press(tab('Plants'));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(within(screen.getByTestId('plants-root')).getByText('Synthetic ivy')).toBeTruthy();
 });

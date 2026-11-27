@@ -10,6 +10,12 @@ appId: com.epaflix.fytorium
 - assertVisible: ${EXPECT}
 - tapOn:
     id: logout-confirm
+# W6-P26: a form with changes left open in another tab asks before log out drops it.
+- runFlow:
+    when:
+      visible: "Discard changes?"
+    commands:
+      - tapOn: "Discard"
 - extendedWaitUntil:
     visible: "Log in"
     timeout: 30000

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useNavigation, usePreventRemove, useRoute, type NavigationAction } from '@react-navigation/native';
 import { Button, Dialog, Portal, Text } from 'react-native-paper';
-import { useTab } from './context';
+import { useDraft, useTab } from './context';
 import type { TabName } from './routes';
 
 export type Question = { title: string; body: string; stay: string; leave: string };
@@ -10,6 +10,9 @@ export const DISCARD: Question = {
 };
 
 export type Hidden = { tab: TabName; question: Question };
+
+// What a tab tap, reselect, notification tap or "View imported plants" asked for while a save was in flight (W6-P21).
+export type Intent = { kind: 'home' } | { kind: 'tab'; tab: string; reselect: boolean } | { kind: 'run'; run(): void };
 
 type Shell = {
   // W6-P21: pages with a save, delete or upload in flight; tab changes wait for them.
@@ -20,29 +23,43 @@ type Shell = {
   // Pages whose question was already answered with leave elsewhere (W6-P15); they close without asking again.
   discarded: Set<string>;
   setSaving(page: string, saving: boolean): void;
-  subscribe(listener: () => void): () => void;
+  // The one request waiting for the saves to end; a later one replaces it.
+  pending: Intent | null;
+  // Runs the request now, or keeps it until every save has ended.
+  request(intent: Intent): void;
+  // How the mounted shell carries out a navigation request.
+  setExecutor(execute: (intent: Intent) => void): void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
 
 function createShell(): Shell {
-  const listeners = new Set<() => void>();
   const saving = new Set<string>();
   const dirty = new Map<string, Hidden>();
-  return {
+  let execute = (intent: Intent) => { if (intent.kind === 'run') intent.run(); };
+  const shell: Shell = {
     saving,
     dirty,
     discarded: new Set<string>(),
+    pending: null,
+    request(intent) {
+      if (saving.size > 0) shell.pending = intent;
+      else execute(intent);
+    },
+    setExecutor(next) { execute = next; },
     setDirty(page, entry) {
       if (entry) dirty.set(page, entry); else dirty.delete(page);
     },
     setSaving(page, value) {
-      const had = saving.has(page);
       if (value) saving.add(page); else saving.delete(page);
-      if (had !== value) listeners.forEach((listener) => listener());
+      if (saving.size === 0 && shell.pending) {
+        const intent = shell.pending;
+        shell.pending = null;
+        execute(intent);
+      }
     },
-    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
+  return shell;
 }
 
 export function ShellProvider({ children }: { children: ReactNode }) {
@@ -72,7 +89,8 @@ export function LeaveGuard({ dirty, question = DISCARD, onLeave }: { dirty: bool
   const shell = useShell();
   const tab = useTab();
   const route = useRoute();
-  const [pending, setPending] = useState<NavigationAction | null>(null);
+  // The open question and what it would close survive Android recreating the activity, as Kotlin's do.
+  const [pending, setPending] = useDraft<NavigationAction | null>('leave', null);
   const [leaving, setLeaving] = useState<NavigationAction | null>(null);
   useEffect(() => {
     shell.setDirty(route.key, dirty ? { tab, question } : null);

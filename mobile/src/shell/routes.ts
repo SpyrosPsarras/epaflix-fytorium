@@ -31,9 +31,11 @@ export function tabsFor(role: Role | null): TabName[] {
   return role === 'owner' || role === 'family' ? ['Today', 'Plants', 'Journal', 'More'] : ['Today', 'Plants', 'More'];
 }
 
-// W6-P17 with its build amendment: which pages a role may keep open (as Kotlin's AppShell `allowed`).
+// W6-P17 with its build amendment: which pages stay open when the same member's role changes. Becoming a sitter
+// keeps only the More pages a sitter may open and closes the rest, plant pages and Find included (Kotlin
+// AppShell.kt:177); with the cut at the first page that goes, that is Kotlin's `takeWhile`.
 export function allowed(route: string, role: Role | null): boolean {
-  if (role === 'sitter') return ['TodayRoot', 'PlantsRoot', 'MoreRoot', 'Plant', 'Find', 'Notifications', 'About'].includes(route);
+  if (role === 'sitter') return ['TodayRoot', 'PlantsRoot', 'MoreRoot', 'Notifications', 'About'].includes(route);
   if (role === 'family') return !['Planta', 'Members', 'Sites'].includes(route);
   return true;
 }

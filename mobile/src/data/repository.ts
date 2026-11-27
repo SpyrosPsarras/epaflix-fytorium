@@ -26,16 +26,33 @@ const empty = (offline: boolean): CareState => ({
 class BadReply extends Error {}
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const isTasks = (rows: unknown) => Array.isArray(rows) && rows.every((task) => isObject(task) && typeof task.status === 'string');
-// The parse points Kotlin's parseTaskList, parsePlant and parseTimezone fail on; field-level parsing comes with the pages.
+const text = (value: unknown) => typeof value === 'string';
+const absent = (value: unknown) => value === null || value === undefined;
+const optional = (check: (value: unknown) => boolean) => (value: unknown) => absent(value) || check(value);
+const number = (value: unknown) => typeof value === 'number';
+const objects = (check: (row: Record<string, unknown>) => boolean) => (value: unknown) => Array.isArray(value) && value.every((row) => isObject(row) && check(row));
+
+function validZone(zone: unknown): boolean {
+  if (!text(zone)) return false;
+  try { new Intl.DateTimeFormat('en', { timeZone: zone as string }); return true; } catch { return false; }
+}
+
+// The fields Kotlin's parsers require before a reply is saved (CareModels.kt parseEvent, parseTask, parseTaskList,
+// parsePlant, parseTimezone); the pages parse the rest when they arrive.
+const isEvent = (event: Record<string, unknown>) => text(event.id) && text(event.plant_id) && text(event.kind) && text(event.occurred_on)
+  && typeof event.can_undo === 'boolean' && optional(number)(event.batch_plant_count) && optional(number)(event.batch_event_count);
+const isTask = (task: Record<string, unknown>) => text(task.status) && optional(number)(task.intervalDays)
+  && objects((basis) => text(basis.input) && text(basis.source) && text(basis.adjustment) && optional(number)(basis.factor))(task.basedOn)
+  && optional((event) => isObject(event) && isEvent(event))(task.completed_event);
 const SHAPES = {
-  tasks: (body: unknown) => isObject(body) && typeof body.today === 'string' && typeof body.view === 'string' && isObject(body.settings)
-    && isObject(body.groups) && Object.values(body.groups).every(isTasks)
-    && Array.isArray(body.sections) && body.sections.every((section) => isObject(section)
-      && typeof section.key === 'string' && typeof section.label === 'string' && isTasks(section.tasks)),
-  plants: (body: unknown) => Array.isArray(body) && body.every((row) => isObject(row) && typeof row.id === 'string' && typeof row.display_name === 'string'),
-  meta: (body: unknown) => isObject(body) && typeof body.timezone === 'string',
-  plant: (body: unknown) => isObject(body) && typeof body.id === 'string',
+  tasks: (body: unknown) => isObject(body) && text(body.today) && text(body.view)
+    && isObject(body.settings) && text(body.settings.sort) && text(body.settings.filter) && typeof body.settings.show_completed === 'boolean'
+    && isObject(body.groups) && Object.values(body.groups).every(objects(isTask))
+    && objects((section) => text(section.key) && text(section.label) && objects(isTask)(section.tasks))(body.sections),
+  plants: objects((plant) => text(plant.id) && text(plant.display_name) && text(plant.scientific_name) && text(plant.status)
+    && optional(number)(plant.pot_size_cm)),
+  meta: (body: unknown) => isObject(body) && validZone(body.timezone),
+  plant: (body: unknown) => isObject(body) && text(body.id),
 };
 
 function checked(json: string, shape: (body: unknown) => boolean): string {

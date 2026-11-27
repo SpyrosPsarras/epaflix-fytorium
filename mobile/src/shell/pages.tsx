@@ -52,7 +52,18 @@ function useSavedScroll() {
   return { ref: ref as never, contentOffset: { x: 0, y: offset }, onScrollEndDrag: save, onMomentumScrollEnd: save };
 }
 
+// W6-P22: a list shown again (a tab tap, Back to it) reads again; nothing moves while it stays in view.
+function useReloadOnReturn() {
+  const { care } = useDeps();
+  const shown = useRef(false);
+  useFocusEffect(useCallback(() => {
+    if (shown.current) void care.refresh();
+    shown.current = true;
+  }, [care]));
+}
+
 function PlantRows({ plants, open, header }: { plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement }) {
+  useReloadOnReturn();
   return (
     <FlatList
       data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
@@ -141,12 +152,13 @@ export function MoreRoot() {
   const shell = useShell();
   // An open question survives Android recreating the activity, as Kotlin's saved `confirmLogout` does.
   const [confirming, setConfirming] = useDraft('confirming', false);
-  const [hidden, setHidden] = useState<[string, Hidden] | null>(null);
-  const answered = useRef(new Set<string>());
+  const [hidden, setHidden] = useDraft<[string, Hidden] | null>('hidden', null);
+  const [answered, setAnswered] = useDraft<string[]>('answered', []);
   // W6-P26: each form with changes in another tab asks its own question, in turn, before log out drops it.
-  const askNext = () => {
-    const next = [...shell.dirty].find(([page]) => !answered.current.has(page)) ?? null;
-    if (next) setHidden(next); else deps.logout();
+  const askNext = (done: string[]) => {
+    const next = [...shell.dirty].find(([page]) => !done.includes(page)) ?? null;
+    setHidden(next);
+    if (!next) deps.logout();
   };
   let name: string | null = null;
   try { name = care.identity ? JSON.parse(care.identity)?.member?.display_name ?? null : null; } catch { name = null; }
@@ -179,13 +191,17 @@ export function MoreRoot() {
         visible={confirming} online={deps.online} onDismiss={() => setConfirming(false)}
         onConfirm={() => {
           setConfirming(false);
-          answered.current.clear();
-          askNext();
+          setAnswered([]);
+          askNext([]);
         }} />
       <QuestionDialog
         question={hidden?.[1].question ?? null}
         onStay={() => { const tab = hidden?.[1].tab; setHidden(null); if (tab) navigation.navigate(tab as never); }}
-        onLeave={() => { if (hidden) answered.current.add(hidden[0]); setHidden(null); askNext(); }} />
+        onLeave={() => {
+          const done = hidden ? [...answered, hidden[0]] : answered;
+          setAnswered(done);
+          askNext(done);
+        }} />
     </ScrollView>
   );
 }
@@ -272,7 +288,7 @@ export function PlantaStub() {
   const navigation = useNavigation<Nav>();
   const shell = useShell();
   const first = parsePlants(useCare().plants)[0];
-  const [asking, setAsking] = useState<Hidden | null>(null);
+  const [asking, setAsking] = useDraft<Hidden | null>('asking', null);
   const viewImported = () => {
     const plants = stackOf('Plants');
     navigation.goBack();
@@ -287,7 +303,7 @@ export function PlantaStub() {
       {first && <Button mode="outlined" onPress={() => navigation.navigate('Plant', { id: first.id })} contentStyle={{ minHeight: 48 }}>Open imported plant</Button>}
       <Button mode="outlined" onPress={() => navigation.navigate('Sites')} contentStyle={{ minHeight: 48 }}>Check sites</Button>
       <Button mode="outlined" contentStyle={{ minHeight: 48 }}
-        onPress={() => { const [form] = plantsForms(); if (form) setAsking(form[1]); else viewImported(); }}>
+        onPress={() => shell.request({ kind: 'run', run: () => { const [form] = plantsForms(); if (form) setAsking(form[1]); else viewImported(); } })}>
         View imported plants
       </Button>
       <QuestionDialog

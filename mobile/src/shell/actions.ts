@@ -12,13 +12,14 @@ export function popToRoot(tab: string) {
   if (stack && (stack.routes?.length ?? 0) > 1) navigation.dispatch({ ...StackActions.popToTop(), target: stack.key });
 }
 
+// Saved states bring signals back from earlier processes, so a new one must not repeat any of them.
 let signal = 0;
 // W6-P6 at a root, and W6-P15: the root scrolls to the top and saves that, and the Plants grid can drop its search.
 export function rootToTop(tab: string, clearSearch = false) {
   const stack = stackOf(tab);
   const root = stack?.routes?.[0];
   if (!stack?.key || !root?.key) return;
-  signal += 1;
+  signal = Math.max(signal + 1, Date.now());
   navigation.dispatch({ ...CommonActions.setParams({ top: signal, ...(clearSearch ? { clear: signal } : {}) }), source: root.key, target: stack.key });
 }
 

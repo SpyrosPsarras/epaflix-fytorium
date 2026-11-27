@@ -7,10 +7,15 @@ import { Drafts } from '../data/drafts';
 import { nodeDb } from './helpers/nodeDb';
 
 const identity = (id: string, role: string) => JSON.stringify({ member: { id, role, display_name: 'Synthetic' }, household: { id: 'h1' } });
-const tasks = (view: string) => JSON.stringify({ today: '2026-11-27', view, settings: {}, groups: {}, sections: [] });
+const task = { status: 'due', dueOn: '2026-11-27', intervalDays: 7, basedOn: [{ input: 'species', source: 'synthetic', adjustment: 'none' }] };
+const tasks = (view: string) => JSON.stringify({
+  today: '2026-11-27', view, settings: { sort: 'task', filter: 'all', show_completed: false },
+  groups: { watering: [task] }, sections: [{ key: 'watering', label: 'Water', tasks: [task] }],
+});
+const plantRow = (id: string, name: string) => ({ id, display_name: name, scientific_name: 'Testoria lucida', status: 'active', pot_size_cm: null });
 const TODAY = tasks('today');
 const UPCOMING = tasks('upcoming');
-const PLANTS = '[{"id":"p1","display_name":"Synthetic fern"}]';
+const PLANTS = JSON.stringify([plantRow('p1', 'Synthetic fern')]);
 const META = '{"timezone":"Europe/Athens","minAppVersion":null}';
 type Reply = Partial<RawResponse> | 'drop' | Promise<Partial<RawResponse>>;
 
@@ -74,7 +79,7 @@ test('logout wipes the cache, and a read that returns after the wipe is ignored'
   const late = h.repository.refresh();
   await new Promise((resolve) => setImmediate(resolve));
   h.repository.wipe();
-  release({ body: '[{"id":"stale","display_name":"Stale"}]' });
+  release({ body: JSON.stringify([plantRow('stale', 'Stale')]) });
   await late;
   expect(h.repository.get()).toMatchObject({ member: null, plants: null, busy: false });
   expect(h.db.all('SELECT * FROM cached_care')).toEqual([]);
@@ -220,6 +225,9 @@ test('a 200 the lists cannot use keeps the last good copy and its time, and says
   for (const [route, body] of [
     ['/api/plants', '<html>proxy</html>'], ['/api/plants', '{"rows":[]}'], ['/api/tasks?view=today', '[]'], ['/api/meta', '{}'], ['/api/me', '{}'],
     ['/api/tasks?view=today', badTasks({ sections: [null] })], ['/api/tasks?view=today', badTasks({ groups: { watering: null } })],
+    ['/api/tasks?view=today', badTasks({ groups: { watering: [{ status: 'due' }] } })], ['/api/tasks?view=today', badTasks({ settings: {} })],
+    ['/api/tasks?view=today', badTasks({ groups: { watering: [{ ...task, completed_event: { id: 'e1' } }] } })],
+    ['/api/plants', JSON.stringify([{ id: 'p1', display_name: 'Synthetic fern' }])], ['/api/meta', '{"timezone":"Not/AZone"}'],
   ]) {
     h.route('/api/me', () => ({ body: identity('m1', 'owner') }));
     h.route('/api/plants', () => ({ body: PLANTS }));

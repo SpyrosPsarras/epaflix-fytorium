@@ -286,6 +286,19 @@ app_db() {
   for suffix in '' -wal -shm; do app_file "files/SQLite/fytorium.db$suffix" > "/tmp/app.db$suffix" 2>/dev/null || rm -f "/tmp/app.db$suffix"; done
   sqlite3 /tmp/app.db "$1"
 }
+# Sends the phone's requests to app:3000 to a WireMock stub with the given response; the stack's own calls are untouched.
+divert_app() {
+  app_ip=$(getent hosts app | cut -d' ' -f1); fakes_ip=$(getent hosts fakes | cut -d' ' -f1)
+  stub=$(curl -fsS -X POST http://fakes:8080/__admin/mappings -H 'Content-Type: application/json' \
+    -d "{\"priority\":1,\"request\":{\"urlPathPattern\":\"/api/.*\",\"headers\":{\"Host\":{\"equalTo\":\"app:3000\"}}},\"response\":$1}" | sed -n 's/^ *"id" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$stub" ] || fail 'the app:3000 stub was not created'
+  divert="-p tcp -d $app_ip --dport 3000 -j DNAT --to-destination $fakes_ip:8080"
+  adb shell su 0 iptables -t nat -I OUTPUT $divert || fail 'could not divert app:3000'
+}
+undivert_app() {
+  adb shell su 0 iptables -t nat -D OUTPUT $divert
+  curl -fsS -X DELETE "http://fakes:8080/__admin/mappings/$stub" >/dev/null
+}
 work_live() {
   for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
   sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' AND workspec.state IN (0, 1, 2)"
@@ -343,7 +356,15 @@ w3() {
   pass 'After process death the Plants stack and its draft came back'
 
   # Removing the task in Recents (Clear all, as a swipe does) ends it; the next start opens Today at its root without the draft.
-  adb shell input keyevent KEYCODE_APP_SWITCH; sleep 2
+  adb shell input keyevent KEYCODE_APP_SWITCH
+  # Recents can take a moment to draw; App Switch is sent again only while the app still has the focus.
+  recents_open() {
+    visible 'text="Clear all"' && return 0
+    adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" && adb shell input keyevent KEYCODE_APP_SWITCH
+    sleep 2
+    return 1
+  }
+  wait_for 'Clear all in Recents' recents_open
   adb shell uiautomator dump /sdcard/w.xml >/dev/null
   clear_all=$(adb shell cat /sdcard/w.xml | grep -o '<node[^>]*text="Clear all"[^>]*>' | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p')
   [ -n "$clear_all" ] || fail 'Recents shows no Clear all'
@@ -387,24 +408,31 @@ w3() {
   airplane disable
   wait_ready "$E2E_GUEST_NETWORK_TIMEOUT" 'Guest network back after airplane mode' online_again
   # Fytorium reachable but answering 503: the phone's requests to app:3000 go to a WireMock stub that answers only them.
-  app_ip=$(getent hosts app | cut -d' ' -f1); fakes_ip=$(getent hosts fakes | cut -d' ' -f1)
-  stub=$(curl -fsS -X POST http://fakes:8080/__admin/mappings -H 'Content-Type: application/json' \
-    -d '{"priority":1,"request":{"urlPathPattern":"/api/.*","headers":{"Host":{"equalTo":"app:3000"}}},"response":{"status":503,"body":"Service Unavailable"}}' | sed -n 's/^ *"id" *: *"\([^"]*\)".*/\1/p' | head -n 1)
-  [ -n "$stub" ] || fail 'the 503 stub was not created'
-  divert="-p tcp -d $app_ip --dport 3000 -j DNAT --to-destination $fakes_ip:8080"
-  adb shell su 0 iptables -t nat -I OUTPUT $divert || fail 'could not divert app:3000'
+  divert_app '{"status":503,"body":"Service Unavailable"}'
   foreground
   unavailable_shown() { status_is "Fytorium isn&apos;t responding" || status_is "Fytorium isn't responding"; }
   wait_for "Fytorium isn't responding on the status line" unavailable_shown
   answered=$(curl -fsS -X POST http://fakes:8080/__admin/requests/count -H 'Content-Type: application/json' \
     -d '{"urlPathPattern":"/api/.*","headers":{"Host":{"equalTo":"app:3000"}}}' | sed -n 's/.*"count" *: *\([0-9]*\).*/\1/p')
   [ "${answered:-0}" -ge 1 ] || fail 'the phone never reached the 503 stub'
-  adb shell su 0 iptables -t nat -D OUTPUT $divert
-  curl -fsS -X DELETE "http://fakes:8080/__admin/mappings/$stub" >/dev/null
+  undivert_app
   foreground
   cleared() { ! status_is 'Offline' && ! unavailable_shown; }
   wait_for 'the status line cleared' cleared
   pass "Airplane mode shows Offline; Fytorium answering 503 shows Fytorium isn't responding"
+
+  # The update stop covers the shell: a draft open when a 426 arrives is still there after Check again clears it.
+  flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Stop draft'
+  divert_app '{"status":426,"headers":{"Content-Type":"application/json"},"jsonBody":{"error":"update_required","minAppVersion":"99.0.0"}}'
+  foreground
+  wait_for 'the update stop' visible 'text="Check again"'
+  # The compressed dump holds what accessibility services see; the full one also lists the covered shell.
+  adb shell uiautomator dump --compressed /sdcard/c.xml >/dev/null
+  ! adb shell cat /sdcard/c.xml | grep -q 'text="Stop draft"' || fail 'the covered draft is visible to accessibility services'
+  undivert_app
+  flow tap-text.yaml -e TEXT='Check again'
+  wait_for 'the draft after the stop cleared' visible 'text="Stop draft"'
+  pass 'A draft open when the update stop came is there after Check again'
 
   for scheme in light dark; do
     if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
