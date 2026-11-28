@@ -1,0 +1,13 @@
+# Opens a plant's Edit page from the Plants tab and types a nickname. env: PLANT, TEXT
+appId: com.epaflix.fytorium
+---
+- tapOn:
+    id: tab-Plants
+- scrollUntilVisible:
+    element: ${PLANT}
+- tapOn: ${PLANT}
+- tapOn: Edit
+- tapOn:
+    id: draft-field
+- inputText: ${TEXT}
+- hideKeyboard

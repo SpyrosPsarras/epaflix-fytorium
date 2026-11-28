@@ -1,0 +1,4 @@
+appId: com.epaflix.fytorium
+---
+- tapOn:
+    id: tab-More

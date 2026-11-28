@@ -1,0 +1,4 @@
+# Taps a visible text. env: TEXT
+appId: com.epaflix.fytorium
+---
+- tapOn: ${TEXT}

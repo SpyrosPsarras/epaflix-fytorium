@@ -1,0 +1,21 @@
+# env: EXPECT, the dialog sentence for this connection state
+appId: com.epaflix.fytorium
+---
+- tapOn:
+    id: tab-More
+- scrollUntilVisible:
+    element: "Log out"
+- tapOn: "Log out"
+- assertVisible: "Log out of Fytorium?"
+- assertVisible: ${EXPECT}
+- tapOn:
+    id: logout-confirm
+# W6-P26: a form with changes left open in another tab asks before log out drops it.
+- runFlow:
+    when:
+      visible: "Discard changes?"
+    commands:
+      - tapOn: "Discard"
+- extendedWaitUntil:
+    visible: "Log in"
+    timeout: 30000

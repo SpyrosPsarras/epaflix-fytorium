@@ -1,0 +1,9 @@
+# The caller starts the app (am start, simctl launch); Maestro's own launchApp can drop the emulator's adb transport.
+appId: com.epaflix.fytorium
+---
+- extendedWaitUntil:
+    visible:
+      id: fytorium-root
+    timeout: 60000
+- assertVisible: Fytorium
+- takeScreenshot: launch

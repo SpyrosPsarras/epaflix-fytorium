@@ -24,7 +24,7 @@ test('app start accepts only the exact redirect URI and S256 challenge with app 
   for (const [key, value] of [
     ['redirect_uri', 'https://foreign.invalid/callback'], ['redirect_uri', 'com.epaflix.fytorium:/oauth2redirect/'],
     ['redirect_uri', 'com.epaflix.fytorium://oauth2redirect'], ['redirect_uri', 'COM.EPAFLIX.FYTORIUM:/oauth2redirect'],
-    ['code_challenge_method', 'plain'], ['code_challenge', 'short'], ['state', ''], ['state', '\0'], ['app', 'ios'],
+    ['code_challenge_method', 'plain'], ['code_challenge', 'short'], ['state', ''], ['state', '\0'], ['app', 'windows'], ['app', 'IOS'],
   ]) {
     const invalid = params(); invalid.set(key, value);
     const response = await fetch(harness.base + '/auth/login?' + invalid, { redirect: 'manual' });

@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+temp=$(mktemp -d)
+trap 'rm -rf "$temp"' EXIT
+for url in https://app https://oidc https://fake-push http://app:3000 https://oidc/default https://fake-push. '"https://app"' \
+  'https://app?lang=en' https://OIDC/default 'https://fake-push#ready' https://APP; do
+  printf 'x\000%s\000y' "$url" > "$temp/dex"
+  if sh test-hosts "$temp/dex"; then echo "Missed test host: $url" >&2; exit 1; fi
+done
+for url in https://fytorium.epaflix.com https://application.example http://localhost:8081/ https://oidcx.example; do
+  printf 'x\000%s\000y' "$url" > "$temp/dex"
+  sh test-hosts "$temp/dex" || { echo "Flagged production string: $url" >&2; exit 1; }
+done
+mkdir -p "$temp/assets/sub"
+printf 'clean' > "$temp/assets/clean.json"
+printf 'x\000https://app\000' > "$temp/assets/sub/release notes.json"
+if sh test-hosts "$temp/assets"; then echo 'Missed a test host in a file name with a space' >&2; exit 1; fi
+rm "$temp/assets/sub/release notes.json"
+sh test-hosts "$temp/assets" || { echo 'Flagged a clean directory' >&2; exit 1; }
+if sh test-hosts "$temp/missing" 2>/dev/null; then echo 'Treated an unreadable path as clean' >&2; exit 1; fi
+echo 'Test-host scan checks passed: any case; NUL, colon, slash, quote, ?, # and trailing-dot terminators; directories with spaces; unreadable paths fail.'

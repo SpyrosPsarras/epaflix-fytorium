@@ -34,6 +34,20 @@ test('app login returns a bound code without a browser session and exchanges it 
   expect(await me.json()).toEqual(browserIdentity);
 });
 
+test('the iOS app logs in through the same redirect and exchange', async () => {
+  const owner = await harness.login();
+  const browserIdentity = await (await owner.request('/api/me')).json();
+  const login = await harness.appLogin('synthetic-owner', undefined, 'ios');
+  expect(login.callback.status).toBe(303);
+  expect(login.location.protocol + login.location.pathname).toBe('com.epaflix.fytorium:/oauth2redirect');
+  expect(login.location.searchParams.get('state')).toBe(login.state);
+  const response = await harness.token({ grant_type: 'authorization_code', code: login.code, code_verifier: login.verifier, device_name: 'Synthetic iPhone' });
+  expect(response.status).toBe(200);
+  const tokens = await response.json();
+  const me = await fetch(harness.base + '/api/me', { headers: { authorization: 'Bearer ' + tokens.access_token } });
+  expect(await me.json()).toEqual(browserIdentity);
+});
+
 test('Custom Tab start and callback preserve an existing browser session while returning an app code', async () => {
   const owner = await harness.login();
   const identity = await (await owner.request('/api/me')).json();

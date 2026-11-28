@@ -1,0 +1,20 @@
+# Signs in on the synthetic OIDC page that a Custom Tab shows. env: SUBJECT
+# Chrome hides the placeholder from accessibility; the subject field has autofocus.
+appId: com.android.chrome
+---
+- extendedWaitUntil:
+    visible: "Mock OAuth2 Server Sign-in"
+    timeout: 120000
+- tapOn:
+    focused: true
+- inputText: ${SUBJECT}
+- hideKeyboard
+- scrollUntilVisible:
+    element: "Sign-in"
+    direction: DOWN
+- tapOn: "Sign-in"
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"

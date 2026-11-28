@@ -1,0 +1,11 @@
+#!/bin/sh
+# usage: fixture-sign <in.apk> <out.apk>. Signs with the never-published fixture key, creating it on first use.
+set -eu
+tools=$(ls -d /opt/android/build-tools/* | tail -n 1)
+keystore=/src/cache/fixture.p12
+[ -f "$keystore" ] || keytool -genkeypair -keystore "$keystore" -storetype PKCS12 -storepass fixture -keypass fixture \
+  -alias fixture -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Fytorium fixture never publish'
+mkdir -p "$(dirname "$2")"
+"$tools/zipalign" -f 4 "$1" "$2.aligned"
+"$tools/apksigner" sign --ks "$keystore" --ks-pass pass:fixture --out "$2" "$2.aligned"
+rm -f "$2.aligned" "$2.idsig"

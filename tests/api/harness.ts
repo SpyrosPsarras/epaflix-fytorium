@@ -225,11 +225,11 @@ export function createApiHarness(options: { appEnv?: Record<string, string>; tes
     return { callback, callbackUrl, transactionCookie, cookie, request };
   }
 
-  async function appLogin(subject = 'synthetic-owner', invite?: string) {
+  async function appLogin(subject = 'synthetic-owner', invite?: string, app: 'android' | 'ios' = 'android') {
     provider.setSubject(subject, { name: 'Test member' });
     const verifier = randomBytes(32).toString('base64url');
     const state = randomBytes(24).toString('base64url');
-    const params = new URLSearchParams({ app: 'android', redirect_uri: 'com.epaflix.fytorium:/oauth2redirect',
+    const params = new URLSearchParams({ app, redirect_uri: 'com.epaflix.fytorium:/oauth2redirect',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state });
     const pending = invite ? await fetch(base + '/invite/' + invite, { redirect: 'manual' }) : null;
     const pendingCookie = pending?.headers.getSetCookie()[0]?.split(';')[0] ?? '';

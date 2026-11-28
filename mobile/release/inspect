@@ -1,0 +1,56 @@
+#!/bin/sh
+# usage: inspect <release apk>. Fails on any difference from the shipped Android contract.
+set -eu
+apk=$(realpath "$1")
+cd "$(dirname "$0")"
+tools=$(ls -d /opt/android/build-tools/* | tail -n 1)
+temp=$(mktemp -d)
+trap 'rm -rf "$temp"' EXIT
+fail() { echo "Release inspection FAIL: $*" >&2; exit 1; }
+"$tools/aapt" dump permissions "$apk" | grep -v '^package:' | sort >"$temp/permissions"
+sort permissions.txt | diff -u - "$temp/permissions" || fail 'permissions differ from release/permissions.txt'
+"$tools/aapt" dump badging "$apk" >"$temp/badging"
+grep -q "^package: name='com.epaflix.fytorium'" "$temp/badging" || fail 'package name'
+grep -qx "sdkVersion:'29'" "$temp/badging" || fail 'minSdk is not 29'
+grep -qx "targetSdkVersion:'35'" "$temp/badging" || fail 'targetSdk is not 35'
+! grep -q 'application-debuggable' "$temp/badging" || fail 'release APK is debuggable'
+"$tools/aapt" dump xmltree "$apk" AndroidManifest.xml >"$temp/manifest"
+grep -q 'android:allowBackup(0x01010280)=(type 0x12)0x0' "$temp/manifest" || fail 'backup is allowed'
+grep -q 'android:usesCleartextTraffic(0x010104ec)=(type 0x12)0x0' "$temp/manifest" || fail 'cleartext is not off'
+! grep -q 'android:networkSecurityConfig' "$temp/manifest" || fail 'release has a network security config'
+! grep -Eq 'DebugPushReceiver|ReactNativeFirebaseMessaging(Receiver|Service|HeadlessService)' "$temp/manifest" || fail 'debug or library push component in manifest'
+grep -q 'photopicker_activity:0:required' "$temp/manifest" || fail 'Photo Picker backport request missing'
+grep -Eq 'android:enableOnBackInvokedCallback\(0x[0-9a-f]+\)=\(type 0x12\)0xffffffff' "$temp/manifest" || fail 'predictive back is not opted in (W6-T18)'
+awk '/E: (service|receiver)/{name=""} /A: android:name/ && name=="" {name=$0} /MESSAGING_EVENT/{print name}' "$temp/manifest" \
+  | sed 's/.*Raw: "\(.*\)")/\1/' >"$temp/handlers"
+[ "$(cat "$temp/handlers")" = com.epaflix.fytorium.platform.PushService ] || fail "MESSAGING_EVENT handlers must be PushService only: $(cat "$temp/handlers")"
+ref=$(sed -n 's/.*android:dataExtractionRules(0x0101063e)=@\(0x[0-9a-f]*\).*/\1/p' "$temp/manifest" | head -n 1)
+[ -n "$ref" ] || fail 'application has no data extraction rules'
+rules=$("$tools/aapt2" dump resources "$apk" | awk -v id="$ref" '$1=="resource" && $2==id {found=1; next} found && /\(file\)/ {print $3; exit}')
+[ -n "$rules" ] || fail "data extraction rules resource $ref not found"
+"$tools/aapt2" dump xmltree --file "$rules" "$apk" >"$temp/rules"
+# Each section must hold <exclude domain="D" path="."/> for every domain.
+awk 'function flush() { if (el=="exclude" && path==".") print section ":" domain; el=""; domain=""; path="" }
+  /E: / { flush(); el=$2; if ($2=="cloud-backup" || $2=="device-transfer") section=$2 }
+  /A: domain=/ { split($0, a, "\""); domain=a[2] }
+  /A: path=/ { split($0, a, "\""); path=a[2] }
+  END { flush() }' "$temp/rules" | sort -u >"$temp/excluded"
+for section in cloud-backup device-transfer; do
+  for domain in root sharedpref file database external; do
+    grep -qx "$section:$domain" "$temp/excluded" || fail "$section does not exclude all of $domain"
+  done
+done
+unzip -p "$apk" assets/app.config >"$temp/app.config"
+node -e '
+  const config = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const url = new URL(config.extra.serverUrl);
+  if (config.extra.variant !== "release" || url.protocol !== "https:" || !url.hostname || ["app", "oidc", "fake-push", "localhost"].includes(url.hostname.replace(/\.$/, ""))) process.exit(1);
+' "$temp/app.config" || fail 'embedded app config is not an HTTPS release for a production host'
+unzip -p "$apk" 'classes*.dex' >"$temp/dex"
+! grep -aEq 'DebugPushReceiver' "$temp/dex" || fail 'debug hook in DEX'
+sh test-hosts "$temp/dex" || fail 'test host in DEX'
+unzip -q "$apk" 'assets/*' -d "$temp/apk"
+[ -s "$temp/apk/assets/index.android.bundle" ] || fail 'no embedded JS bundle'
+! grep -raEq 'FytoriumSyntheticPush|synthetic\.push\.current' "$temp/apk/assets" || fail 'synthetic push tokens in assets'
+sh test-hosts "$temp/apk/assets" || fail 'test host in assets'
+echo 'Release inspection PASS: permissions, identity, SDK levels, not debuggable, backup and extraction rules, cleartext, sole push handler, picker backport, release config, no debug code or test hosts.'

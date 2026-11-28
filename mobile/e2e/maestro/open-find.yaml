@@ -1,0 +1,7 @@
+# Opens Find a plant from Today and types a query; the field has focus, so the keyboard stays up. env: QUERY
+appId: com.epaflix.fytorium
+---
+- tapOn: "Find a plant"
+- assertVisible:
+    id: find-search
+- inputText: ${QUERY}

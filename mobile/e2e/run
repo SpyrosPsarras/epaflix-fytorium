@@ -1,0 +1,550 @@
+#!/bin/sh
+# usage: e2e/run w1. Runs inside the emulator image on the stack network, from mobile/.
+set -eu
+scenario=${1:-w1}
+case "$scenario" in w1|w2|w3) ;; *) echo "Unknown e2e scenario: $scenario" >&2; exit 2;; esac
+artifacts=../.scratch/e2e-failures
+mkdir -p "$artifacts"
+. e2e/device
+. e2e/api.sh
+package=com.epaflix.fytorium
+pass() { echo "PASS: $*"; }
+fail() { echo "FAIL: $*" >&2; adb logcat -d > "$artifacts/logcat.txt" 2>/dev/null || true; grep -A25 "FATAL EXCEPTION" "$artifacts/logcat.txt" | head -60 >&2 || true; adb exec-out screencap -p > "$artifacts/failure.png" 2>/dev/null || true; adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 && adb pull /sdcard/window.xml "$artifacts/failure-window.xml" >/dev/null 2>&1 || true; exit 1; }
+data=/data/data/$package
+app_file() { adb exec-out su 0 cat "$data/$1"; }
+app_has() { adb shell su 0 ls "$data/$1" >/dev/null 2>&1; }
+keystore_alias() {
+  uid=$(adb shell pm list packages -U "$package" | tr -d '\r' | sed -n "s/^package:$package uid:\([0-9]*\)$/\1/p")
+  case "$uid" in ''|*[!0-9]*) fail "no single uid for $package: $uid";; esac
+  for suffix in '' -wal -shm; do adb exec-out su 0 cat "/data/misc/keystore/persistent.sqlite$suffix" > "/tmp/keystore.db$suffix" 2>/dev/null || rm -f "/tmp/keystore.db$suffix"; done
+  sqlite3 /tmp/keystore.db "SELECT count(*) FROM keyentry WHERE alias = 'fytorium.credentials' AND namespace = $uid"
+}
+flag() { app_file shared_prefs/fytorium-platform.xml 2>/dev/null | grep -q "name=\"$1\" value=\"true\""; }
+launch_without_crash() {
+  adb logcat -c
+  adb shell am start -W -n "$package/.MainActivity" >/dev/null
+  sleep 8
+  adb shell pidof "$package" >/dev/null || fail "$1: process not running"
+  adb shell uiautomator dump /sdcard/window.xml >/dev/null && adb pull /sdcard/window.xml /tmp/window.xml >/dev/null
+  grep -q 'resource-id="fytorium-root"' /tmp/window.xml || fail "$1: app root not shown"
+  ! adb logcat -d | grep -E "FATAL EXCEPTION|Force finishing activity.*$package" || fail "$1: crashed"
+  pass "$1: launched without Metro and without a crash"
+}
+w1() {
+  for host in gbif fakes; do
+    if curl -fsS "http://$host:8080/__admin/mappings" >/tmp/mappings 2>/dev/null; then break; fi
+  done
+  [ "$(grep -o '"id"' /tmp/mappings | wc -l)" -gt 0 ] || fail 'WireMock sees no mounted mappings'
+  curl -fsS http://fake-push:8080/fcm/stats >/dev/null || fail 'fake-push not serving its mounted script'
+  pass 'Stack fakes see their mounted files'
+
+  fixture=/src/cache/kotlin-fixture
+  push_id="synthetic-fcm-w1-$(cat /proc/sys/kernel/random/uuid)"
+  adb install "$fixture/app.apk" >/dev/null && adb install "$fixture/test.apk" >/dev/null
+  curl -fsS -H 'Content-Type: application/json' -d '{"action":"set","at":"2030-06-01T10:00:00Z"}' http://app:3000/__test/clock >/dev/null
+  adb shell am instrument -w -e class com.epaflix.fytorium.SeedTest -e pushToken "$push_id" -e denyNotifications true \
+    "$package.test/androidx.test.runner.AndroidJUnitRunner" > "$artifacts/seed.txt" || true
+  grep -q '^OK (1 test)' "$artifacts/seed.txt" || { cat "$artifacts/seed.txt" >&2; fail 'Kotlin seed did not complete'; }
+  app_has shared_prefs/credentials.xml || fail 'seeded install has no credentials'
+  pass "Kotlin $fixture/app.apk seeded: logged in, Today and a plant cached, token registered"
+
+  aliases=$(keystore_alias)
+  if [ "$aliases" != 1 ]; then
+    ls -la /tmp/keystore.db* >&2; sqlite3 /tmp/keystore.db '.tables' 'SELECT alias, namespace, domain FROM keyentry' >&2 || true; echo "uid=$uid" >&2
+    fail 'seeded install has no Keystore alias'
+  fi
+  # Prefs the app cannot write make the first attempt fail before anything is deleted.
+  adb install -r /src/cache/artifacts/fytorium-release-fixture.apk >/dev/null || fail 'release fixture APK did not install over the Kotlin app'
+  adb shell su 0 chmod 500 "$data/shared_prefs"
+  launch_without_crash 'Release fixture over Kotlin, prefs write blocked'
+  adb shell am force-stop "$package"
+  adb shell su 0 chmod 771 "$data/shared_prefs"
+  app_file shared_prefs/notification-permission.xml | grep -q 'name="asked" value="true"' || fail 'a failed flag write lost the legacy asked value'
+  app_has shared_prefs/credentials.xml || fail 'a failed flag write still deleted legacy prefs'
+  ! flag first_run_done || fail 'N5 marked itself done after a failed flag write'
+  pass 'N5 kept the legacy prefs when its own flags could not be written'
+  # A capture folder the app cannot empty makes the next cleanup attempt fail.
+  adb shell su 0 chmod 500 "$data/cache/captures"
+  launch_without_crash 'Release fixture, capture cleanup blocked'
+  flag push_reset_pending || fail 'N5 did not set push_reset_pending before cleanup'
+  flag notifications_asked || fail 'N5 did not carry over the asked flag'
+  ! flag first_run_done || fail 'N5 marked itself done after a failed step'
+  app_has cache/captures/seed.jpg || fail 'the blocked capture was removed anyway'
+  pass 'N5 left first_run_done unset after a failed step'
+  adb shell am force-stop "$package"
+  adb shell su 0 chmod 700 "$data/cache/captures"
+  launch_without_crash 'Release fixture retry'
+  flag first_run_done || fail 'N5 retry did not complete'
+  for path in shared_prefs/credentials.xml shared_prefs/diagnostics.xml shared_prefs/notification-permission.xml \
+    databases/care-cache.db cache/thumbnails cache/captures no_backup/photo-drafts; do
+    ! app_has "$path" || fail "N5 left $path"
+  done
+  aliases=$(keystore_alias)
+  [ "$aliases" = 0 ] || fail "N5 left the Keystore alias ($aliases)"
+  for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
+  [ -s /tmp/work.db ] || fail 'WorkManager database missing'
+  live=$(sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name IN ('care-cache-refresh','notification-cache-refresh') AND workspec.state NOT IN (2,3,5)")
+  [ "$live" = 0 ] || fail 'N5 left legacy WorkManager jobs scheduled'
+  cancelled=$(sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = 'care-cache-refresh' AND workspec.state = 5")
+  [ "$cancelled" -ge 1 ] || fail 'the seeded care-cache-refresh job was not found cancelled'
+  pass 'Release N5 retry removed legacy prefs, Keystore alias, database, caches, drafts and jobs'
+  adb install -r /src/cache/artifacts/fytorium-debug-fixture.apk >/dev/null || fail 'debug fixture APK did not install over the release fixture'
+  launch_without_crash 'Debug fixture'
+
+  adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
+  push() { adb shell am broadcast -n "$package/com.epaflix.fytorium.platform.DebugPushReceiver" -a com.epaflix.fytorium.DEBUG_PUSH \
+    --es tag fytorium-daily --es title "'$1'" --es body "'$2'" --es url / >/dev/null; sleep 2; }
+  posted() { adb shell dumpsys notification --noredact | grep -c "pkg=$package.*tag=fytorium-daily" || true; }
+  push 'Synthetic reminder one' 'Synthetic body one'
+  [ "$(posted)" = 0 ] || fail 'N4 showed a push while push_ready was clear'
+  adb shell am force-stop "$package"
+  printf '%s\n' "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" '<map>' \
+    '<boolean name="first_run_done" value="true" />' '<boolean name="push_ready" value="true" />' '</map>' \
+    | adb shell "run-as $package sh -c 'cat > $data/shared_prefs/fytorium-platform.xml'"
+  push 'Synthetic reminder one' 'Synthetic body one'
+  [ "$(posted)" = 1 ] || fail 'N4 did not show a push once push_ready was set'
+  push 'Synthetic reminder two' 'Synthetic body two'
+  [ "$(posted)" = 1 ] || fail 'N4 did not replace the notification by tag'
+  adb shell dumpsys notification --noredact | grep -q 'Synthetic reminder two' || fail 'replacement text not shown'
+  pass 'N4: dropped while push_ready clear, shown once set, replaced by tag'
+  device_online() { [ "$(adb get-state 2>/dev/null)" = device ]; }
+  for scheme in light dark; do
+    wait_ready 60 "adb transport online before Maestro ($scheme)" device_online
+    if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
+    adb shell am start -W -n "$package/.MainActivity" >/dev/null
+    out="../.scratch/e2e-screenshots/android-$scheme"
+    rm -rf "$out"
+    if ! maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "$out" >/dev/null; then
+      # Maestro's driver can drop the adb transport; only that infrastructure failure earns one retry.
+      grep -rq 'device offline' "$out" || fail "Maestro launch flow ($scheme)"
+      echo "Maestro lost the adb transport ($scheme); reconnecting and retrying once."
+      adb reconnect offline >/dev/null 2>&1 || true
+      wait_ready 60 "adb transport back online ($scheme)" device_online
+      rm -rf "$out"
+      maestro --device emulator-5554 test e2e/maestro/launch.yaml --test-output-dir "$out" >/dev/null || fail "Maestro launch flow ($scheme)"
+    fi
+  done
+  pass 'Maestro launch flow in light and dark; screenshots in .scratch/e2e-screenshots/'
+  curl -fsS -H 'Content-Type: application/json' -d '{"action":"reset"}' http://app:3000/__test/clock >/dev/null
+}
+q() { psql -h postgres -U fytorium -d fytorium -tAc "$1"; }
+wait_for() {
+  description=$1; shift
+  deadline=$(($(date +%s) + 60))
+  until "$@"; do
+    [ "$(date +%s)" -lt "$deadline" ] || fail "timed out: $description"
+    sleep 2
+  done
+}
+flow() { file=$1; shift; maestro --device emulator-5554 test "$@" "e2e/maestro/$file" >"$artifacts/maestro.log" 2>&1 || { cat "$artifacts/maestro.log" >&2; fail "Maestro $file"; }; }
+launch() { adb shell am start -W -n "$package/.MainActivity" "$@" >/dev/null; }
+foreground() { adb shell input keyevent KEYCODE_HOME; sleep 2; launch; }
+shot() { adb exec-out screencap -p > "../.scratch/e2e-screenshots/$1.png"; }
+# The test clock moves created_at, so a new device is found by id: the one that did not exist before the login.
+devices() { q "SELECT string_agg(d.id::text, ',') FROM app_devices d JOIN members m ON m.id = d.member_id WHERE m.subject = '$1'"; }
+new_device() {
+  known=",$2,"
+  for id in $(q "SELECT d.id FROM app_devices d JOIN members m ON m.id = d.member_id WHERE m.subject = '$1'"); do
+    case "$known" in *",$id,"*) ;; *) echo "$id"; return;; esac
+  done
+}
+device_token() { q "SELECT fcm_token FROM push_subscriptions WHERE app_device_id = '$1'"; }
+has_token() { [ -n "$(device_token "$1")" ]; }
+airplane() { adb shell cmd connectivity airplane-mode "$1" >/dev/null; sleep 3; }
+# After airplane mode the guest needs a validated default network, DNS and HTTP to the stack again.
+online_again() {
+  timeout 10 adb shell dumpsys connectivity | grep -q 'VALIDATED' || return 1
+  guest_http app 3000 /healthz && guest_http oidc 8080 /default/.well-known/openid-configuration
+}
+posted() { adb shell dumpsys notification --noredact | grep -c "pkg=$package.*tag=fytorium-daily" || true; }
+replay() { adb shell am broadcast -n "$package/com.epaflix.fytorium.platform.DebugPushReceiver" -a com.epaflix.fytorium.DEBUG_PUSH \
+  --es tag fytorium-daily --es title "'$1'" --es body "'Synthetic body'" --es url / >/dev/null; sleep 2; }
+kv() {
+  for suffix in '' -wal -shm; do adb exec-out su 0 cat "$data/files/SQLite/ExpoSQLiteStorage$suffix" > "/tmp/kv.db$suffix" 2>/dev/null || rm -f "/tmp/kv.db$suffix"; done
+  sqlite3 /tmp/kv.db "SELECT value FROM storage WHERE key = '$1'" 2>/dev/null
+}
+deletes() { value=$(kv "synthetic.push.$1"); echo "${value:-0}"; }
+
+w2() {
+  mkdir -p ../.scratch/e2e-screenshots
+  # Chrome and Maestro are chatty; a larger buffer keeps the app's debug lines for the checks below.
+  adb logcat -G 16M
+  owner=synthetic-a03-owner
+  family=synthetic-w2-family
+  curl -fsS -H 'Content-Type: application/json' -d '{"action":"reset"}' http://app:3000/__test/clock >/dev/null
+  # A. Upgrade: a logged-in Kotlin install registered token T_old; the RN app must delete it before registering.
+  adb uninstall "$package" >/dev/null 2>&1 || true
+  fixture=/src/cache/kotlin-fixture
+  old="synthetic-fcm-w2-$(cat /proc/sys/kernel/random/uuid)"
+  adb install "$fixture/app.apk" >/dev/null && adb install "$fixture/test.apk" >/dev/null
+  adb shell am instrument -w -e class com.epaflix.fytorium.SeedTest -e pushToken "$old" \
+    "$package.test/androidx.test.runner.AndroidJUnitRunner" > "$artifacts/seed.txt" || true
+  grep -q '^OK (1 test)' "$artifacts/seed.txt" || { cat "$artifacts/seed.txt" >&2; fail 'Kotlin seed did not complete'; }
+  [ "$(q "SELECT count(*) FROM push_subscriptions WHERE fcm_token = '$old'")" = 1 ] || fail 'seeded token not registered'
+  adb install -r /src/cache/artifacts/fytorium-debug-fixture.apk >/dev/null || fail 'debug APK did not install over Kotlin'
+  # Notifications are allowed throughout, so only push_ready decides whether a replayed push shows.
+  adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
+  adb logcat -c
+  launch --es pushToken "$old" --es pushDeleteFailures 1000
+  seeded_failure() { [ "$(deletes failed)" -ge 1 ]; }
+  wait_for 'the seeded deletion failure' seeded_failure
+  wait_for 'login page after upgrade' visible 'text="Log in"'
+  shot w2-login-light
+  adb shell cmd uimode night yes >/dev/null; sleep 2; shot w2-login-dark; adb shell cmd uimode night no >/dev/null
+  before=$(devices "$owner")
+  flow login.yaml -e SUBJECT="$owner"
+  flow logged-in.yaml
+  first=$(new_device "$owner" "$before")
+  [ -n "$first" ] || fail 'login created no device'
+  sleep 5
+  if has_token "$first"; then
+    echo "device=$first token=$(device_token "$first") old=$old failed=$(deletes failed) deleted=$(deletes deleted)" >&2
+    app_file shared_prefs/fytorium-platform.xml >&2 || true
+    q "SELECT d.id, d.created_at, s.fcm_token FROM app_devices d LEFT JOIN push_subscriptions s ON s.app_device_id = d.id ORDER BY d.created_at" >&2
+    fail 'registered before the old token was deleted'
+  fi
+  pass 'After the upgrade and login nothing posts while deleteToken fails'
+  # Deletion works again from the next start; the session survives the restart.
+  adb shell am force-stop "$package"
+  launch --es pushDeleteFailures 0
+  wait_for 'registration after deletion' has_token "$first"
+  [ "$(device_token "$first")" != "$old" ] || fail 'registered the Kotlin token again'
+  wait_for 'push_ready after registration' flag push_ready
+  pass 'Foreground retry deleted the old token and registered a new one'
+  shot w2-logged-in-light
+
+  # B. Online logout revokes the device.
+  flow logout.yaml -e EXPECT='Plants and photos saved on this phone are removed, and this phone stops getting Fytorium notifications. You need a connection to log in again.'
+  [ -n "$(q "SELECT revoked_at FROM app_devices WHERE id = '$first'")" ] || fail 'online logout did not revoke the device'
+  ! flag push_ready || fail 'push_ready survived logout'
+  pass 'Online logout revoked the device and closed the push gate'
+
+  # C. Android kills the app while the browser shows the login page.
+  maestro --device emulator-5554 test e2e/maestro/tap-login.yaml >"$artifacts/maestro.log" 2>&1 || fail 'tap Log in'
+  wait_for 'Custom Tab login page' visible 'Mock OAuth2 Server Sign-in'
+  before=$(devices "$owner")
+  adb shell am kill "$package"
+  ! adb shell pidof "$package" >/dev/null || fail 'the app process survived am kill'
+  flow oidc-sign-in.yaml -e SUBJECT="$owner"
+  flow logged-in.yaml
+  second=$(new_device "$owner" "$before")
+  [ -n "$second" ] || fail 'no new device after the cold-start login'
+  pass 'Login completed after the app process died during browser login'
+
+  # D. Offline logout, then another member logs in while the old token's deletion still fails.
+  wait_for 'second registration' has_token "$second"
+  adb shell am force-stop "$package"
+  adb logcat -c
+  launch --es pushDeleteFailures 1000
+  flow logged-in.yaml
+  failed_before=$(deletes failed)
+  deleted_before=$(deletes deleted)
+  airplane enable
+  flow logout.yaml -e EXPECT="This phone is offline, so you can't log in again until it reconnects. Plants and photos saved on this phone are removed."
+  [ -z "$(q "SELECT revoked_at FROM app_devices WHERE id = '$second'")" ] || fail 'offline logout reached the server'
+  flag push_reset_pending || fail 'offline logout did not set push_reset_pending'
+  airplane disable
+  wait_ready "$E2E_GUEST_NETWORK_TIMEOUT" 'Guest network back after airplane mode: validated, app and oidc HTTP' online_again
+  issuer=$(q "SELECT issuer FROM members WHERE subject = '$owner'")
+  household=$(q "SELECT household_id FROM members WHERE subject = '$owner'")
+  q "INSERT INTO members (issuer, subject, role, household_id) VALUES ('$issuer', '$family', 'family', '$household') ON CONFLICT (issuer, subject) DO UPDATE SET removed_at = NULL" >/dev/null
+  before=$(devices "$family")
+  flow login.yaml -e SUBJECT="$family"
+  flow logged-in.yaml
+  member_b=$(new_device "$family" "$before")
+  [ -n "$member_b" ] || fail 'member B login created no device'
+  sleep 5
+  [ "$(deletes failed)" -gt "$failed_before" ] || fail 'deletion did not fail as seeded'
+  [ "$(deletes deleted)" = "$deleted_before" ] || fail 'the old token was deleted although every deletion should fail'
+  ! has_token "$member_b" || fail 'member B registered while the old token deletion was pending'
+  replay 'Synthetic reminder for member A'
+  [ "$(posted)" = 0 ] || fail "member A's push was shown to member B"
+  pass "Offline logout kept the old token's push away from member B while its deletion was pending"
+  adb shell am force-stop "$package"
+  launch --es pushDeleteFailures 0
+  wait_for 'member B registration' has_token "$member_b"
+  flag push_reset_pending && fail 'push_reset_pending still set after deletion' || true
+  replay 'Synthetic reminder for member B'
+  [ "$(posted)" = 1 ] || fail 'member B push not shown after registration'
+  pass 'Reconnect deleted the old token, then member B registered and receives pushes'
+
+  # E. A refused refresh ends the session the same way as logout.
+  q "UPDATE app_devices SET revoked_at = now() WHERE id = '$member_b'" >/dev/null
+  deleted_before=$(deletes deleted)
+  foreground
+  wait_for 'login page after the refresh was refused' visible 'text="Log in"'
+  ! flag push_ready || fail 'invalid grant left push_ready set'
+  # Online, the session end deletes the token at once, which clears the reset flag again.
+  token_deleted() { [ "$(deletes deleted)" -gt "$deleted_before" ]; }
+  wait_for "member B's token deleted after the session ended" token_deleted
+  ! flag push_reset_pending || fail 'the reset flag stayed set after the deletion succeeded'
+  pass 'An invalid grant ended the session like a logout'
+  q "DELETE FROM members WHERE subject = '$family'" >/dev/null 2>&1 || true
+}
+
+app_db() {
+  for suffix in '' -wal -shm; do app_file "files/SQLite/fytorium.db$suffix" > "/tmp/app.db$suffix" 2>/dev/null || rm -f "/tmp/app.db$suffix"; done
+  sqlite3 /tmp/app.db "$1"
+}
+# Sends the phone's requests to app:3000 to a WireMock stub with the given response; the stack's own calls are untouched.
+divert_app() {
+  app_ip=$(getent hosts app | cut -d' ' -f1); fakes_ip=$(getent hosts fakes | cut -d' ' -f1)
+  stub=$(curl -fsS -X POST http://fakes:8080/__admin/mappings -H 'Content-Type: application/json' \
+    -d "{\"priority\":1,\"request\":{\"urlPathPattern\":\"/api/.*\",\"headers\":{\"Host\":{\"equalTo\":\"app:3000\"}}},\"response\":$1}" | sed -n 's/^ *"id" *: *"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$stub" ] || fail 'the app:3000 stub was not created'
+  divert="-p tcp -d $app_ip --dport 3000 -j DNAT --to-destination $fakes_ip:8080"
+  adb shell su 0 iptables -t nat -I OUTPUT $divert || fail 'could not divert app:3000'
+}
+undivert_app() {
+  adb shell su 0 iptables -t nat -D OUTPUT $divert
+  curl -fsS -X DELETE "http://fakes:8080/__admin/mappings/$stub" >/dev/null
+}
+work_live() {
+  for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
+  sqlite3 /tmp/work.db "SELECT count(*) FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' AND workspec.state IN (0, 1, 2)"
+}
+work_state() {
+  for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
+  sqlite3 /tmp/work.db "SELECT workspec.state FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' ORDER BY workspec.last_enqueue_time DESC LIMIT 1"
+}
+# Each dump replaces a deleted file, so a dump that returns without writing cannot pass on an older screen.
+dump() { adb shell rm -f /sdcard/w.xml; adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell test -s /sdcard/w.xml; }
+visible() { dump && adb shell cat /sdcard/w.xml | grep -q "$1"; }
+# One successful dump that has the first pattern and not the second (extended regex): a failed dump never passes.
+shows() {
+  dump || return 1
+  window=$(adb shell cat /sdcard/w.xml)
+  printf '%s' "$window" | grep -Eq "$1" || return 1
+  [ -z "${2:-}" ] || ! printf '%s' "$window" | grep -Eq "$2"
+}
+status_is() { visible "resource-id=\"status-line\"[^>]*text=\"$1" || visible "text=\"$1[^\"]*\"[^>]*resource-id=\"status-line\""; }
+
+w3() {
+  mkdir -p ../.scratch/e2e-screenshots
+  adb logcat -G 16M
+  owner=synthetic-a03-owner
+  run_id=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  plant_name="Synthetic W3 fern $run_id"
+  curl -fsS -H 'Content-Type: application/json' -d '{"action":"reset"}' http://app:3000/__test/clock >/dev/null
+  adb uninstall "$package" >/dev/null 2>&1 || true
+  adb install /src/cache/artifacts/fytorium-debug-fixture.apk >/dev/null || fail 'debug APK did not install'
+  adb shell pm grant "$package" android.permission.POST_NOTIFICATIONS
+  launch
+  flow login.yaml -e SUBJECT="$owner"
+  flow logged-in.yaml
+
+  # A plant with a cover photo, made through the API as the same member.
+  token=$(api_login "$owner") || fail 'API login failed'
+  # Test plants that earlier runs left (W3's own and the W1 Kotlin seeds) go first, so the lists stay short.
+  q "SELECT id || '|' || nickname FROM plants WHERE nickname LIKE 'Synthetic W3 fern %' OR nickname LIKE 'Synthetic W1 seed fern %'" | while IFS='|' read -r old name; do
+    api "$token" DELETE "/api/plants/$old" "{\"confirm_name\":\"$name\"}" >/dev/null || true
+  done
+  site=$(api "$token" POST /api/sites "{\"name\":\"Synthetic W3 site $run_id\",\"location\":\"indoor\",\"light\":\"part_shade\",\"humidity\":\"normal\",\"grow_light\":false,\"draft\":false}" | json_field id)
+  search=$(api "$token" GET '/api/species/search?q=Testoria%20lucida' | json_field search_id)
+  plant=$(api "$token" POST /api/plants "{\"nickname\":\"$plant_name\",\"site_id\":\"$site\",\"search_id\":\"$search\",\"gbif_key\":910001,\"pot_type\":\"plastic\",\"soil_type\":\"all_purpose\",\"plant_size\":\"small\",\"growth_stage\":\"young\",\"fertilizer_type\":\"liquid\",\"pot_size_cm\":null,\"window_distance_cm\":null,\"drainage\":true,\"grow_light\":false,\"near_ac\":false,\"near_heater\":false}" | json_field id)
+  [ -n "$plant" ] || fail 'seed plant not created'
+  curl -fsS -H "Authorization: Bearer $token" -H 'X-App-Version: 99.0.0' -F "photo=@e2e/synthetic-photo.jpg;type=image/jpeg" "http://app:3000/api/plants/$plant/photos" >/dev/null || fail 'seed photo upload failed'
+  pass "Seeded $plant_name with a cover photo"
+
+  [ "$(work_state fytorium-care-refresh)" = 0 ] || fail 'the 6-hour refresh is not scheduled after login'
+  pass 'Login scheduled the 6-hour refresh'
+
+  foreground
+  flow open-today-plant.yaml -e PLANT="$plant_name"
+  photo_cached() { [ "$(app_db "SELECT count(*) FROM photo_cache WHERE key LIKE '%/display'")" -ge 1 ]; }
+  wait_for 'the cover photo cached' photo_cached
+  photo_files() { adb shell su 0 find "$data/cache/photos" -type f 2>/dev/null | tr -d '\r'; }
+  [ -n "$(photo_files)" ] || fail 'the cached photo has no file'
+  [ "$(app_db "SELECT count(*) FROM cached_care WHERE resource = 'plant/$plant'")" = 1 ] || fail 'plant page not cached'
+  shot w3-plant-light
+  pass 'The plant page read is cached with its display photo'
+
+  # Android ended the process: the stacks and the draft come back.
+  flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Kept draft'
+  adb shell input keyevent KEYCODE_HOME; sleep 2
+  adb shell am kill "$package"; sleep 1
+  ! adb shell pidof "$package" >/dev/null || fail 'process survived am kill'
+  launch
+  wait_for 'the draft after process death' visible 'text="Kept draft"'
+  pass 'After process death the Plants stack and its draft came back'
+
+  # Removing the task in Recents ends it; the next start opens Today at its root without the draft.
+  adb shell input keyevent KEYCODE_APP_SWITCH
+  # Recents can take a moment to draw; App Switch is sent again only while the app still has the focus.
+  recents_open() {
+    visible 'resource-id="com.google.android.apps.nexuslauncher:id/snapshot"' && return 0
+    adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" && adb shell input keyevent KEYCODE_APP_SWITCH
+    sleep 2
+    return 1
+  }
+  wait_for 'the task card in Recents' recents_open
+  bounds() { adb shell cat /sdcard/w.xml | grep -o "<node[^>]*$1[^>]*>" | head -n 1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p'; }
+  # Clear all sits left of the oldest task; when the launcher centres the only card it is scrolled into view first.
+  clear_all() {
+    dump || return 1
+    found=$(bounds 'text="Clear all"')
+    if [ -z "$found" ]; then adb shell input swipe 200 900 1000 900 300; sleep 1; return 1; fi
+    set -- $found
+    adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
+  }
+  wait_for 'Clear all in Recents' clear_all
+  sleep 2
+  task_listed() { adb shell dumpsys activity recents | grep -q "realActivity={$package/"; }
+  ! task_listed || fail 'the task is still in Recents after it was removed'
+  adb shell input keyevent KEYCODE_HOME
+  launch
+  wait_for 'Today after a fresh start' visible 'resource-id="today-root"'
+  shows 'resource-id="today-root"' 'text="Kept draft"' || fail 'the draft came back after a fresh start'
+  [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'drafts survived a fresh start'
+  pass 'After the task was removed in Recents the app opens Today at its root and drops the draft'
+  [ "$(work_live fytorium-care-refresh)" = 1 ] || fail 'signed-in starts did not leave exactly one 6-hour refresh'
+  pass 'Signed-in starts keep exactly one 6-hour refresh'
+
+  # Owner downgraded to sitter with a draft hidden in Plants and a cached plant page and photo.
+  flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Hidden draft'
+  [ "$(app_db "SELECT count(*) FROM drafts WHERE json = '\"Hidden draft\"'")" = 1 ] || fail 'the hidden draft was not saved'
+  maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+  q "UPDATE members SET role = 'sitter' WHERE subject = '$owner'" >/dev/null
+  foreground
+  wait_for 'the Journal tab gone' shows 'resource-id="tab-Today"' 'resource-id="tab-Journal"'
+  [ "$(app_db "SELECT count(*) FROM cached_care WHERE resource = 'plant/$plant'")" = 0 ] || fail 'the owner plant page stayed cached'
+  [ "$(app_db 'SELECT count(*) FROM photo_cache')" = 0 ] || fail 'the owner photos stayed cached'
+  [ -z "$(photo_files)" ] || fail 'the owner photo files stayed on disk'
+  [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'the owner draft stayed'
+  maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
+  wait_for 'the Plants grid after the role change' visible 'resource-id="plants-root"'
+  shows 'resource-id="plants-root"' 'text="Hidden draft"' || fail 'the hidden draft survived the role change'
+  shot w3-sitter-light
+  pass 'Becoming a sitter dropped the Journal tab, the hidden draft, the cached plant page and its photo'
+  q "UPDATE members SET role = 'owner' WHERE subject = '$owner'" >/dev/null
+  foreground
+
+  # Offline versus a Fytorium that does not answer.
+  maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+  airplane enable
+  offline_shown() { status_is 'Offline'; }
+  wait_for 'Offline on the status line' offline_shown
+  shot w3-offline-light
+  airplane disable
+  wait_ready "$E2E_GUEST_NETWORK_TIMEOUT" 'Guest network back after airplane mode' online_again
+  # Fytorium reachable but answering 503: the phone's requests to app:3000 go to a WireMock stub that answers only them.
+  divert_app '{"status":503,"body":"Service Unavailable"}'
+  foreground
+  unavailable_shown() { status_is "Fytorium isn&apos;t responding" || status_is "Fytorium isn't responding"; }
+  wait_for "Fytorium isn't responding on the status line" unavailable_shown
+  answered=$(curl -fsS -X POST http://fakes:8080/__admin/requests/count -H 'Content-Type: application/json' \
+    -d '{"urlPathPattern":"/api/.*","headers":{"Host":{"equalTo":"app:3000"}}}' | sed -n 's/.*"count" *: *\([0-9]*\).*/\1/p')
+  [ "${answered:-0}" -ge 1 ] || fail 'the phone never reached the 503 stub'
+  undivert_app
+  foreground
+  cleared() { shows 'resource-id="status-line"' 'text="(Offline|Fytorium isn(&apos;|.)t responding)'; }
+  wait_for 'the status line cleared' cleared
+  pass "Airplane mode shows Offline; Fytorium answering 503 shows Fytorium isn't responding"
+
+  # The update stop covers the shell: a draft open when a 426 arrives is still there after Check again clears it.
+  flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Stop draft'
+  divert_app '{"status":426,"headers":{"Content-Type":"application/json"},"jsonBody":{"error":"update_required","minAppVersion":"99.0.0"}}'
+  foreground
+  wait_for 'the update stop' visible 'text="Check again"'
+  # The compressed dump holds what accessibility services see; the full one also lists the covered shell.
+  adb shell rm -f /sdcard/c.xml
+  adb shell uiautomator dump --compressed /sdcard/c.xml >/dev/null && adb shell cat /sdcard/c.xml | grep -q 'text="Check again"' || fail 'no accessibility dump of the update stop'
+  ! adb shell cat /sdcard/c.xml | grep -q 'text="Stop draft"' || fail 'the covered draft is visible to accessibility services'
+  undivert_app
+  flow tap-text.yaml -e TEXT='Check again'
+  wait_for 'the draft after the stop cleared' visible 'text="Stop draft"'
+  pass 'A draft open when the update stop came is there after Check again'
+
+  for scheme in light dark; do
+    if [ "$scheme" = dark ]; then adb shell cmd uimode night yes >/dev/null; else adb shell cmd uimode night no >/dev/null; fi
+    sleep 2
+    maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+    wait_for 'Today shown' visible 'resource-id="today-root"'
+    shot "w3-today-$scheme"
+    maestro --device emulator-5554 test e2e/maestro/tap-more.yaml >/dev/null 2>&1 || fail 'tap More'
+    wait_for 'More shown' visible 'resource-id="more-root"'
+    shot "w3-more-$scheme"
+  done
+  adb shell cmd uimode night no >/dev/null
+
+  # A notification tap that started the task opens Today once; Android recreating the activity later keeps Find.
+  adb shell am force-stop "$package"
+  adb shell am start -W -a com.epaflix.fytorium.OPEN_HOME -n "$package/.MainActivity" >/dev/null
+  wait_for 'Today after the notification start' visible 'resource-id="today-root"'
+  flow open-find.yaml -e QUERY='Synthetic W3'
+  shows 'resource-id="find-search"' 'resource-id="tab-Today"' || fail 'the tab bar stayed over the keyboard'
+  adb shell input keyevent KEYCODE_BACK
+  wait_for 'the tab bar back after the keyboard closed' visible 'resource-id="tab-Today"'
+  adb shell input keyevent KEYCODE_HOME; sleep 2
+  adb shell am kill "$package"; sleep 1
+  ! adb shell pidof "$package" >/dev/null || fail 'process survived am kill'
+  launch
+  wait_for 'Find after the activity came back' visible 'text="Synthetic W3"'
+  visible 'resource-id="find-search"' || fail 'the notification start ran again and closed Find'
+  pass 'A notification start opens Today once, Find keeps its query after recreation, and the keyboard hides the tab bar'
+  # One Back closes the restored Find (after the keyboard, if it came up); Android keeps the app in front.
+  if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+  adb shell input keyevent KEYCODE_BACK
+  find_back() {
+    adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" || fail 'Back from the restored Find left the app'
+    shows 'resource-id="today-root"' 'resource-id="find-search"'
+  }
+  wait_for 'Today after Back from the restored Find' find_back
+
+  # W6-P11 on the device: the Back gesture closes only the page over Today; at Today's clean root Android takes it
+  # and the app leaves; with a form with changes in another tab, the app keeps its task (W6-P9).
+  in_front() { adb shell dumpsys window | grep -q "mCurrentFocus=.*$package"; }
+  # A focused window that is not the app's, so a failed dumpsys never counts as "left".
+  away() { adb shell dumpsys window | grep 'mCurrentFocus=Window{' | grep -qv "$package"; }
+  back_gesture() { adb shell input swipe 2 960 600 960 250; sleep 2; }
+  flow open-find.yaml -e QUERY='Synthetic W3'
+  if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+  back_gesture
+  in_front || fail 'the Back gesture over Find left the app'
+  wait_for 'Today after the Back gesture over Find' find_back
+  back_gesture
+  wait_for 'the app left after the Back gesture at the clean Today root' away
+  launch
+  wait_for 'Today after coming back' visible 'resource-id="today-root"'
+  flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Back draft'
+  maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+  back_gesture
+  wait_for 'the app left after Back at Today with a hidden draft' away
+  adb shell pidof "$package" >/dev/null || fail 'Back at Today with a hidden draft ended the process'
+  launch
+  maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
+  wait_for 'the hidden draft after Back at Today' visible 'text="Back draft"'
+  pass 'Back over a page stays in the app; at the clean Today root Android takes it; a hidden draft keeps the task'
+
+  # A Find result opens on the first tap while the keyboard is up, and the Back arrow is a 48 dp target (W6-P24).
+  maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+  flow find-open.yaml -e QUERY="$run_id" -e PLANT="$plant_name"
+  density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: \([0-9]*\)$/\1/p' | tail -n 1)
+  dump || fail 'no window dump on the plant page'
+  set -- $(adb shell cat /sdcard/w.xml | grep -o '<node[^>]*content-desc="Back"[^>]*>' | head -n 1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p')
+  [ $# = 4 ] || fail 'no Back arrow on the plant page'
+  minimum=$((48 * density / 160))
+  [ $(($3 - $1)) -ge "$minimum" ] && [ $(($4 - $2)) -ge "$minimum" ] || fail "Back arrow is $(($3 - $1))x$(($4 - $2)) px, under 48 dp ($minimum px)"
+  pass 'A Find result opens on the first tap, and the Back arrow is at least 48 dp'
+
+  # A notification tap on a task Android restores after ending the process opens Today (W6-P16).
+  maestro --device emulator-5554 test e2e/maestro/tap-more.yaml >/dev/null 2>&1 || fail 'tap More'
+  wait_for 'More shown' visible 'resource-id="more-root"'
+  adb shell input keyevent KEYCODE_HOME; sleep 2
+  adb shell am kill "$package"; sleep 1
+  ! adb shell pidof "$package" >/dev/null || fail 'process survived am kill'
+  adb shell am start -W -a com.epaflix.fytorium.OPEN_HOME -n "$package/.MainActivity" >/dev/null
+  wait_for 'Today selected after the notification tap' shows 'resource-id="tab-Today"[^>]*selected="true"'
+  pass 'A notification tap on a restored task opens Today'
+
+  # Logout cancels the 6-hour refresh.
+  flow logout.yaml -e EXPECT='Plants and photos saved on this phone are removed, and this phone stops getting Fytorium notifications. You need a connection to log in again.'
+  [ "$(work_state fytorium-care-refresh)" = 5 ] || fail 'logout did not cancel the 6-hour refresh'
+  [ "$(app_db 'SELECT count(*) FROM cached_care')" = 0 ] || fail 'logout left cached care'
+  pass 'Logout cancelled the 6-hour refresh and wiped the cache'
+  api "$token" DELETE "/api/plants/$plant" "{\"confirm_name\":\"$plant_name\"}" >/dev/null || true
+  api "$token" DELETE "/api/sites/$site" >/dev/null || true
+}
+
+"$scenario"
+echo "E2E $scenario PASS"
