@@ -1,0 +1,7 @@
+# Finds a plant from Today and opens it with one tap while the keyboard is up. env: QUERY, PLANT
+appId: com.epaflix.fytorium
+---
+- tapOn: "Find a plant"
+- inputText: ${QUERY}
+- tapOn: ${PLANT}
+- assertVisible: "Edit"

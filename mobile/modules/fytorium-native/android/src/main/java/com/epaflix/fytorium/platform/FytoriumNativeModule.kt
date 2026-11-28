@@ -20,6 +20,16 @@ object RestoreState {
         restored = savedInstanceState != null
         if (restored && activity.intent?.action == Push.OPEN_HOME) activity.intent.action = null
     }
+
+    // A notification tap that reaches a running task comes through onNewIntent, possibly before React listens
+    // (a killed process whose task Android restores); it waits here until the shell takes it once.
+    @Volatile private var tapped = false
+
+    @JvmStatic fun newIntent(intent: android.content.Intent) {
+        if (intent.action == Push.OPEN_HOME) tapped = true
+    }
+
+    fun takeTap(): Boolean = tapped.also { tapped = false }
 }
 
 // W6-P11 at targetSdk 35: with predictive back on, Android calls no onBackPressed, and React Native registers its
@@ -117,7 +127,8 @@ class FytoriumNativeModule : Module() {
         }
         Function("consumeOpenHome") {
             val intent = appContext.currentActivity?.intent
-            (intent?.action == Push.OPEN_HOME).also { if (it) intent?.action = null }
+            val launched = (intent?.action == Push.OPEN_HOME).also { if (it) intent?.action = null }
+            RestoreState.takeTap() || launched
         }
         Function("debugLaunchArgument") { name: String ->
             if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) null

@@ -18,7 +18,8 @@ export function PageHeader({ back, options, navigation, route }: NativeStackHead
   const title = typeof options.title === 'string' ? options.title : route.name;
   return (
     <Appbar.Header>
-      {back ? <Appbar.BackAction accessibilityLabel="Back" onPress={() => navigation.goBack()} /> : null}
+      {/* W6-P24: a 48 dp target; Paper's default is 40 dp, and its touchable cannot reach past that. */}
+      {back ? <Appbar.BackAction accessibilityLabel="Back" onPress={() => navigation.goBack()} style={{ width: 48, height: 48, margin: 4 }} /> : null}
       <Appbar.Content title={title} titleStyle={{}} accessibilityRole="header" />
       {options.headerRight?.({ canGoBack: Boolean(back) })}
     </Appbar.Header>
@@ -72,6 +73,8 @@ function PlantRows({ plants, open, header, read = 'plants', onEntry = true }: {
   return (
     <FlatList
       data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
+      // Find opens with the keyboard up; the first tap on a result opens it instead of only closing the keyboard.
+      keyboardShouldPersistTaps="handled"
       renderItem={({ item }) => (
         <List.Item title={item.name} onPress={() => open(item)} accessibilityRole="button" style={{ minHeight: 56 }} />
       )}

@@ -87,9 +87,9 @@ function withFytoriumNative(config) {
     if (!mod.modResults.contents.includes(marker)) {
       mod.modResults.contents = mod.modResults.contents
         .replace(/(override fun onCreate\(savedInstanceState: Bundle\?\) \{\n)/, `$1    ${marker}\n    com.epaflix.fytorium.platform.Redirects.capture(intent)\n    com.epaflix.fytorium.platform.BackState.attach(this)\n`)
-        .replace(/(\n  override fun getMainComponentName)/, `\n  override fun onNewIntent(intent: android.content.Intent) {\n    com.epaflix.fytorium.platform.Redirects.capture(intent)\n    super.onNewIntent(intent)\n  }\n$1`)
+        .replace(/(\n  override fun getMainComponentName)/, `\n  override fun onNewIntent(intent: android.content.Intent) {\n    com.epaflix.fytorium.platform.Redirects.capture(intent)\n    com.epaflix.fytorium.platform.RestoreState.newIntent(intent)\n    super.onNewIntent(intent)\n  }\n$1`)
         .replace(/super\.invokeDefaultOnBackPressed\(\)/g, 'com.epaflix.fytorium.platform.BackState.whileDefault { super.invokeDefaultOnBackPressed() }');
-      if (!mod.modResults.contents.includes(marker) || !mod.modResults.contents.includes('override fun onNewIntent')
+      if (!mod.modResults.contents.includes(marker) || !mod.modResults.contents.includes('RestoreState.newIntent')
         || !mod.modResults.contents.includes('BackState.whileDefault')) throw new Error('MainActivity layout changed');
     }
     return mod;

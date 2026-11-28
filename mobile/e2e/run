@@ -188,7 +188,7 @@ w2() {
   launch --es pushToken "$old" --es pushDeleteFailures 1000
   seeded_failure() { [ "$(deletes failed)" -ge 1 ]; }
   wait_for 'the seeded deletion failure' seeded_failure
-  wait_for 'login page after upgrade' sh -c "adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q 'text=\"Log in\"'"
+  wait_for 'login page after upgrade' visible 'text="Log in"'
   shot w2-login-light
   adb shell cmd uimode night yes >/dev/null; sleep 2; shot w2-login-dark; adb shell cmd uimode night no >/dev/null
   before=$(devices "$owner")
@@ -221,7 +221,7 @@ w2() {
 
   # C. Android kills the app while the browser shows the login page.
   maestro --device emulator-5554 test e2e/maestro/tap-login.yaml >"$artifacts/maestro.log" 2>&1 || fail 'tap Log in'
-  wait_for 'Custom Tab login page' sh -c "adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q 'Mock OAuth2 Server Sign-in'"
+  wait_for 'Custom Tab login page' visible 'Mock OAuth2 Server Sign-in'
   before=$(devices "$owner")
   adb shell am kill "$package"
   ! adb shell pidof "$package" >/dev/null || fail 'the app process survived am kill'
@@ -272,7 +272,7 @@ w2() {
   q "UPDATE app_devices SET revoked_at = now() WHERE id = '$member_b'" >/dev/null
   deleted_before=$(deletes deleted)
   foreground
-  wait_for 'login page after the refresh was refused' sh -c "adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q 'text=\"Log in\"'"
+  wait_for 'login page after the refresh was refused' visible 'text="Log in"'
   ! flag push_ready || fail 'invalid grant left push_ready set'
   # Online, the session end deletes the token at once, which clears the reset flag again.
   token_deleted() { [ "$(deletes deleted)" -gt "$deleted_before" ]; }
@@ -307,10 +307,12 @@ work_state() {
   for suffix in '' -wal -shm; do app_file "no_backup/androidx.work.workdb$suffix" > "/tmp/work.db$suffix" 2>/dev/null || rm -f "/tmp/work.db$suffix"; done
   sqlite3 /tmp/work.db "SELECT workspec.state FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' ORDER BY workspec.last_enqueue_time DESC LIMIT 1"
 }
-visible() { adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q "$1"; }
+# Each dump replaces a deleted file, so a dump that returns without writing cannot pass on an older screen.
+dump() { adb shell rm -f /sdcard/w.xml; adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell test -s /sdcard/w.xml; }
+visible() { dump && adb shell cat /sdcard/w.xml | grep -q "$1"; }
 # One successful dump that has the first pattern and not the second (extended regex): a failed dump never passes.
 shows() {
-  adb shell uiautomator dump /sdcard/w.xml >/dev/null || return 1
+  dump || return 1
   window=$(adb shell cat /sdcard/w.xml)
   printf '%s' "$window" | grep -Eq "$1" || return 1
   [ -z "${2:-}" ] || ! printf '%s' "$window" | grep -Eq "$2"
@@ -379,7 +381,7 @@ w3() {
   bounds() { adb shell cat /sdcard/w.xml | grep -o "<node[^>]*$1[^>]*>" | head -n 1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p'; }
   # Clear all sits left of the oldest task; when the launcher centres the only card it is scrolled into view first.
   clear_all() {
-    adb shell uiautomator dump /sdcard/w.xml >/dev/null
+    dump || return 1
     found=$(bounds 'text="Clear all"')
     if [ -z "$found" ]; then adb shell input swipe 200 900 1000 900 300; sleep 1; return 1; fi
     set -- $found
@@ -445,7 +447,8 @@ w3() {
   foreground
   wait_for 'the update stop' visible 'text="Check again"'
   # The compressed dump holds what accessibility services see; the full one also lists the covered shell.
-  adb shell uiautomator dump --compressed /sdcard/c.xml >/dev/null
+  adb shell rm -f /sdcard/c.xml
+  adb shell uiautomator dump --compressed /sdcard/c.xml >/dev/null && adb shell cat /sdcard/c.xml | grep -q 'text="Check again"' || fail 'no accessibility dump of the update stop'
   ! adb shell cat /sdcard/c.xml | grep -q 'text="Stop draft"' || fail 'the covered draft is visible to accessibility services'
   undivert_app
   flow tap-text.yaml -e TEXT='Check again'
@@ -492,7 +495,7 @@ w3() {
   # and the app leaves; with a form with changes in another tab, the app keeps its task (W6-P9).
   in_front() { adb shell dumpsys window | grep -q "mCurrentFocus=.*$package"; }
   # A focused window that is not the app's, so a failed dumpsys never counts as "left".
-  away() { adb shell dumpsys window | grep 'mCurrentFocus=' | grep -qv "$package"; }
+  away() { adb shell dumpsys window | grep 'mCurrentFocus=Window{' | grep -qv "$package"; }
   back_gesture() { adb shell input swipe 2 960 600 960 250; sleep 2; }
   flow open-find.yaml -e QUERY='Synthetic W3'
   if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
@@ -512,6 +515,27 @@ w3() {
   maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
   wait_for 'the hidden draft after Back at Today' visible 'text="Back draft"'
   pass 'Back over a page stays in the app; at the clean Today root Android takes it; a hidden draft keeps the task'
+
+  # A Find result opens on the first tap while the keyboard is up, and the Back arrow is a 48 dp target (W6-P24).
+  maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+  flow find-open.yaml -e QUERY="$run_id" -e PLANT="$plant_name"
+  density=$(adb shell wm density | tr -d '\r' | sed -n 's/.*: \([0-9]*\)$/\1/p' | tail -n 1)
+  dump || fail 'no window dump on the plant page'
+  set -- $(adb shell cat /sdcard/w.xml | grep -o '<node[^>]*content-desc="Back"[^>]*>' | head -n 1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p')
+  [ $# = 4 ] || fail 'no Back arrow on the plant page'
+  minimum=$((48 * density / 160))
+  [ $(($3 - $1)) -ge "$minimum" ] && [ $(($4 - $2)) -ge "$minimum" ] || fail "Back arrow is $(($3 - $1))x$(($4 - $2)) px, under 48 dp ($minimum px)"
+  pass 'A Find result opens on the first tap, and the Back arrow is at least 48 dp'
+
+  # A notification tap on a task Android restores after ending the process opens Today (W6-P16).
+  maestro --device emulator-5554 test e2e/maestro/tap-more.yaml >/dev/null 2>&1 || fail 'tap More'
+  wait_for 'More shown' visible 'resource-id="more-root"'
+  adb shell input keyevent KEYCODE_HOME; sleep 2
+  adb shell am kill "$package"; sleep 1
+  ! adb shell pidof "$package" >/dev/null || fail 'process survived am kill'
+  adb shell am start -W -a com.epaflix.fytorium.OPEN_HOME -n "$package/.MainActivity" >/dev/null
+  wait_for 'Today selected after the notification tap' shows 'resource-id="tab-Today"[^>]*selected="true"'
+  pass 'A notification tap on a restored task opens Today'
 
   # Logout cancels the 6-hour refresh.
   flow logout.yaml -e EXPECT='Plants and photos saved on this phone are removed, and this phone stops getting Fytorium notifications. You need a connection to log in again.'

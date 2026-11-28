@@ -363,3 +363,30 @@ test('the status line follows the newest plant list answer, whichever order they
     expect(h.repository.get().serverUnavailable).toBe(shown);
   }
 });
+
+test('a full refresh and a list-only read answer the status line in request order', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  const lists: ((reply: Partial<RawResponse>) => void)[] = [];
+  h.route('/api/plants', () => new Promise((resolve) => { lists.push(resolve); }));
+  const ok = { body: JSON.stringify([plantRow('p1', 'Synthetic fern')]) };
+  const cases = [
+    { older: 'full', newer: 'alone', olderReply: ok, newerReply: { status: 503 }, shown: true },
+    { older: 'full', newer: 'alone', olderReply: { status: 503 }, newerReply: ok, shown: false },
+    { older: 'alone', newer: 'full', olderReply: ok, newerReply: { status: 503 }, shown: true },
+    { older: 'alone', newer: 'full', olderReply: { status: 503 }, newerReply: ok, shown: false },
+  ] as const;
+  for (const { older, newer, olderReply, newerReply, shown } of cases) {
+    lists.length = 0;
+    const start = (kind: 'full' | 'alone') => (kind === 'full' ? h.repository.refresh() : h.repository.refreshPlants());
+    const first = start(older);
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = start(newer);
+    await new Promise((resolve) => setImmediate(resolve));
+    lists[1](newerReply);
+    await second;
+    lists[0](olderReply);
+    await first;
+    expect({ older, newer, shown: h.repository.get().serverUnavailable }).toEqual({ older, newer, shown });
+  }
+});

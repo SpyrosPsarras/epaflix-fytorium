@@ -166,16 +166,24 @@ export function createRepository(deps: Deps) {
         deps.onMemberChanged(member);
         set({ ...empty(false), member, identity, busy: true });
       }
-      const [today, upcoming, plants, meta] = await Promise.all([
-        read('/api/tasks', { view: 'today' }), read('/api/tasks', { view: 'upcoming' }), readPlantList(), read('/api/meta'),
+      // The plant list's own outcome is ordered with the list-only reads; the task lists and meta fail as before.
+      const ticket = ++listReads;
+      const [today, upcoming, listed, meta] = await Promise.all([
+        read('/api/tasks', { view: 'today' }), read('/api/tasks', { view: 'upcoming' }),
+        readPlantList(ticket).then((list) => ({ list }), (error: unknown) => ({ error })), read('/api/meta'),
       ]);
       if (epoch !== generation) return;
       checked(today, SHAPES.tasks); checked(upcoming, SHAPES.tasks); checked(meta, SHAPES.meta);
-      deps.cache.save(member, { today, upcoming, meta, ...plantsToSave(plants) }, now());
-      newestStatus(plants.ticket);
+      if ('error' in listed) {
+        if (newestStatus(ticket)) failed(listed.error, epoch);
+        return;
+      }
+      deps.cache.save(member, { today, upcoming, meta, ...plantsToSave(listed.list) }, now());
+      const newest = newestStatus(ticket);
       loadCached();
-      // The data is new, but a connection lost while it was on its way still shows as Offline.
-      set({ offline: !deps.online(), serverUnavailable: false, message: null });
+      // The data is new, but a connection lost while it was on its way still shows as Offline; a newer list
+      // answer that failed keeps its warning.
+      set({ offline: !deps.online(), ...(newest ? { serverUnavailable: false, message: null } : {}) });
     } catch (error) {
       failed(error, epoch);
     } finally {

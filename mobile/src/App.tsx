@@ -54,9 +54,12 @@ function useOnline(): boolean {
 
 const clock = () => new Date().toTimeString().slice(0, 8);
 const setBackHandled = (value: boolean) => Native.setBackHandled(value);
+// Android keeps a notification tap natively until the shell takes it once, so the event only says "check now";
+// a tap that came before this subscription is taken here too.
 const subscribeOpenHome = (listener: () => void) => {
+  const take = () => { if (Native.consumeOpenHome()) listener(); };
   if (Native.consumeOpenHome()) setTimeout(listener, 0);
-  const subscription = Native.addListener('openHome', listener);
+  const subscription = Native.addListener('openHome', Platform.OS === 'android' ? take : listener);
   return () => subscription.remove();
 };
 
