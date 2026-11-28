@@ -1,7 +1,6 @@
 import { BackHandler } from 'react-native';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
-import type { NavigationState } from '@react-navigation/native';
-import { back, owner, press, selected, setup, systemBack, tab } from './helpers/shell';
+import { back, press, selected, setup, systemBack, tab } from './helpers/shell';
 import { useSaving } from '../shell/guards';
 
 jest.mock('expo-image', () => {
