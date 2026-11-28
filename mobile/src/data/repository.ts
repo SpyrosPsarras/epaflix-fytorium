@@ -88,6 +88,19 @@ export function createRepository(deps: Deps) {
   const plantReads = new Map<string, number>();
   let reads = 0;
   const returns = new Set<() => void>();
+  // The plant list is read by the full refresh and alone; the newest request that answers is the one kept.
+  let listReads = 0;
+  let listSaved = 0;
+  const readPlantList = async () => {
+    const ticket = ++listReads;
+    const json = checked(await read('/api/plants'), SHAPES.plants);
+    return { json, ticket };
+  };
+  const plantsToSave = (list: { json: string; ticket: number }): Record<string, string> => {
+    if (list.ticket < listSaved) return {};
+    listSaved = list.ticket;
+    return { plants: list.json };
+  };
   let again = false;
   const listeners = new Set<() => void>();
 
@@ -148,11 +161,11 @@ export function createRepository(deps: Deps) {
         set({ ...empty(false), member, identity, busy: true });
       }
       const [today, upcoming, plants, meta] = await Promise.all([
-        read('/api/tasks', { view: 'today' }), read('/api/tasks', { view: 'upcoming' }), read('/api/plants'), read('/api/meta'),
+        read('/api/tasks', { view: 'today' }), read('/api/tasks', { view: 'upcoming' }), readPlantList(), read('/api/meta'),
       ]);
       if (epoch !== generation) return;
-      checked(today, SHAPES.tasks); checked(upcoming, SHAPES.tasks); checked(plants, SHAPES.plants); checked(meta, SHAPES.meta);
-      deps.cache.save(member, { today, upcoming, plants, meta }, now());
+      checked(today, SHAPES.tasks); checked(upcoming, SHAPES.tasks); checked(meta, SHAPES.meta);
+      deps.cache.save(member, { today, upcoming, meta, ...plantsToSave(plants) }, now());
       loadCached();
       // The data is new, but a connection lost while it was on its way still shows as Offline.
       set({ offline: !deps.online(), serverUnavailable: false, message: null });
@@ -182,9 +195,9 @@ export function createRepository(deps: Deps) {
       if (!member || !deps.online()) return;
       const epoch = generation;
       try {
-        const plants = checked(await read('/api/plants'), SHAPES.plants);
+        const plants = await readPlantList();
         if (epoch !== generation) return;
-        deps.cache.save(member, { plants }, now());
+        deps.cache.save(member, plantsToSave(plants), now());
         loadCached();
         set({ offline: !deps.online(), serverUnavailable: false, message: null });
       } catch (error) {

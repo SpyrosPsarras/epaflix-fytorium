@@ -2,6 +2,7 @@ import { BackHandler } from 'react-native';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { NavigationState } from '@react-navigation/native';
 import { back, owner, press, selected, setup, systemBack, tab } from './helpers/shell';
+import { useSaving } from '../shell/guards';
 
 jest.mock('expo-image', () => {
   const { Text } = jest.requireActual('react-native');
@@ -641,4 +642,64 @@ test('W6-P21: a held View imported plants still runs when its page is only cover
   await act(async () => h.shell().setSaving('planta', false));
   expect(selected('More')).toBe(true);
   expect(screen.getByTestId('more-root')).toBeTruthy();
+});
+
+function HoldSave() {
+  useSaving('held-save', true);
+  return null;
+}
+
+test('W6-P16, P21: a held notification tap opens Today after recreation even when the save ends as the old screen goes', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await h.view.rerender(h.tree(undefined, <HoldSave />));
+  await h.openHome();
+  expect(selected('More')).toBe(true);
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(selected('Today')).toBe(true);
+  expect(h.db.all("SELECT key FROM drafts WHERE key LIKE '%/shell/home'")).toEqual([]);
+  await restored.unmount();
+});
+
+test('W6-P21: a notification tap replaced by a tab tap during a save is not replayed after recreation', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await act(async () => h.shell().setSaving('more', true));
+  await h.openHome();
+  await press(tab('Plants'));
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(selected('More')).toBe(true);
+  await restored.unmount();
+});
+
+test('W6-P15, P18: a held View imported plants asks about a form above Planta before it closes or switches anything', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  await fireEvent.changeText(screen.getByTestId('plants-search'), 'fern');
+  await press(tab('More'));
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await act(async () => h.shell().setSaving('planta', true));
+  await press(screen.getByText('View imported plants'));
+  await press(screen.getByText('Open imported plant'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await act(async () => h.shell().setSaving('planta', false));
+  expect(await screen.findByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Keep editing'));
+  expect(selected('More')).toBe(true);
+  expect(screen.getByTestId('draft-field').props.value).toBe('Monty');
+  expect(screen.getByTestId('plants-search', { includeHiddenElements: true }).props.value).toBe('fern');
+});
+
+test('W6-P22: a shown plant list reads alone when the app comes back, also while the task lists fail', async () => {
+  const h = await setup();
+  await press(tab('Plants'));
+  h.fail('/api/tasks', true);
+  h.addPlant('p3', 'Synthetic ivy');
+  await act(async () => { h.care.returned(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(within(screen.getByTestId('plants-root')).getByText('Synthetic ivy')).toBeTruthy();
 });

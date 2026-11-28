@@ -60,6 +60,8 @@ function useReadOnShow(read: 'all' | 'plants', onEntry: boolean) {
   useFocusEffect(useCallback(() => {
     if (shown.current || onEntry) void (read === 'all' ? care.refresh() : care.refreshPlants());
     shown.current = true;
+    // Resume and reconnect run the full refresh; a shown plant list also reads alone (Kotlin PlantsScreen.reload).
+    return read === 'plants' ? care.onReturn(() => void care.refreshPlants()) : undefined;
   }, [care, read, onEntry]));
 }
 
@@ -320,7 +322,12 @@ export function PlantaStub() {
     rootToTop('Plants', true);
     root.dispatch(CommonActions.navigate('Plants'));
   };
-  const plantsForms = () => [...shell.dirty].filter(([, entry]) => entry.tab === 'Plants');
+  // Every form the action would close asks first: in the Plants stack, and above Planta in its own (W6-P18).
+  const plantsForms = () => {
+    const own = navigation.getState()?.routes ?? [];
+    const above = new Set(own.slice(own.findIndex((entry) => entry.key === route.key) + 1).map((entry) => entry.key));
+    return [...shell.dirty].filter(([page, entry]) => entry.tab === 'Plants' || above.has(page));
+  };
   return (
     <View style={{ padding: 16, gap: 12 }}>
       <StubPage />

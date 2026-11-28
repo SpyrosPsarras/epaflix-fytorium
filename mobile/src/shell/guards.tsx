@@ -29,8 +29,8 @@ type Shell = {
   pending: Intent | null;
   // Runs the request now, or keeps it until every save has ended.
   request(intent: Intent): void;
-  // How the mounted shell carries out a navigation request.
-  setExecutor(execute: (intent: Intent) => void): void;
+  // How the mounted shell carries out a navigation request, and what it does when one is held.
+  setExecutor(execute: (intent: Intent) => void, held?: (intent: Intent) => void): void;
 };
 
 const ShellContext = createContext<Shell | null>(null);
@@ -40,16 +40,17 @@ function createShell(): Shell {
   const dirty = new Map<string, Hidden>();
   let execute = (intent: Intent) => { if (intent.kind === 'run') intent.run(); };
   let dirtyChanged = () => undefined as void;
+  let held = (_intent: Intent) => undefined as void;
   const shell: Shell = {
     saving,
     dirty,
     discarded: new Set<string>(),
     pending: null,
     request(intent) {
-      if (saving.size > 0) shell.pending = intent;
+      if (saving.size > 0) { shell.pending = intent; held(intent); }
       else execute(intent);
     },
-    setExecutor(next) { execute = next; },
+    setExecutor(next, onHeld) { execute = next; held = onHeld ?? (() => undefined); },
     setDirty(page, entry) {
       if (entry) dirty.set(page, entry); else dirty.delete(page);
       dirtyChanged();

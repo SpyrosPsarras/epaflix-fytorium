@@ -476,7 +476,10 @@ w3() {
   adb shell input keyevent KEYCODE_BACK
   find_back() {
     adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" || fail 'Back from the restored Find left the app'
-    visible 'resource-id="today-root"' && ! visible 'resource-id="find-search"'
+    # One dump for both checks, so a failed dump cannot count as "Find is gone".
+    adb shell uiautomator dump /sdcard/w.xml >/dev/null || return 1
+    window=$(adb shell cat /sdcard/w.xml)
+    printf '%s' "$window" | grep -q 'resource-id="today-root"' && ! printf '%s' "$window" | grep -q 'resource-id="find-search"'
   }
   wait_for 'Today after Back from the restored Find' find_back
 
@@ -488,14 +491,14 @@ w3() {
   if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
   back_gesture
   in_front || fail 'the Back gesture over Find left the app'
-  wait_for 'Today after the Back gesture over Find' sh -c "! adb shell uiautomator dump /sdcard/w.xml >/dev/null || ! adb shell cat /sdcard/w.xml | grep -q 'resource-id=\"find-search\"'"
+  wait_for 'Today after the Back gesture over Find' find_back
   back_gesture
   ! in_front || fail 'the Back gesture at the clean Today root kept the app in front'
   launch
   wait_for 'Today after coming back' visible 'resource-id="today-root"'
   flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Back draft'
   maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
-  adb shell input keyevent KEYCODE_BACK; sleep 2
+  back_gesture
   ! in_front || fail 'Back at Today with a hidden draft kept the app in front'
   adb shell pidof "$package" >/dev/null || fail 'Back at Today with a hidden draft ended the process'
   launch

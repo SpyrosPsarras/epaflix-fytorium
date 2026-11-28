@@ -104,16 +104,24 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
   }
 
   // A notification tap held for a save is saved too, so it still opens Today once after Android recreates the
-  // activity (Kotlin's saved homePending); whatever runs next, the tap or a request that replaced it, clears it.
+  // activity (Kotlin's saved homePending). A later request that replaces it clears it; it is done once Today's root
+  // shows. A tree being torn down cannot navigate, so it leaves the tap to the next shell.
   const homeHeld = pageKey(applied.member ? memberKey(applied.member) : 'none', 'shell', 'home');
-  useEffect(() => shell.setExecutor((intent) => { drafts.remove(homeHeld); run(intent); }), [shell, drafts, homeHeld]);
+  const homeDone = (state: NavigationState | undefined) => {
+    const shown = state?.routes[state.index ?? 0];
+    if (shown?.name === 'Today' && (shown.state?.routes.length ?? 1) === 1) drafts.remove(homeHeld);
+  };
+  useEffect(() => {
+    shell.setExecutor(
+      (intent) => { if (intent.kind === 'run' || navigation.isReady()) run(intent); },
+      (intent) => { if (intent.kind === 'home') drafts.put(homeHeld, true); else drafts.remove(homeHeld); },
+    );
+    return () => shell.setExecutor((intent) => { if (intent.kind === 'run') intent.run(); });
+  }, [shell, drafts, homeHeld]);
   const syncBack = () => setBackHandled(backHandled(navigation.isReady() ? navigation.getRootState() : undefined, shell.dirty.size));
   useEffect(() => shell.watchDirty(syncBack));
   useEffect(() => () => setBackHandled(false), [setBackHandled]);
-  useEffect(() => subscribeOpenHome(() => {
-    if (shell.saving.size > 0) drafts.put(homeHeld, true);
-    shell.request({ kind: 'home' });
-  }));
+  useEffect(() => subscribeOpenHome(() => shell.request({ kind: 'home' })));
 
   return (
     <NavigationContainer
@@ -124,7 +132,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         // The first screen is saved too, so its scroll or draft comes back even if nothing was opened yet (N3).
         onState(navigation.getRootState() as NavigationState);
         syncBack();
-        if (drafts.get(homeHeld)) { drafts.remove(homeHeld); run({ kind: 'home' }); }
+        if (drafts.get(homeHeld)) { run({ kind: 'home' }); homeDone(navigation.getRootState() as NavigationState); }
       }}
       onStateChange={(state) => {
         // W6-P4: a page's saved state goes when its route leaves the stack, never when Android only destroys the view.
@@ -134,6 +142,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         shown.current = now;
         onState(state as NavigationState | undefined);
         syncBack();
+        homeDone(state as NavigationState | undefined);
       }}>
       <Tab.Navigator
         backBehavior="firstRoute"
@@ -152,7 +161,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
             const again = tabNavigation.isFocused();
             if (shell.saving.size > 0) {
               event.preventDefault();
-              shell.pending = { kind: 'tab', tab: route.name, reselect: again };
+              shell.request({ kind: 'tab', tab: route.name, reselect: again });
             } else if (again && (stackOf(route.name)?.routes?.length ?? 1) === 1) {
               reselect(route.name);
             }

@@ -313,3 +313,34 @@ test('the plant list alone refreshes while the task lists fail', async () => {
   await h.repository.refreshPlants();
   expect(h.repository.get()).toMatchObject({ plants: fresh, today: TODAY });
 });
+
+test('the newest plant list request wins, whichever path read it and whichever answers last', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  const lists: ((reply: Partial<RawResponse>) => void)[] = [];
+  h.route('/api/plants', () => new Promise((resolve) => { lists.push(resolve); }));
+  const list = (name: string) => ({ body: JSON.stringify([plantRow('p1', name)]) });
+  const names = () => JSON.parse(h.repository.get().plants!)[0].display_name;
+
+  const full = h.repository.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  const alone = h.repository.refreshPlants();
+  await new Promise((resolve) => setImmediate(resolve));
+  lists[1](list('Newer'));
+  await alone;
+  lists[0](list('Older'));
+  await full;
+  expect(names()).toBe('Newer');
+  expect(h.repository.get().today).toBe(TODAY);
+
+  lists.length = 0;
+  const first = h.repository.refreshPlants();
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = h.repository.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  lists[1](list('Newest'));
+  await second;
+  lists[0](list('Stale'));
+  await first;
+  expect(names()).toBe('Newest');
+});

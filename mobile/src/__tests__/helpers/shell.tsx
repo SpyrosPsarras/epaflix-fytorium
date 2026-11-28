@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { CommonActions, DefaultTheme, type NavigationState } from '@react-navigation/native';
 import { PaperProvider } from 'react-native-paper';
@@ -56,11 +56,12 @@ export async function setup(member: Member = owner) {
         subscribeOpenHome={(listener) => { homes.add(listener); return () => homes.delete(listener); }} />
     );
   }
-  const tree = (initialState?: NavigationState) => (
+  const tree = (initialState?: NavigationState, extra?: ReactNode) => (
     <PaperProvider>
       <DepsProvider value={deps}>
         <ShellProvider>
           <Capture />
+          {extra}
           <Host initialState={initialState} />
         </ShellProvider>
       </DepsProvider>
