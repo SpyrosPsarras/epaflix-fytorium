@@ -91,10 +91,16 @@ export function createRepository(deps: Deps) {
   // The plant list is read by the full refresh and alone; the newest request that answers is the one kept.
   let listReads = 0;
   let listSaved = 0;
-  const readPlantList = async () => {
-    const ticket = ++listReads;
+  // The status line follows the newest list answer too, success or failure.
+  let listStatus = 0;
+  const readPlantList = async (ticket = ++listReads) => {
     const json = checked(await read('/api/plants'), SHAPES.plants);
     return { json, ticket };
+  };
+  const newestStatus = (ticket: number) => {
+    if (ticket < listStatus) return false;
+    listStatus = ticket;
+    return true;
   };
   const plantsToSave = (list: { json: string; ticket: number }): Record<string, string> => {
     if (list.ticket < listSaved) return {};
@@ -166,6 +172,7 @@ export function createRepository(deps: Deps) {
       if (epoch !== generation) return;
       checked(today, SHAPES.tasks); checked(upcoming, SHAPES.tasks); checked(meta, SHAPES.meta);
       deps.cache.save(member, { today, upcoming, meta, ...plantsToSave(plants) }, now());
+      newestStatus(plants.ticket);
       loadCached();
       // The data is new, but a connection lost while it was on its way still shows as Offline.
       set({ offline: !deps.online(), serverUnavailable: false, message: null });
@@ -194,14 +201,15 @@ export function createRepository(deps: Deps) {
       const member = state.member;
       if (!member || !deps.online()) return;
       const epoch = generation;
+      const ticket = ++listReads;
       try {
-        const plants = await readPlantList();
+        const plants = await readPlantList(ticket);
         if (epoch !== generation) return;
         deps.cache.save(member, plantsToSave(plants), now());
         loadCached();
-        set({ offline: !deps.online(), serverUnavailable: false, message: null });
+        if (newestStatus(ticket)) set({ offline: !deps.online(), serverUnavailable: false, message: null });
       } catch (error) {
-        failed(error, epoch);
+        if (newestStatus(ticket)) failed(error, epoch);
       }
     },
     // The app came back to the foreground or online: an open page reads again (Kotlin ON_RESUME and reconnect).

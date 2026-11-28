@@ -344,3 +344,22 @@ test('the newest plant list request wins, whichever path read it and whichever a
   await first;
   expect(names()).toBe('Newest');
 });
+
+test('the status line follows the newest plant list answer, whichever order they come in', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  const lists: ((reply: Partial<RawResponse>) => void)[] = [];
+  h.route('/api/plants', () => new Promise((resolve) => { lists.push(resolve); }));
+  const ok = { body: JSON.stringify([plantRow('p1', 'Synthetic fern')]) };
+  for (const [older, newer, shown] of [[{ status: 503 }, ok, false], [ok, { status: 503 }, true]] as const) {
+    lists.length = 0;
+    const first = h.repository.refreshPlants();
+    const second = h.repository.refreshPlants();
+    await new Promise((resolve) => setImmediate(resolve));
+    lists[1](newer);
+    await second;
+    lists[0](older);
+    await first;
+    expect(h.repository.get().serverUnavailable).toBe(shown);
+  }
+});

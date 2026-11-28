@@ -676,23 +676,68 @@ test('W6-P21: a notification tap replaced by a tab tap during a save is not repl
   await restored.unmount();
 });
 
-test('W6-P15, P18: a held View imported plants asks about a form above Planta before it closes or switches anything', async () => {
+// Plants: a search and an Edit draft; More: Planta with a held View imported plants, then an Edit draft above it.
+async function twoFormsAndHeldImport() {
   const h = await setup();
   await press(tab('Plants'));
   await fireEvent.changeText(screen.getByTestId('plants-search'), 'fern');
+  await press(screen.getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Plants draft');
   await press(tab('More'));
   await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
   await act(async () => h.shell().setSaving('planta', true));
   await press(screen.getByText('View imported plants'));
   await press(screen.getByText('Open imported plant'));
   await press(screen.getByText('Edit'));
-  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await fireEvent.changeText(screen.getAllByTestId('draft-field').at(-1)!, 'More draft');
   await act(async () => h.shell().setSaving('planta', false));
+  const drafts = () => screen.getAllByTestId('draft-field', { includeHiddenElements: true }).map((field) => field.props.value).sort();
+  return { h, drafts };
+}
+
+test('W6-P15, P18: a held View imported plants asks about each form in turn, and Keep editing on any keeps them all', async () => {
+  const { drafts } = await twoFormsAndHeldImport();
+  expect(await screen.findByText('Discard changes?')).toBeTruthy();
+  await press(screen.getByText('Discard'));
   expect(await screen.findByText('Discard changes?')).toBeTruthy();
   await press(screen.getByText('Keep editing'));
+  expect(screen.queryByText('Discard changes?')).toBeNull();
   expect(selected('More')).toBe(true);
-  expect(screen.getByTestId('draft-field').props.value).toBe('Monty');
+  expect(drafts()).toEqual(['More draft', 'Plants draft']);
   expect(screen.getByTestId('plants-search', { includeHiddenElements: true }).props.value).toBe('fern');
+});
+
+test('W6-P15, P18: answering Discard for every form closes them, shows the grid without its search and More at its root', async () => {
+  const { h } = await twoFormsAndHeldImport();
+  await press(await screen.findByText('Discard'));
+  await press(await screen.findByText('Discard'));
+  expect(selected('Plants')).toBe(true);
+  expect(screen.getByTestId('plants-root')).toBeTruthy();
+  expect(screen.getByTestId('plants-search').props.value).toBe('');
+  expect(screen.queryByTestId('draft-field', { includeHiddenElements: true })).toBeNull();
+  expect(h.db.all<{ json: string }>('SELECT json FROM drafts').map((row) => row.json)).not.toContain('"More draft"');
+  await press(tab('More'));
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+});
+
+test('W6-P16, P21: a held notification tap answered with Keep editing is not asked again after recreation', async () => {
+  const h = await setup();
+  await press(within(screen.getByTestId('today-root')).getByText('Synthetic fern'));
+  await press(screen.getByText('Edit'));
+  await fireEvent.changeText(screen.getByTestId('draft-field'), 'Monty');
+  await act(async () => h.shell().setSaving('edit', true));
+  await h.openHome();
+  await act(async () => h.shell().setSaving('edit', false));
+  await press(await screen.findByText('Keep editing'));
+  await press(tab('Plants'));
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(screen.queryByText('Discard changes?')).toBeNull();
+  expect(selected('Plants')).toBe(true);
+  expect(h.db.all("SELECT key FROM drafts WHERE key LIKE '%/shell/home'")).toEqual([]);
+  await restored.unmount();
 });
 
 test('W6-P22: a shown plant list reads alone when the app comes back, also while the task lists fail', async () => {

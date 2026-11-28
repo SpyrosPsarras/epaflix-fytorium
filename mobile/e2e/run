@@ -308,6 +308,13 @@ work_state() {
   sqlite3 /tmp/work.db "SELECT workspec.state FROM workname JOIN workspec ON workspec.id = workname.work_spec_id WHERE workname.name = '$1' ORDER BY workspec.last_enqueue_time DESC LIMIT 1"
 }
 visible() { adb shell uiautomator dump /sdcard/w.xml >/dev/null && adb shell cat /sdcard/w.xml | grep -q "$1"; }
+# One successful dump that has the first pattern and not the second (extended regex): a failed dump never passes.
+shows() {
+  adb shell uiautomator dump /sdcard/w.xml >/dev/null || return 1
+  window=$(adb shell cat /sdcard/w.xml)
+  printf '%s' "$window" | grep -Eq "$1" || return 1
+  [ -z "${2:-}" ] || ! printf '%s' "$window" | grep -Eq "$2"
+}
 status_is() { visible "resource-id=\"status-line\"[^>]*text=\"$1" || visible "text=\"$1[^\"]*\"[^>]*resource-id=\"status-line\""; }
 
 w3() {
@@ -326,8 +333,8 @@ w3() {
 
   # A plant with a cover photo, made through the API as the same member.
   token=$(api_login "$owner") || fail 'API login failed'
-  # Plants that an earlier failed run left go first, so Today's list stays short enough to find the new one.
-  q "SELECT id || '|' || nickname FROM plants WHERE nickname LIKE 'Synthetic W3 fern %'" | while IFS='|' read -r old name; do
+  # Test plants that earlier runs left (W3's own and the W1 Kotlin seeds) go first, so the lists stay short.
+  q "SELECT id || '|' || nickname FROM plants WHERE nickname LIKE 'Synthetic W3 fern %' OR nickname LIKE 'Synthetic W1 seed fern %'" | while IFS='|' read -r old name; do
     api "$token" DELETE "/api/plants/$old" "{\"confirm_name\":\"$name\"}" >/dev/null || true
   done
   site=$(api "$token" POST /api/sites "{\"name\":\"Synthetic W3 site $run_id\",\"location\":\"indoor\",\"light\":\"part_shade\",\"humidity\":\"normal\",\"grow_light\":false,\"draft\":false}" | json_field id)
@@ -385,7 +392,7 @@ w3() {
   adb shell input keyevent KEYCODE_HOME
   launch
   wait_for 'Today after a fresh start' visible 'resource-id="today-root"'
-  ! visible 'text="Kept draft"' || fail 'the draft came back after a fresh start'
+  shows 'resource-id="today-root"' 'text="Kept draft"' || fail 'the draft came back after a fresh start'
   [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'drafts survived a fresh start'
   pass 'After the task was removed in Recents the app opens Today at its root and drops the draft'
   [ "$(work_live fytorium-care-refresh)" = 1 ] || fail 'signed-in starts did not leave exactly one 6-hour refresh'
@@ -397,13 +404,14 @@ w3() {
   maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
   q "UPDATE members SET role = 'sitter' WHERE subject = '$owner'" >/dev/null
   foreground
-  wait_for 'the Journal tab gone' sh -c "! adb shell uiautomator dump /sdcard/w.xml >/dev/null || ! adb shell cat /sdcard/w.xml | grep -q 'resource-id=\"tab-Journal\"'"
+  wait_for 'the Journal tab gone' shows 'resource-id="tab-Today"' 'resource-id="tab-Journal"'
   [ "$(app_db "SELECT count(*) FROM cached_care WHERE resource = 'plant/$plant'")" = 0 ] || fail 'the owner plant page stayed cached'
   [ "$(app_db 'SELECT count(*) FROM photo_cache')" = 0 ] || fail 'the owner photos stayed cached'
   [ -z "$(photo_files)" ] || fail 'the owner photo files stayed on disk'
   [ "$(app_db 'SELECT count(*) FROM drafts')" = 0 ] || fail 'the owner draft stayed'
   maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
-  ! visible 'text="Hidden draft"' || fail 'the hidden draft survived the role change'
+  wait_for 'the Plants grid after the role change' visible 'resource-id="plants-root"'
+  shows 'resource-id="plants-root"' 'text="Hidden draft"' || fail 'the hidden draft survived the role change'
   shot w3-sitter-light
   pass 'Becoming a sitter dropped the Journal tab, the hidden draft, the cached plant page and its photo'
   q "UPDATE members SET role = 'owner' WHERE subject = '$owner'" >/dev/null
@@ -427,7 +435,7 @@ w3() {
   [ "${answered:-0}" -ge 1 ] || fail 'the phone never reached the 503 stub'
   undivert_app
   foreground
-  cleared() { ! status_is 'Offline' && ! unavailable_shown; }
+  cleared() { shows 'resource-id="status-line"' 'text="(Offline|Fytorium isn(&apos;|.)t responding)'; }
   wait_for 'the status line cleared' cleared
   pass "Airplane mode shows Offline; Fytorium answering 503 shows Fytorium isn't responding"
 
@@ -461,7 +469,7 @@ w3() {
   adb shell am start -W -a com.epaflix.fytorium.OPEN_HOME -n "$package/.MainActivity" >/dev/null
   wait_for 'Today after the notification start' visible 'resource-id="today-root"'
   flow open-find.yaml -e QUERY='Synthetic W3'
-  ! visible 'resource-id="tab-Today"' || fail 'the tab bar stayed over the keyboard'
+  shows 'resource-id="find-search"' 'resource-id="tab-Today"' || fail 'the tab bar stayed over the keyboard'
   adb shell input keyevent KEYCODE_BACK
   wait_for 'the tab bar back after the keyboard closed' visible 'resource-id="tab-Today"'
   adb shell input keyevent KEYCODE_HOME; sleep 2
@@ -476,16 +484,15 @@ w3() {
   adb shell input keyevent KEYCODE_BACK
   find_back() {
     adb shell dumpsys window | grep -q "mCurrentFocus=.*$package" || fail 'Back from the restored Find left the app'
-    # One dump for both checks, so a failed dump cannot count as "Find is gone".
-    adb shell uiautomator dump /sdcard/w.xml >/dev/null || return 1
-    window=$(adb shell cat /sdcard/w.xml)
-    printf '%s' "$window" | grep -q 'resource-id="today-root"' && ! printf '%s' "$window" | grep -q 'resource-id="find-search"'
+    shows 'resource-id="today-root"' 'resource-id="find-search"'
   }
   wait_for 'Today after Back from the restored Find' find_back
 
   # W6-P11 on the device: the Back gesture closes only the page over Today; at Today's clean root Android takes it
   # and the app leaves; with a form with changes in another tab, the app keeps its task (W6-P9).
   in_front() { adb shell dumpsys window | grep -q "mCurrentFocus=.*$package"; }
+  # A focused window that is not the app's, so a failed dumpsys never counts as "left".
+  away() { adb shell dumpsys window | grep 'mCurrentFocus=' | grep -qv "$package"; }
   back_gesture() { adb shell input swipe 2 960 600 960 250; sleep 2; }
   flow open-find.yaml -e QUERY='Synthetic W3'
   if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
@@ -493,13 +500,13 @@ w3() {
   in_front || fail 'the Back gesture over Find left the app'
   wait_for 'Today after the Back gesture over Find' find_back
   back_gesture
-  ! in_front || fail 'the Back gesture at the clean Today root kept the app in front'
+  wait_for 'the app left after the Back gesture at the clean Today root' away
   launch
   wait_for 'Today after coming back' visible 'resource-id="today-root"'
   flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Back draft'
   maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
   back_gesture
-  ! in_front || fail 'Back at Today with a hidden draft kept the app in front'
+  wait_for 'the app left after Back at Today with a hidden draft' away
   adb shell pidof "$package" >/dev/null || fail 'Back at Today with a hidden draft ended the process'
   launch
   maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'

@@ -310,7 +310,8 @@ export function PlantaStub() {
   const route = useRoute();
   const shell = useShell();
   const first = parsePlants(useCare().plants)[0];
-  const [asking, setAsking] = useDraft<Hidden | null>('asking', null);
+  const [asking, setAsking] = useDraft<[string, Hidden] | null>('asking', null);
+  const [answered, setAnswered] = useDraft<string[]>('answered', []);
   const focused = useTabShown();
   const viewImported = () => {
     const plants = stackOf('Plants');
@@ -328,6 +329,14 @@ export function PlantaStub() {
     const above = new Set(own.slice(own.findIndex((entry) => entry.key === route.key) + 1).map((entry) => entry.key));
     return [...shell.dirty].filter(([page, entry]) => entry.tab === 'Plants' || above.has(page));
   };
+  // Each form asks in turn; nothing closes until every one was answered with leave, and Stay keeps them all.
+  const askNext = (done: string[]) => {
+    const next = plantsForms().find(([page]) => !done.includes(page)) ?? null;
+    setAsking(next);
+    if (next) return;
+    done.forEach((page) => shell.discarded.add(page));
+    viewImported();
+  };
   return (
     <View style={{ padding: 16, gap: 12 }}>
       <StubPage />
@@ -337,15 +346,19 @@ export function PlantaStub() {
         onPress={() => shell.request({ kind: 'run', run: () => {
           // A request held for a save is dropped if the review left its stack meanwhile.
           if (!navigation.getState()?.routes.some((entry) => entry.key === route.key)) return;
-          const [form] = plantsForms();
-          if (form) setAsking(form[1]); else viewImported();
+          setAnswered([]);
+          askNext([]);
         } })}>
         View imported plants
       </Button>
       <QuestionDialog
-        question={focused ? asking?.question ?? null : null}
+        question={focused ? asking?.[1].question ?? null : null}
         onStay={() => setAsking(null)}
-        onLeave={() => { setAsking(null); plantsForms().forEach(([page]) => shell.discarded.add(page)); viewImported(); }} />
+        onLeave={() => {
+          const done = asking ? [...answered, asking[0]] : answered;
+          setAnswered(done);
+          askNext(done);
+        }} />
     </View>
   );
 }

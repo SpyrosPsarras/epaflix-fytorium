@@ -104,16 +104,17 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
   }
 
   // A notification tap held for a save is saved too, so it still opens Today once after Android recreates the
-  // activity (Kotlin's saved homePending). A later request that replaces it clears it; it is done once Today's root
-  // shows. A tree being torn down cannot navigate, so it leaves the tap to the next shell.
+  // activity (Kotlin's saved homePending). It is done once it runs on a ready navigator, as Kotlin clears it when
+  // the saves end; a question it raises is saved by its own guard. A later request that replaces it clears it, and
+  // a tree being torn down cannot navigate, so it leaves the tap to the next shell.
   const homeHeld = pageKey(applied.member ? memberKey(applied.member) : 'none', 'shell', 'home');
-  const homeDone = (state: NavigationState | undefined) => {
-    const shown = state?.routes[state.index ?? 0];
-    if (shown?.name === 'Today' && (shown.state?.routes.length ?? 1) === 1) drafts.remove(homeHeld);
-  };
   useEffect(() => {
     shell.setExecutor(
-      (intent) => { if (intent.kind === 'run' || navigation.isReady()) run(intent); },
+      (intent) => {
+        if (intent.kind !== 'run' && !navigation.isReady()) return;
+        if (intent.kind === 'home') drafts.remove(homeHeld);
+        run(intent);
+      },
       (intent) => { if (intent.kind === 'home') drafts.put(homeHeld, true); else drafts.remove(homeHeld); },
     );
     return () => shell.setExecutor((intent) => { if (intent.kind === 'run') intent.run(); });
@@ -132,7 +133,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         // The first screen is saved too, so its scroll or draft comes back even if nothing was opened yet (N3).
         onState(navigation.getRootState() as NavigationState);
         syncBack();
-        if (drafts.get(homeHeld)) { run({ kind: 'home' }); homeDone(navigation.getRootState() as NavigationState); }
+        if (drafts.get(homeHeld)) { drafts.remove(homeHeld); run({ kind: 'home' }); }
       }}
       onStateChange={(state) => {
         // W6-P4: a page's saved state goes when its route leaves the stack, never when Android only destroys the view.
@@ -142,7 +143,6 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         shown.current = now;
         onState(state as NavigationState | undefined);
         syncBack();
-        homeDone(state as NavigationState | undefined);
       }}>
       <Tab.Navigator
         backBehavior="firstRoute"
