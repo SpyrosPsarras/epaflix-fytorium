@@ -47,7 +47,7 @@ function useOnline(): boolean {
     connection.set(next);
     setOnline(next);
     care.connectivityChanged(next);
-    if (next) { void push.sync(); void refreshInBackground(); }
+    if (next) { void push.sync(); void refreshInBackground(); care.returned(); }
   }), []);
   return online;
 }
@@ -79,7 +79,7 @@ export default function App() {
     takeRedirects();
     const native = Native.addListener('redirect', takeRedirects);
     const foreground = AppState.addEventListener('change', (next) => {
-      if (next === 'active') { void push.sync(); void refreshInBackground(); }
+      if (next === 'active') { void push.sync(); void refreshInBackground(); care.returned(); }
     });
     return () => { links.remove(); native.remove(); foreground.remove(); };
   }, []);

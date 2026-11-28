@@ -30,10 +30,16 @@ object BackState {
     private var callback: androidx.activity.OnBackPressedCallback? = null
 
     @JvmStatic fun attach(activity: androidx.activity.ComponentActivity) {
-        callback = object : androidx.activity.OnBackPressedCallback(wanted) {
+        val added = object : androidx.activity.OnBackPressedCallback(wanted) {
             @Suppress("DEPRECATION")
             override fun handleOnBackPressed() = activity.onBackPressed()
-        }.also { activity.onBackPressedDispatcher.addCallback(activity, it) }
+        }
+        activity.onBackPressedDispatcher.addCallback(activity, added)
+        callback = added
+        // A destroyed activity must not stay reachable through this object.
+        activity.lifecycle.addObserver(androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_DESTROY && callback === added) callback = null
+        })
     }
 
     fun handled(value: Boolean) {

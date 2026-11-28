@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { CommonActions, NavigationContainer, type NavigationState, type Theme } from '@react-navigation/native';
+import { CommonActions, NavigationContainer, useIsFocused, type NavigationState, type Theme } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { memberKey, type Member } from '../data/cache';
 import { useShell, type Intent } from './guards';
 import { navigation, popToRoot, reselect, stackOf } from './actions';
-import { TabContext, useDeps } from './context';
+import { TabContext, TabShownContext, useDeps } from './context';
 import {
   AboutRoute, FindPage, JournalAdd, JournalPick, JournalRoot, MoreRoot, PageHeader, PlantEdit, PlantPage, PlantaStub, PlantsRoot, StubPage, TodayRoot, UnmatchedStub,
 } from './pages';
@@ -48,12 +48,15 @@ const ROOTS = { Today: TodayRoot, Plants: PlantsRoot, Journal: JournalRoot, More
 
 function tabStack(tab: TabName) {
   return function TabStack() {
+    const shown = useIsFocused();
     return (
       <TabContext.Provider value={tab}>
+        <TabShownContext.Provider value={shown}>
         <Stack.Navigator screenOptions={{ header: (props) => <PageHeader {...props} /> }}>
           <Stack.Screen name={TAB_ROOTS[tab] as keyof StackParams} component={ROOTS[tab]} options={{ title: tab }} />
           {pages()}
         </Stack.Navigator>
+        </TabShownContext.Provider>
       </TabContext.Provider>
     );
   };
@@ -100,11 +103,17 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
     setApplied({ member, version: applied.version + 1, initialState: state ? (filterState(state, member!.role) as NavigationState) : undefined });
   }
 
-  useEffect(() => shell.setExecutor(run), [shell]);
+  // A notification tap held for a save is saved too, so it still opens Today once after Android recreates the
+  // activity (Kotlin's saved homePending); whatever runs next, the tap or a request that replaced it, clears it.
+  const homeHeld = pageKey(applied.member ? memberKey(applied.member) : 'none', 'shell', 'home');
+  useEffect(() => shell.setExecutor((intent) => { drafts.remove(homeHeld); run(intent); }), [shell, drafts, homeHeld]);
   const syncBack = () => setBackHandled(backHandled(navigation.isReady() ? navigation.getRootState() : undefined, shell.dirty.size));
   useEffect(() => shell.watchDirty(syncBack));
   useEffect(() => () => setBackHandled(false), [setBackHandled]);
-  useEffect(() => subscribeOpenHome(() => shell.request({ kind: 'home' })));
+  useEffect(() => subscribeOpenHome(() => {
+    if (shell.saving.size > 0) drafts.put(homeHeld, true);
+    shell.request({ kind: 'home' });
+  }));
 
   return (
     <NavigationContainer
@@ -115,6 +124,7 @@ export function Shell({ member, theme, initialState, onState, subscribeOpenHome 
         // The first screen is saved too, so its scroll or draft comes back even if nothing was opened yet (N3).
         onState(navigation.getRootState() as NavigationState);
         syncBack();
+        if (drafts.get(homeHeld)) { drafts.remove(homeHeld); run({ kind: 'home' }); }
       }}
       onStateChange={(state) => {
         // W6-P4: a page's saved state goes when its route leaves the stack, never when Android only destroys the view.

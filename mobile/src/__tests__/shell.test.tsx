@@ -3,7 +3,11 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react-n
 import type { NavigationState } from '@react-navigation/native';
 import { back, owner, press, selected, setup, systemBack, tab } from './helpers/shell';
 
-jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('expo-image', () => {
+  const { Text } = jest.requireActual('react-native');
+  const { createElement } = jest.requireActual('react');
+  return { Image: ({ source }: { source: { uri: string } }) => createElement(Text, { testID: 'cover' }, source.uri) };
+});
 
 test('W6-P5, P1: a tab tap never closes a page, and Back returns to the grid with its search', async () => {
   await setup();
@@ -445,8 +449,9 @@ test('W6-P21: View imported plants waits for a save, and a later tab tap replace
   expect(screen.getByText('View imported plants')).toBeTruthy();
   await act(async () => h.shell().setSaving('planta', false));
   expect(selected('Plants')).toBe(true);
-
   await press(tab('More'));
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+
   await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
   await act(async () => h.shell().setSaving('planta', true));
   await press(screen.getByText('View imported plants'));
@@ -550,4 +555,90 @@ test('W6-P11: Android keeps Back at the clean Today root, and the app takes it e
   expect(h.handlesBack()).toBe(true);
   await h.view.unmount();
   expect(h.handlesBack()).toBe(false);
+});
+
+test('W6-P22: an open plant reads again when the app comes back, and a cover removed elsewhere goes', async () => {
+  const h = await setup();
+  h.renamePlant('p1', 'Synthetic fern', 'c1');
+  await press(within(screen.getByTestId('today-root')).getByText('Synthetic fern'));
+  expect(await screen.findByText('file:///photos/c1.jpg')).toBeTruthy();
+  h.renamePlant('p1', 'Synthetic fernando', null);
+  await act(async () => { h.care.returned(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(within(screen.getByTestId('plant-p1')).getByText('Synthetic fernando')).toBeTruthy();
+  expect(screen.queryByTestId('cover')).toBeNull();
+});
+
+test('W6-P22: Plants reads the plant list alone, so a task outage does not hide a new plant', async () => {
+  const h = await setup();
+  h.fail('/api/tasks', true);
+  h.addPlant('p3', 'Synthetic ivy');
+  await press(tab('Plants'));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(within(screen.getByTestId('plants-root')).getByText('Synthetic ivy')).toBeTruthy();
+});
+
+test('W6-P13: Find shows the status line, and a restored Find does not focus its field again', async () => {
+  const h = await setup();
+  await press(within(screen.getByTestId('today-root')).getByText('Find a plant'));
+  const find = () => screen.getByTestId('find-search');
+  expect(find().props.autoFocus).toBe(true);
+  await fireEvent(find(), 'focus');
+  h.fail('/api/plants', true);
+  await act(async () => { await h.care.refreshPlants(); });
+  expect(screen.getAllByText("Fytorium isn't responding").length).toBeGreaterThan(0);
+  await act(async () => { h.care.connectivityChanged(false); });
+  expect(screen.getAllByText(/^Offline/).length).toBeGreaterThan(0);
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(find().props.autoFocus).toBe(false);
+  await restored.unmount();
+});
+
+test('W6-P16, P21: a notification tap held for a save still opens Today after Android recreated the activity', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await act(async () => h.shell().setSaving('more', true));
+  await h.openHome();
+  expect(selected('More')).toBe(true);
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  expect(selected('Today')).toBe(true);
+  expect(h.db.all("SELECT key FROM drafts WHERE key LIKE '%/shell/home'")).toEqual([]);
+  await restored.unmount();
+});
+
+test('W6-P22: Today restored behind another tab reads when it is first shown', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  const saved = h.states.at(-1)!;
+  await h.view.unmount();
+  const restored = await render(h.tree(saved));
+  h.addPlant('p3', 'Synthetic ivy');
+  await press(tab('Today'));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(within(screen.getByTestId('today-root')).getByText('Synthetic ivy')).toBeTruthy();
+  await restored.unmount();
+});
+
+test('W6-P21: a held View imported plants still runs when its page is only covered, and not after it closed', async () => {
+  const h = await setup();
+  await press(tab('More'));
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await act(async () => h.shell().setSaving('planta', true));
+  await press(screen.getByText('View imported plants'));
+  await press(screen.getByText('Open imported plant'));
+  await act(async () => h.shell().setSaving('planta', false));
+  expect(selected('Plants')).toBe(true);
+  await press(tab('More'));
+  expect(screen.getByTestId('more-root')).toBeTruthy();
+
+  await press(within(screen.getByTestId('more-root')).getByText('Import from Planta'));
+  await act(async () => h.shell().setSaving('planta', true));
+  await press(screen.getByText('View imported plants'));
+  await systemBack();
+  await act(async () => h.shell().setSaving('planta', false));
+  expect(selected('More')).toBe(true);
+  expect(screen.getByTestId('more-root')).toBeTruthy();
 });

@@ -480,6 +480,29 @@ w3() {
   }
   wait_for 'Today after Back from the restored Find' find_back
 
+  # W6-P11 on the device: the Back gesture closes only the page over Today; at Today's clean root Android takes it
+  # and the app leaves; with a form with changes in another tab, the app keeps its task (W6-P9).
+  in_front() { adb shell dumpsys window | grep -q "mCurrentFocus=.*$package"; }
+  back_gesture() { adb shell input swipe 2 960 600 960 250; sleep 2; }
+  flow open-find.yaml -e QUERY='Synthetic W3'
+  if adb shell dumpsys input_method | grep -q 'mInputShown=true'; then adb shell input keyevent KEYCODE_BACK; sleep 1; fi
+  back_gesture
+  in_front || fail 'the Back gesture over Find left the app'
+  wait_for 'Today after the Back gesture over Find' sh -c "! adb shell uiautomator dump /sdcard/w.xml >/dev/null || ! adb shell cat /sdcard/w.xml | grep -q 'resource-id=\"find-search\"'"
+  back_gesture
+  ! in_front || fail 'the Back gesture at the clean Today root kept the app in front'
+  launch
+  wait_for 'Today after coming back' visible 'resource-id="today-root"'
+  flow type-draft.yaml -e PLANT="$plant_name" -e TEXT='Back draft'
+  maestro --device emulator-5554 test e2e/maestro/tap-today.yaml >/dev/null 2>&1 || fail 'tap Today'
+  adb shell input keyevent KEYCODE_BACK; sleep 2
+  ! in_front || fail 'Back at Today with a hidden draft kept the app in front'
+  adb shell pidof "$package" >/dev/null || fail 'Back at Today with a hidden draft ended the process'
+  launch
+  maestro --device emulator-5554 test e2e/maestro/tap-plants.yaml >/dev/null 2>&1 || fail 'tap Plants'
+  wait_for 'the hidden draft after Back at Today' visible 'text="Back draft"'
+  pass 'Back over a page stays in the app; at the clean Today root Android takes it; a hidden draft keeps the task'
+
   # Logout cancels the 6-hour refresh.
   flow logout.yaml -e EXPECT='Plants and photos saved on this phone are removed, and this phone stops getting Fytorium notifications. You need a connection to log in again.'
   [ "$(work_state fytorium-care-refresh)" = 5 ] || fail 'logout did not cancel the 6-hour refresh'

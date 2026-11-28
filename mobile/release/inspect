@@ -20,6 +20,7 @@ grep -q 'android:usesCleartextTraffic(0x010104ec)=(type 0x12)0x0' "$temp/manifes
 ! grep -q 'android:networkSecurityConfig' "$temp/manifest" || fail 'release has a network security config'
 ! grep -Eq 'DebugPushReceiver|ReactNativeFirebaseMessaging(Receiver|Service|HeadlessService)' "$temp/manifest" || fail 'debug or library push component in manifest'
 grep -q 'photopicker_activity:0:required' "$temp/manifest" || fail 'Photo Picker backport request missing'
+grep -Eq 'android:enableOnBackInvokedCallback\(0x[0-9a-f]+\)=\(type 0x12\)0xffffffff' "$temp/manifest" || fail 'predictive back is not opted in (W6-T18)'
 awk '/E: (service|receiver)/{name=""} /A: android:name/ && name=="" {name=$0} /MESSAGING_EVENT/{print name}' "$temp/manifest" \
   | sed 's/.*Raw: "\(.*\)")/\1/' >"$temp/handlers"
 [ "$(cat "$temp/handlers")" = com.epaflix.fytorium.platform.PushService ] || fail "MESSAGING_EVENT handlers must be PushService only: $(cat "$temp/handlers")"

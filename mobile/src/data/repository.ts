@@ -84,6 +84,10 @@ export function createRepository(deps: Deps) {
   let state = empty(!deps.online());
   let generation = 0;
   let running: Promise<void> | null = null;
+  // The newest read per plant; an older one that answers later is ignored.
+  const plantReads = new Map<string, number>();
+  let reads = 0;
+  const returns = new Set<() => void>();
   let again = false;
   const listeners = new Set<() => void>();
 
@@ -171,6 +175,25 @@ export function createRepository(deps: Deps) {
       })().finally(() => { running = null; });
       return running;
     },
+    // The plant list alone, as Plants, Find and the picker read it on entry and return (Kotlin reads it apart from
+    // the task lists, so a task outage does not hide new plants).
+    async refreshPlants(): Promise<void> {
+      const member = state.member;
+      if (!member || !deps.online()) return;
+      const epoch = generation;
+      try {
+        const plants = checked(await read('/api/plants'), SHAPES.plants);
+        if (epoch !== generation) return;
+        deps.cache.save(member, { plants }, now());
+        loadCached();
+        set({ offline: !deps.online(), serverUnavailable: false, message: null });
+      } catch (error) {
+        failed(error, epoch);
+      }
+    },
+    // The app came back to the foreground or online: an open page reads again (Kotlin ON_RESUME and reconnect).
+    returned() { returns.forEach((listener) => listener()); },
+    onReturn(listener: () => void) { returns.add(listener); return () => { returns.delete(listener); }; },
     connectivityChanged(online: boolean) {
       // A connected network does not prove Fytorium answers; only a refresh clears Offline.
       if (!online) set({ offline: true, serverUnavailable: false });
@@ -182,12 +205,14 @@ export function createRepository(deps: Deps) {
       if (!member) return null;
       const epoch = generation;
       const resource = `plant/${id}`;
+      const ticket = ++reads;
+      plantReads.set(id, ticket);
       if (deps.online()) {
         try {
           const json = checked(await read(`/api/plants/${id}`), isPlant(id));
-          if (epoch === generation) deps.cache.save(member, { [resource]: json }, now());
+          if (epoch === generation && plantReads.get(id) === ticket) deps.cache.save(member, { [resource]: json }, now());
         } catch (error) {
-          failed(error, epoch);
+          if (plantReads.get(id) === ticket) failed(error, epoch);
         }
       }
       return epoch === generation && sameMember(state.member, member) ? deps.cache.get(member, resource) : null;

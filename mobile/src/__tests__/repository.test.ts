@@ -279,3 +279,37 @@ test('a refresh that lands after the connection went keeps its data and still sh
   await refresh;
   expect(h.repository.get()).toMatchObject({ plants: PLANTS, offline: true, serverUnavailable: false });
 });
+
+test('a plant read that answers after a newer one does not replace it', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  const releases: ((reply: Partial<RawResponse>) => void)[] = [];
+  h.route('/api/plants/p1', () => new Promise((resolve) => { releases.push(resolve); }));
+  const older = h.repository.plant('p1');
+  const newer = h.repository.plant('p1');
+  await new Promise((resolve) => setImmediate(resolve));
+  releases[1]({ body: JSON.stringify(plantRow('p1', 'New name')) });
+  await newer;
+  releases[0]({ status: 503 });
+  await older;
+  releases.length = 0;
+  const late = h.repository.plant('p1');
+  const later = h.repository.plant('p1');
+  await new Promise((resolve) => setImmediate(resolve));
+  releases[1]({ body: JSON.stringify(plantRow('p1', 'Newest name')) });
+  await later;
+  releases[0]({ body: JSON.stringify(plantRow('p1', 'Old name')) });
+  await late;
+  expect(JSON.parse(h.cache.get({ id: 'm1', role: 'owner' }, 'plant/p1')!.json).display_name).toBe('Newest name');
+  expect(h.repository.get().serverUnavailable).toBe(false);
+});
+
+test('the plant list alone refreshes while the task lists fail', async () => {
+  const h = setup();
+  await h.repository.refresh();
+  h.route('/api/tasks?view=today', () => ({ status: 503 }));
+  const fresh = JSON.stringify([plantRow('p1', 'Synthetic fern'), plantRow('p2', 'Synthetic ivy')]);
+  h.route('/api/plants', () => ({ body: fresh }));
+  await h.repository.refreshPlants();
+  expect(h.repository.get()).toMatchObject({ plants: fresh, today: TODAY });
+});

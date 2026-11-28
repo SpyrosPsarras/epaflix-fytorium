@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { useIsFocused, useNavigation, usePreventRemove, useRoute, type NavigationAction } from '@react-navigation/native';
+import { useNavigation, usePreventRemove, useRoute, type NavigationAction } from '@react-navigation/native';
 import { Button, Dialog, Portal, Text } from 'react-native-paper';
-import { useDraft, useTab } from './context';
+import { useDraft, useTab, useTabShown } from './context';
 import type { TabName } from './routes';
 
 export type Question = { title: string; body: string; stay: string; leave: string };
@@ -97,8 +97,8 @@ export function LeaveGuard({ dirty, question = DISCARD, onLeave }: { dirty: bool
   // The open question and what it would close survive Android recreating the activity, as Kotlin's do.
   const [pending, setPending] = useDraft<NavigationAction | null>('leave', null);
   const [leaving, setLeaving] = useState<NavigationAction | null>(null);
-  // Dialogs render above every tab, so a page's question shows only while the page is shown; it stays saved.
-  const focused = useIsFocused();
+  // The question stays saved while its tab is hidden.
+  const focused = useTabShown();
   useEffect(() => {
     shell.setDirty(route.key, dirty ? { tab, question } : null);
     return () => shell.setDirty(route.key, null);

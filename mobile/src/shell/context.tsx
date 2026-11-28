@@ -25,6 +25,10 @@ export type AppDeps = {
 // The tab whose stack a page is in, so a question can lead back to it (W6-P26).
 export const TabContext = createContext<TabName>('Today');
 export const useTab = () => useContext(TabContext);
+// Whether that tab is the one shown: questions render above every tab, so a page's question shows only in its tab.
+// A page covered in its own stack still asks, since what it blocks (a reselect, a notification tap) acts there.
+export const TabShownContext = createContext(true);
+export const useTabShown = () => useContext(TabShownContext);
 
 const DepsContext = createContext<AppDeps | null>(null);
 export const DepsProvider = DepsContext.Provider;

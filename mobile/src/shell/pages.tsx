@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, FlatList, ScrollView, View } from 'react-native';
-import { CommonActions, useFocusEffect, useIsFocused, useNavigation, useRoute, type NavigationProp, type RouteProp } from '@react-navigation/native';
+import { CommonActions, StackActions, useFocusEffect, useNavigation, useRoute, type NavigationProp, type RouteProp } from '@react-navigation/native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import { Appbar, Button, List, Text, TextInput, useTheme } from 'react-native-paper';
 import { AboutPage } from '../screens/AboutPage';
 import { LogoutDialog } from '../screens/LogoutDialog';
-import { parsePlants, useCare, useDeps, useDraft, type Plant } from './context';
+import { parsePlants, useCare, useDeps, useDraft, useTabShown, type Plant } from './context';
 import { LeaveGuard, QuestionDialog, useShell, type Hidden } from './guards';
 import { navigation as root, rootToTop, stackOf } from './actions';
 import type { RootParams, StackParams } from './routes';
@@ -53,18 +53,20 @@ function useSavedScroll() {
 }
 
 // W6-P22: a list reads on entry and each time it is shown again (a tab tap, Back to it); nothing moves while it
-// stays in view. Today's first showing is the app start, which App's own refresh covers.
-function useReadOnShow(onEntry: boolean) {
+// stays in view. Today reads its task lists; Plants, Find and the pickers read the plant list alone.
+function useReadOnShow(read: 'all' | 'plants', onEntry: boolean) {
   const { care } = useDeps();
   const shown = useRef(false);
   useFocusEffect(useCallback(() => {
-    if (shown.current || onEntry) void care.refresh();
+    if (shown.current || onEntry) void (read === 'all' ? care.refresh() : care.refreshPlants());
     shown.current = true;
-  }, [care, onEntry]));
+  }, [care, read, onEntry]));
 }
 
-function PlantRows({ plants, open, header, onEntry = true }: { plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement; onEntry?: boolean }) {
-  useReadOnShow(onEntry);
+function PlantRows({ plants, open, header, read = 'plants', onEntry = true }: {
+  plants: Plant[]; open(plant: Plant): void; header?: React.ReactElement; read?: 'all' | 'plants'; onEntry?: boolean;
+}) {
+  useReadOnShow(read, onEntry);
   return (
     <FlatList
       data={plants} keyExtractor={(plant) => plant.id} ListHeaderComponent={header} testID="plant-rows" {...useSavedScroll()}
@@ -76,11 +78,21 @@ function PlantRows({ plants, open, header, onEntry = true }: { plants: Plant[]; 
 }
 
 // shortcut: W3 holding pages; the Today, Plants, Journal and More waves replace their bodies, not their navigation.
+// Offline, or Fytorium not answering, with the time of the last good read (W2; Find shows it too, W6-P13).
+function StatusLine() {
+  const care = useCare();
+  const updated = care.lastUpdated ? new Date(care.lastUpdated).toTimeString().slice(0, 5) : null;
+  const status = care.offline ? `Offline${updated ? ` · updated ${updated}` : ''}` : care.serverUnavailable ? "Fytorium isn't responding" : '';
+  return <Text testID="status-line" style={{ marginHorizontal: 16, minHeight: 20 }}>{status}</Text>;
+}
+
 export function TodayRoot() {
   const navigation = useNavigation<Nav>();
   const care = useCare();
   const deps = useDeps();
   const shell = useShell();
+  // Today shown at start is covered by App's start refresh; restored elsewhere, Today reads when first shown.
+  const [startScreen] = useState(() => navigation.isFocused());
   // W6-P9: with a form with changes in a hidden tab, Back here keeps the task instead of letting Android finish it.
   useFocusEffect(useCallback(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -92,13 +104,11 @@ export function TodayRoot() {
   }, [deps, shell]));
   const plants = parsePlants(care.plants);
   const writer = care.member?.role === 'owner' || care.member?.role === 'family';
-  const updated = care.lastUpdated ? new Date(care.lastUpdated).toTimeString().slice(0, 5) : null;
-  const status = care.offline ? `Offline${updated ? ` · updated ${updated}` : ''}` : care.serverUnavailable ? "Fytorium isn't responding" : '';
   return (
     <View style={{ flex: 1 }} testID="today-root">
-      <Text testID="status-line" style={{ marginHorizontal: 16, minHeight: 20 }}>{status}</Text>
+      <StatusLine />
       <PlantRows
-        plants={plants} onEntry={false}
+        plants={plants} read="all" onEntry={!startScreen}
         open={(plant) => navigation.navigate('Plant', { id: plant.id })}
         header={(
           <View style={{ padding: 16, gap: 8 }}>
@@ -155,7 +165,7 @@ export function MoreRoot() {
   const [confirming, setConfirming] = useDraft('confirming', false);
   const [hidden, setHidden] = useDraft<[string, Hidden] | null>('hidden', null);
   const [answered, setAnswered] = useDraft<string[]>('answered', []);
-  const focused = useIsFocused();
+  const focused = useTabShown();
   // W6-P26: each form with changes in another tab asks its own question, in turn, before log out drops it.
   const askNext = (done: string[]) => {
     const next = [...shell.dirty].find(([page]) => !done.includes(page)) ?? null;
@@ -224,28 +234,34 @@ export function PlantPage() {
   const care = useCare();
   const { colors } = useTheme();
   const [plant, setPlant] = useState<Plant | null>(() => parsePlants(care.plants).find((row) => row.id === route.params.id) ?? null);
-  const [cover, setCover] = useState<string | null>(null);
-  // W6-P22: the plant reads each time its page is shown, so a return shows a change made elsewhere.
+  const [cover, setCover] = useState<{ id: string; uri: string | null } | null>(null);
+  // W6-P22: the plant reads each time its page is shown, and while shown when the app comes back to the
+  // foreground or online, so a change made elsewhere shows.
   useFocusEffect(useCallback(() => {
     let current = true;
-    void deps.care.plant(route.params.id).then((row) => {
+    const read = () => void deps.care.plant(route.params.id).then((row) => {
       if (!current || !row) return;
-      const [read] = parsePlants(`[${row.json}]`);
-      setPlant(read);
+      const [fresh] = parsePlants(`[${row.json}]`);
+      setPlant(fresh);
     });
-    return () => { current = false; };
+    read();
+    const stop = deps.care.onReturn(read);
+    return () => { current = false; stop(); };
   }, [deps.care, route.params.id]));
   useEffect(() => {
     let current = true;
-    if (plant?.coverPhotoId && care.member) void deps.photos.load(care.member, plant.coverPhotoId, 'display').then((uri) => { if (current) setCover(uri); });
+    const id = plant?.coverPhotoId;
+    if (id && care.member) void deps.photos.load(care.member, id, 'display').then((uri) => { if (current) setCover({ id, uri }); });
     return () => { current = false; };
   }, [deps.photos, care.member, plant?.coverPhotoId]);
+  // Only the current cover shows; a cover removed elsewhere goes with the read that drops it.
+  const coverUri = cover && cover.id === plant?.coverPhotoId ? cover.uri : null;
   useEffect(() => { navigation.setOptions({ title: plant?.name ?? 'Plant' }); }, [navigation, plant?.name]);
   const writer = care.member?.role === 'owner' || care.member?.role === 'family';
   return (
     <ScrollView testID={`plant-${route.params.id}`} contentContainerStyle={{ padding: 16, gap: 12 }}>
       <View style={{ aspectRatio: 4 / 3, backgroundColor: colors.surfaceVariant }}>
-        {cover && <Image source={{ uri: cover }} cachePolicy="memory" style={{ flex: 1 }} accessibilityLabel={`Photo of ${plant?.name ?? 'the plant'}`} />}
+        {coverUri && <Image source={{ uri: coverUri }} cachePolicy="memory" style={{ flex: 1 }} accessibilityLabel={`Photo of ${plant?.name ?? 'the plant'}`} />}
       </View>
       <Text variant="headlineSmall">{plant?.name ?? 'Plant'}</Text>
       {writer && <Button mode="outlined" onPress={() => navigation.navigate('PlantEdit', { id: route.params.id })} contentStyle={{ minHeight: 48 }}>Edit</Button>}
@@ -289,13 +305,17 @@ export function StubPage() {
 // and "View imported plants" closes the review and shows the Plants grid at the top without its search.
 export function PlantaStub() {
   const navigation = useNavigation<Nav>();
+  const route = useRoute();
   const shell = useShell();
   const first = parsePlants(useCare().plants)[0];
   const [asking, setAsking] = useDraft<Hidden | null>('asking', null);
-  const focused = useIsFocused();
+  const focused = useTabShown();
   const viewImported = () => {
     const plants = stackOf('Plants');
-    navigation.goBack();
+    // Planta leaves its stack with every page above it (Kotlin showAllPlants).
+    const own = navigation.getState();
+    const at = own?.routes.findIndex((entry) => entry.key === route.key) ?? -1;
+    if (own && at >= 0) root.dispatch({ ...StackActions.pop(own.routes.length - at), target: own.key });
     if (plants?.key && plants.routes.length > 1) root.dispatch({ type: 'POP_TO_TOP', target: plants.key });
     rootToTop('Plants', true);
     root.dispatch(CommonActions.navigate('Plants'));
@@ -308,8 +328,8 @@ export function PlantaStub() {
       <Button mode="outlined" onPress={() => navigation.navigate('Sites')} contentStyle={{ minHeight: 48 }}>Check sites</Button>
       <Button mode="outlined" contentStyle={{ minHeight: 48 }}
         onPress={() => shell.request({ kind: 'run', run: () => {
-          // A request held for a save is dropped if the review closed meanwhile.
-          if (!navigation.isFocused()) return;
+          // A request held for a save is dropped if the review left its stack meanwhile.
+          if (!navigation.getState()?.routes.some((entry) => entry.key === route.key)) return;
           const [form] = plantsForms();
           if (form) setAsking(form[1]); else viewImported();
         } })}>
@@ -336,10 +356,14 @@ export function UnmatchedStub() {
 export function FindPage() {
   const navigation = useNavigation<Nav>();
   const [query, setQuery] = useDraft('query', '');
+  // W6-P13 focuses the field once, when Find opens; a restored Find keeps a keyboard the user closed closed.
+  const [focusedOnce, setFocusedOnce] = useDraft('focused', false);
   const plants = parsePlants(useCare().plants).filter((plant) => plant.name.toLowerCase().includes(query.trim().toLowerCase()));
   return (
     <View style={{ flex: 1 }}>
-      <TextInput label="Search plants" testID="find-search" value={query} onChangeText={setQuery} autoFocus style={{ margin: 16 }} />
+      <StatusLine />
+      <TextInput label="Search plants" testID="find-search" value={query} onChangeText={setQuery} autoFocus={!focusedOnce}
+        onFocus={() => { if (!focusedOnce) setFocusedOnce(true); }} style={{ margin: 16 }} />
       <PlantRows plants={plants} open={(plant) => navigation.navigate('Plant', { id: plant.id })} />
     </View>
   );
